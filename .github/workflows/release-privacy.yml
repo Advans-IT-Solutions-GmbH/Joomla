@@ -204,6 +204,6 @@ jobs:
 
       - name: Attest build provenance
         if: steps.version.outputs.bump != 'none'
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
