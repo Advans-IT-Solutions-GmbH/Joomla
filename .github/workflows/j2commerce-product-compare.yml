@@ -18,7 +18,7 @@ jobs:
           chmod +x build.sh
           ./build.sh
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: extension-package
           path: j2commerce/plg_j2commerce_productcompare/tests/extension.zip
@@ -47,7 +47,7 @@ jobs:
             script: 'uninstall'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/plg_j2commerce_productcompare/tests/
@@ -61,7 +61,7 @@ jobs:
           cd j2commerce/plg_j2commerce_productcompare/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ${{ matrix.script }}-logs
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
       - name: Collect logs
