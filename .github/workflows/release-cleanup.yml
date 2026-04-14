@@ -171,7 +171,7 @@ jobs:
 
       - name: Create Release
         if: steps.version.outputs.bump != 'none'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: cleanup-v${{ steps.version.outputs.new }}
           make_latest: true
