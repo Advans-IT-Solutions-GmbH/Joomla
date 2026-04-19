@@ -79,16 +79,22 @@ jobs:
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests/base-image
           docker build -t base-build .
+          # Use the official Joomla entrypoint so it auto-installs via env vars
           docker run -d --name base_joomla \
             --link base_mysql:mysql \
             -e JOOMLA_DB_HOST=mysql \
             -e JOOMLA_DB_USER=joomla \
             -e JOOMLA_DB_PASSWORD=joomla_pass \
             -e JOOMLA_DB_NAME=joomla_db \
-            base-build apache2-foreground
-          echo "Waiting for Joomla web installer..."
-          timeout 300 bash -c "until docker exec base_joomla test -f /var/www/html/installation/index.php 2>/dev/null || docker exec base_joomla test -f /var/www/html/configuration.php 2>/dev/null; do sleep 5; done"
-          echo "Running base setup..."
+            -e JOOMLA_SITE_NAME="Test Site" \
+            -e JOOMLA_ADMIN_USER=admin \
+            -e JOOMLA_ADMIN_USERNAME=admin \
+            -e JOOMLA_ADMIN_PASSWORD="Admin1234!" \
+            -e JOOMLA_ADMIN_EMAIL=admin@test.local \
+            base-build
+          echo "Waiting for Joomla to install (configuration.php)..."
+          timeout 480 bash -c "until docker exec base_joomla test -f /var/www/html/configuration.php 2>/dev/null; do sleep 5; done"
+          echo "Joomla installed. Running OSMap + J2Commerce setup..."
           docker exec base_joomla /usr/local/bin/setup-base.sh
           echo "✅ Base setup complete"
 
