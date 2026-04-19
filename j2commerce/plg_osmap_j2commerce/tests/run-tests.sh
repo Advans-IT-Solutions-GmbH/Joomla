@@ -77,8 +77,8 @@ main() {
     fi
     
     print_header "Waiting for Joomla to be ready"
-    # Wait for ready.txt — written after Joomla init + OSMap + J2Commerce + plugin install + fixtures
-    timeout 600 bash -c "until docker exec $CONTAINER_NAME test -f /var/www/html/ready.txt 2>/dev/null; do sleep 5; done" || {
+    # Wait for ready.txt — written after plugin install + fixtures (~30-60s with base image)
+    timeout 120 bash -c "until docker exec $CONTAINER_NAME test -f /var/www/html/ready.txt 2>/dev/null; do sleep 3; done" || {
         print_error "Test environment did not become ready in time"
         echo "--- Container logs (last 80 lines) ---"
         docker logs $CONTAINER_NAME 2>&1 | tail -80 || true
