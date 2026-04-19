@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths: ['j2commerce/plg_osmap_j2commerce/**']
 
+env:
+  BASE_IMAGE: ghcr.io/advansit/joomla-osmap-j2commerce-base:latest
+
 jobs:
   build:
     name: Build Package
@@ -26,12 +29,83 @@ jobs:
           path: j2commerce/plg_osmap_j2commerce/tests/extension.zip
           retention-days: 1
 
+  base-image:
+    name: Base Image (Joomla + OSMap + J2Commerce)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      cache-hit: ${{ steps.cache-check.outputs.cache-hit }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if base image exists
+        id: cache-check
+        run: |
+          if docker manifest inspect ${{ env.BASE_IMAGE }} > /dev/null 2>&1; then
+            echo "cache-hit=true" >> "$GITHUB_OUTPUT"
+            echo "Base image exists — skipping build"
+          else
+            echo "cache-hit=false" >> "$GITHUB_OUTPUT"
+            echo "Base image not found — will build"
+          fi
+
+      - name: Start MySQL for base image build
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          docker run -d --name base_mysql \
+            -e MYSQL_ROOT_PASSWORD=root_pass \
+            -e MYSQL_DATABASE=joomla_db \
+            -e MYSQL_USER=joomla \
+            -e MYSQL_PASSWORD=joomla_pass \
+            --health-cmd="mysqladmin ping -h localhost" \
+            --health-interval=5s \
+            --health-retries=10 \
+            mysql:8.0
+          echo "Waiting for MySQL..."
+          until docker inspect base_mysql --format='{{.State.Health.Status}}' | grep -q healthy; do sleep 3; done
+          echo "MySQL ready"
+
+      - name: Build and install Joomla base
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests/base-image
+          docker build -t base-build .
+          docker run -d --name base_joomla \
+            --link base_mysql:mysql \
+            -e JOOMLA_DB_HOST=mysql \
+            -e JOOMLA_DB_USER=joomla \
+            -e JOOMLA_DB_PASSWORD=joomla_pass \
+            -e JOOMLA_DB_NAME=joomla_db \
+            base-build apache2-foreground
+          echo "Waiting for Joomla web installer..."
+          timeout 300 bash -c "until docker exec base_joomla test -f /var/www/html/installation/index.php 2>/dev/null || docker exec base_joomla test -f /var/www/html/configuration.php 2>/dev/null; do sleep 5; done"
+          echo "Running base setup..."
+          docker exec base_joomla /usr/local/bin/setup-base.sh
+          echo "✅ Base setup complete"
+
+      - name: Commit and push base image
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          docker commit base_joomla ${{ env.BASE_IMAGE }}
+          docker push ${{ env.BASE_IMAGE }}
+          echo "✅ Base image pushed to ghcr.io"
+
   test:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, base-image]
     permissions:
       contents: read
+      packages: read
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -49,29 +123,39 @@ jobs:
             script: 'uninstall'
     steps:
       - uses: actions/checkout@v6
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
+
       - name: Start environment
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose up -d
+
       - name: Run tests
-        timeout-minutes: 12
+        timeout-minutes: 5
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ${{ matrix.script }}-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+
       - name: Cleanup
         if: always()
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose down -v
-
-

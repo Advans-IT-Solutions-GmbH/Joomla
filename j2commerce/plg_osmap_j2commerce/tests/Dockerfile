@@ -1,19 +1,6 @@
-FROM joomla:5-php8.2-apache
-
-RUN apt-get update && apt-get install -y \
-    unzip \
-    curl \
-    default-mysql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Skip SSL for mysql client
-RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
-
-# Download OSMap Free and J2Commerce at build time so the image is self-contained
-RUN curl -sL "https://github.com/joomlashack/OSMap/releases/download/v5.1.3/com_osmap_free_5.1.3.zip" \
-        -o /tmp/com_osmap.zip \
-    && curl -sL "https://github.com/J2Store4/j2store4/releases/download/v4.0.5/com_j2store_v4-4.0.5-pro.zip" \
-        -o /tmp/com_j2store.zip
+# Uses the pre-built base image (Joomla + OSMap + J2Commerce already installed).
+# Only adds the plugin under test and the custom entrypoint.
+FROM ghcr.io/advansit/joomla-osmap-j2commerce-base:latest
 
 # Copy extension package (built by CI before docker build)
 COPY extension.zip /tmp/plg_osmap_j2commerce.zip
