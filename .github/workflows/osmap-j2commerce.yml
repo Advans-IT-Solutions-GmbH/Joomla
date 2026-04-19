@@ -57,8 +57,8 @@ jobs:
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose up -d
-          sleep 60
       - name: Run tests
+        timeout-minutes: 10
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
@@ -74,28 +74,4 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose down -v
 
-  collect-results:
-    name: Collect Results
-    runs-on: ubuntu-latest
-    needs: test
-    if: always()
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v8
-        with:
-          path: test-artifacts/
-      - name: Collect logs
-        run: |
-          mkdir -p tests/logs/plg_osmap_j2commerce
-          find test-artifacts/ -name "*.txt" -exec cp {} tests/logs/plg_osmap_j2commerce/ \; 2>/dev/null || true
-      - name: Commit logs
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add -f tests/logs/plg_osmap_j2commerce/*.txt
-          git diff --staged --quiet || git commit -m "Add test logs [skip ci]"
-          git push || true
+

@@ -77,10 +77,10 @@ main() {
     fi
     
     print_header "Waiting for Joomla to be ready"
-    timeout 180 bash -c "until docker exec $CONTAINER_NAME test -f /var/www/html/health.txt 2>/dev/null; do sleep 3; done" || {
+    timeout 480 bash -c "until docker exec $CONTAINER_NAME test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done" || {
         print_error "Joomla did not become ready in time"
         docker exec $CONTAINER_NAME ls -la /var/www/html/ 2>/dev/null || true
-        docker logs $CONTAINER_NAME 2>&1 | tail -50 || true
+        docker logs $CONTAINER_NAME 2>&1 | tail -80 || true
         exit 1
     }
     print_success "Joomla is ready"
