@@ -13,8 +13,12 @@
 
     <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
 
+    <scriptfile>script.php</scriptfile>
+
     <files>
         <filename plugin="j2commerce">j2commerce.php</filename>
+        <filename>script.php</filename>
+        <folder>language</folder>
     </files>
 
     <config>
