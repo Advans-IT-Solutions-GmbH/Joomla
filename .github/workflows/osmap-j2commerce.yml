@@ -58,7 +58,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose up -d
       - name: Run tests
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
