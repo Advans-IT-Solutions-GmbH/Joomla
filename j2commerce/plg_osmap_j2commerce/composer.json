@@ -1,0 +1,18 @@
+{
+    "name": "advans/plg-osmap-j2commerce",
+    "description": "OSMap sitemap plugin for J2Commerce products",
+    "type": "joomla-plugin",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": "^8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Advans\\Plugin\\Osmap\\J2Commerce\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

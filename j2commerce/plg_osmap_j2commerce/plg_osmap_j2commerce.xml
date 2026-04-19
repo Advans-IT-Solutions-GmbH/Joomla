@@ -15,8 +15,13 @@
 
     <scriptfile>script.php</scriptfile>
 
+    <namespace path="src">Advans\Plugin\Osmap\J2Commerce</namespace>
+    <autoloadLanguage>true</autoloadLanguage>
+
     <files>
         <filename plugin="j2commerce">j2commerce.php</filename>
+        <folder>services</folder>
+        <folder>src</folder>
         <folder>language</folder>
     </files>
 
