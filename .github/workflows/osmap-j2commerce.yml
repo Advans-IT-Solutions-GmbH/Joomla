@@ -76,10 +76,13 @@ jobs:
 
       - name: Build and install Joomla base
         if: steps.cache-check.outputs.cache-hit != 'true'
+        timeout-minutes: 15
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests/base-image
           docker build -t base-build .
-          # Use the official Joomla entrypoint so it auto-installs via env vars
+
+          # Run with the official joomla:5 entrypoint (not overridden in Dockerfile)
+          # The entrypoint reads JOOMLA_* env vars and installs Joomla automatically
           docker run -d --name base_joomla \
             --link base_mysql:mysql \
             -e JOOMLA_DB_HOST=mysql \
@@ -91,11 +94,23 @@ jobs:
             -e JOOMLA_ADMIN_USERNAME=admin \
             -e JOOMLA_ADMIN_PASSWORD="Admin1234!" \
             -e JOOMLA_ADMIN_EMAIL=admin@test.local \
-            base-build
+            --entrypoint /entrypoint.sh \
+            base-build apache2-foreground
+
           echo "Waiting for Joomla to install (configuration.php)..."
-          timeout 480 bash -c "until docker exec base_joomla test -f /var/www/html/configuration.php 2>/dev/null; do sleep 5; done"
-          echo "Joomla installed. Running OSMap + J2Commerce setup..."
-          docker exec base_joomla /usr/local/bin/setup-base.sh
+          timeout 480 bash -c "
+            until docker exec base_joomla test -f /var/www/html/configuration.php 2>/dev/null; do
+              sleep 5
+              echo '  still waiting...'
+            done
+          "
+          echo "Joomla ready. Installing OSMap + J2Commerce..."
+          docker exec \
+            -e JOOMLA_DB_HOST=mysql \
+            -e JOOMLA_DB_USER=joomla \
+            -e JOOMLA_DB_PASSWORD=joomla_pass \
+            -e JOOMLA_DB_NAME=joomla_db \
+            base_joomla /usr/local/bin/setup-base.sh
           echo "✅ Base setup complete"
 
       - name: Commit and push base image
