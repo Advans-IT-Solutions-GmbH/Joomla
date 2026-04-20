@@ -21,6 +21,15 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 done
 echo "Plugin in DB. Prefix: ${DB_PREFIX}"
 
+# Patch OSMap Factory::getTable() for Joomla 5 compatibility.
+# Table::getInstance() returns false (not null) in Joomla 5 when the table
+# is not found, violating the ?Table return type declaration.
+OSMAP_FACTORY="/var/www/html/administrator/components/com_osmap/library/Alledia/OSMap/Factory.php"
+if [ -f "$OSMAP_FACTORY" ]; then
+    sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' "$OSMAP_FACTORY"
+    echo "OSMap Factory.php patched for Joomla 5"
+fi
+
 echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null
