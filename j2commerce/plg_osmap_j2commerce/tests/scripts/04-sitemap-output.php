@@ -191,7 +191,8 @@ class SitemapOutputTest
             ])
             ->from($db->quoteName('#__menu', 'm'))
             ->join('INNER', $db->quoteName('#__content', 'a')
-                . ' ON m.link LIKE CONCAT(' . $db->quote('%id=') . ', a.id)'
+                . ' ON (m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id, ' . $db->quote('&%') . ')'
+                . '  OR m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id))'
                 . ' AND m.link LIKE ' . $db->quote('%com_content%view=article%'))
             ->join('INNER', $db->quoteName('#__j2store_products', 'p')
                 . ' ON p.product_source_id = a.id'
