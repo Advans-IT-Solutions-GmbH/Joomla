@@ -21,37 +21,25 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 done
 echo "Plugin in DB. Prefix: ${DB_PREFIX}"
 
-# Patch OSMap for Joomla 5 compatibility.
-# 1. Factory::getTable(): Table::getInstance() returns false (not null) in Joomla 5.
-# 2. OSMapTableSitemap is not auto-loaded in Joomla 5 — require it explicitly in Factory.
+# Patch OSMap Factory::getTable() for Joomla 5 compatibility.
+# Two issues:
+# 1. Table::getInstance() returns false (not null) in Joomla 5 — violates ?Table return type.
+# 2. Legacy table classes (OSMapTableSitemap etc.) are not auto-loaded in Joomla 5.
 OSMAP_FACTORY="/var/www/html/administrator/components/com_osmap/library/Alledia/OSMap/Factory.php"
 if [ -f "$OSMAP_FACTORY" ]; then
-    # Fix return type: false -> null
-    sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' "$OSMAP_FACTORY"
-    # Ensure OSMap table classes are loaded before getInstance() is called
-    sed -i "s|public static function getTable|// Joomla 5 compat: load table classes explicitly\n    public static function getTable|" "$OSMAP_FACTORY"
-    # Insert require_once before the return statement
-    TABLES_PATH='JPATH_ADMINISTRATOR . \'/components/com_osmap/tables/\''
-    sed -i "s|// Joomla 5 compat: load table classes explicitly\n    public static function getTable|// Joomla 5 compat: load table classes explicitly\n    public static function getTable|" "$OSMAP_FACTORY"
-    # Simpler: prepend a require_once in the getTable method body
-    python3 -c "
-import re
-with open('$OSMAP_FACTORY', 'r') as f:
-    content = f.read()
-# Add require_once for table file before Table::getInstance call
-old = 'return Table::getInstance(\$tableName, \$prefix) ?: null;'
-new = '''// Load table class file if not already loaded (Joomla 5 does not auto-load legacy table classes)
-        \$tableFile = JPATH_ADMINISTRATOR . '/components/com_osmap/tables/' . strtolower(\$tableName) . '.php';
-        if (is_file(\$tableFile) && !class_exists('OSMapTable' . \$tableName)) {
-            require_once \$tableFile;
-        }
-        return Table::getInstance(\$tableName, \$prefix) ?: null;'''
-content = content.replace(old, new)
-with open('$OSMAP_FACTORY', 'w') as f:
-    f.write(content)
-print('Factory.php patched')
+    php -r "
+\$file = '/var/www/html/administrator/components/com_osmap/library/Alledia/OSMap/Factory.php';
+\$content = file_get_contents(\$file);
+\$old = 'return Table::getInstance(\$tableName, \$prefix);';
+\$new = '// Joomla 5: load legacy table class file if not already loaded' . PHP_EOL
+     . '        \$tableFile = JPATH_ADMINISTRATOR . \'/components/com_osmap/tables/\' . strtolower(\$tableName) . \'.php\';' . PHP_EOL
+     . '        if (is_file(\$tableFile) && !class_exists(\'OSMapTable\' . \$tableName)) {' . PHP_EOL
+     . '            require_once \$tableFile;' . PHP_EOL
+     . '        }' . PHP_EOL
+     . '        return Table::getInstance(\$tableName, \$prefix) ?: null;';
+\$patched = str_replace(\$old, \$new, \$content);
+if (\$patched === \$content) { echo \"WARNING: patch not applied (string not found)\n\"; } else { file_put_contents(\$file, \$patched); echo \"OSMap Factory.php patched for Joomla 5\n\"; }
 "
-    echo "OSMap Factory.php patched for Joomla 5"
 fi
 
 echo "Enabling plugins..."
