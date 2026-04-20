@@ -41,7 +41,8 @@ class SitemapHttpTest
             return false;
         }
 
-        echo "Sitemap fetched (" . strlen($xml) . " bytes)\n\n";
+        echo "Sitemap fetched (" . strlen($xml) . " bytes)\n";
+        echo "Response (first 500 chars):\n" . substr($xml, 0, 500) . "\n\n";
 
         $urls = $this->extractUrls($xml);
         echo "URLs found in sitemap: " . count($urls) . "\n";

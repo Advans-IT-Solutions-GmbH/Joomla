@@ -25,6 +25,18 @@ echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null
 
+# Disable SEF URLs so OSMap generates plain index.php?... URLs (simpler to assert)
+mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+    -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '$.sef', 0) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
+# Also set via configuration.php
+php -r "
+\$f = '/var/www/html/configuration.php';
+\$c = file_get_contents(\$f);
+\$c = preg_replace('/public \\\$sef = [^;]+;/', 'public \$sef = false;', \$c);
+\$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = false;', \$c);
+file_put_contents(\$f, \$c);
+" 2>/dev/null || true
+
 echo "Inserting fixtures..."
 COM_CONTENT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' LIMIT 1;" 2>/dev/null || echo "0")
