@@ -92,13 +92,19 @@ fi
 echo "mainmenu root item id: ${MAINMENU_ROOT_ID}"
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOSQL
+-- Rebuild nested set values for our menu items.
+-- OSMap queries: m.lft > p.lft AND m.lft < p.rgt where p.lft=0.
+-- We need lft/rgt > 0. Use high values to avoid conflicts.
+SET @max_rgt = (SELECT COALESCE(MAX(rgt), 0) FROM ${DB_PREFIX}menu);
+
 -- Shop page menu item (top-level, published=1) — ID 9001
 INSERT IGNORE INTO ${DB_PREFIX}menu
-    (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params)
+    (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params, lft, rgt)
 VALUES (
     9001, 'mainmenu', 'Shop', 'shop', 'shop',
     'index.php?option=com_j2store&view=products',
-    'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2STORE_ID}, '*', 1, '{}'
+    'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2STORE_ID}, '*', 1, '{}',
+    @max_rgt + 1, @max_rgt + 6
 );
 
 -- Product articles
@@ -136,10 +142,12 @@ INSERT IGNORE INTO ${DB_PREFIX}menu
 VALUES
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}'),
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
+     @max_rgt + 2, @max_rgt + 3),
     (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
      'index.php?option=com_content&view=article&id=9002&Itemid=9003',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}');
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
+     @max_rgt + 4, @max_rgt + 5);
 EOSQL
 
 echo "Fixtures inserted"
