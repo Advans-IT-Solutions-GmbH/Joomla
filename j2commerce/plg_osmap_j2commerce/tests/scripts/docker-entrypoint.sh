@@ -1,106 +1,212 @@
 #!/bin/bash
 set -e
 
-echo "=== OSMap J2Commerce Test Setup ==="
-echo "Base image: Joomla + OSMap + J2Commerce already installed"
-echo "==================================="
+echo "=== OSMap J2Commerce Test Environment Setup ==="
+echo "Extension: ${EXTENSION_NAME:-unknown}"
+echo "==============================================="
 
-# Start Apache in background
-apache2-foreground &
-APACHE_PID=$!
-
-DB_HOST="${JOOMLA_DB_HOST:-mysql}"
-DB_USER="${JOOMLA_DB_USER:-joomla}"
-DB_PASS="${JOOMLA_DB_PASSWORD:-joomla_pass}"
-DB_NAME="${JOOMLA_DB_NAME:-joomla_db}"
-
-# Wait for MySQL (base image has Joomla files but DB is fresh per test run)
+# Wait for MySQL to be ready
 echo "Waiting for MySQL..."
-timeout 60 bash -c "until mysqladmin ping -h '$DB_HOST' -u '$DB_USER' -p'$DB_PASS' --silent 2>/dev/null; do sleep 2; done"
-echo "✅ MySQL ready"
+until mysql -h mysql -u joomla -pjoomla_pass -e "SELECT 1" &>/dev/null; do
+    sleep 2
+done
+echo "MySQL is ready"
 
-# Restore Joomla DB from base snapshot if available, else run installer
-if [ -f /var/www/html/configuration.php ]; then
-    echo "✅ Joomla already configured"
-else
-    echo "Running Joomla CLI installer..."
-    php /var/www/html/cli/joomla.php installation:install \
-        --site-name="Test Site" \
-        --admin-user="admin" \
-        --admin-username="admin" \
-        --admin-password="Admin1234!" \
-        --admin-email="admin@test.local" \
-        --db-type="mysqli" \
-        --db-host="$DB_HOST" \
-        --db-user="$DB_USER" \
-        --db-pass="$DB_PASS" \
-        --db-name="$DB_NAME" \
-        --db-prefix="j_" 2>&1
-    echo "✅ Joomla installed"
+# Run original Joomla entrypoint in background
+/entrypoint.sh apache2-foreground &
+JOOMLA_PID=$!
 
-    echo "Installing OSMap..."
-    cp /tmp/com_osmap.zip /var/www/html/tmp/
-    php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/com_osmap.zip 2>&1
-    echo "✅ OSMap installed"
+# Wait for Joomla files to be extracted
+echo "Waiting for Joomla files..."
+sleep 10
 
-    echo "Installing J2Commerce..."
-    cp /tmp/com_j2store.zip /var/www/html/tmp/
-    php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/com_j2store.zip 2>&1
-    echo "✅ J2Commerce installed"
+# Check if Joomla needs installation
+if [ ! -f /var/www/html/configuration.php ]; then
+    echo "Installing Joomla via CLI..."
+
+    # Wait for files to be fully extracted
+    until [ -f /var/www/html/installation/joomla.php ] || [ -f /var/www/html/cli/joomla.php ]; do
+        sleep 2
+    done
+
+    # Use Joomla CLI installer (Joomla 4+)
+    if [ -f /var/www/html/cli/joomla.php ]; then
+        php /var/www/html/cli/joomla.php site:install \
+            --db-host=mysql \
+            --db-user=joomla \
+            --db-pass=joomla_pass \
+            --db-name=joomla_db \
+            --db-prefix=j_ \
+            --db-type=mysql \
+            --site-name="Test Site" \
+            --admin-user="admin" \
+            --admin-username="admin" \
+            --admin-password="Admin123!" \
+            --admin-email="admin@test.local" \
+            --no-interaction 2>&1 || echo "CLI install attempted"
+    fi
+
+    # Fallback: Create configuration.php manually if CLI failed
+    if [ ! -f /var/www/html/configuration.php ]; then
+        echo "Creating configuration.php manually..."
+        cat > /var/www/html/configuration.php << 'EOFCONFIG'
+<?php
+class JConfig {
+    public $offline = false;
+    public $offline_message = 'This site is down for maintenance.';
+    public $display_offline_message = 1;
+    public $offline_image = '';
+    public $sitename = 'Test Site';
+    public $editor = 'tinymce';
+    public $captcha = '0';
+    public $list_limit = 20;
+    public $access = 1;
+    public $debug = false;
+    public $debug_lang = false;
+    public $debug_lang_const = true;
+    public $dbtype = 'mysqli';
+    public $host = 'mysql';
+    public $user = 'joomla';
+    public $password = 'joomla_pass';
+    public $db = 'joomla_db';
+    public $dbprefix = 'j_';
+    public $dbencryption = 0;
+    public $dbsslverifyservercert = false;
+    public $dbsslkey = '';
+    public $dbsslcert = '';
+    public $dbsslca = '';
+    public $dbsslcipher = '';
+    public $force_ssl = 0;
+    public $live_site = '';
+    public $secret = 'testsecret123456';
+    public $gzip = false;
+    public $error_reporting = 'default';
+    public $helpurl = 'https://help.joomla.org/proxy';
+    public $tmp_path = '/var/www/html/tmp';
+    public $log_path = '/var/www/html/administrator/logs';
+    public $lifetime = 15;
+    public $session_handler = 'database';
+    public $shared_session = false;
+    public $session_metadata = true;
+}
+EOFCONFIG
+        chown www-data:www-data /var/www/html/configuration.php
+
+        # Import Joomla schema
+        echo "Importing Joomla database schema..."
+        if [ -f /var/www/html/installation/sql/mysql/base.sql ]; then
+            mysql -h mysql -u joomla -pjoomla_pass joomla_db < /var/www/html/installation/sql/mysql/base.sql 2>/dev/null || true
+        fi
+        if [ -f /var/www/html/installation/sql/mysql/extensions.sql ]; then
+            mysql -h mysql -u joomla -pjoomla_pass joomla_db < /var/www/html/installation/sql/mysql/extensions.sql 2>/dev/null || true
+        fi
+        if [ -f /var/www/html/installation/sql/mysql/supports.sql ]; then
+            mysql -h mysql -u joomla -pjoomla_pass joomla_db < /var/www/html/installation/sql/mysql/supports.sql 2>/dev/null || true
+        fi
+
+        # Create admin user
+        ADMIN_PASS_HASH=$(php -r "echo password_hash('Admin123!', PASSWORD_BCRYPT);")
+        mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
+            INSERT INTO j_users (id, name, username, email, password, block, sendEmail, registerDate, params)
+            VALUES (42, 'Super User', 'admin', 'admin@test.local', '$ADMIN_PASS_HASH', 0, 1, NOW(), '{}')
+            ON DUPLICATE KEY UPDATE password='$ADMIN_PASS_HASH';
+            INSERT INTO j_user_usergroup_map (user_id, group_id) VALUES (42, 8) ON DUPLICATE KEY UPDATE group_id=8;
+        " 2>/dev/null || true
+    fi
+
+    echo "Joomla installation complete"
 fi
 
-# Install the plugin under test
-echo ""
-echo "--- Installing plg_osmap_j2commerce ---"
-cp /tmp/plg_osmap_j2commerce.zip /var/www/html/tmp/
-php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/plg_osmap_j2commerce.zip 2>&1
-echo "✅ plg_osmap_j2commerce installed"
+# Wait for configuration.php
+echo "Waiting for Joomla configuration..."
+until [ -f /var/www/html/configuration.php ]; do
+    sleep 2
+done
 
-# Enable all plugins
+# Get DB prefix
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
-    -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null
-echo "✅ Plugins enabled"
+echo "DB prefix: ${DB_PREFIX}"
 
-# Insert test fixtures
-echo ""
-echo "--- Inserting test fixtures ---"
-ROOT_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
-    -se "SELECT id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 AND client_id=0 LIMIT 1;" 2>/dev/null || echo "1")
-COM_CONTENT_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
-    -se "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
-COM_J2STORE_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
-    -se "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_j2store' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
+# Install OSMap
+echo "Installing OSMap..."
+if [ -f /tmp/osmap.zip ]; then
+    cp /tmp/osmap.zip /var/www/html/tmp/osmap.zip
+    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/osmap.zip 2>&1; then
+        echo "OSMap installed via Joomla CLI"
+    else
+        echo "WARNING: OSMap CLI install failed"
+    fi
+else
+    echo "WARNING: OSMap ZIP not found at /tmp/osmap.zip"
+fi
 
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" 2>/dev/null <<SQL
-INSERT INTO ${DB_PREFIX}menu (id,menutype,title,alias,link,type,published,parent_id,level,component_id,browserNav,access,img,template_style_id,params,lft,rgt,home,language,client_id)
-VALUES (9001,'mainmenu','Shop','shop','index.php?option=com_j2store&view=products','component',1,$ROOT_ID,2,$COM_J2STORE_ID,0,1,'',0,'{}',100,105,0,'*',0)
-ON DUPLICATE KEY UPDATE title='Shop';
+# Install J2Commerce
+echo "Installing J2Commerce..."
+if [ -f /tmp/j2commerce.zip ]; then
+    cp /tmp/j2commerce.zip /var/www/html/tmp/j2commerce.zip
+    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
+        echo "J2Commerce installed via Joomla CLI"
+    else
+        echo "WARNING: J2Commerce CLI install failed"
+    fi
+else
+    echo "ERROR: J2Commerce ZIP not found at /tmp/j2commerce.zip"
+    exit 1
+fi
 
-INSERT INTO ${DB_PREFIX}content (id,asset_id,title,alias,introtext,fulltext,state,catid,created,modified,language,metadesc,metakey,access,hits,featured)
-VALUES
-    (9001,0,'Test Product Alpha','test-product-alpha','<p>Alpha.</p>','',1,2,NOW(),NOW(),'*','Alpha desc','alpha',1,0,0),
-    (9002,0,'Test Product Beta','test-product-beta','<p>Beta.</p>','',1,2,NOW(),NOW(),'*','Beta desc','beta',1,0,0)
-ON DUPLICATE KEY UPDATE title=VALUES(title);
+# Install OSMap J2Commerce plugin
+echo "Installing OSMap J2Commerce plugin..."
+cp /tmp/extension.zip /var/www/html/tmp/extension.zip
+if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+    echo "Plugin installed via Joomla CLI"
+else
+    echo "ERROR: Plugin installation FAILED"
+    exit 1
+fi
 
-INSERT INTO ${DB_PREFIX}menu (id,menutype,title,alias,link,type,published,parent_id,level,component_id,browserNav,access,img,template_style_id,params,lft,rgt,home,language,client_id)
-VALUES
-    (9002,'mainmenu','Test Product Alpha','test-product-alpha','index.php?option=com_content&view=article&id=9001','component',-2,9001,3,$COM_CONTENT_ID,0,1,'',0,'{}',101,102,0,'*',0),
-    (9003,'mainmenu','Test Product Beta','test-product-beta','index.php?option=com_content&view=article&id=9002','component',-2,9001,3,$COM_CONTENT_ID,0,1,'',0,'{}',103,104,0,'*',0)
-ON DUPLICATE KEY UPDATE title=VALUES(title);
+# Enable all newly installed plugins
+echo "Enabling installed plugins..."
+mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+    -e "UPDATE ${DB_PREFIX}extensions SET enabled = 1 WHERE enabled = 0 AND type = 'plugin';" 2>&1 \
+    && echo "Plugins enabled" \
+    || echo "WARNING: Could not enable plugins via DB"
 
-INSERT INTO ${DB_PREFIX}j2store_products (j2store_product_id,product_source_id,product_source,product_type,enabled,created_on,modified_on)
-VALUES
-    (9001,9001,'com_content','simple',1,NOW(),NOW()),
-    (9002,9002,'com_content','simple',1,NOW(),NOW())
-ON DUPLICATE KEY UPDATE enabled=1;
-SQL
-echo "✅ Test fixtures inserted"
+# Insert test fixtures: menu items + J2Commerce products for sitemap tests
+echo "Inserting test fixtures..."
+mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOSQL
+-- Test menu (required for OSMap)
+INSERT IGNORE INTO ${DB_PREFIX}menu_types (id, menutype, title, description)
+VALUES (10, 'mainmenu', 'Main Menu', 'Test main menu');
 
-# Signal readiness
-echo "READY" > /var/www/html/ready.txt
-chown www-data:www-data /var/www/html/ready.txt 2>/dev/null || true
-echo ""
-echo "✅ Test environment ready"
+-- J2Commerce product article (content item)
+INSERT IGNORE INTO ${DB_PREFIX}content (id, title, alias, introtext, fulltext, state, catid, created, modified, publish_up, language, access)
+VALUES (1, 'Test Product', 'test-product', 'A test product', '', 1, 2, NOW(), NOW(), NOW(), '*', 1);
 
-wait $APACHE_PID
+-- J2Commerce product record
+INSERT IGNORE INTO ${DB_PREFIX}j2store_products (j2store_product_id, product_source_id, product_source, product_sku, product_price, product_visibility, enabled)
+VALUES (1, 1, 'com_content', 'TEST-001', 99.00, 1, 1);
+
+-- J2Commerce product variant
+INSERT IGNORE INTO ${DB_PREFIX}j2store_variants (j2store_variant_id, j2store_product_id, variant_sku, price, is_master)
+VALUES (1, 1, 'TEST-001', 99.00, 1);
+
+-- Menu item linking to J2Commerce product (published=-2 = J2Commerce SEF item)
+INSERT IGNORE INTO ${DB_PREFIX}menu (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params)
+VALUES (
+    100, 'mainmenu', 'Test Product', 'test-product', 'test-product',
+    'index.php?option=com_content&view=article&id=1',
+    'component', -2, 1, 1,
+    (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' LIMIT 1),
+    '*', 1, '{}'
+);
+EOSQL
+echo "Test fixtures inserted"
+
+# Write health file — signals container is ready for tests
+echo "OK" > /var/www/html/health.txt
+chown www-data:www-data /var/www/html/health.txt
+
+echo "=== Container ready ==="
+
+# Keep container running
+wait $JOOMLA_PID
