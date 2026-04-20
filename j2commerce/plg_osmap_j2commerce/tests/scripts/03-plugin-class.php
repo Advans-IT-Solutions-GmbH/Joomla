@@ -16,6 +16,19 @@ use Joomla\CMS\Factory;
 // Bootstrap DB connection (sufficient for CLI; getApplication('site') fails in CLI context)
 Factory::getDbo();
 
+// Register the plugin's PSR-4 namespace so j2commerce.php can resolve its class_alias.
+// Composer is not run after extension install, so we register the autoloader manually.
+spl_autoload_register(function (string $class): void {
+    $prefix = 'Advans\\Plugin\\Osmap\\J2Commerce\\';
+    $base   = JPATH_PLUGINS . '/osmap/j2commerce/src/';
+    if (str_starts_with($class, $prefix)) {
+        $file = $base . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+        if (file_exists($file)) {
+            require_once $file;
+        }
+    }
+});
+
 use Alledia\OSMap\Plugin\Base;
 
 class PluginClassTest
