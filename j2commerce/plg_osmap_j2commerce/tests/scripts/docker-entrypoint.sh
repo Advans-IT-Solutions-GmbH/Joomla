@@ -71,9 +71,24 @@ if [ "$COM_J2STORE_ID" = "0" ]; then
     exit 1
 fi
 
-# Get the root menu item ID for mainmenu (parent_id for top-level items)
+# Get the root menu item ID for mainmenu (parent_id for top-level items).
+# In Joomla 5 the root item has menutype='' and level=0; the mainmenu root
+# has level=1 and parent_id = that global root id.
 MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-    -e "SELECT id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=0 LIMIT 1;" 2>/dev/null || echo "1")
+    -e "SELECT id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 AND parent_id=(SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1) LIMIT 1;" \
+    2>/dev/null)
+# Fallback: just use the first top-level mainmenu item's parent_id
+if [ -z "$MAINMENU_ROOT_ID" ]; then
+    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" \
+        2>/dev/null)
+fi
+# Final fallback: global root
+if [ -z "$MAINMENU_ROOT_ID" ]; then
+    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1;" \
+        2>/dev/null || echo "1")
+fi
 echo "mainmenu root item id: ${MAINMENU_ROOT_ID}"
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOSQL
