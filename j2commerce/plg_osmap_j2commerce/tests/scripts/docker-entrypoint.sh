@@ -16,8 +16,7 @@ until [ -f /var/www/html/configuration.php ] && [ ! -d /var/www/html/installatio
     sleep 3
 done
 
-# Extra wait: the last extension install runs after installation/ is removed.
-# Poll the DB until our plugin appears in #__extensions.
+# Poll the DB until our plugin appears in #__extensions (installed after installation/ removal)
 echo "Waiting for plugin to appear in DB..."
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; \$c=new JConfig; echo \$c->dbprefix;" 2>/dev/null || echo "joom_")
 until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
@@ -26,7 +25,6 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     sleep 3
 done
 echo "Plugin registered in DB"
-
 echo "DB prefix: ${DB_PREFIX}"
 
 # Enable all plugins (installed disabled by default)
@@ -35,33 +33,58 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null \
     && echo "Plugins enabled" || echo "WARNING: could not enable plugins"
 
-# Insert test fixtures for sitemap tests
+# Insert test fixtures matching the IDs expected by 04-sitemap-output.php:
+#   SHOP_MENU_ID  = 9001  (published=1, com_j2store shop page)
+#   PRODUCT_ALPHA = article 9001, menu 9002
+#   PRODUCT_BETA  = article 9002, menu 9003
 echo "Inserting test fixtures..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOSQL
-INSERT IGNORE INTO ${DB_PREFIX}content
-    (id, title, alias, introtext, \`fulltext\`, state, catid, created, modified, publish_up, language, access)
-VALUES
-    (1, 'Test Product', 'test-product', 'A test product', '', 1, 2, NOW(), NOW(), NOW(), '*', 1);
-
-INSERT IGNORE INTO ${DB_PREFIX}j2store_products
-    (j2store_product_id, product_source_id, product_source, product_sku, product_price, product_visibility, enabled)
-VALUES
-    (1, 1, 'com_content', 'TEST-001', 99.00, 1, 1);
-
-INSERT IGNORE INTO ${DB_PREFIX}j2store_variants
-    (j2store_variant_id, j2store_product_id, variant_sku, price, is_master)
-VALUES
-    (1, 1, 'TEST-001', 99.00, 1);
-
+-- Shop page menu item (parent for product SEF items)
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params)
 VALUES (
-    100, 'mainmenu', 'Test Product', 'test-product', 'test-product',
-    'index.php?option=com_content&view=article&id=1',
-    'component', -2, 1, 1,
-    (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' LIMIT 1),
+    9001, 'mainmenu', 'Shop', 'shop', 'shop',
+    'index.php?option=com_j2store&view=products',
+    'component', 1, 1, 1,
+    (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_j2store' LIMIT 1),
     '*', 1, '{}'
 );
+
+-- Product articles
+INSERT IGNORE INTO ${DB_PREFIX}content
+    (id, title, alias, introtext, \`fulltext\`, state, catid, created, modified, publish_up, language, access)
+VALUES
+    (9001, 'Test Product Alpha', 'test-product-alpha', 'Alpha product', '', 1, 2, NOW(), NOW(), NOW(), '*', 1),
+    (9002, 'Test Product Beta',  'test-product-beta',  'Beta product',  '', 1, 2, NOW(), NOW(), NOW(), '*', 1);
+
+-- J2Commerce product records
+INSERT IGNORE INTO ${DB_PREFIX}j2store_products
+    (j2store_product_id, product_source_id, product_source, product_sku, product_price, product_visibility, enabled)
+VALUES
+    (9001, 9001, 'com_content', 'ALPHA-001', 49.00, 1, 1),
+    (9002, 9002, 'com_content', 'BETA-001',  79.00, 1, 1);
+
+-- J2Commerce product variants
+INSERT IGNORE INTO ${DB_PREFIX}j2store_variants
+    (j2store_variant_id, j2store_product_id, variant_sku, price, is_master)
+VALUES
+    (9001, 9001, 'ALPHA-001', 49.00, 1),
+    (9002, 9002, 'BETA-001',  79.00, 1);
+
+-- Product SEF menu items (published=-2, children of shop menu 9001)
+INSERT IGNORE INTO ${DB_PREFIX}menu
+    (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params)
+VALUES
+    (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001',
+     'component', -2, 9001, 2,
+     (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' LIMIT 1),
+     '*', 1, '{}'),
+    (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002',
+     'component', -2, 9001, 2,
+     (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' LIMIT 1),
+     '*', 1, '{}');
 EOSQL
 echo "Fixtures inserted"
 

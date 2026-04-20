@@ -12,9 +12,9 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
-// Boot the CMS application so OSMap's include.php can call Factory::getApplication()
 use Joomla\CMS\Factory;
-$app = Factory::getApplication('site');
+// Bootstrap DB connection (sufficient for CLI; getApplication('site') fails in CLI context)
+Factory::getDbo();
 
 use Alledia\OSMap\Plugin\Base;
 
