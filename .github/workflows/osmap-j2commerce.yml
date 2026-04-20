@@ -63,6 +63,8 @@ jobs:
             script: 'plugin-class'
           - name: '04 - Sitemap Output'
             script: 'sitemap'
+          - name: '06 - Sitemap HTTP'
+            script: 'sitemap-http'
           - name: '05 - Uninstall'
             script: 'uninstall'
     steps:

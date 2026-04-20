@@ -84,6 +84,23 @@ VALUES
 EOSQL
 
 echo "Fixtures inserted"
+
+# Create OSMap sitemap and link it to mainmenu so the HTTP test can call
+# index.php?option=com_osmap&view=xml&id=1
+echo "Creating OSMap sitemap..."
+MAINMENU_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+    -e "SELECT id FROM ${DB_PREFIX}menu_types WHERE menutype='mainmenu' LIMIT 1;" 2>/dev/null || echo "0")
+echo "mainmenu id: ${MAINMENU_ID}"
+
+mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOSQL
+INSERT IGNORE INTO ${DB_PREFIX}osmap_sitemaps (id, name, params, is_default, published, created_on, links_count)
+VALUES (1, 'Test Sitemap', '{}', 1, 1, NOW(), 0);
+
+INSERT IGNORE INTO ${DB_PREFIX}osmap_sitemap_menus (sitemap_id, menutype_id, changefreq, priority, ordering)
+VALUES (1, ${MAINMENU_ID}, 'weekly', 0.5, 1);
+EOSQL
+echo "OSMap sitemap created"
+
 echo "OK" > /var/www/html/health.txt
 echo "=== Container ready ==="
 
