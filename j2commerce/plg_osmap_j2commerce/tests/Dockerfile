@@ -10,23 +10,20 @@ RUN apt-get update && apt-get install -y \
 # Configure MySQL client to skip SSL
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
-# Download OSMap from GitHub release
-ARG OSMAP_VERSION=v4.5.2
-RUN curl -sL "https://github.com/joomlatools/joomlatools-framework-osmap/releases/download/${OSMAP_VERSION}/pkg_osmap-${OSMAP_VERSION}.zip" \
-    -o /tmp/osmap.zip || \
-    curl -sL "https://github.com/joomlatools/joomlatools-framework-osmap/releases/latest/download/pkg_osmap.zip" \
-    -o /tmp/osmap.zip || \
-    echo "WARNING: OSMap download failed"
+# Download OSMap (joomlashack/OSMap, free edition)
+ARG OSMAP_VERSION=5.1.3
+RUN curl -fsSL "https://github.com/joomlashack/OSMap/releases/download/v${OSMAP_VERSION}/com_osmap_free_${OSMAP_VERSION}.zip" \
+    -o /tmp/osmap.zip
 
-# Download J2Commerce from GitHub release
-ARG J2COMMERCE_VERSION=v4.0.20
-RUN curl -sL "https://github.com/j2commerce/j2cart/releases/download/${J2COMMERCE_VERSION}/com_j2store_v4-$(echo ${J2COMMERCE_VERSION} | sed 's/^v//')-pro.zip" \
+# Download J2Commerce
+ARG J2COMMERCE_VERSION=4.0.20
+RUN curl -fsSL "https://github.com/j2commerce/j2cart/releases/download/v${J2COMMERCE_VERSION}/com_j2store_v4-${J2COMMERCE_VERSION}-pro.zip" \
     -o /tmp/j2commerce.zip
 
 # Copy extension package (built by CI)
 COPY extension.zip /tmp/extension.zip
 
-# Copy custom entrypoint
+# Copy post-install hook (runs after Joomla entrypoint finishes)
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
