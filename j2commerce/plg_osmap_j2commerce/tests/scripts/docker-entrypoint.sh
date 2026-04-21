@@ -184,41 +184,6 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
     SELECT sitemap_id, menutype_id FROM ${DB_PREFIX}osmap_sitemap_menus;
 " 2>/dev/null || echo "WARNING: fixture verification failed"
 
-# Debug: verify menu items and run the exact getTree() query
-echo "=== Debug: menu items with lft/rgt ==="
-mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, title, published, parent_id, level, lft, rgt, link
-    FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003);" 2>/dev/null || true
-
-echo "=== Debug: global root lft/rgt ==="
-mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, lft, rgt FROM ${DB_PREFIX}menu WHERE lft=0;" 2>/dev/null || true
-
-echo "=== Debug: OSMap getMenuItems query result ==="
-mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT m.id, m.title, m.published, m.lft, m.link
-    FROM ${DB_PREFIX}menu m
-    INNER JOIN ${DB_PREFIX}menu p ON (p.lft = 0)
-    WHERE m.menutype='mainmenu' AND m.published=1
-      AND m.lft > p.lft AND m.lft < p.rgt
-    ORDER BY m.lft;" 2>/dev/null || true
-
-echo "=== Debug: getTree() query (parent_id=9001) ==="
-mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT m.id, m.alias, a.id AS article_id, a.title
-    FROM ${DB_PREFIX}menu m
-    INNER JOIN ${DB_PREFIX}content a
-        ON (m.link LIKE CONCAT('%&id=', a.id, '&%') OR m.link LIKE CONCAT('%&id=', a.id))
-        AND m.link LIKE '%com_content%view=article%'
-    INNER JOIN ${DB_PREFIX}j2store_products p
-        ON p.product_source_id = a.id
-        AND p.product_source = 'com_content'
-        AND p.enabled = 1
-    WHERE m.published = -2
-      AND m.parent_id = 9001
-      AND m.client_id = 0
-    ORDER BY a.title;" 2>/dev/null || true
-
 echo "OK" > /var/www/html/health.txt
 echo "=== Container ready ==="
 

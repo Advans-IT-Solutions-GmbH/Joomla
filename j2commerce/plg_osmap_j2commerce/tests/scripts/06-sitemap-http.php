@@ -134,7 +134,16 @@ class SitemapHttpTest
     {
         $urls = [];
         if (preg_match_all('/<loc>(.*?)<\/loc>/s', $xml, $matches)) {
-            $urls = array_map('trim', $matches[1]);
+            foreach ($matches[1] as $raw) {
+                // Strip CDATA wrapper if present: <![CDATA[...]]>
+                $url = trim($raw);
+                if (str_starts_with($url, '<![CDATA[') && str_ends_with($url, ']]>')) {
+                    $url = substr($url, 9, -3);
+                }
+                // Decode HTML entities (&amp; -> &)
+                $url = html_entity_decode($url, ENT_QUOTES | ENT_XML1, 'UTF-8');
+                $urls[] = $url;
+            }
         }
         return $urls;
     }
