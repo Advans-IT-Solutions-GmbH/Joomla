@@ -37,8 +37,10 @@ class J2Commerce extends Base implements SubscriberInterface
      * Called by OSMap for each menu item that belongs to com_j2store.
      * Emits one sitemap node per enabled product.
      *
-     * Uses the product's own published=-2 menu item as Itemid — identical to
-     * how J2Commerce's router generates SEF URLs (/de/shop/product-alias).
+     * Uses the path of the product's published=-2 menu item directly as the
+     * link. This produces the same SEF URL (/de/shop/product-alias) that
+     * J2Commerce's router generates, without relying on Joomla's router to
+     * resolve a com_content Itemid that is hidden from routing.
      */
     public function getTree(Collector $collector, Item $parent, Registry $params): void
     {
@@ -47,11 +49,10 @@ class J2Commerce extends Base implements SubscriberInterface
         $query = $db->getQuery(true)
             ->select([
                 $db->quoteName('m.id'),
-                $db->quoteName('m.alias'),
+                $db->quoteName('m.path'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
-                $db->quoteName('a.id', 'article_id'),
             ])
             ->from($db->quoteName('#__menu', 'm'))
             ->join('INNER', $db->quoteName('#__content', 'a')
@@ -80,7 +81,7 @@ class J2Commerce extends Base implements SubscriberInterface
                 'browserNav' => $parent->browserNav,
                 'priority'   => $params->get('priority', '0.8'),
                 'changefreq' => $params->get('changefreq', 'weekly'),
-                'link'       => 'index.php?option=com_content&view=article&id=' . $product->article_id . '&Itemid=' . $product->id,
+                'link'       => $product->path,
                 'expandible' => false,
             ];
 

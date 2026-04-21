@@ -55,61 +55,78 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        // With SEF disabled, product URLs look like:
-        //   .../index.php?option=com_content&view=article&id=9001:test-product-alpha&Itemid=9002&...
-        // We match article IDs using the pattern "&id=NNNN" or "&id=NNNN:" to avoid
-        // false positives from Itemid=NNNN (e.g. Itemid=9003 contains "id=9003").
-        $hasArticleId = function (string $u, int $articleId): bool {
-            // Match &id=9001 or &id=9001: (Joomla appends :alias after the numeric id)
-            return preg_match('/[?&]id=' . $articleId . '(?:[^0-9]|$)/', $u) === 1;
-        };
-
-        $isProductUrl = function (string $u, int $articleId) use ($hasArticleId): bool {
-            return str_contains($u, 'com_content')
-                && str_contains($u, 'view=article')
-                && $hasArticleId($u, $articleId);
-        };
-
-        $this->test('Sitemap contains product Alpha URL (article id=9001)', function () use ($urls, $isProductUrl) {
+        // The plugin uses the menu item path directly as the link, so OSMap
+        // emits URLs like http://localhost/shop/test-product-alpha.
+        // We match on the product alias which is stable and unique.
+        $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if ($isProductUrl($u, 9001) || str_contains($u, 'test-product-alpha')) return true;
+                if (str_contains($u, 'test-product-alpha')) return true;
             }
             return false;
         });
 
-        $this->test('Sitemap contains product Beta URL (article id=9002)', function () use ($urls, $isProductUrl) {
+        $this->test('Sitemap contains product Beta URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if ($isProductUrl($u, 9002) || str_contains($u, 'test-product-beta')) return true;
+                if (str_contains($u, 'test-product-beta')) return true;
             }
             return false;
         });
 
-        $this->test('Disabled product not in sitemap', function () use ($urls, $isProductUrl) {
-            // product_source_id=9003 has enabled=0, so article id=9003 must not appear
+        $this->test('Disabled product not in sitemap', function () use ($urls) {
+            // product_source_id=9003 has enabled=0
             foreach ($urls as $u) {
-                if ($isProductUrl($u, 9003) || str_contains($u, 'test-product-disabled')) return false;
+                if (str_contains($u, 'test-product-disabled')) return false;
             }
             return true;
         });
 
-        $this->test('Product without menu item not in sitemap', function () use ($urls, $isProductUrl) {
-            // product_source_id=9004 has no SEF menu item, so article id=9004 must not appear
+        $this->test('Product without menu item not in sitemap', function () use ($urls) {
+            // product_source_id=9004 has no SEF menu item
             foreach ($urls as $u) {
-                if ($isProductUrl($u, 9004) || str_contains($u, 'test-product-nomenu')) return false;
+                if (str_contains($u, 'test-product-nomenu')) return false;
             }
             return true;
         });
 
-        $this->test('At least 2 product URLs in sitemap', function () use ($urls, $isProductUrl) {
+        $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
             $count = 0;
             foreach ($urls as $u) {
-                if ($isProductUrl($u, 9001) || $isProductUrl($u, 9002)
-                    || str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
+                if (str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
                     $count++;
                 }
             }
             return $count >= 2;
         });
+
+        // Verify that every product URL in the sitemap actually resolves to HTTP 200.
+        // This catches broken links — e.g. wrong path, missing .htaccess rewrite, or
+        // a URL that was generated correctly but cannot be served by the web server.
+        $productUrls = array_filter($urls, fn($u) =>
+            str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')
+        );
+
+        echo "\nVerifying " . count($productUrls) . " product URL(s) return HTTP 200:\n";
+        foreach ($productUrls as $url) {
+            $this->test("URL resolves to 200: $url", function () use ($url) {
+                $ctx = stream_context_create(['http' => [
+                    'timeout'         => 10,
+                    'follow_location' => 1,
+                    'ignore_errors'   => true,
+                ]]);
+                @file_get_contents($url, false, $ctx);
+                $status = 0;
+                foreach ($http_response_header ?? [] as $h) {
+                    if (preg_match('#^HTTP/\S+ (\d+)#', $h, $m)) {
+                        $status = (int) $m[1];
+                    }
+                }
+                if ($status !== 200) {
+                    echo "  HTTP $status\n";
+                    return false;
+                }
+                return true;
+            });
+        }
 
         echo "\n=== Sitemap HTTP Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
