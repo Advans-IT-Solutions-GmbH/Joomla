@@ -24,6 +24,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
             return;
         }
 
+        $this->patchOsmapFactory();
         $this->ensureUpdateSite();
 
         $app  = Factory::getApplication();
@@ -80,6 +81,43 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         $message .= '</div>';
 
         $app->enqueueMessage($message, 'message');
+    }
+
+    /**
+     * Patches OSMap Factory.php for Joomla 5 / PHP 8.1+ compatibility.
+     *
+     * OSMap ≤ 5.1.3: Factory::getTable() returns false instead of null,
+     * causing a TypeError (return type declared as ?Table).
+     * Fix: append ?: null so false is coerced to null.
+     * Idempotent — OSMap ≥ 5.1.4 already contains the fix.
+     */
+    private function patchOsmapFactory(): void
+    {
+        $file = JPATH_ADMINISTRATOR
+            . '/components/com_osmap/library/Alledia/OSMap/Factory.php';
+
+        if (!is_file($file)) {
+            return;
+        }
+
+        $content = file_get_contents($file);
+
+        if ($content === false) {
+            return;
+        }
+
+        $buggy = 'return Table::getInstance($tableName, $prefix);';
+        $fixed = 'return Table::getInstance($tableName, $prefix) ?: null;';
+
+        if (str_contains($content, $fixed)) {
+            return;
+        }
+
+        if (!str_contains($content, $buggy)) {
+            return;
+        }
+
+        file_put_contents($file, str_replace($buggy, $fixed, $content));
     }
 
     /**
