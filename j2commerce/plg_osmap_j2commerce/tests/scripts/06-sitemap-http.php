@@ -55,25 +55,55 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
-            return $this->urlsContain($urls, 'test-product-alpha');
+        // With SEF disabled, product URLs are com_content article URLs with view=article.
+        // URLs in the sitemap XML are CDATA-encoded so & becomes &amp;.
+        // We identify product URLs by: com_content + view=article + id=NNNN.
+        // Note: id=9001 also appears in Itemid=9001 (shop menu), so we require view=article.
+        $isProductUrl = function (string $u, int $articleId): bool {
+            return (str_contains($u, 'com_content') || str_contains($u, 'test-product-'))
+                && (str_contains($u, 'view=article') || str_contains($u, 'test-product-'))
+                && (str_contains($u, 'id=' . $articleId) || str_contains($u, 'test-product-'));
+        };
+
+        $this->test('Sitemap contains product Alpha URL (article id=9001)', function () use ($urls, $isProductUrl) {
+            foreach ($urls as $u) {
+                if ($isProductUrl($u, 9001) || str_contains($u, 'test-product-alpha')) return true;
+            }
+            return false;
         });
 
-        $this->test('Sitemap contains product Beta URL', function () use ($urls) {
-            return $this->urlsContain($urls, 'test-product-beta');
+        $this->test('Sitemap contains product Beta URL (article id=9002)', function () use ($urls, $isProductUrl) {
+            foreach ($urls as $u) {
+                if ($isProductUrl($u, 9002) || str_contains($u, 'test-product-beta')) return true;
+            }
+            return false;
         });
 
-        $this->test('Disabled product not in sitemap', function () use ($urls) {
-            return !$this->urlsContain($urls, 'test-product-disabled');
+        $this->test('Disabled product not in sitemap', function () use ($urls, $isProductUrl) {
+            // product_source_id=9003 has enabled=0
+            foreach ($urls as $u) {
+                if ($isProductUrl($u, 9003) || str_contains($u, 'test-product-disabled')) return false;
+            }
+            return true;
         });
 
-        $this->test('Product without menu item not in sitemap', function () use ($urls) {
-            return !$this->urlsContain($urls, 'test-product-nomenu');
+        $this->test('Product without menu item not in sitemap', function () use ($urls, $isProductUrl) {
+            // product_source_id=9004 has no SEF menu item
+            foreach ($urls as $u) {
+                if ($isProductUrl($u, 9004) || str_contains($u, 'test-product-nomenu')) return false;
+            }
+            return true;
         });
 
-        $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
-            $productUrls = array_filter($urls, fn($u) => str_contains($u, 'test-product-'));
-            return count($productUrls) >= 2;
+        $this->test('At least 2 product URLs in sitemap', function () use ($urls, $isProductUrl) {
+            $count = 0;
+            foreach ($urls as $u) {
+                if ($isProductUrl($u, 9001) || $isProductUrl($u, 9002)
+                    || str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
+                    $count++;
+                }
+            }
+            return $count >= 2;
         });
 
         echo "\n=== Sitemap HTTP Test Summary ===\n";
