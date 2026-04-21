@@ -8,7 +8,7 @@
     <license>GNU GPL v3</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.3.2</version>
+    <version>1.3.3</version>
     <description>PLG_OSMAP_J2COMMERCE_XML_DESCRIPTION</description>
 
     <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
