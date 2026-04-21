@@ -13,6 +13,7 @@ use Alledia\OSMap\Plugin\Base;
 use Alledia\OSMap\Sitemap\Collector;
 use Alledia\OSMap\Sitemap\Item;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Registry\Registry;
@@ -37,10 +38,10 @@ class J2Commerce extends Base implements SubscriberInterface
      * Called by OSMap for each menu item that belongs to com_j2store.
      * Emits one sitemap node per enabled product.
      *
-     * Uses the path of the product's published=-2 menu item directly as the
-     * link. This produces the same SEF URL (/de/shop/product-alias) that
-     * J2Commerce's router generates, without relying on Joomla's router to
-     * resolve a com_content Itemid that is hidden from routing.
+     * The link is passed as an index.php?... URL so OSMap routes it through
+     * Joomla's router, which produces the correct absolute SEF URL including
+     * the language prefix (e.g. https://advans.ch/de/shop/product-alias).
+     * Using the raw menu path (/shop/...) skips the router and omits /de/.
      */
     public function getTree(Collector $collector, Item $parent, Registry $params): void
     {
@@ -50,9 +51,11 @@ class J2Commerce extends Base implements SubscriberInterface
             ->select([
                 $db->quoteName('m.id'),
                 $db->quoteName('m.path'),
+                $db->quoteName('m.language'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
+                $db->quoteName('l.sef', 'lang_sef'),
             ])
             ->from($db->quoteName('#__menu', 'm'))
             ->join('INNER', $db->quoteName('#__content', 'a')
@@ -63,6 +66,8 @@ class J2Commerce extends Base implements SubscriberInterface
                 . ' ON p.product_source_id = a.id'
                 . ' AND p.product_source = ' . $db->quote('com_content')
                 . ' AND p.enabled = 1')
+            ->join('LEFT', $db->quoteName('#__languages', 'l')
+                . ' ON l.lang_code = m.language')
             ->where([
                 'm.published = -2',
                 'm.parent_id = ' . (int) $parent->id,
@@ -73,6 +78,13 @@ class J2Commerce extends Base implements SubscriberInterface
         $products = $db->setQuery($query)->loadObjectList();
 
         foreach ($products as $product) {
+            // Build the absolute SEF URL directly from the menu path and
+            // language SEF prefix. The published=-2 menu items are invisible
+            // to Joomla's router, so routing index.php?... does not work.
+            // Example: lang_sef=de, path=shop/product-alias → /de/shop/product-alias
+            $langPrefix = $product->lang_sef ? $product->lang_sef . '/' : '';
+            $link       = Uri::root() . $langPrefix . $product->path;
+
             $node = (object) [
                 'id'         => $product->id,
                 'name'       => $product->title,
@@ -81,7 +93,7 @@ class J2Commerce extends Base implements SubscriberInterface
                 'browserNav' => $parent->browserNav,
                 'priority'   => $params->get('priority', '0.8'),
                 'changefreq' => $params->get('changefreq', 'weekly'),
-                'link'       => '/' . $product->path,
+                'link'       => $link,
                 'expandible' => false,
             ];
 
