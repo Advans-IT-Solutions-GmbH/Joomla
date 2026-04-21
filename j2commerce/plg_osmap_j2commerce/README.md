@@ -23,7 +23,12 @@ J2Commerce creates these automatically when a product is saved.
 - [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
 - PHP 8.1 or higher
 - J2Commerce (formerly J2Store) 4.x or later
-- [OSMap Free](https://extensions.joomla.org/extension/osmap/) 5.x or later
+- [OSMap Free or Pro](https://extensions.joomla.org/extension/osmap/) 5.x or later
+
+> **OSMap ≤ 5.1.3 compatibility:** The installer script automatically patches a
+> bug in OSMap ≤ 5.1.3 where `Factory::getTable()` returns `false` instead of
+> `null`, causing a `TypeError` in PHP 8.1+. The patch is applied on install
+> and update and is idempotent — OSMap ≥ 5.1.4 already contains the fix.
 
 ## Installation
 
@@ -169,6 +174,17 @@ in J2Commerce.
 
 Ensure Joomla's SEF is enabled (**System → Global Configuration → SEO Settings**)
 and that the `.htaccess` / `web.config` rewrite rules are in place.
+
+**TypeError: Factory::getTable() must be of type ?Table, false returned**
+
+This is a bug in OSMap ≤ 5.1.3. The installer script patches it automatically
+on plugin install or update. If you see this error before installing the plugin,
+apply the fix manually:
+
+```bash
+sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' \
+    /path/to/joomla/administrator/components/com_osmap/library/Alledia/OSMap/Factory.php
+```
 
 **Product URLs in the sitemap return 404**
 
