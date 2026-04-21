@@ -14,26 +14,30 @@ the same routing mechanism as J2Commerce itself. The result is correct SEF URLs
 (`/de/shop/product-alias`) in the sitemap without any manual maintenance.
 
 Products with `enabled=0` in J2Commerce are excluded automatically. New or
-re-enabled products are picked up on the next sitemap request.
+re-enabled products are picked up on the next sitemap request. Each product
+must have a `published=-2` child menu item under the shop menu item —
+J2Commerce creates these automatically when a product is saved.
 
 ## Requirements
 
-- Joomla 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- PHP 8.1 or higher
 - J2Commerce (formerly J2Store) 4.x or later
 - [OSMap Free](https://extensions.joomla.org/extension/osmap/) 5.x or later
 
 ## Installation
 
 1. Download `plg_osmap_j2commerce.zip` from the [latest release](https://github.com/advansit/Joomla/releases)
-2. Install via Joomla Backend → **Extensions → Install**
-3. Enable the plugin: **Extensions → Plugins** → search "OSMap J2Commerce" → enable
-4. In OSMap (**Components → OSMap → Sitemaps**), ensure the menu containing
+2. **System → Extensions → Install**
+3. Upload and install
+4. Enable via **System → Plugins → OSMap J2Commerce**
+5. In OSMap (**Components → OSMap → Sitemaps**), ensure the menu containing
    your shop item is selected
-5. Save the sitemap — products appear automatically
+6. Save the sitemap — products appear automatically
 
 ## Configuration
 
-In the plugin parameters (**Extensions → Plugins → OSMap J2Commerce**):
+**System → Plugins → OSMap J2Commerce**
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -55,28 +59,66 @@ The sitemap node link (`index.php?option=com_content&view=article&id=X&Itemid=Y`
 uses the product's own menu item as `Itemid`, so Joomla's SEF router resolves
 it to the correct `/de/shop/product-alias` URL.
 
-## Prerequisites
+## Development
 
-Each product must have a `published=-2` child menu item under the shop menu
-item. J2Commerce creates these automatically when you save a product — they
-appear in the menu manager as hidden entries with the product alias as path.
-If a product was created before this plugin was installed, its menu item
-already exists and will be picked up immediately.
+### Structure
 
-If you manage products outside of J2Commerce's standard workflow (e.g. direct
-DB imports), ensure the corresponding menu items exist.
+```
+plg_osmap_j2commerce/
+├── README.md
+├── VERSION
+├── LICENSE.txt
+├── plg_osmap_j2commerce.xml    # Joomla manifest (group="osmap", element="j2commerce")
+├── j2commerce.php              # OSMap entry point + class_alias bridge
+├── build.sh
+├── services/provider.php       # PSR-4 registration
+├── src/Extension/J2Commerce.php
+├── language/ (en-GB, de-DE)
+└── tests/
+```
+
+Installed path: `plugins/osmap/j2commerce/`
+
+### Building
+
+```bash
+./build.sh
+```
+
+## Automated Testing
+
+This plugin has automated tests that run on every push via GitHub Actions.
+
+### Test Suites
+
+1. **Installation** — Plugin registration in DB, file deployment
+2. **Configuration** — Plugin params, language files, XML manifest
+3. **Plugin Class** — OSMap interface, `getTree()` method, class loading
+4. **Sitemap Output** — Direct DB query test for `getTree()` result
+5. **Uninstall** — Clean removal from database and filesystem
+6. **Sitemap HTTP** — Full-stack HTTP request against the live sitemap endpoint
+
+### Running Tests Locally
+
+```bash
+cd tests
+docker compose up -d
+sleep 120  # Wait for Joomla initialization
+./run-tests.sh all
+docker compose down -v
+```
 
 ## Troubleshooting
 
 **Products do not appear in the sitemap**
 
-- Confirm the plugin is enabled (Extensions → Plugins → OSMap J2Commerce).
+- Verify the plugin is enabled (**System → Plugins → OSMap J2Commerce**)
 - Confirm the menu containing your shop item is selected in the OSMap sitemap
-  configuration (Components → OSMap → Sitemaps → edit → Menus tab).
+  configuration (**Components → OSMap → Sitemaps → edit → Menus tab**)
 - Check that the product has `enabled=1` in J2Commerce
-  (Components → J2Commerce → Products).
+  (**Components → J2Commerce → Products**)
 - Verify that `published=-2` child menu items exist under the shop menu item
-  (Extensions → Menus → your menu → show all items including hidden).
+  (**System → Menus → your menu**, enable "Show hidden items")
 
 **Only some products appear**
 
@@ -85,11 +127,19 @@ in J2Commerce.
 
 **SEF URLs are not resolved correctly**
 
-Ensure Joomla's SEF is enabled (System → Global Configuration → SEO Settings)
+Ensure Joomla's SEF is enabled (**System → Global Configuration → SEO Settings**)
 and that the `.htaccess` / `web.config` rewrite rules are in place.
 
-## Changelog
+## Support & Contact
 
-### 1.0.0 (2026-04)
+**Advans IT Solutions GmbH**  
+Karl-Barth-Platz 9  
+4052 Basel  
+Switzerland  
+CHE-316.407.165
 
-- Initial release
+https://advans.ch
+
+## License
+
+Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
