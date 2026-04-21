@@ -7,6 +7,11 @@
 
 defined('_JEXEC') or die;
 
+// Joomla's DI container loads this file before the plugin entry point
+// (j2commerce.php), so the PSR-4 autoloader may not have this namespace
+// registered yet. Load the class explicitly to guarantee availability.
+require_once dirname(__DIR__) . '/src/Extension/J2Commerce.php';
+
 use Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce;
 use Joomla\CMS\Extension\PluginInterface;
 use Joomla\CMS\Factory;

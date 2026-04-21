@@ -25,6 +25,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         }
 
         $this->patchOsmapFactory();
+        $this->disableLegacyPlugin();
         $this->ensureUpdateSite();
 
         $app  = Factory::getApplication();
@@ -81,6 +82,32 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         $message .= '</div>';
 
         $app->enqueueMessage($message, 'message');
+    }
+
+    /**
+     * Disables the legacy plg_osmap_j2store plugin if still present.
+     *
+     * The legacy plugin (element=j2store, folder=osmap) generates incorrect
+     * sitemap URLs (index.php?option=com_content&view=article&id=...) for
+     * J2Commerce products. This plugin supersedes it and must be the only
+     * active osmap plugin handling com_j2store.
+     */
+    private function disableLegacyPlugin(): void
+    {
+        try {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+            $query = $db->getQuery(true)
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('enabled') . ' = 0')
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('osmap'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('j2store'));
+
+            $db->setQuery($query)->execute();
+        } catch (\Throwable $e) {
+            // Non-fatal — legacy plugin may not be installed
+        }
     }
 
     /**
