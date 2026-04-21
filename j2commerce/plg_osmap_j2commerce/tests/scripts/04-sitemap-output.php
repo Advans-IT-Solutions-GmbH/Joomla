@@ -30,8 +30,8 @@ class SitemapOutputTest
 
     // IDs inserted by docker-entrypoint.sh fixtures
     private const SHOP_MENU_ID    = 9001;
-    private const PRODUCT_ALPHA   = ['article_id' => 9001, 'menu_id' => 9002, 'alias' => 'test-product-alpha'];
-    private const PRODUCT_BETA    = ['article_id' => 9002, 'menu_id' => 9003, 'alias' => 'test-product-beta'];
+    private const PRODUCT_ALPHA   = ['menu_id' => 9002, 'path' => 'shop/test-product-alpha'];
+    private const PRODUCT_BETA    = ['menu_id' => 9003, 'path' => 'shop/test-product-beta'];
 
     public function __construct()
     {
@@ -77,18 +77,17 @@ class SitemapOutputTest
             return count($products) === 2;
         });
 
-        $this->test('getTree() query returns correct product aliases', function () use ($products) {
-            $aliases = array_column($products, 'alias');
-            sort($aliases);
-            return $aliases === ['test-product-alpha', 'test-product-beta'];
+        $this->test('getTree() query returns correct product paths', function () use ($products) {
+            $paths = array_column($products, 'path');
+            sort($paths);
+            return $paths === ['shop/test-product-alpha', 'shop/test-product-beta'];
         });
 
-        $this->test('Generated nodes have correct link format', function () use ($products) {
+        $this->test('Generated nodes use menu path as link', function () use ($products) {
             foreach ($products as $p) {
-                $expected = 'index.php?option=com_content&view=article&id=' . $p->article_id . '&Itemid=' . $p->id;
                 $node = $this->buildNode($p, new Registry('{}'));
-                if ($node->link !== $expected) {
-                    echo "  Expected: $expected\n  Got:      {$node->link}\n";
+                if ($node->link !== $p->path) {
+                    echo "  Expected: {$p->path}\n  Got:      {$node->link}\n";
                     return false;
                 }
             }
@@ -174,7 +173,7 @@ class SitemapOutputTest
 
     /**
      * Runs the exact same DB query as PlgOsmapJ2commerce::getTree() uses.
-     * Keeping this in sync with j2commerce.php is intentional — if the query
+     * Keeping this in sync with J2Commerce.php is intentional — if the query
      * changes, this test must change too.
      */
     private function runGetTreeQuery(int $parentMenuId): array
@@ -183,11 +182,10 @@ class SitemapOutputTest
         $query = $db->getQuery(true)
             ->select([
                 $db->quoteName('m.id'),
-                $db->quoteName('m.alias'),
+                $db->quoteName('m.path'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
-                $db->quoteName('a.id', 'article_id'),
             ])
             ->from($db->quoteName('#__menu', 'm'))
             ->join('INNER', $db->quoteName('#__content', 'a')
@@ -221,7 +219,7 @@ class SitemapOutputTest
             'browserNav' => 0,
             'priority'   => $params->get('priority', '0.8'),
             'changefreq' => $params->get('changefreq', 'weekly'),
-            'link'       => 'index.php?option=com_content&view=article&id=' . $product->article_id . '&Itemid=' . $product->id,
+            'link'       => $product->path,
             'expandible' => false,
         ];
     }

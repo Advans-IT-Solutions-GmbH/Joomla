@@ -55,9 +55,15 @@ are the hidden routing entries J2Commerce creates automatically for each
 product. For each entry, the plugin checks that the corresponding J2Commerce
 product exists and has `enabled=1`, then emits a sitemap node.
 
-The sitemap node link (`index.php?option=com_content&view=article&id=X&Itemid=Y`)
-uses the product's own menu item as `Itemid`, so Joomla's SEF router resolves
-it to the correct `/de/shop/product-alias` URL.
+The sitemap node uses the `path` of the `published=-2` menu item directly as
+the URL (e.g. `shop/product-alias`). This produces the correct SEF URL that
+J2Commerce's router handles (`/de/shop/product-alias`).
+
+**This plugin is designed for sites where products are routed through
+J2Commerce.** Product pages must be accessible via the shop URL
+(`/de/shop/product-alias`), not via direct `com_content` article URLs
+(`/de/component/content/article/...`). If your site serves products through
+`com_content` directly, this plugin will generate URLs that do not resolve.
 
 ## Development
 
@@ -129,6 +135,14 @@ in J2Commerce.
 
 Ensure Joomla's SEF is enabled (**System → Global Configuration → SEO Settings**)
 and that the `.htaccess` / `web.config` rewrite rules are in place.
+
+**Product URLs in the sitemap return 404**
+
+This plugin generates URLs via J2Commerce's routing (`/de/shop/product-alias`).
+If your site blocks direct `com_content` article access via `.htaccess` or
+routes products differently, ensure the shop URL path is accessible. This
+plugin does not support sites that serve product pages through `com_content`
+directly.
 
 ## Support & Contact
 
