@@ -56,14 +56,48 @@ product. For each entry, the plugin checks that the corresponding J2Commerce
 product exists and has `enabled=1`, then emits a sitemap node.
 
 The sitemap node uses the `path` of the `published=-2` menu item directly as
-the URL (e.g. `shop/product-alias`). This produces the correct SEF URL that
-J2Commerce's router handles (`/de/shop/product-alias`).
+the URL (e.g. `/shop/product-alias`). Joomla's SEF router converts this to a
+fully qualified URL (`https://example.com/de/shop/product-alias`).
 
-**This plugin is designed for sites where products are routed through
-J2Commerce.** Product pages must be accessible via the shop URL
-(`/de/shop/product-alias`), not via direct `com_content` article URLs
-(`/de/component/content/article/...`). If your site serves products through
-`com_content` directly, this plugin will generate URLs that do not resolve.
+**This plugin requires J2Commerce-based routing.** Product pages must be
+accessible via the shop SEF URL (`/de/shop/product-alias`). Direct
+`com_content` article URLs (`/de/component/content/article/...`) are not used
+and must not be required for product access.
+
+## .htaccess Requirements
+
+This plugin generates SEF URLs of the form `/de/shop/product-alias`. For these
+to resolve correctly, your `.htaccess` must route all non-file requests through
+Joomla's `index.php` (standard Joomla SEF setup):
+
+```apache
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/index\.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule .* index.php [L]
+```
+
+If your site blocks direct `com_content` or `component/` URLs (recommended for
+SEO and security), ensure `/component/j2store` is explicitly allowed, as
+J2Commerce uses it internally for cart and checkout:
+
+```apache
+# Block /component/ URLs except j2store (cart/checkout) and ajax
+RewriteCond %{REQUEST_URI} ^(/[a-z]{2})?/component/ [NC]
+RewriteCond %{REQUEST_URI} !^(/[a-z]{2})?/component/j2store [NC]
+RewriteCond %{REQUEST_URI} !^(/[a-z]{2})?/component/ajax [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ /$1/ [R=301,L]
+
+# Block index.php?option=com_... except j2store and required components
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteCond %{QUERY_STRING} !^option=com_j2store [NC]
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^([a-z]{2})?/?index\.php$ /$1/? [R=301,L]
+```
+
+Product pages (`/de/shop/product-alias`) are served entirely through Joomla's
+SEF routing and do not require any additional rewrite rules.
 
 ## Development
 
@@ -138,11 +172,12 @@ and that the `.htaccess` / `web.config` rewrite rules are in place.
 
 **Product URLs in the sitemap return 404**
 
-This plugin generates URLs via J2Commerce's routing (`/de/shop/product-alias`).
-If your site blocks direct `com_content` article access via `.htaccess` or
-routes products differently, ensure the shop URL path is accessible. This
-plugin does not support sites that serve product pages through `com_content`
-directly.
+Verify that:
+1. Joomla's SEF is enabled and `.htaccess` routes non-file requests to `index.php`
+2. `/component/j2store` is not blocked in `.htaccess` (J2Commerce needs it for cart/checkout)
+3. The shop menu item is published and the product has `enabled=1` in J2Commerce
+
+See the [.htaccess Requirements](#htaccess-requirements) section above.
 
 ## Support & Contact
 
