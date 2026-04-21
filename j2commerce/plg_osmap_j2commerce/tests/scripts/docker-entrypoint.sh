@@ -71,19 +71,12 @@ if [ "$COM_J2STORE_ID" = "0" ]; then
     exit 1
 fi
 
-# Get the root menu item ID for mainmenu (parent_id for top-level items).
-# In Joomla 5 the root item has menutype='' and level=0; the mainmenu root
-# has level=1 and parent_id = that global root id.
+# Get the parent_id for top-level mainmenu items (= the global root item id).
+# In Joomla the global root has parent_id=0; all top-level items have parent_id=global_root_id.
 MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-    -e "SELECT id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 AND parent_id=(SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1) LIMIT 1;" \
+    -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" \
     2>/dev/null)
-# Fallback: just use the first top-level mainmenu item's parent_id
-if [ -z "$MAINMENU_ROOT_ID" ]; then
-    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-        -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" \
-        2>/dev/null)
-fi
-# Final fallback: global root
+# Fallback: global root id
 if [ -z "$MAINMENU_ROOT_ID" ]; then
     MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
         -e "SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1;" \
@@ -138,7 +131,7 @@ VALUES
 -- SEF menu items (published=-2, children of shop 9001)
 -- Only Alpha (9002) and Beta (9003) — disabled and nomenu have no SEF item
 INSERT IGNORE INTO ${DB_PREFIX}menu
-    (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params)
+    (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params, lft, rgt)
 VALUES
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
@@ -151,6 +144,21 @@ VALUES
 EOSQL
 
 echo "Fixtures inserted"
+
+# Fix nested set values so OSMap can traverse our new menu items.
+# OSMap queries: m.lft > p.lft AND m.lft < p.rgt where p.lft=0 (global root).
+# The global root has lft=0 and rgt=N. Our items were inserted with lft/rgt
+# beyond N, so they are invisible to OSMap. We expand the global root's rgt
+# and shift our items to fit inside it.
+mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+-- Expand the global root (lft=0) to include our new items.
+-- Our items have lft values up to @max_rgt + 5 (set during INSERT above).
+-- We set the global root's rgt to MAX(rgt)+1 across all items.
+UPDATE ${DB_PREFIX}menu
+SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}menu) AS t)
+WHERE lft = 0;
+EOSQL
+echo "Menu nested set expanded"
 
 # Create OSMap sitemap and link it to mainmenu so the HTTP test can call
 # index.php?option=com_osmap&view=xml&id=1
