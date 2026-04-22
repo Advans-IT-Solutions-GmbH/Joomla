@@ -1,4 +1,12 @@
 # J2Store Extension Cleanup Component
+
+[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml)
+[![Release](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml)
+[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
+[![PHP 8.0+](https://img.shields.io/badge/PHP-8.0%2B-purple.svg)](https://www.php.net/)
+
 Safe migration tool for transitioning from J2Store to [J2Commerce](https://github.com/joomla-projects/j2commerce).
 
 ## Description

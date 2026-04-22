@@ -170,8 +170,16 @@ docker compose down -v
 
 82 language keys covering all UI labels, error messages, email templates, and JavaScript strings.
 
+## Support & Contact
+
+**Advans IT Solutions GmbH**  
+Karl-Barth-Platz 9  
+4052 Basel  
+Switzerland  
+CHE-316.407.165
+
+https://advans.ch
+
 ## License
 
-Proprietary License — Copyright (C) 2026 Advans IT Solutions GmbH
-
-See [LICENSE.txt](../LICENSE.txt) for details.
+Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.

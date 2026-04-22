@@ -1,8 +1,10 @@
 # System - J2Commerce Privacy Plugin
-**Author:** Advans IT Solutions GmbH  
-**License:** Proprietary  
-**Joomla:** 5.x+  
-**PHP:** 8.1+
+
+[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2commerce-privacy.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2commerce-privacy.yml)
+[![Release](https://github.com/advansit/Joomla/actions/workflows/release-privacy.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-privacy.yml)
+[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
+[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
 GDPR/DSGVO compliance solution for J2Commerce. Features:
 - **Checkout Consent Checkbox** - Privacy consent during checkout
@@ -1270,7 +1272,39 @@ Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights re
 - Active subscription status verification requires manual administrative processes
 - Payment gateway integration for real-time subscription status not implemented
 
----
+## Automated Testing
 
-**End of Documentation**
-# Trigger workflow
+This plugin has automated tests that run on every push via GitHub Actions.
+
+### Test Suites
+
+1. **Installation** — Plugin registration in DB, file deployment
+2. **Configuration** — Plugin params, language files, XML manifest
+3. **Plugin Class** — Method existence and class structure
+4. **Privacy Export** — `onPrivacyExportRequest` output validation
+5. **Privacy Removal** — `onPrivacyRemoveData` retention logic
+6. **Uninstall** — Clean removal from database and filesystem
+
+### Running Tests Locally
+
+```bash
+cd tests
+docker compose up -d
+sleep 120  # Wait for Joomla initialization
+./run-tests.sh all
+docker compose down -v
+```
+
+## Support & Contact
+
+**Advans IT Solutions GmbH**  
+Karl-Barth-Platz 9  
+4052 Basel  
+Switzerland  
+CHE-316.407.165
+
+https://advans.ch
+
+## License
+
+Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.

@@ -1,5 +1,12 @@
 # J2Commerce Import/Export Component
 
+[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2commerce-import-export.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2commerce-import-export.yml)
+[![Release](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml)
+[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 7](https://img.shields.io/badge/Joomla-7.x-blue.svg)](https://www.joomla.org/)
+[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
+
 Import and export J2Commerce products with all related Joomla data.
 
 ## Features
@@ -220,21 +227,38 @@ com_j2commerce_importexport/
 └── VERSION
 ```
 
-### Running Tests
+## Automated Testing
+
+This component has automated tests that run on every push via GitHub Actions.
+
+### Test Suites
+
+1. **Installation** — Component registration in DB, file deployment
+2. **Configuration** — Component params, language files, XML manifest
+3. **Export** — JSON, CSV, XML export output validation
+4. **Import** — Full product import, duplicate detection, quantity modes
+5. **Uninstall** — Clean removal from database and filesystem
+
+### Running Tests Locally
 
 ```bash
 cd tests
 docker compose up -d
-sleep 60
+sleep 60  # Wait for Joomla initialization
 ./run-tests.sh all
 docker compose down -v
 ```
 
-## License
-
-Proprietary. Copyright (C) 2026 Advans IT Solutions GmbH.
-
-## Support
+## Support & Contact
 
 **Advans IT Solutions GmbH**  
+Karl-Barth-Platz 9  
+4052 Basel  
+Switzerland  
+CHE-316.407.165
+
 https://advans.ch
+
+## License
+
+Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
