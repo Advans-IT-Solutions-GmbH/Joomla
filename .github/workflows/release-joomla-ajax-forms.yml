@@ -202,6 +202,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Delete previous releases
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          TAG_PREFIX="ajaxforms-v"
+          CURRENT_TAG="ajaxforms-v${{ steps.version.outputs.new }}"
+          for tag in $(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${CURRENT_TAG}$"); do
+            release_id=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+            if [ -n "$release_id" ] && [ "$release_id" != "None" ]; then
+              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
+              echo "Deleted release $tag (id: $release_id)"
+            fi
+            git push origin --delete "$tag" 2>/dev/null || true
+            echo "Deleted tag $tag"
+          done
+
       - name: Attest build provenance
         if: steps.version.outputs.bump != 'none'
         uses: actions/attest-build-provenance@v4
