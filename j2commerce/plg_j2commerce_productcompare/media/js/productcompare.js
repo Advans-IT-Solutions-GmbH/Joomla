@@ -4,9 +4,17 @@
 (function() {
     'use strict';
 
+    // Configuration is injected by the plugin via Joomla.addScriptOptions()
+    // and read here via Joomla.getOptions(). This avoids inline <script> blocks
+    // and works correctly with Joomla's asset pipeline.
+    const options = (typeof Joomla !== 'undefined' && Joomla.getOptions)
+        ? (Joomla.getOptions('plg_j2store_productcompare') || {})
+        : {};
+
     const ProductCompare = {
         storageKey: 'j2store_compare_products',
-        maxProducts: window.J2StoreCompare?.maxProducts || 4,
+        maxProducts: options.maxProducts || 4,
+        ajaxUrl: options.ajaxUrl || '',
         products: [],
 
         init() {
@@ -161,7 +169,7 @@
             modalBody.innerHTML = '<div class="loading">Loading...</div>';
             
             // Fetch comparison data via AJAX
-            const ajaxUrl = window.J2CommerceCompare.ajaxUrl || '';
+            const ajaxUrl = this.ajaxUrl;
             
             fetch(ajaxUrl, {
                 method: 'POST',

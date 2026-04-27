@@ -143,63 +143,113 @@ docker compose down -v
 3. Check JavaScript console for errors
 4. Re-save plugin settings
 
-## Customization
+## Template Overrides
 
-### Styling the Compare Button
-```css
-/* Custom button styling */
-.j2commerce-compare-btn {
-    background: #007bff;
-    color: white;
-    border-radius: 4px;
-    padding: 8px 16px;
-}
+All HTML rendered by this plugin can be overridden from your active Joomla template without modifying the plugin files. Overrides survive plugin updates.
 
-.j2commerce-compare-btn:hover {
-    background: #0056b3;
-}
+### How it works
+
+The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution order (first match wins):
+
+1. `templates/{your-template}/html/plg_j2store_productcompare/{layout}.php`
+2. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default
+
+### Available layouts
+
+| File | What it renders |
+|------|----------------|
+| `button.php` | The "Compare" button shown on product list and detail pages |
+| `bar.php` | The fixed bar at the bottom of the page showing selected products |
+| `modal.php` | The modal dialog container (content loaded via AJAX) |
+| `table.php` | The comparison table returned by the AJAX endpoint |
+
+### Creating an override
+
+1. Create the override directory in your template:
+   ```
+   templates/{your-template}/html/plg_j2store_productcompare/
+   ```
+
+2. Copy the layout file(s) you want to override from the plugin:
+   ```
+   plugins/j2store/productcompare/tmpl/button.php  →  templates/{your-template}/html/plg_j2store_productcompare/button.php
+   plugins/j2store/productcompare/tmpl/table.php   →  templates/{your-template}/html/plg_j2store_productcompare/table.php
+   ```
+   You only need to copy the files you actually want to change.
+
+3. Edit the copy in your template directory.
+
+### Variables available in each layout
+
+**`button.php`**
+```php
+$productId   // (int)    J2Store product ID
+$buttonText  // (string) Translated button label (from plugin params)
+$buttonClass // (string) CSS classes (from plugin params, default: "btn btn-secondary")
 ```
 
-### Styling the Comparison Bar
-```css
-/* Comparison bar at bottom */
-.j2commerce-compare-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: #f8f9fa;
-    border-top: 2px solid #dee2e6;
-    padding: 15px;
-    z-index: 1000;
-}
+**`bar.php`**
+
+No PHP variables — all text is rendered via `Text::_()` language keys directly in the layout.
+
+**`modal.php`**
+
+No PHP variables — the modal body is populated via AJAX after the user clicks "View Comparison".
+
+**`table.php`**
+```php
+$products  // (array) Array of product objects, each with:
+           //   ->title      (string) Product/article title
+           //   ->sku        (string) Variant SKU
+           //   ->price      (float)  Variant price
+           //   ->stock      (int)    Stock quantity
+           //   ->introtext  (string) Raw HTML from Joomla article intro text
+           //   ->options    (array)  Product options as [['option_name' => ..., 'option_value' => ...], ...]
 ```
 
-### Styling the Modal
-```css
-/* Comparison modal */
-.j2commerce-compare-modal {
-    max-width: 90%;
-    width: 1200px;
-}
+### Example: adding a custom row to the comparison table
 
-.j2commerce-compare-table {
-    width: 100%;
-    border-collapse: collapse;
-}
+Copy `tmpl/table.php` to your template override directory and add a row:
 
-.j2commerce-compare-table th,
-.j2commerce-compare-table td {
-    padding: 12px;
-    border: 1px solid #dee2e6;
-}
+```php
+// After the existing stock row:
+<tr>
+    <th scope="row"><?php echo Text::_('YOUR_CUSTOM_ATTRIBUTE'); ?></th>
+    <?php foreach ($products as $product) : ?>
+        <td><?php echo $this->escape($product->options['your_option'] ?? '-'); ?></td>
+    <?php endforeach; ?>
+</tr>
 ```
 
-### Custom Button Text
-Plugin settings allow custom button text per language:
-- English: "Compare Products"
-- German: "Produkte vergleichen"
-- French: "Comparer les produits"
+### Example: replacing the button with a custom icon button
+
+In your `button.php` override:
+
+```php
+<?php defined('_JEXEC') or die; ?>
+<button type="button"
+        class="btn btn-outline-secondary btn-sm j2store-compare-btn"
+        data-product-id="<?php echo (int) $productId; ?>"
+        title="<?php echo $this->escape($buttonText); ?>">
+    <span class="icon-random" aria-hidden="true"></span>
+    <span class="visually-hidden"><?php echo $this->escape($buttonText); ?></span>
+</button>
+```
+
+### CSS customization
+
+The plugin loads `media/plg_j2store_productcompare/css/productcompare.css` via Joomla's WebAssetManager. To override styles, add CSS to your template's stylesheet — the plugin CSS uses non-`!important` rules so template styles take precedence naturally.
+
+Key CSS classes:
+
+| Class | Element |
+|-------|---------|
+| `.j2store-compare-btn` | Compare button (all instances) |
+| `.j2store-compare-btn.active` | Button when product is in comparison list |
+| `.j2store-compare-bar` | Fixed bottom bar |
+| `.compare-bar-products` | Product thumbnails area inside the bar |
+| `.j2store-compare-modal` | Modal overlay container |
+| `.j2store-comparison-table` | Comparison table inside the modal |
 
 ## Configuration Examples
 

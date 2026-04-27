@@ -13,7 +13,7 @@
     <version>1.0.2</version>
     <description>PLG_J2COMMERCE_PRODUCTCOMPARE_XML_DESCRIPTION</description>
     
-    <targetplatform name="joomla" version="(4\.[0-9]|5\.[0-9]|6\.[0-9])" />
+    <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
 
     <namespace path="src">Advans\Plugin\J2Commerce\ProductCompare</namespace>
 
@@ -28,6 +28,7 @@
     <media destination="plg_j2store_productcompare" folder="media">
         <folder>js</folder>
         <folder>css</folder>
+        <filename>joomla.asset.json</filename>
     </media>
 
     <config>
