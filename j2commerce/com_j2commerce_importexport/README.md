@@ -242,12 +242,35 @@ This component has automated tests that run on every push via GitHub Actions.
 ### Running Tests Locally
 
 ```bash
-cd tests
+cd j2commerce/com_j2commerce_importexport/tests
 docker compose up -d
-sleep 60  # Wait for Joomla initialization
+# Wait for container readiness (health.txt written by docker-entrypoint.sh)
+timeout 300 bash -c 'until docker exec com_j2commerce_importexport_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 ```
+
+## Troubleshooting
+
+### Import Fails with "Invalid file type"
+**Problem:** Upload rejected immediately  
+**Solution:** Only CSV, XML and JSON files are accepted. Verify the file extension and that the file is not corrupted.
+
+### Import Stops Partway Through
+**Problem:** Some rows imported, then error  
+**Solution:** Check the error message for the row number. Common causes: missing required `title` field, invalid category path, or malformed image path. Fix the row and re-import — duplicate detection will skip already-imported products.
+
+### Exported JSON is Empty
+**Problem:** Export file contains no products  
+**Solution:** Verify J2Commerce products exist and are published. Check that the selected export type matches your data (e.g., "Products (Complete)" requires J2Store product records, not just Joomla articles).
+
+### Images Not Appearing After Import
+**Problem:** Products imported but images missing  
+**Solution:** Images must be uploaded to the server before import. Verify the path in the import file matches the actual file location relative to the Joomla root (e.g., `images/products/photo.jpg`).
+
+### Duplicate Products Created
+**Problem:** Re-importing creates new products instead of updating  
+**Solution:** Enable "Update existing products" in import options. Ensure the import file contains `article_id`, `alias`, or `sku` values that match existing products.
 
 ## Support & Contact
 

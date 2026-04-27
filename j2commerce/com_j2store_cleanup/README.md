@@ -2,10 +2,9 @@
 
 [![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml)
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml)
-[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
-[![PHP 8.0+](https://img.shields.io/badge/PHP-8.0%2B-purple.svg)](https://www.php.net/)
+[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
 Safe migration tool for transitioning from J2Store to [J2Commerce](https://github.com/joomla-projects/j2commerce).
 
@@ -24,8 +23,8 @@ Until now, there was no automated way to remove old J2Store extensions that are 
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 4.x, 5.x or 6.x
-- PHP 8.0 or higher
+- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- PHP 8.1 or higher
 - Administrator access
 - ⚠️ Backup recommended before use
 
@@ -107,12 +106,13 @@ This component has automated tests that run on every push via GitHub Actions.
 ```bash
 cd j2commerce/com_j2store_cleanup/tests
 docker compose up -d
-sleep 120  # Wait for Joomla initialization
+# Wait for container readiness (health.txt written by docker-entrypoint.sh)
+timeout 300 bash -c 'until docker exec com_j2store_cleanup_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 ```
 
-Test results are saved in `tests/test-results/` and committed to `tests/logs/`.
+Test results are saved in `tests/test-results/`.
 
 ## Development
 
@@ -125,9 +125,9 @@ com_j2store_cleanup/
 ├── com_j2store_cleanup.xml           # Joomla manifest
 ├── script.php                        # Install/update script
 ├── administrator/
-│   └── components/
-│       └── com_j2store_cleanup/
-│           └── j2store_cleanup.php   # Main component file
+│   ├── components/
+│   │   └── com_j2store_cleanup/
+│   │       └── j2store_cleanup.php   # Main component file
 │   └── language/
 │       ├── en-GB/
 │       ├── de-CH/

@@ -2,10 +2,9 @@
 
 [![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2commerce-product-compare.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2commerce-product-compare.yml)
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-productcompare.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-productcompare.yml)
-[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
-[![PHP 8.0+](https://img.shields.io/badge/PHP-8.0%2B-purple.svg)](https://www.php.net/)
+[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
 Help customers make informed purchase decisions with side-by-side product comparison.
 
@@ -27,9 +26,9 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 4.x, 5.x or 6.x
-- PHP 8.0 or higher
-- J2Commerce 3.x or higher
+- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- PHP 8.1 or higher
+- J2Commerce 4.x or higher
 
 ## Installation
 1. Download `plg_j2commerce_productcompare.zip`
@@ -94,9 +93,10 @@ This plugin has automated tests that run on every push via GitHub Actions.
 ### Running Tests Locally
 
 ```bash
-cd tests
+cd j2commerce/plg_j2commerce_productcompare/tests
 docker compose up -d
-sleep 120  # Wait for Joomla initialization
+# Wait for container readiness (health.txt written by docker-entrypoint.sh)
+timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 ```

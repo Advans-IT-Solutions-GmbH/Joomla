@@ -1,13 +1,15 @@
 # Repository Structure
 
-## Plugins
+## Extensions
 
-| Plugin | Path | Group | Description |
-|--------|------|-------|-------------|
-| Privacy | `j2commerce/plg_privacy_j2commerce/` | privacy | GDPR/DSGVO for J2Commerce |
-| Import/Export | `j2commerce/plg_import_export/` | j2store | Product import/export |
-| Product Compare | `j2commerce/plg_product_compare/` | j2store | Product comparison |
-| AJAX Forms | `plg_ajax_joomlaajaxforms/` | ajax | Joomla AJAX form handler |
+| Extension | Path | Type | Description |
+|-----------|------|------|-------------|
+| Privacy | `j2commerce/plg_privacy_j2commerce/` | plugin (privacy) | GDPR/DSGVO for J2Commerce |
+| Import/Export | `j2commerce/com_j2commerce_importexport/` | component | Product import/export |
+| Product Compare | `j2commerce/plg_j2commerce_productcompare/` | plugin (j2store) | Product comparison |
+| OSMap | `j2commerce/plg_osmap_j2commerce/` | plugin (osmap) | J2Commerce sitemap for OSMap |
+| Cleanup | `j2commerce/com_j2store_cleanup/` | component | Remove legacy J2Store extensions |
+| AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
 
 ## Shared Infrastructure
 
@@ -47,8 +49,13 @@ plg_*/
 |---|---|---|
 | `j2commerce-privacy.yml` | push to `main` (privacy paths) | Build & Test |
 | `release-privacy.yml` | `workflow_dispatch` | Release: bump version, build ZIP, create GitHub Release |
-| `j2commerce-import-export.yml` | push to `main` | Build & Test |
+| `j2commerce-import-export.yml` | push to `main` (importexport + shared paths) | Build & Test |
 | `release-importexport.yml` | `workflow_dispatch` | Release |
-| `joomla-ajax-forms.yml` | push to `main` | Build & Test |
+| `j2commerce-product-compare.yml` | push to `main` (productcompare paths) | Build & Test |
+| `release-productcompare.yml` | `workflow_dispatch` | Release |
+| `osmap-j2commerce.yml` | push to `main` (osmap + shared paths) | Build & Test |
+| `release-osmap-j2commerce.yml` | `workflow_dispatch` | Release |
+| `j2store-cleanup.yml` | push to `main` (cleanup paths) | Build & Test |
+| `release-cleanup.yml` | `workflow_dispatch` | Release |
+| `joomla-ajax-forms.yml` | push to `main` (ajaxforms paths) | Build & Test |
 | `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Release |
-| `release-cleanup.yml` | schedule | Clean up old release artifacts |
