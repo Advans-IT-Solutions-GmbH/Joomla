@@ -1,22 +1,8 @@
 version: 2
 updates:
-  # AcyMailing Plugin
-  - package-ecosystem: "composer"
-    directory: "/J2Commerce/plg_j2commerce_acymailing"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    groups:
-      dependencies:
-        patterns:
-          - "*"
-    labels:
-      - "dependencies"
-      - "acymailing"
-
   # Privacy Plugin
   - package-ecosystem: "composer"
-    directory: "/J2Commerce/plg_privacy_j2commerce"
+    directory: "/j2commerce/plg_privacy_j2commerce"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -28,9 +14,9 @@ updates:
       - "dependencies"
       - "privacy"
 
-  # 2FA Plugin
+  # Import/Export Component
   - package-ecosystem: "composer"
-    directory: "/J2Commerce/plg_system_j2commerce_2fa"
+    directory: "/j2commerce/com_j2commerce_importexport"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -40,7 +26,49 @@ updates:
           - "*"
     labels:
       - "dependencies"
-      - "2fa"
+      - "importexport"
+
+  # J2Store Cleanup Component
+  - package-ecosystem: "composer"
+    directory: "/j2commerce/com_j2store_cleanup"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "cleanup"
+
+  # Product Compare Plugin
+  - package-ecosystem: "composer"
+    directory: "/j2commerce/plg_j2commerce_productcompare"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "productcompare"
+
+  # OSMap Plugin
+  - package-ecosystem: "composer"
+    directory: "/j2commerce/plg_osmap_j2commerce"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "osmap"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

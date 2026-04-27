@@ -77,23 +77,28 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: always()
-    permissions:
-      contents: write
+    permissions: {}
+
     steps:
-      - uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v8
+      - name: Download all test results
+        uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
-      - name: Collect logs
+
+      - name: Collect and display logs
         run: |
-          mkdir -p tests/logs/plg_j2commerce_productcompare
-          find test-artifacts/ -name "*.txt" -exec cp {} tests/logs/plg_j2commerce_productcompare/ \; 2>/dev/null || true
-      - name: Commit logs
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add -f tests/logs/plg_j2commerce_productcompare/*.txt
-          git diff --staged --quiet || git commit -m "Add test logs [skip ci]"
-          git push || true
+          echo "=== Test Results Summary ==="
+          for dir in test-artifacts/*/; do
+            if [ -d "$dir" ]; then
+              echo ""
+              echo "--- $(basename "$dir") ---"
+              find "$dir" -name "*.txt" -exec cat {} \;
+            fi
+          done
+
+      - name: Upload combined logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: all-test-logs
+          path: test-artifacts/
+          retention-days: 30
