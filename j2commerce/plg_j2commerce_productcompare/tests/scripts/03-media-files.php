@@ -35,9 +35,23 @@ class MediaFilesTest
             return file_exists($file) && filesize($file) > 50;
         });
 
+        $this->test('joomla.asset.json deployed', function () {
+            return file_exists($this->mediaPath . '/joomla.asset.json');
+        });
+
+        $this->test('joomla.asset.json is valid JSON', function () {
+            $content = file_get_contents($this->mediaPath . '/joomla.asset.json');
+            return json_decode($content) !== null;
+        });
+
         $this->test('JS contains compare functionality', function () {
             $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
             return strpos($content, 'compare') !== false || strpos($content, 'Compare') !== false;
+        });
+
+        $this->test('JS reads config via Joomla.getOptions', function () {
+            $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
+            return strpos($content, 'Joomla.getOptions') !== false;
         });
 
         $this->test('CSS contains compare styles', function () {

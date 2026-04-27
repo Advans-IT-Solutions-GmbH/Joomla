@@ -52,6 +52,22 @@ class ConfigurationTest
                 || file_exists(JPATH_PLUGINS . '/j2store/productcompare/productcompare.xml');
         });
 
+        $this->test('tmpl/button.php layout exists', function () {
+            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/tmpl/button.php');
+        });
+
+        $this->test('tmpl/bar.php layout exists', function () {
+            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/tmpl/bar.php');
+        });
+
+        $this->test('tmpl/modal.php layout exists', function () {
+            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/tmpl/modal.php');
+        });
+
+        $this->test('tmpl/table.php layout exists', function () {
+            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/tmpl/table.php');
+        });
+
         echo "\n=== Configuration Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

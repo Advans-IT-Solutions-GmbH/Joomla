@@ -41,16 +41,24 @@ class PluginClassTest
             return strpos($content, 'function onAjaxProductcompare') !== false;
         });
 
-        $this->test('Has getCompareButton method', function () use ($content) {
-            return strpos($content, 'function getCompareButton') !== false;
+        $this->test('Has onAfterRender method', function () use ($content) {
+            return strpos($content, 'function onAfterRender') !== false;
+        });
+
+        $this->test('Has renderCompareButton method', function () use ($content) {
+            return strpos($content, 'function renderCompareButton') !== false;
         });
 
         $this->test('Has getProductsData method', function () use ($content) {
             return strpos($content, 'function getProductsData') !== false;
         });
 
-        $this->test('Has generateComparisonTable method', function () use ($content) {
-            return strpos($content, 'function generateComparisonTable') !== false;
+        $this->test('Has renderLayout method', function () use ($content) {
+            return strpos($content, 'function renderLayout') !== false;
+        });
+
+        $this->test('Uses FileLayout for template overrides', function () use ($content) {
+            return strpos($content, 'FileLayout') !== false;
         });
 
         $this->test('Uses Joomla CMSPlugin or extends correct base', function () use ($content) {
@@ -62,6 +70,14 @@ class PluginClassTest
                 || strpos($content, 'getDbo') !== false
                 || strpos($content, 'getDatabase') !== false
                 || strpos($content, 'Factory::getContainer') !== false;
+        });
+
+        $this->test('Uses WebAssetManager for assets', function () use ($content) {
+            return strpos($content, 'getWebAssetManager') !== false;
+        });
+
+        $this->test('Uses addScriptOptions for JS config', function () use ($content) {
+            return strpos($content, 'addScriptOptions') !== false;
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";
