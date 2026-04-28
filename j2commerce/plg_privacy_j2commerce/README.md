@@ -185,7 +185,11 @@ If an order is found but no `#__privacy_consents` entry exists, one is auto-crea
 
 ## Template Integration
 
-J2Commerce's `eventWithHtml()` only imports plugins in the `j2store` group. This plugin is in the `privacy` group (required for Joomla's native `com_privacy` integration). There is no hook available to a `privacy`-group plugin inside J2Commerce's checkout or MyProfile views. Template overrides are the only way to integrate without patching rendered HTML.
+This plugin is a **native Joomla privacy plugin**, not a J2Commerce plugin. It is registered under Joomla's `privacy` plugin group, which is what allows it to participate in Joomla's built-in Privacy Suite (`com_privacy`): handling data export requests, deletion requests, consent tracking, and the scheduled cleanup task.
+
+The trade-off is that J2Commerce does not know about it. J2Commerce's `eventWithHtml()` — the mechanism J2Commerce uses to let plugins inject content into its views — only loads plugins from its own `j2store` group. Plugins in the `privacy` group are invisible to it. This means there is no event hook available inside J2Commerce's checkout or MyProfile views that this plugin can use.
+
+Template overrides are the solution: by placing PHP files in `templates/{active-template}/html/com_j2store/`, the overrides run as part of J2Commerce's own rendering and can check for this plugin via `PluginHelper` to conditionally add the consent checkbox and Privacy tab.
 
 ### Automatic deployment on first install
 
@@ -236,7 +240,7 @@ If the plugin is not installed or disabled, `$showPrivacyTab` stays `false` and 
 
 ### Language file must be loaded manually
 
-The `privacy` plugin group is **not** auto-imported by Joomla in the frontend. Without the explicit `Factory::getLanguage()->load(...)` call above, all `PLG_PRIVACY_J2COMMERCE_*` language keys render as raw strings in the tab. This call is already included in the provided `default.php` — do not remove it.
+Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the explicit `Factory::getLanguage()->load(...)` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys render as raw strings in the tab. This call is already included in the provided `default.php` — do not remove it.
 
 ### Updating overrides after plugin updates
 
