@@ -88,15 +88,13 @@ class PrivacyPluginBaseTest
             $this->test('deleteCartData method exists', 
                 $reflection->hasMethod('deleteCartData'));
             
-            // MyProfile privacy section
-            $this->test('injectPrivacySection method exists', 
-                $reflection->hasMethod('injectPrivacySection'));
-            $this->test('getPrivacySectionHtml method exists', 
-                $reflection->hasMethod('getPrivacySectionHtml'));
-            
-            // Frontend features
-            $this->test('onAfterRender method exists', 
-                $reflection->hasMethod('onAfterRender'));
+            // Frontend integration via template overrides (onAfterRender removed in 1.5.0)
+            $this->test('onAfterRender method removed (replaced by template overrides)',
+                !$reflection->hasMethod('onAfterRender'));
+            $this->test('injectPrivacySection method removed (replaced by template overrides)',
+                !$reflection->hasMethod('injectPrivacySection'));
+            $this->test('getPrivacySectionHtml method removed (replaced by template overrides)',
+                !$reflection->hasMethod('getPrivacySectionHtml'));
             $this->test('onAjaxJ2commercePrivacy method exists', 
                 $reflection->hasMethod('onAjaxJ2commercePrivacy'));
         }

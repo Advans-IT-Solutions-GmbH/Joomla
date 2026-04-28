@@ -61,7 +61,7 @@ class InstallationTest
         
         // Test 3: Language files exist
         $this->test('German language file exists', 
-            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/language/de-CH/plg_privacy_j2commerce.ini'));
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/language/de-DE/plg_privacy_j2commerce.ini'));
         
         $this->test('English language file exists', 
             file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/language/en-GB/plg_privacy_j2commerce.ini'));
