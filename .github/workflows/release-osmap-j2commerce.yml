@@ -126,7 +126,7 @@ jobs:
                   <element>j2commerce</element>
                   <type>plugin</type>
                   <folder>osmap</folder>
-                  <client>site</client>
+                  
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_osmap_j2commerce</infourl>
                   <downloads>

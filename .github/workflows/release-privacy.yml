@@ -14,9 +14,25 @@ on:
           - major
 
 jobs:
+  syntax-check:
+    name: PHP Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: Check PHP syntax
+        run: |
+          find j2commerce/plg_privacy_j2commerce/src -name "*.php" -exec php -l {} \;
+          find j2commerce/plg_privacy_j2commerce/overrides -name "*.php" -exec php -l {} \;
+          php -l j2commerce/plg_privacy_j2commerce/script.php
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
+    needs: syntax-check
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     permissions:
       contents: write
@@ -126,7 +142,6 @@ jobs:
                   <element>j2commerce</element>
                   <type>plugin</type>
                   <folder>privacy</folder>
-                  <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_privacy_j2commerce</infourl>
                   <downloads>

@@ -127,7 +127,7 @@ jobs:
                   <element>joomlaajaxforms</element>
                   <type>plugin</type>
                   <folder>ajax</folder>
-                  <client>site</client>
+                  
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/plg_ajax_joomlaajaxforms</infourl>
                   <downloads>
