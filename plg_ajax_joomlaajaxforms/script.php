@@ -10,17 +10,21 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 
-class PlgAjaxJoomlaajaxformsInstallerScript
+class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
 {
-    public function postflight($type, $parent)
+    protected $minimumJoomla = '5.0';
+    protected $minimumPhp    = '8.1';
+
+    public function postflight(string $type, object $parent): void
     {
-        if ($type === 'install' || $type === 'update') {
-            $this->checkHtaccess();
+        if ($type !== 'install' && $type !== 'update') {
+            return;
         }
 
-        return true;
+        $this->checkHtaccess();
     }
 
     /**
@@ -30,10 +34,10 @@ class PlgAjaxJoomlaajaxformsInstallerScript
      * index.php?option=com_* URLs, com_ajax must be whitelisted.
      * This check is generic and works on any Joomla site.
      */
-    protected function checkHtaccess()
+    private function checkHtaccess(): void
     {
         $htaccess = JPATH_ROOT . '/.htaccess';
-        $app = Factory::getApplication();
+        $app      = Factory::getApplication();
 
         Factory::getLanguage()->load(
             'plg_ajax_joomlaajaxforms',
@@ -41,7 +45,6 @@ class PlgAjaxJoomlaajaxformsInstallerScript
         );
 
         if (!file_exists($htaccess)) {
-            // No .htaccess — nothing to check (Nginx, or SEF not enabled)
             return;
         }
 
@@ -77,14 +80,17 @@ class PlgAjaxJoomlaajaxformsInstallerScript
             }
         }
 
-        if (!empty($issues)) {
-            $msg = '<strong>' . Text::_('PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_TITLE') . '</strong><ul>';
-            foreach ($issues as $issue) {
-                $msg .= '<li>' . $issue . '</li>';
-            }
-            $msg .= '</ul>';
-            $msg .= '<p>' . Text::_('PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_ACTION') . '</p>';
-            $app->enqueueMessage($msg, 'warning');
+        if (empty($issues)) {
+            return;
         }
+
+        $msg  = '<strong>' . Text::_('PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_TITLE') . '</strong><ul>';
+        foreach ($issues as $issue) {
+            $msg .= '<li>' . $issue . '</li>';
+        }
+        $msg .= '</ul>';
+        $msg .= '<p>' . Text::_('PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_ACTION') . '</p>';
+
+        $app->enqueueMessage($msg, 'warning');
     }
 }

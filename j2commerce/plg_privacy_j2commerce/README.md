@@ -6,15 +6,27 @@
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
-GDPR/DSGVO compliance solution for J2Commerce. Features:
-- **Checkout Consent Checkbox** - Privacy consent during checkout
-- **Privacy Policy Link** - Configurable link to privacy policy article
-- **Address Management** - Frontend delete buttons for saved addresses
-- **Automated Data Cleanup** - Scheduled anonymization after retention period
-- **MyProfile Privacy Tab** - User-facing privacy management in J2Commerce profile
-- **Admin Notifications** - Email alerts on privacy-related user actions
-- **Activity Logging** - Audit trail for all privacy operations
-- **Legal Compliance** - Swiss OR Art. 958f / MWSTG Art. 70 compliant retention
+## Description
+
+GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data.
+
+## Features
+
+- **Checkout Consent Checkbox** — Privacy consent during checkout via template override
+- **Privacy Policy Link** — Configurable link to privacy policy article
+- **Address Management** — Frontend delete buttons for saved addresses
+- **Automated Data Cleanup** — Scheduled anonymization after configurable retention period
+- **MyProfile Privacy Tab** — User-facing privacy management in J2Commerce profile
+- **Admin Notifications** — Email alerts on privacy-related user actions
+- **Activity Logging** — Audit trail for all privacy operations
+- **Legal Compliance** — Swiss OR Art. 958f / MWSTG Art. 70 compliant retention
+
+## Requirements
+
+- Joomla 5.0 or higher
+- PHP 8.1 or higher
+- J2Commerce 4.0 or higher
+- Joomla Privacy Component enabled (`com_privacy`)
 
 ---
 
@@ -50,13 +62,6 @@ GDPR/DSGVO compliance solution for J2Commerce. Features:
 ---
 
 ## Installation
-
-### Requirements
-
-- Joomla 5.0 or higher
-- PHP 8.1 or higher
-- J2Commerce 4.0 or higher
-- Joomla Privacy Component enabled
 
 ### Scope and Limitations
 
@@ -988,10 +993,9 @@ This plugin does not store or have access to complete payment details. Users mus
 
 ### Supported Languages
 
-- • **German (Switzerland)** - `de-CH`
-- • **German (Germany)** - `de-DE` (identical to `de-CH`)
+- • **German** - `de-DE`
 - • **English (UK)** - `en-GB`
-- • **French (France)** - `fr-FR` (standard French; no separate `fr-CH` variant)
+- • **French** - `fr-FR`
 
 ### Adding New Languages
 
@@ -1070,143 +1074,7 @@ AND field_name = 'is_lifetime_license';
 
 ---
 
-## Testing
-
-### Test Coverage Status
-
-**Current Status:** Automated tests are placeholder implementations only.
-
-**Test Coverage:** ~10% (installation verification only)
-
-**Recommended Approach:**
-1. Use the manual testing steps below
-2. Estimated effort for full automated test suite: 24-32 hours
-
-### Manual Testing
-
-Manual testing steps:
-
-**Quick Manual Test:**
-
-**1. Create test product:**
-```
-Components → J2Store → Products → New
-Name: Test Lifetime Product
-Custom Fields → Lifetime License: Yes
-Save
-```
-
-**2. Create test order:**
-- Create order for test user
-- Use the test product
-- Complete order
-
-**3. Request deletion:**
-```
-Users → Privacy → Requests → New Request
-Type: Remove
-Email: testuser@example.com
-```
-
-**4. Try to delete:**
-```
-Users → Privacy → Requests → [Open request]
-Complete Request → Delete Data
-```
-
-**5. Expected result:**
-```
-• Error message appears
-Shows: "LIFETIME-LIZENZEN"
-Lists: Test Lifetime Product
-```
-
-• **If you see this, the plugin works correctly!**
-
----
-
-### Automated Testing
-
-Tests run on every push via GitHub Actions.
-
-**Test suites:**
-1. **Installation** - Plugin registration, file deployment
-2. **Configuration** - Plugin params, language files
-3. **Privacy Plugin Base** - Privacy API method validation
-4. **Data Integration** - J2Commerce data access
-5. **Data Export** - Privacy export functionality
-6. **Data Anonymization** - Anonymization logic
-7. **GDPR Compliance** - Retention period enforcement
-8. **Uninstall** - Clean removal
-
-**Running tests locally:**
-```bash
-cd tests
-docker compose up -d
-sleep 120
-./run-tests.sh all
-docker compose down -v
-```
-
----
-
-## Development
-
-### Structure
-
-```
-plg_privacy_j2commerce/
-├── README.md                    # This file
-├── VERSION
-├── LICENSE.txt
-├── j2commerce.xml              # Plugin manifest
-├── script.php                  # Installation script
-├── services/
-│   └── provider.php            # Service provider
-├── src/
-│   ├── Extension/
-│   │   └── J2Commerce.php      # Main plugin class
-│   └── Task/
-│       └── AutoCleanupTask.php # Scheduled task
-├── language/
-│   ├── de-CH/                  # German (Switzerland)
-│   ├── de-DE/                  # German (Germany) — identical to de-CH
-│   ├── en-GB/                  # English (UK)
-│   └── fr-FR/                  # French (France)
-└── tests/                      # Integration tests
-```
-
-### Building
-
-```bash
-./build.sh
-```
-
-Creates: `plg_privacy_j2commerce.zip`
-
-### Key Classes
-
-**J2Commerce.php:**
-- `onPrivacyExportRequest()` - Export user data
-- `onPrivacyCanRemoveData()` - Check if deletion allowed
-- `onPrivacyRemoveData()` - Perform deletion/anonymization
-- `checkRetentionPeriod()` - Check retention periods
-- `isLifetimeLicense()` - Check custom field
-- `formatRetentionMessage()` - Generate error message
-
-**AutoCleanupTask.php:**
-- `autoCleanup()` - Main cleanup logic
-- `hasLifetimeLicense()` - Check for lifetime licenses
-- `partialAnonymizeUserData()` - Keep email, delete rest
-- `anonymizeUserData()` - Full anonymization
-
----
-
-## Support
-
-### Documentation Files
-
-All documentation is in this README. Previous separate files have been consolidated.
+## Troubleshooting
 
 ### Common Issues
 
@@ -1230,81 +1098,55 @@ All documentation is in this README. Previous separate files have been consolida
 - **Recommended Approach:** Apply standard accounting retention periods to subscription orders
 - **Enterprise Requirements:** Contact Advans IT Solutions for custom subscription handling implementation
 
-### Contact
-
-**Advans IT Solutions GmbH**  
-Karl-Barth-Platz 9  
-4052 Basel  
-Switzerland  
-CHE-316.407.165
-
-**Website:** https://advans.ch
-
----
-
-## License
-
-Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
-
----
-
-## Changelog
-
-### Version 1.5.0 (next release)
-
-**Fixes and documentation:**
-- Fix: `script.php` minimum requirements raised to Joomla 5.0 / PHP 8.1 (were incorrectly set to 4.0 / 7.4)
-- Fix: README corrected false statement that privacy plugins cannot hook into `onAfterRender`
-- Fix: Implementation Guide Step 1 clarified as optional; two separate tables (`#__j2store_product_customfields` vs `#__license_keys`) now documented
-- Fix: `checkRetentionPeriod()` method name corrected (was `checkOrderRetention()`)
-- Fix: Minimum requirements updated to Joomla 5.0, PHP 8.1, J2Commerce 4.0
-- Fix: "French (CH)" corrected to "French (France)" (`fr-FR`)
-- Fix: References to non-existent `MANUAL_TESTING.md` and `TODO_TESTS.md` removed
-- Fix: Anonymization documentation now includes `customer_note` and `ip_address` fields
-- Docs: `de-DE` language (identical to `de-CH`) added to Multi-Language section and Structure overview
-- Docs: Template Integration section added to Table of Contents
-- Docs: All plugin parameters documented (Checkout Consent, Frontend Self-Service, Notifications & Logging fieldsets were missing)
-
-### Version 1.0.0 (2025-01-11)
-
-**Initial Release:**
-- GDPR-compliant data export
-- Automatic data anonymization
-- Lifetime license support via Custom Fields
-- One-time purchase handling
-- Configurable retention periods
-- Multi-country legal basis support
-- Scheduled automatic cleanup
-- Multi-language support (de-CH, de-DE, en-GB, fr-FR)
-- documentation
-
-**Known Limitations:**
-- Automated recurring subscription lifecycle management not included
-- Active subscription status verification requires manual administrative processes
-- Payment gateway integration for real-time subscription status not implemented
-
 ## Automated Testing
 
-This plugin has automated tests that run on every push via GitHub Actions.
+This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
 
 ### Test Suites
 
-1. **Installation** — Plugin registration in DB, file deployment
+1. **Installation** — Plugin registration in DB, file deployment, template overrides
 2. **Configuration** — Plugin params, language files, XML manifest
 3. **Plugin Class** — Method existence and class structure
-4. **Privacy Export** — `onPrivacyExportRequest` output validation
-5. **Privacy Removal** — `onPrivacyRemoveData` retention logic
-6. **Uninstall** — Clean removal from database and filesystem
+4. **Data Integration** — Test data setup and CRUD operations
+5. **Privacy Export** — `onPrivacyExportRequest` output validation
+6. **Data Anonymization** — `onPrivacyRemoveData` retention logic
+7. **GDPR Compliance** — All DSGVO-relevant methods and hooks
+8. **Template Overrides** — Override source files and deployment verification
+9. **Uninstall** — Clean removal from database and filesystem
 
 ### Running Tests Locally
 
 ```bash
 cd tests
 docker compose up -d
-sleep 120  # Wait for Joomla initialization
 ./run-tests.sh all
 docker compose down -v
 ```
+
+## Development
+
+### Build
+
+```bash
+./build.sh
+```
+
+Creates: `plg_privacy_j2commerce.zip`
+
+### Key Classes
+
+**J2Commerce.php:**
+- `onPrivacyExportRequest()` — Export user data
+- `onPrivacyCanRemoveData()` — Check if deletion allowed
+- `onPrivacyRemoveData()` — Perform deletion/anonymization
+- `checkRetentionPeriod()` — Check retention periods
+- `isLifetimeLicense()` — Check custom field
+
+**AutoCleanupTask.php:**
+- `autoCleanup()` — Main cleanup logic
+- `hasLifetimeLicense()` — Check for lifetime licenses
+- `partialAnonymizeUserData()` — Keep email, delete rest
+- `anonymizeUserData()` — Full anonymization
 
 ## Support & Contact
 
