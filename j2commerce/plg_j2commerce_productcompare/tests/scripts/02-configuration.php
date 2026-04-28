@@ -43,8 +43,8 @@ class ConfigurationTest
             return file_exists(JPATH_PLUGINS . '/j2store/productcompare/language/en-GB/plg_j2store_productcompare.ini');
         });
 
-        $this->test('Language file de-CH exists', function () {
-            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/language/de-CH/plg_j2store_productcompare.ini');
+        $this->test('Language file de-DE exists', function () {
+            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/language/de-DE/plg_j2store_productcompare.ini');
         });
 
         $this->test('XML manifest exists', function () {
