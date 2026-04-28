@@ -130,7 +130,7 @@ com_j2store_cleanup/
 │   │       └── j2store_cleanup.php   # Main component file
 │   └── language/
 │       ├── en-GB/
-│       ├── de-CH/
+│       ├── de-DE/
 │       └── fr-FR/
 ├── updates/
 │   └── update.xml                    # Joomla update server
@@ -273,7 +273,7 @@ If legitimate extensions are detected:
 
 This extension supports the following languages:
 - **English (en-GB)** - Default
-- **German (de-CH)** - Swiss German
+- **German (de-DE)**
 - **French (fr-FR)** - French
 
 Users can add additional language files by creating new language folders following Joomla's language structure:

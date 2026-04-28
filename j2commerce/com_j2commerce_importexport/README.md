@@ -221,7 +221,7 @@ com_j2commerce_importexport/
 │   │   │   │   └── ImportModel.php
 │   │   │   └── View/Dashboard/
 │   │   └── tmpl/dashboard/
-│   └── language/ (en-GB, de-CH, fr-FR)
+│   └── language/ (en-GB, de-DE, fr-FR)
 ├── tests/
 ├── com_j2commerce_importexport.xml
 └── VERSION

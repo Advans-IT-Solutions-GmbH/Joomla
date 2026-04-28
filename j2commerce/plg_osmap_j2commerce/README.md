@@ -24,6 +24,14 @@ re-enabled products are picked up on the next sitemap request. Each product
 must have a `published=-2` child menu item under the shop menu item —
 J2Commerce creates these automatically when a product is saved.
 
+## Features
+
+- Adds all enabled J2Commerce products to the OSMap sitemap automatically
+- Generates correct SEF URLs using J2Commerce's own routing mechanism
+- Configurable priority and change frequency per product
+- Excludes disabled products automatically
+- Patches OSMap ≤ 5.1.3 `Factory::getTable()` bug on install/update
+
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
@@ -200,6 +208,12 @@ Verify that:
 3. The shop menu item is published and the product has `enabled=1` in J2Commerce
 
 See the [.htaccess Requirements](#htaccess-requirements) section above.
+
+## Multi-Language Support
+
+- English (`en-GB`)
+- German (`de-DE`)
+- French (`fr-FR`)
 
 ## Support & Contact
 

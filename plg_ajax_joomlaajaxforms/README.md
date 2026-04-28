@@ -151,24 +151,24 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - Uses `UserFactoryInterface` instead of `User::getInstance()`
 - Uses `->getInput()` instead of `->input`
 
-## Tests
+## Automated Testing
 
-12 test scripts run on every push via GitHub Actions: installation, configuration, endpoint access, login/MFA, registration, reset, remind, security, profile, J2Store cart, .htaccess validation, and uninstall.
+12 test scripts run on every push and on pull requests via GitHub Actions: installation, configuration, endpoint access, login/MFA, registration, reset, remind, security, profile, J2Store cart, .htaccess validation, and uninstall.
 
 ```bash
 cd plg_ajax_joomlaajaxforms/tests
 docker compose up -d
-sleep 120
 ./run-tests.sh all
 docker compose down -v
 ```
 
-## Translations
+## Multi-Language Support
 
-- English (en-GB)
-- German (de-DE) — Swiss Standard German (no ß)
+- English (`en-GB`)
+- German (`de-DE`)
+- French (`fr-FR`)
 
-82 language keys covering all UI labels, error messages, email templates, and JavaScript strings.
+Language keys cover all UI labels, error messages, email templates, and JavaScript strings.
 
 ## Support & Contact
 

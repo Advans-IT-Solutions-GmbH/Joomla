@@ -65,7 +65,7 @@ plg_j2commerce_productcompare/
 ├── build.sh
 ├── services/provider.php
 ├── src/Extension/ProductCompare.php
-├── language/ (en-GB, de-CH, fr-FR)
+├── language/ (en-GB, de-DE, fr-FR)
 ├── media/ (js, css)                    # Installed to media/plg_j2store_productcompare/
 └── tests/
 ```
@@ -321,7 +321,7 @@ Attributes are configurable via J2Commerce product settings.
 
 This extension supports the following languages:
 - **English (en-GB)** - Default
-- **German (de-CH)** - Swiss German
+- **German (de-DE)**
 - **French (fr-FR)** - French
 
 Users can add additional language files by creating new language folders following Joomla's language structure:
