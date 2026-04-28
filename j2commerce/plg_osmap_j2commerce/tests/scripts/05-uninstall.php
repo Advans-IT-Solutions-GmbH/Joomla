@@ -2,8 +2,8 @@
 /**
  * Uninstall Tests for OSMap J2Commerce Plugin
  *
- * Uses direct DB operations instead of Installer::getInstance() —
- * Installer calls Factory::getApplication() internally (CLI-unsafe).
+ * Uses Joomla CLI (extension:remove) so the full Joomla installer
+ * pipeline runs — including script.php uninstall() and all events.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -25,6 +25,17 @@ class UninstallTest
         $this->db = Factory::getDbo();
     }
 
+    private function test(string $name, callable $fn): void
+    {
+        try {
+            if ($fn()) { echo "✓ {$name}\n"; $this->passed++; }
+            else       { echo "✗ {$name}\n"; $this->failed++; }
+        } catch (\Throwable $e) {
+            echo "✗ {$name} - Error: {$e->getMessage()}\n";
+            $this->failed++;
+        }
+    }
+
     public function run(): bool
     {
         echo "=== Uninstall Tests ===\n\n";
@@ -41,25 +52,21 @@ class UninstallTest
             return $extensionId > 0;
         });
 
-        $this->test('Uninstall succeeds (DB + files)', function () use ($extensionId) {
-            if (!$extensionId) {
-                return false;
-            }
+        if (!$extensionId) {
+            echo "Cannot proceed — plugin not found in #__extensions\n";
+            echo "\n=== Uninstall Test Summary ===\n";
+            echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
+            return false;
+        }
 
-            // Remove from #__extensions
-            $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->delete('#__extensions')
-                    ->where('extension_id = ' . $extensionId)
-            )->execute();
+        $output   = [];
+        $exitCode = 0;
+        exec("php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
+        $outputStr = implode("\n", $output);
 
-            // Remove plugin files
-            $pluginDir = JPATH_PLUGINS . '/osmap/j2commerce';
-            if (is_dir($pluginDir)) {
-                $this->removeDir($pluginDir);
-            }
-
-            return true;
+        $this->test('Uninstall command executed', function () use ($exitCode, $outputStr) {
+            echo "  Output: {$outputStr}\n";
+            return $exitCode === 0;
         });
 
         $this->test('Plugin removed from #__extensions', function () {
@@ -71,34 +78,13 @@ class UninstallTest
             return (int) $this->db->setQuery($query)->loadResult() === 0;
         });
 
-        $this->test('Plugin file removed', function () {
-            return !file_exists(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php');
+        $this->test('Plugin files removed', function () {
+            return !file_exists(JPATH_BASE . '/plugins/osmap/j2commerce/j2commerce.php');
         });
 
         echo "\n=== Uninstall Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
-    }
-
-    private function removeDir(string $dir): void
-    {
-        foreach (scandir($dir) as $item) {
-            if ($item === '.' || $item === '..') continue;
-            $path = $dir . '/' . $item;
-            is_dir($path) ? $this->removeDir($path) : unlink($path);
-        }
-        rmdir($dir);
-    }
-
-    private function test(string $name, callable $fn): void
-    {
-        try {
-            if ($fn()) { echo "✓ {$name}\n"; $this->passed++; }
-            else       { echo "✗ {$name}\n"; $this->failed++; }
-        } catch (\Throwable $e) {
-            echo "✗ {$name} - Error: {$e->getMessage()}\n";
-            $this->failed++;
-        }
     }
 }
 
