@@ -39,6 +39,8 @@ jobs:
       - name: Check PHP syntax
         run: |
           find j2commerce/plg_privacy_j2commerce/src -name "*.php" -exec php -l {} \;
+          find j2commerce/plg_privacy_j2commerce/overrides -name "*.php" -exec php -l {} \;
+          php -l j2commerce/plg_privacy_j2commerce/script.php
 
   test:
     name: ${{ matrix.name }}
