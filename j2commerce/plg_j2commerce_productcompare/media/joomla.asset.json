@@ -1,0 +1,25 @@
+{
+  "$schema": "https://developer.joomla.org/schemas/json-schema/web_assets.json",
+  "name": "plg_j2store_productcompare",
+  "version": "1.0.0",
+  "description": "J2Commerce Product Compare Plugin assets",
+  "license": "Proprietary",
+  "assets": [
+    {
+      "name": "plg_j2store_productcompare.css",
+      "type": "style",
+      "uri": "plg_j2store_productcompare/css/productcompare.css",
+      "version": "auto"
+    },
+    {
+      "name": "plg_j2store_productcompare",
+      "type": "script",
+      "uri": "plg_j2store_productcompare/js/productcompare.js",
+      "dependencies": [],
+      "attributes": {
+        "defer": true
+      },
+      "version": "auto"
+    }
+  ]
+}
