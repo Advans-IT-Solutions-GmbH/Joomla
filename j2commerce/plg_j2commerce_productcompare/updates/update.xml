@@ -6,6 +6,7 @@
         <element>j2commerce_productcompare</element>
         <type>plugin</type>
         <folder>j2commerce</folder>
+        <client>site</client>
         <version>1.0.2</version>
         <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_j2commerce_productcompare</infourl>
         <downloads>
