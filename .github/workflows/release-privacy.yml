@@ -144,6 +144,7 @@ jobs:
                   <element>j2commerce</element>
                   <type>plugin</type>
                   <folder>privacy</folder>
+                  <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_privacy_j2commerce</infourl>
                   <downloads>

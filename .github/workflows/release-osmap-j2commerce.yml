@@ -126,7 +126,7 @@ jobs:
                   <element>j2commerce</element>
                   <type>plugin</type>
                   <folder>osmap</folder>
-                  
+                  <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_osmap_j2commerce</infourl>
                   <downloads>
@@ -135,7 +135,7 @@ jobs:
                   <tags>
                       <tag>stable</tag>
                   </tags>
-                  <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+                  <targetplatform name="joomla" version="(4\.[0-9]|5\.[0-9]|6\.[0-9])" />
                   <php_minimum>8.1</php_minimum>
               </update>
           </updates>
