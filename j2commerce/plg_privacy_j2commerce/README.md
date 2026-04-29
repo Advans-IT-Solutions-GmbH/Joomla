@@ -228,6 +228,74 @@ templates/{your-template}/html/com_j2store/
 - Joomla template based on **Bootstrap 5** (`default.php` uses BS5 tab markup)
 - J2Commerce MyProfile view enabled
 
+---
+
+## AcyMailing Integration
+
+This plugin includes optional AcyMailing support for both the **Privacy Suite** (data export and deletion) and the **MyProfile Newsletter tab** (subscription management).
+
+### How it works
+
+The integration uses **direct DB queries** against AcyMailing's tables — no AcyMailing PHP classes, helper files, or `acym_get()` are loaded. This means:
+
+- Works with all AcyMailing versions: 6.x, 7.x, 8.x, 9.x, 10.x
+- Works with all license tiers: Starter, Essential, Enterprise
+- Works whether AcyMailing is enabled or disabled in Joomla
+- Gracefully skipped when AcyMailing is not installed — no errors, no impact on existing behaviour
+
+The plugin detects AcyMailing by scanning the database for a table ending in `acym_configuration`. If not found, all AcyMailing code paths are bypassed.
+
+### Privacy Suite: what is exported and deleted
+
+**Export (`onPrivacyExportRequest`):**
+
+A `newsletter_subscriptions` domain is added to the export containing:
+
+| Field | Description |
+|---|---|
+| email | Subscriber e-mail address |
+| name | Subscriber name |
+| confirmed | Whether the subscriber confirmed their opt-in |
+| created | Subscription creation date |
+| list (per row) | List name |
+| status | `subscribed` or `unsubscribed` |
+| subscription_date | Date subscribed to this list |
+| unsubscribe_date | Date unsubscribed from this list (if applicable) |
+
+**Deletion (`onPrivacyRemoveData`):**
+
+The subscriber record in `acym_user` and all rows in `acym_user_has_list` are deleted. List-association rows are deleted first to respect the foreign key constraint.
+
+### MyProfile Newsletter tab
+
+The Newsletter tab in J2Commerce MyProfile (`default_newsletter.php`) lets logged-in users manage their subscriptions directly — no redirect to a separate AcyMailing frontend page.
+
+**To enable the Newsletter tab:**
+
+1. Install AcyMailing (any version, any license tier) on the Joomla site.
+2. Ensure the template override `templates/{template}/html/com_j2store/myprofile/default_newsletter.php` exists. This file is maintained in the `advansit/advans.ch` repository under `src/template/html/com_j2store/myprofile/default_newsletter.php`.
+3. Ensure `default.php` includes the Newsletter tab block (already present in the advans.ch template override).
+4. In AcyMailing, set the lists you want to expose to users: **AcyMailing → Lists → Edit → Visible: Yes**.
+
+The tab is hidden automatically when AcyMailing is not installed — no configuration needed.
+
+**What users can do in the Newsletter tab:**
+
+- See all visible AcyMailing lists with their current subscription status
+- Subscribe or unsubscribe per list via checkboxes
+- Unsubscribe from all lists at once (with confirmation dialog)
+
+**Tables accessed by `default_newsletter.php`:**
+
+| Table | Purpose |
+|---|---|
+| `{prefix}acym_configuration` | Presence check only (to detect AcyMailing) |
+| `{prefix}acym_user` | Read/create subscriber record |
+| `{prefix}acym_user_has_list` | Read/write subscription status per list |
+| `{prefix}acym_list` | Read visible list names and descriptions |
+
+No AcyMailing PHP classes are loaded. All queries use Joomla's `DatabaseDriver` API.
+
 ### How `default.php` activates the privacy tab
 
 `default.php` checks for the plugin at runtime:
