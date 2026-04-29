@@ -185,6 +185,16 @@ class AcyMailingIntegrationTest
         // Insert a dedicated subscriber for deletion so the export test data is untouched
         $deleteEmail = 'acym-delete@example.com';
 
+        // All tables the plugin deletes from (mirrors removeAcyMailingData)
+        $relatedTables = [
+            'user_has_list',
+            'user_has_field',
+            'user_stat',
+            'url_click',
+            'history',
+            'queue',
+        ];
+
         try {
             // Insert subscriber
             $this->db->setQuery(
@@ -207,11 +217,19 @@ class AcyMailingIntegrationTest
             $this->test('List association inserted', $assocCount >= 1);
 
             // Run deletion (mirrors plugin's removeAcyMailingData)
-            $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->delete($this->db->quoteName($prefix . 'user_has_list'))
-                    ->where($this->db->quoteName('user_id') . ' = ' . $subId)
-            )->execute();
+            foreach ($relatedTables as $table) {
+                $fullTable = $prefix . $table;
+                $tables = $this->db->getTableList();
+                if (!in_array($fullTable, $tables, true)) {
+                    continue; // table may not exist in minimal test schema
+                }
+
+                $this->db->setQuery(
+                    $this->db->getQuery(true)
+                        ->delete($this->db->quoteName($fullTable))
+                        ->where($this->db->quoteName('user_id') . ' = ' . $subId)
+                )->execute();
+            }
 
             $this->db->setQuery(
                 $this->db->getQuery(true)
@@ -219,12 +237,20 @@ class AcyMailingIntegrationTest
                     ->where($this->db->quoteName('id') . ' = ' . $subId)
             )->execute();
 
-            // Verify deletion
-            $remainingAssoc = (int) $this->db->setQuery(
-                "SELECT COUNT(*) FROM `{$prefix}user_has_list` WHERE user_id = $subId"
-            )->loadResult();
-            $this->test('List associations deleted', $remainingAssoc === 0,
-                "Got $remainingAssoc remaining");
+            // Verify all related tables are clean
+            foreach ($relatedTables as $table) {
+                $fullTable = $prefix . $table;
+                $tables = $this->db->getTableList();
+                if (!in_array($fullTable, $tables, true)) {
+                    continue;
+                }
+
+                $remaining = (int) $this->db->setQuery(
+                    "SELECT COUNT(*) FROM `{$fullTable}` WHERE user_id = $subId"
+                )->loadResult();
+                $this->test("$table rows deleted", $remaining === 0,
+                    "Got $remaining remaining");
+            }
 
             $remainingSub = (int) $this->db->setQuery(
                 "SELECT COUNT(*) FROM `{$prefix}user` WHERE id = $subId"

@@ -237,6 +237,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ], 'subscription_' . $sub->list_id));
         }
 
+        // Load custom field values (may contain name, address, phone, etc.)
+        try {
+            $query = $db->getQuery(true)
+                ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
+                ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
+                ->leftJoin(
+                    $db->quoteName($prefix . 'field', 'f') .
+                    ' ON ' . $db->quoteName('f.id') . ' = ' . $db->quoteName('uhf.field_id')
+                )
+                ->where($db->quoteName('uhf.user_id') . ' = ' . (int) $acymUser->id);
+            $fields = $db->setQuery($query)->loadObjectList();
+        } catch (\Exception $e) {
+            $fields = [];
+        }
+
+        foreach ($fields as $field) {
+            if (empty($field->value)) {
+                continue;
+            }
+
+            $domain->addItem($this->createItemFromArray([
+                'field' => $field->field_name ?? 'field_' . $field->field_id,
+                'type'  => $field->field_type ?? '',
+                'value' => $field->value,
+            ], 'field_' . $field->field_id));
+        }
+
         return $domain;
     }
 
@@ -271,12 +298,23 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            // Delete list associations first (FK constraint)
-            $db->setQuery(
-                $db->getQuery(true)
-                    ->delete($db->quoteName($prefix . 'user_has_list'))
-                    ->where($db->quoteName('user_id') . ' = ' . $acymId)
-            )->execute();
+            // Tables referencing acym_user.id — delete before the subscriber record (FK constraints)
+            $relatedTables = [
+                'user_has_list',   // list subscriptions
+                'user_has_field',  // custom field values (may contain name, address, etc.)
+                'user_stat',       // per-campaign open/click/bounce stats
+                'url_click',       // URL click tracking
+                'history',         // action log incl. IP address
+                'queue',           // pending outbound emails
+            ];
+
+            foreach ($relatedTables as $table) {
+                $db->setQuery(
+                    $db->getQuery(true)
+                        ->delete($db->quoteName($prefix . $table))
+                        ->where($db->quoteName('user_id') . ' = ' . $acymId)
+                )->execute();
+            }
 
             // Delete subscriber record
             $db->setQuery(
