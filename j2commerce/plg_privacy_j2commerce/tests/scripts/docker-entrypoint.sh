@@ -208,6 +208,60 @@ VALUES (LAST_INSERT_ID(), 1, 1, 2.0000);
 EOSQL
 echo "Test data inserted"
 
+# Install minimal AcyMailing schema for integration tests.
+# Only the tables the plugin accesses are created — no full AcyMailing install required.
+echo "Installing AcyMailing test schema..."
+mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOACYM
+CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_configuration (
+    id    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name  VARCHAR(255) NOT NULL,
+    value TEXT,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_list (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    name         VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) DEFAULT NULL,
+    visible      TINYINT(1)   NOT NULL DEFAULT 1,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_user (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    email         VARCHAR(255) NOT NULL,
+    name          VARCHAR(255) DEFAULT NULL,
+    confirmed     TINYINT(1)   NOT NULL DEFAULT 0,
+    creation_date DATETIME     DEFAULT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_acym_user_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_user_has_list (
+    user_id           INT UNSIGNED NOT NULL,
+    list_id           INT UNSIGNED NOT NULL,
+    status            TINYINT(1)   NOT NULL DEFAULT 1,
+    subscription_date DATETIME     DEFAULT NULL,
+    unsubscribe_date  DATETIME     DEFAULT NULL,
+    PRIMARY KEY (user_id, list_id),
+    CONSTRAINT fk_acym_uhl_user FOREIGN KEY (user_id) REFERENCES ${DB_PREFIX}acym_user (id),
+    CONSTRAINT fk_acym_uhl_list FOREIGN KEY (list_id) REFERENCES ${DB_PREFIX}acym_list (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seed: one visible list
+INSERT IGNORE INTO ${DB_PREFIX}acym_list (id, name, display_name, visible)
+VALUES (1, 'newsletter', 'Newsletter', 1);
+
+-- Seed: test subscriber used by export tests
+INSERT IGNORE INTO ${DB_PREFIX}acym_user (email, name, confirmed, creation_date)
+VALUES ('acym-test@example.com', 'AcyMailing Test User', 1, NOW());
+
+-- Seed: list subscription for the test subscriber
+INSERT IGNORE INTO ${DB_PREFIX}acym_user_has_list (user_id, list_id, status, subscription_date)
+SELECT id, 1, 1, NOW() FROM ${DB_PREFIX}acym_user WHERE email = 'acym-test@example.com';
+EOACYM
+echo "AcyMailing test schema installed"
+
 # Create a simple health check file
 echo "OK" > /var/www/html/health.txt
 chown www-data:www-data /var/www/html/health.txt

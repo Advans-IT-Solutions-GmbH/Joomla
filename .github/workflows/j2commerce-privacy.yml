@@ -72,6 +72,8 @@ jobs:
             script: 'gdpr'
           - name: '08 - Template Overrides'
             script: 'template_overrides'
+          - name: '10 - AcyMailing Integration'
+            script: 'acymailing'
           - name: '09 - Uninstall'
             script: 'uninstall'
     steps:
