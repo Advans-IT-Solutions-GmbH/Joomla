@@ -91,6 +91,7 @@ jobs:
           DATE=$(date +%Y-%m)
           cd plg_ajax_joomlaajaxforms
           echo "$VERSION" > VERSION
+          sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" build.env
           sed -i \
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
