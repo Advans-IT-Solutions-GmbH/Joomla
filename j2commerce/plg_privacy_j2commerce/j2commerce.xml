@@ -5,12 +5,12 @@
     <name>PLG_PRIVACY_J2COMMERCE</name>
     <element>j2commerce</element>
     <author>Advans IT Solutions GmbH</author>
-    <creationDate>2026-03</creationDate>
+    <creationDate>2026-04</creationDate>
     <copyright>Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.</copyright>
     <license>Proprietary</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.4.7</version>
+    <version>1.5.0</version>
     <description>PLG_PRIVACY_J2COMMERCE_XML_DESCRIPTION</description>
 
     <namespace path="src">Advans\Plugin\Privacy\J2Commerce</namespace>
