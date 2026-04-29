@@ -7,6 +7,15 @@
 
 defined('_JEXEC') or die;
 
+// Ensure OSMap's Alledia autoloader is registered before loading the plugin
+// class. During Joomla's update/install process the plugin is instantiated
+// before com_osmap's include.php has run, causing "Class not found" for
+// Alledia\OSMap\Plugin\Base.
+$osmapInclude = JPATH_ADMINISTRATOR . '/components/com_osmap/include.php';
+if (is_file($osmapInclude) && !defined('OSMAP_LOADED')) {
+    include_once $osmapInclude;
+}
+
 // Joomla's DI container loads this file before the plugin entry point
 // (j2commerce.php), so the PSR-4 autoloader may not have this namespace
 // registered yet. Load the class explicitly to guarantee availability.
