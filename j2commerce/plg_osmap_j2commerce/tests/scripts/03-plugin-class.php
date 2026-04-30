@@ -2,9 +2,7 @@
 /**
  * Plugin Class Tests for OSMap J2Commerce Plugin
  *
- * Tests class structure without instantiation — Base::__construct() calls
- * admin/include.php which triggers PluginHelper::importPlugin() ->
- * Factory::getApplication(), which is not available in CLI context.
+ * Tests class structure without instantiation.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -15,24 +13,6 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
 Factory::getDbo();
-
-// Load allediaframework (installed by OSMap at libraries/allediaframework/)
-$allediaFramework = JPATH_LIBRARIES . '/allediaframework/include.php';
-if (!is_file($allediaFramework)) {
-    echo "FATAL: allediaframework not found at {$allediaFramework}\n";
-    exit(1);
-}
-require_once $allediaFramework;
-
-// Register Alledia\OSMap namespace directly — avoids admin/include.php
-// which calls PluginHelper::importPlugin() -> Factory::getApplication() (CLI-unsafe)
-use Alledia\Framework\AutoLoader;
-$osmapLibrary = JPATH_ADMINISTRATOR . '/components/com_osmap/library';
-if (!is_dir($osmapLibrary)) {
-    echo "FATAL: OSMap library not found at {$osmapLibrary}\n";
-    exit(1);
-}
-AutoLoader::register('Alledia', $osmapLibrary . '/Alledia');
 
 // Register plugin's PSR-4 namespace (composer not run after JOOMLA_EXTENSIONS_PATHS)
 spl_autoload_register(function (string $class): void {
@@ -60,8 +40,8 @@ class PluginClassTest
             return class_exists('PlgOsmapJ2commerce');
         });
 
-        $this->test('Plugin extends Alledia\\OSMap\\Plugin\\Base', function () {
-            return is_subclass_of('PlgOsmapJ2commerce', 'Alledia\\OSMap\\Plugin\\Base');
+        $this->test('Plugin extends Joomla\\CMS\\Plugin\\CMSPlugin', function () {
+            return is_subclass_of('PlgOsmapJ2commerce', 'Joomla\\CMS\\Plugin\\CMSPlugin');
         });
 
         $this->test('getTree() method exists', function () {
@@ -73,8 +53,6 @@ class PluginClassTest
         });
 
         $this->test('getComponentElement() returns com_j2store (source check)', function () {
-            // Cannot instantiate: Base::__construct() calls admin/include.php ->
-            // PluginHelper::importPlugin() -> Factory::getApplication() (CLI-unsafe).
             $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
             return str_contains($src, "return 'com_j2store'");
         });
