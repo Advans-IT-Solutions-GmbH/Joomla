@@ -44,15 +44,7 @@ class SitemapHttpTest
         echo "Sitemap fetched (" . strlen($xml) . " bytes)\n";
         echo "Response (first 500 chars):\n" . substr($xml, 0, 500) . "\n\n";
 
-        // Debug: show what printNode received (patched in entrypoint)
-        $debugFile = '/tmp/osmap_debug.txt';
-        if (file_exists($debugFile)) {
-            echo "=== printNode debug log ===\n";
-            echo file_get_contents($debugFile);
-            echo "===========================\n\n";
-        } else {
-            echo "=== printNode debug log: (file not found — printNode not called or patch failed) ===\n\n";
-        }
+
 
         $urls = $this->extractUrls($xml);
         echo "URLs found in sitemap: " . count($urls) . "\n";

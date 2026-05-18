@@ -219,16 +219,7 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
       AND m.client_id = 0
     ORDER BY a.title;" 2>/dev/null || true
 
-echo "=== Debug: installed plugin version check ==="
-grep -c "item->path" /var/www/html/plugins/osmap/j2commerce/src/Extension/J2Commerce.php 2>/dev/null \
-    && echo "GOOD: item->path found in installed plugin" \
-    || echo "BAD: item->path NOT found — old plugin installed"
-grep "Uri::root\|item->link\|item->path" /var/www/html/plugins/osmap/j2commerce/src/Extension/J2Commerce.php 2>/dev/null | head -5 || true
 
-echo "=== Debug: installed plugin version check ==="
-grep -c "getTree called" /var/www/html/plugins/osmap/j2commerce/src/Extension/J2Commerce.php 2>/dev/null \
-    && echo "GOOD: debug instrumentation found in installed plugin" \
-    || echo "BAD: debug instrumentation NOT found — old plugin installed"
 
 echo "OK" > /var/www/html/health.txt
 echo "=== Container ready ==="

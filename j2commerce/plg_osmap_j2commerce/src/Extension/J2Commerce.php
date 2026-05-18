@@ -104,11 +104,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     public function getTree(Collector $collector, Item $parent, Registry $params): void
     {
-        file_put_contents('/tmp/osmap_debug.txt',
-            'getTree called: parent->link=' . ($parent->link ?? 'NULL') . ' parent->id=' . ($parent->id ?? 'NULL') . "\n",
-            FILE_APPEND
-        );
-
         parse_str(parse_url($parent->link ?? '', PHP_URL_QUERY) ?? '', $query);
 
         $view     = $query['view'] ?? '';
@@ -198,21 +193,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->bind(':parentId', $parentId, ParameterType::INTEGER)
             ->order($db->quoteName('a.title') . ' ASC');
 
-        try {
-            $items = $db->setQuery($query)->loadObjectList() ?: [];
-        } catch (\Throwable $e) {
-            // Log SQL errors so they appear in the test debug output
-            file_put_contents('/tmp/osmap_debug.txt',
-                'emitHiddenMenuChildren SQL error: ' . $e->getMessage() . "\nSQL: " . $query->__toString() . "\n",
-                FILE_APPEND
-            );
-            return false;
-        }
-
-        file_put_contents('/tmp/osmap_debug.txt',
-            'emitHiddenMenuChildren rows: ' . count($items) . "\n",
-            FILE_APPEND
-        );
+        $items = $db->setQuery($query)->loadObjectList() ?: [];
 
         foreach ($items as $item) {
             $this->printMenuPathNode($collector, $parent, $params, $item);
