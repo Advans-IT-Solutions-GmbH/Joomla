@@ -27,6 +27,8 @@
         <language tag="en-GB">language/en-GB/plg_ajax_joomlaajaxforms.sys.ini</language>
         <language tag="de-DE">language/de-DE/plg_ajax_joomlaajaxforms.ini</language>
         <language tag="de-DE">language/de-DE/plg_ajax_joomlaajaxforms.sys.ini</language>
+        <language tag="de-CH">language/de-CH/plg_ajax_joomlaajaxforms.ini</language>
+        <language tag="de-CH">language/de-CH/plg_ajax_joomlaajaxforms.sys.ini</language>
     </languages>
 
     <config>

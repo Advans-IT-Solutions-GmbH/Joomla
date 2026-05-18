@@ -27,6 +27,8 @@
         <languages folder="administrator/language">
             <language tag="en-GB">en-GB/com_j2commerce_importexport.ini</language>
             <language tag="en-GB">en-GB/com_j2commerce_importexport.sys.ini</language>
+            <language tag="de-DE">de-DE/com_j2commerce_importexport.ini</language>
+            <language tag="de-DE">de-DE/com_j2commerce_importexport.sys.ini</language>
             <language tag="de-CH">de-CH/com_j2commerce_importexport.ini</language>
             <language tag="de-CH">de-CH/com_j2commerce_importexport.sys.ini</language>
             <language tag="fr-FR">fr-FR/com_j2commerce_importexport.ini</language>
