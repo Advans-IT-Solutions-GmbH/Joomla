@@ -104,9 +104,9 @@ class PluginClassTest
             return str_contains($src, 'emitHiddenMenuChildren') && str_contains($src, "published");
         });
 
-        $this->test('J2Store mechanism uses menu item link as URL (printMenuPathNode)', function () {
+        $this->test('J2Store mechanism uses menu item SEF path as URL (printMenuPathNode)', function () {
             $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, 'printMenuPathNode') && str_contains($src, "item->link");
+            return str_contains($src, 'printMenuPathNode') && str_contains($src, "item->path");
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";

@@ -66,33 +66,25 @@ class AutoCleanupTaskTest
         $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
         $this->test('AutoCleanupTask.php exists', file_exists($taskFile));
 
+        // TaskPluginTrait is part of com_scheduler which is not installed in the
+        // test container. Loading the file causes a PHP fatal at compile time
+        // (trait resolution), so we verify the class structure statically instead.
         if (file_exists($taskFile)) {
-            // TaskPluginTrait is part of com_scheduler which may not be installed
-            // in the test container. Suppress the fatal error and mark as skipped.
-            set_error_handler(null);
-            try {
-                @include_once $taskFile;
-            } catch (\Throwable $e) {
-                // Trait not available — class-level tests will be skipped below
-            }
-            restore_error_handler();
-        }
+            $src = file_get_contents($taskFile);
 
-        $classLoaded = class_exists('Advans\\Plugin\\Privacy\\J2Commerce\\Task\\AutoCleanupTask');
+            $this->test(
+                'AutoCleanupTask uses TaskPluginTrait',
+                str_contains($src, 'use TaskPluginTrait')
+            );
 
-        $this->test(
-            'AutoCleanupTask class loadable (or skipped if com_scheduler absent)',
-            true  // file existence already verified above; loading may fail without com_scheduler
-        );
-
-        if ($classLoaded) {
             $this->test(
                 'AutoCleanupTask implements SubscriberInterface',
-                is_a(
-                    'Advans\\Plugin\\Privacy\\J2Commerce\\Task\\AutoCleanupTask',
-                    'Joomla\\Event\\SubscriberInterface',
-                    true
-                )
+                str_contains($src, 'implements SubscriberInterface')
+            );
+
+            $this->test(
+                'AutoCleanupTask defines getSubscribedEvents',
+                str_contains($src, 'getSubscribedEvents')
             );
         }
     }
@@ -125,35 +117,33 @@ class AutoCleanupTaskTest
     {
         echo "\n--- Scheduler Event Advertisement ---\n";
 
-        $fqcn = 'Advans\\Plugin\\Privacy\\J2Commerce\\Task\\AutoCleanupTask';
+        // com_scheduler is not installed in the test container — TaskPluginTrait
+        // causes a PHP fatal at class-load time. Verify event subscriptions via
+        // static source analysis instead of runtime reflection.
+        $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
 
-        if (!class_exists($fqcn)) {
-            $this->test('getSubscribedEvents (skipped — com_scheduler not installed in test container)', true);
+        if (!file_exists($taskFile)) {
+            $this->test('Event subscriptions (skipped — file not found)', true);
             return;
         }
 
-        $events = $fqcn::getSubscribedEvents();
-
-        $this->test(
-            'getSubscribedEvents() returns array',
-            is_array($events)
-        );
+        $src = file_get_contents($taskFile);
 
         $this->test(
             'Subscribes to onTaskOptionsList',
-            isset($events['onTaskOptionsList']),
+            str_contains($src, 'onTaskOptionsList'),
             'Required for Joomla scheduler to discover the task'
         );
 
         $this->test(
             'Subscribes to onExecuteTask',
-            isset($events['onExecuteTask']),
+            str_contains($src, 'onExecuteTask'),
             'Required for Joomla scheduler to execute the task'
         );
 
         $this->test(
             'Subscribes to onContentPrepareForm',
-            isset($events['onContentPrepareForm']),
+            str_contains($src, 'onContentPrepareForm'),
             'Required for task parameter form in scheduler UI'
         );
     }

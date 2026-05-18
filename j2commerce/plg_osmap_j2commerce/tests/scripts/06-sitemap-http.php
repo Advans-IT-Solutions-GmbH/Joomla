@@ -55,19 +55,18 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        // The plugin uses the menu item's link field (com_content&view=article&id=X)
-        // as the URL. OSMap emits these as-is when SEF is disabled.
-        // Fixture: Alpha = article id=9001 (Itemid=9002), Beta = article id=9002 (Itemid=9003).
+        // The plugin uses the menu item's SEF path (m.path) prepended with Uri::root()
+        // to build absolute URLs. Fixture paths: shop/test-product-alpha, shop/test-product-beta.
         $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'Itemid=9002') || str_contains($u, 'id=9001')) return true;
+                if (str_contains($u, 'test-product-alpha')) return true;
             }
             return false;
         });
 
         $this->test('Sitemap contains product Beta URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'Itemid=9003') || str_contains($u, 'id=9002')) return true;
+                if (str_contains($u, 'test-product-beta')) return true;
             }
             return false;
         });
@@ -91,7 +90,7 @@ class SitemapHttpTest
         $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
             $count = 0;
             foreach ($urls as $u) {
-                if (str_contains($u, 'Itemid=9002') || str_contains($u, 'Itemid=9003')) {
+                if (str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
                     $count++;
                 }
             }
@@ -99,7 +98,7 @@ class SitemapHttpTest
         });
 
         $productUrls = array_filter($urls, fn($u) =>
-            str_contains($u, 'Itemid=9002') || str_contains($u, 'Itemid=9003')
+            str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')
         );
 
         // Verify that product URLs in the sitemap are absolute and well-formed.

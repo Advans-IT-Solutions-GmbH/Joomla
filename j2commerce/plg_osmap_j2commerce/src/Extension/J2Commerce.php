@@ -12,6 +12,7 @@ defined('_JEXEC') or die;
 use Alledia\OSMap\Sitemap\Collector;
 use Alledia\OSMap\Sitemap\Item;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
 use Joomla\Event\SubscriberInterface;
@@ -151,7 +152,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $query = $db->getQuery(true)
             ->select([
                 $db->quoteName('m.id'),
-                $db->quoteName('m.link'),
+                $db->quoteName('m.path'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
@@ -287,10 +288,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     // -------------------------------------------------------------------------
 
     /**
-     * Emits a sitemap node using the menu item's link as the URL.
-     * Used for J2Store's published=-2 hidden menu items. The link field
-     * contains a non-SEF URL (e.g. index.php?option=com_content&view=article&id=X)
-     * which OSMap can route to a SEF URL if configured, or use as-is.
+     * Emits a sitemap node using the menu item's SEF path as an absolute URL.
+     * Used for J2Store's published=-2 hidden menu items. The path field contains
+     * the SEF path (e.g. shop/product-alias). We prepend Uri::root() to produce
+     * an absolute URL that OSMap can include in the sitemap without routing.
+     * Using the path avoids Joomla router failures for published=-2 menu items.
      */
     protected function printMenuPathNode(
         Collector $collector,
@@ -298,9 +300,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         Registry $params,
         object $item
     ): void {
-        if (empty($item->link)) {
+        if (empty($item->path)) {
             return;
         }
+
+        // Build absolute URL from SEF path. Uri::root() includes trailing slash.
+        $link = rtrim(Uri::root(), '/') . '/' . ltrim($item->path, '/');
 
         $node = (object) [
             'id'         => $item->id,
@@ -310,7 +315,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'browserNav' => $item->browserNav ?? $parent->browserNav,
             'priority'   => $params->get('priority', '0.8'),
             'changefreq' => $params->get('changefreq', 'weekly'),
-            'link'       => $item->link,
+            'link'       => $link,
             'expandible' => false,
         ];
 
