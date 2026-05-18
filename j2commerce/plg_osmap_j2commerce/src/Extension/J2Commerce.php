@@ -151,7 +151,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $query = $db->getQuery(true)
             ->select([
                 $db->quoteName('m.id'),
-                $db->quoteName('m.path'),
+                $db->quoteName('m.link'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
@@ -287,9 +287,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     // -------------------------------------------------------------------------
 
     /**
-     * Emits a sitemap node using the menu item's SEF path directly as the URL.
-     * Used for J2Store's published=-2 hidden menu items, where the path field
-     * already contains the correct SEF URL (e.g. "shop/product-alias").
+     * Emits a sitemap node using the menu item's link as the URL.
+     * Used for J2Store's published=-2 hidden menu items. The link field
+     * contains a non-SEF URL (e.g. index.php?option=com_content&view=article&id=X)
+     * which OSMap can route to a SEF URL if configured, or use as-is.
      */
     protected function printMenuPathNode(
         Collector $collector,
@@ -297,7 +298,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         Registry $params,
         object $item
     ): void {
-        if (empty($item->path)) {
+        if (empty($item->link)) {
             return;
         }
 
@@ -309,7 +310,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'browserNav' => $item->browserNav ?? $parent->browserNav,
             'priority'   => $params->get('priority', '0.8'),
             'changefreq' => $params->get('changefreq', 'weekly'),
-            'link'       => $item->path,
+            'link'       => $item->link,
             'expandible' => false,
         ];
 

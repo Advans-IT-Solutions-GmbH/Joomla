@@ -55,25 +55,25 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        // The plugin uses the menu item path directly as the link, so OSMap
-        // emits URLs like http://localhost/shop/test-product-alpha.
-        // We match on the product alias which is stable and unique.
+        // The plugin uses the menu item's link field (com_content&view=article&id=X)
+        // as the URL. OSMap emits these as-is when SEF is disabled.
+        // Fixture: Alpha = article id=9001 (Itemid=9002), Beta = article id=9002 (Itemid=9003).
         $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-alpha')) return true;
+                if (str_contains($u, 'Itemid=9002') || str_contains($u, 'id=9001')) return true;
             }
             return false;
         });
 
         $this->test('Sitemap contains product Beta URL', function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-beta')) return true;
+                if (str_contains($u, 'Itemid=9003') || str_contains($u, 'id=9002')) return true;
             }
             return false;
         });
 
         $this->test('Disabled product not in sitemap', function () use ($urls) {
-            // product_source_id=9003 has enabled=0
+            // product_source_id=9003 has enabled=0, its menu item is Itemid=9004 (no fixture)
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-disabled')) return false;
             }
@@ -91,18 +91,15 @@ class SitemapHttpTest
         $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
             $count = 0;
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
+                if (str_contains($u, 'Itemid=9002') || str_contains($u, 'Itemid=9003')) {
                     $count++;
                 }
             }
             return $count >= 2;
         });
 
-        // Verify that every product URL in the sitemap actually resolves to HTTP 200.
-        // This catches broken links — e.g. wrong path, missing .htaccess rewrite, or
-        // a URL that was generated correctly but cannot be served by the web server.
         $productUrls = array_filter($urls, fn($u) =>
-            str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')
+            str_contains($u, 'Itemid=9002') || str_contains($u, 'Itemid=9003')
         );
 
         // Verify that product URLs in the sitemap are absolute and well-formed.
