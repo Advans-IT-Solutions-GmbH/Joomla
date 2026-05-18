@@ -74,32 +74,29 @@ the plugin defaults.
 OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
 or `com_j2commerce`. The plugin tries two mechanisms in order:
 
-### Mechanism 1 — J2Store hidden menu items (published=-2)
+### Mechanism 1 — Standard menu items (primary)
 
-J2Store creates a hidden menu item (`published=-2`) for each product as a child
-of the shop menu item. These items have:
-
-- `link = index.php?option=com_content&view=article&id=<article_id>`
-- `path = shop/<product-alias>` (the SEF URL, already resolved)
-
-The plugin queries `#__menu` for `published=-2` children of the current menu
-item, joins `#__content` and `#__j2store_products` to verify the product is
-enabled, and emits the menu item's `path` directly as the sitemap URL. No URL
-generation is needed — the path is the canonical SEF URL as Joomla stored it.
-
-This is the mechanism used by advans.ch and most J2Store installations.
-
-### Mechanism 2 — J2Commerce 4+ view-based menu items
-
-If no `published=-2` children are found, the plugin falls back to inspecting
-the menu item's `view` parameter:
+The plugin inspects the menu item's `view` parameter and queries the products
+table directly:
 
 - `view=products` — all enabled products in the given category (`catid`), or all products if no `catid`
 - `view=product` — the single product referenced by `id`
 - `view=categories` — all enabled products across all categories
 
 Product URLs are built as non-SEF `index.php?option=...` URLs; OSMap applies
-SEF routing if configured.
+SEF routing if configured. This works on any standard J2Store or J2Commerce
+installation.
+
+### Mechanism 2 — Hidden menu items (fallback, site-specific)
+
+Some installations manually create hidden `com_content` menu items
+(`published=-2`) as children of the shop menu item, one per product. These
+items carry the SEF path directly (e.g. `shop/product-alias`).
+
+If the shop menu item has no `view` parameter, the plugin falls back to
+querying `#__menu` for `published=-2` children, joins `#__content` and the
+products table to verify each product is enabled, and emits the menu item's
+`path` directly as the sitemap URL.
 
 ## .htaccess Requirements
 
@@ -194,20 +191,17 @@ docker compose down -v
   configuration (**Components → OSMap → Sitemaps → edit → Menus tab**)
 - Check that the product has `enabled=1` in J2Commerce/J2Store
   (**Components → J2Commerce → Products**)
-- **J2Store:** Verify that each product has a hidden menu item (`published=-2`)
-  as a child of the shop menu item in `#__menu`. J2Store creates these
-  automatically when a product is saved.
-- **J2Commerce 4+:** Verify that your shop menu item uses `view=products`,
-  `view=product`, or `view=categories`.
+- Verify that your shop menu item uses `view=products`, `view=product`, or
+  `view=categories`. This is the standard setup and works on any installation.
 
 **Only some products appear**
 
 Products with `enabled=0` are intentionally excluded. Check the product status
 in J2Commerce/J2Store.
 
-For J2Store: a product also requires a `published=-2` menu item. If a product
-was added without saving the menu item (e.g. via import), run J2Store's
-"Rebuild Menu Items" function.
+If you use manually created `published=-2` hidden menu items (site-specific
+setup): verify that each product has such an item as a child of the shop menu
+item in `#__menu`.
 
 **SEF URLs are not resolved correctly**
 
@@ -230,11 +224,11 @@ sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInsta
 Verify that:
 1. Joomla's SEF is enabled and `.htaccess` routes non-file requests to `index.php`
 2. `/component/j2store` is not blocked in `.htaccess` (J2Store needs it for cart/checkout)
-3. **J2Store:** The `path` field of the `published=-2` menu item matches the
-   expected SEF URL. If paths are wrong, rebuild the menu tree in Joomla
+3. The shop menu item uses `view=products`, `view=product`, or
+   `view=categories` and the product has `enabled=1`.
+4. If using manually created `published=-2` hidden menu items: verify the
+   `path` field is correct. If paths are stale, rebuild the menu tree
    (**System → Maintenance → Rebuild**).
-4. **J2Commerce 4+:** The shop menu item uses `view=products`, `view=product`,
-   or `view=categories` and the product has `enabled=1`.
 
 See the [.htaccess Requirements](#htaccess-requirements) section above.
 

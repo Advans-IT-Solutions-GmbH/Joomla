@@ -25,19 +25,17 @@ use Joomla\Registry\Registry;
  *
  * Two sitemap mechanisms are supported:
  *
- * 1. J2Store (published=-2 hidden menu items)
- *    J2Store creates hidden menu items (published=-2) as children of the shop
- *    menu item for each product. These items have:
- *      link = index.php?option=com_content&view=article&id=<article_id>
- *      path = shop/<product-alias>  (the SEF URL)
- *    getTree() queries #__menu for published=-2 children, joins #__content and
- *    #__j2store_products to verify the product is enabled, and emits the menu
- *    item's path directly as the sitemap URL.
+ * 1. Standard menu items (view=products / view=product / view=categories)
+ *    The primary mechanism. getTree() inspects the menu item's view parameter
+ *    and queries #__content joined with the products table to find enabled
+ *    products. Works on any standard J2Store or J2Commerce installation.
  *
- * 2. J2Commerce 4+ (view=products / view=product / view=categories)
- *    J2Commerce uses standard menu items. getTree() falls back to view-based
- *    queries against #__content + #__j2commerce_products when no published=-2
- *    children are found. Subclass J2CommerceNew handles com_j2commerce.
+ * 2. Hidden menu items (published=-2, site-specific)
+ *    Fallback for installations that manually create hidden com_content menu
+ *    items as children of the shop menu item, one per product. These items
+ *    carry the SEF path directly (e.g. shop/<product-alias>). If no view
+ *    parameter is found on the parent item, getTree() queries #__menu for
+ *    published=-2 children and uses their path field as the sitemap URL.
  *
  * Supported components: com_j2store (J2Store) and com_j2commerce (J2Commerce).
  * The plugin registers itself for com_j2store by default. A second subclass
@@ -78,18 +76,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     /**
      * Called by OSMap for each menu item whose option matches getComponentElement().
      *
-     * Tries the J2Store mechanism first (published=-2 hidden children). If no
-     * such children exist, falls back to view-based queries for J2Commerce 4+.
+     * Primary: view-based queries for standard J2Store/J2Commerce menu items.
+     * Fallback: published=-2 hidden children for installations that manually
+     * create hidden com_content menu items per product (site-specific pattern).
      */
     public function getTree(Collector $collector, Item $parent, Registry $params): void
     {
-        $parentId = (int) ($parent->id ?? 0);
-
-        if ($parentId > 0 && $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId)) {
-            return;
-        }
-
-        // Fallback: J2Commerce 4+ view-based menu items
         parse_str(parse_url($parent->link ?? '', PHP_URL_QUERY) ?? '', $query);
 
         $view  = $query['view'] ?? '';
@@ -101,15 +93,22 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 if ($id) {
                     $this->emitSingleProduct($collector, $parent, $params, $id);
                 }
-                break;
+                return;
 
             case 'products':
                 $this->emitProductsForCategory($collector, $parent, $params, $catid);
-                break;
+                return;
 
             case 'categories':
                 $this->emitAllProducts($collector, $parent, $params);
-                break;
+                return;
+        }
+
+        // Fallback: look for manually created published=-2 hidden menu children.
+        $parentId = (int) ($parent->id ?? 0);
+
+        if ($parentId > 0) {
+            $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId);
         }
     }
 
