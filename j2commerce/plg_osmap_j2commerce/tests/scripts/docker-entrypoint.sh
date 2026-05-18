@@ -219,6 +219,9 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
       AND m.client_id = 0
     ORDER BY a.title;" 2>/dev/null || true
 
+echo "=== Debug: OSMap sitemap XML output ==="
+curl -s "http://localhost/index.php?option=com_osmap&view=xml&id=1&format=xml" 2>/dev/null | head -30 || true
+
 echo "OK" > /var/www/html/health.txt
 echo "=== Container ready ==="
 
