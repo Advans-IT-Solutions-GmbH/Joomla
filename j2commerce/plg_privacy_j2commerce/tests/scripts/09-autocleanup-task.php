@@ -245,21 +245,28 @@ class AutoCleanupTaskTest
             ->bind(':cutoff', $cutoff);
 
         // Add lifetime exemption if orderitems table exists
+        // Check that both the table and the product_source_id column exist before
+        // building the exemption subquery — the column is absent in some schema variants.
+        $orderItemColumns = [];
         try {
-            $this->db->getTableColumns('#__j2store_orderitems');
-            $query->where('NOT EXISTS (
+            $orderItemColumns = $this->db->getTableColumns('#__j2store_orderitems');
+        } catch (\Exception $e) {
+            // table not available
+        }
+
+        if (empty($orderItemColumns) || !isset($orderItemColumns['product_source_id'])) {
+            $this->test('Lifetime exemption query (skipped — product_source_id column unavailable)', true);
+            $this->cleanupTestData([$userId]);
+            return;
+        }
+
+        $query->where('NOT EXISTS (
                 SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orderitems', 'oi') . '
                 JOIN ' . $this->db->quoteName('#__j2store_orders', 'ol') . '
                   ON ' . $this->db->quoteName('ol.j2store_order_id') . ' = ' . $this->db->quoteName('oi.j2store_order_id') . '
                 WHERE ' . $this->db->quoteName('ol.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('oi.product_source_id') . ' IN (' . implode(',', $lifetimeSourceIds) . ')
             )');
-        } catch (\Exception $e) {
-            // orderitems not available in this schema variant — skip exemption check
-            $this->test('Lifetime exemption query (skipped — orderitems unavailable)', true);
-            $this->cleanupTestData([$userId]);
-            return;
-        }
 
         $this->db->setQuery($query);
         $expiredUserIds = array_map('intval', $this->db->loadColumn() ?: []);
