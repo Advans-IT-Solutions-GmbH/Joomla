@@ -17,12 +17,19 @@ if (empty($productIds)) {
     return;
 }
 
-// Load products
+// Load products — cast all IDs to int to prevent injection
+$productIds = array_filter(array_map('intval', $productIds));
+
+if (empty($productIds)) {
+    echo '<p>' . Text::_('PLG_J2STORE_PRODUCTCOMPARE_NO_PRODUCTS') . '</p>';
+    return;
+}
+
 $db = Factory::getContainer()->get('DatabaseDriver');
 $query = $db->getQuery(true)
     ->select('*')
     ->from($db->quoteName('#__j2store_products'))
-    ->where($db->quoteName('j2store_product_id') . ' IN (' . implode(',', array_map('intval', $productIds)) . ')');
+    ->whereIn($db->quoteName('j2store_product_id'), $productIds);
 
 $db->setQuery($query);
 $products = $db->loadObjectList();
@@ -53,9 +60,9 @@ if (empty($products)) {
                     <?php foreach ($products as $product): ?>
                         <th>
                             <div class="product-header">
-                                <h4><?php echo $product->product_source_id; ?></h4>
-                                <button type="button" class="btn btn-sm btn-danger" 
-                                        onclick="J2StoreProductCompare.removeProduct(<?php echo $product->j2store_product_id; ?>); location.reload();">
+                                <h4><?php echo (int) $product->product_source_id; ?></h4>
+                                <button type="button" class="btn btn-sm btn-danger"
+                                        onclick="J2CommerceProductCompare.removeProduct(<?php echo (int) $product->j2store_product_id; ?>); location.reload();">
                                     <?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_REMOVE'); ?>
                                 </button>
                             </div>
@@ -67,19 +74,19 @@ if (empty($products)) {
                 <tr>
                     <td><strong><?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_PRODUCT_ID'); ?></strong></td>
                     <?php foreach ($products as $product): ?>
-                        <td><?php echo $product->j2store_product_id; ?></td>
+                        <td><?php echo (int) $product->j2store_product_id; ?></td>
                     <?php endforeach; ?>
                 </tr>
                 <tr>
                     <td><strong><?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_PRODUCT_TYPE'); ?></strong></td>
                     <?php foreach ($products as $product): ?>
-                        <td><?php echo $product->product_type; ?></td>
+                        <td><?php echo htmlspecialchars((string) ($product->product_type ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <?php endforeach; ?>
                 </tr>
                 <tr>
                     <td><strong><?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_VISIBILITY'); ?></strong></td>
                     <?php foreach ($products as $product): ?>
-                        <td><?php echo $product->visibility; ?></td>
+                        <td><?php echo (int) $product->visibility; ?></td>
                     <?php endforeach; ?>
                 </tr>
                 <tr>
@@ -91,7 +98,7 @@ if (empty($products)) {
                 <tr>
                     <td><strong><?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_CREATED'); ?></strong></td>
                     <?php foreach ($products as $product): ?>
-                        <td><?php echo $product->created_on; ?></td>
+                        <td><?php echo htmlspecialchars((string) ($product->created_on ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <?php endforeach; ?>
                 </tr>
             </tbody>
