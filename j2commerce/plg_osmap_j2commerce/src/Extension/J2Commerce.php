@@ -160,9 +160,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->join(
                 'INNER',
                 $db->quoteName('#__content', 'a')
-                . ' ON (m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id, ' . $db->quote('&%') . ')'
-                . '  OR m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id))'
-                . ' AND m.link LIKE ' . $db->quote('%com_content%view=article%')
+                . ' ON ((m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id, ' . $db->quote('&%') . ')'
+                . '   OR m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id))'
+                . '  AND m.link LIKE ' . $db->quote('%com_content%view=article%') . ')'
             )
             ->join(
                 'INNER',
