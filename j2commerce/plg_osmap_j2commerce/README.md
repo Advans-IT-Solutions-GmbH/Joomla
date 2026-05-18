@@ -127,7 +127,7 @@ plg_osmap_j2commerce/
 ├── README.md
 ├── VERSION
 ├── LICENSE.txt
-├── plg_osmap_j2commerce.xml    # Joomla manifest (group="osmap", element="j2commerce")
+├── j2commerce.xml              # Joomla manifest (group="osmap", element="j2commerce")
 ├── j2commerce.php              # OSMap entry point + class_alias bridge
 ├── build.sh
 ├── services/provider.php       # PSR-4 registration

@@ -35,7 +35,7 @@ jobs:
         id: version
         run: |
           TAG_PREFIX="osmap-j2commerce-v"
-          XML_FILE="j2commerce/plg_osmap_j2commerce/plg_osmap_j2commerce.xml"
+          XML_FILE="j2commerce/plg_osmap_j2commerce/j2commerce.xml"
           EXT_PATH="j2commerce/plg_osmap_j2commerce/"
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
@@ -95,7 +95,7 @@ jobs:
           sed -i \
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            plg_osmap_j2commerce.xml
+            j2commerce.xml
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'

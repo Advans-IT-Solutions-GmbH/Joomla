@@ -44,12 +44,12 @@ class ConfigurationTest
         });
 
         $this->test('XML manifest has correct plugin group', function () {
-            $xml = simplexml_load_file(JPATH_PLUGINS . '/osmap/j2commerce/plg_osmap_j2commerce.xml');
+            $xml = simplexml_load_file(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.xml');
             return (string) $xml['group'] === 'osmap';
         });
 
         $this->test('XML manifest has correct element', function () {
-            $xml = simplexml_load_file(JPATH_PLUGINS . '/osmap/j2commerce/plg_osmap_j2commerce.xml');
+            $xml = simplexml_load_file(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.xml');
             return (string) $xml->element === 'j2commerce';
         });
 
