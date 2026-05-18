@@ -297,7 +297,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         if ($result === true) {
             $redirect = '';
             if ($returnUrl) {
-                $redirect = base64_decode($returnUrl);
+                $decoded = base64_decode($returnUrl);
+                if (!empty($decoded) && Uri::isInternal($decoded)) {
+                    $redirect = $decoded;
+                }
             }
             if (empty($redirect)) {
                 $redirect = Uri::base();
@@ -536,6 +539,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleRemoveCartItem(): string
     {
+        $user = $this->getApplication()->getIdentity();
+        if (!$user || $user->guest) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
+        }
+
         $input = $this->getApplication()->getInput();
         $cartitemId = $input->getInt('cartitem_id', 0);
 
@@ -551,12 +559,15 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 require_once JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php';
             }
 
-            // Remove cart item via direct DB query (compatible with all J2Store/J2Commerce versions)
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            // Remove cart item — restrict to the current user to prevent IDOR
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $userId = $user->id;
+            $query  = $db->getQuery(true)
                 ->delete($db->quoteName('#__j2store_cartitems'))
                 ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
-                ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = :userId')
+                ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER)
+                ->bind(':userId', $userId, ParameterType::INTEGER);
             $db->setQuery($query);
             $db->execute();
 
@@ -630,8 +641,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             // Joomla profile form sends jform[name], jform[email1], jform[password1], jform[password2]
             $jform = $input->post->get('jform', [], 'array');
 
-            // Debug: log what we received
-            Log::add('Profile save jform: ' . json_encode(array_keys($jform)), Log::DEBUG, 'plg_ajax_joomlaajaxforms');
+
 
             $name  = trim($jform['name'] ?? $input->post->getString('name', ''));
             $email = trim($jform['email1'] ?? $jform['email'] ?? $input->post->getString('email', ''));
@@ -687,7 +697,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             ]);
         } catch (\Exception $e) {
             Log::add('Profile save exception: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
-            return $this->jsonError($e->getMessage());
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
         }
     }
 

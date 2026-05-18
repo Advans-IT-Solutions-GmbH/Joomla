@@ -31,8 +31,7 @@ plg_*/
 ├── src/
 │   └── Extension/           # Main plugin class
 ├── language/
-│   ├── de-CH/
-│   ├── de-DE/               # Identical to de-CH
+│   ├── de-DE/               # Swiss High German (no ß)
 │   ├── en-GB/
 │   └── fr-FR/
 ├── updates/
