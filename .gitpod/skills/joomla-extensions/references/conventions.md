@@ -26,8 +26,8 @@ Scope is the plugin name: `privacy`, `import-export`, `product-compare`, `ajax-f
 
 ## Language Files
 
-- All four locales required: `de-CH`, `de-DE`, `en-GB`, `fr-FR`
-- `de-DE` is always identical to `de-CH`
+- Three locales required: `de-DE`, `en-GB`, `fr-FR`
+- `de-DE` uses Swiss High German (no `ß`, use `ss` instead)
 - README is always in English
 - Example output in README uses English (not German)
 

@@ -482,7 +482,7 @@ Successful display of the retention notification confirms correct implementation
 - **Flexible Retention Frameworks:** Configurable retention periods (1-30 years) supporting multiple jurisdictions
 - **Multi-Jurisdictional Support:** Configurable legal basis documentation for international operations
 - **Automated Compliance Processing:** Scheduled task execution for expired data handling
-- **Internationalization:** Multi-language interface support (German-CH, German-DE, English-GB, French-FR)
+- **Internationalization:** Multi-language interface support (German de-DE, English en-GB, French fr-FR)
 - **Platform Integration:** Optional Joomla core user data inclusion in privacy exports
 
 ### Limitations
