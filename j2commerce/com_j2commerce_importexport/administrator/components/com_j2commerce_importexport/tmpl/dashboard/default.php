@@ -126,7 +126,7 @@ HTMLHelper::_('bootstrap.collapse');
                                                 <label for="opt-menutype" class="form-label"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_MENUTYPE'); ?></label>
                                                 <select name="options[default_menutype]" id="opt-menutype" class="form-select form-select-sm">
                                                     <?php foreach ($this->menutypes as $mt): ?>
-                                                    <option value="<?php echo $mt->menutype; ?>"><?php echo $mt->title; ?></option>
+                                                    <option value="<?php echo $this->escape($mt->menutype); ?>"><?php echo $this->escape($mt->title); ?></option>
                                                     <?php endforeach; ?>
                                                 </select>
                                             </div>
@@ -135,7 +135,7 @@ HTMLHelper::_('bootstrap.collapse');
                                                 <label for="opt-menu-access" class="form-label"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_MENU_ACCESS'); ?></label>
                                                 <select name="options[menu_access]" id="opt-menu-access" class="form-select form-select-sm">
                                                     <?php foreach ($this->viewlevels as $vl): ?>
-                                                    <option value="<?php echo $vl->id; ?>"><?php echo $vl->title; ?></option>
+                                                    <option value="<?php echo (int) $vl->id; ?>"><?php echo $this->escape($vl->title); ?></option>
                                                     <?php endforeach; ?>
                                                 </select>
                                             </div>
@@ -235,6 +235,15 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(error => alert('Error: ' + error.message));
     });
     
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     function displayPreview(data) {
         if (!data || !data.rows || !data.rows.length) {
             previewContent.innerHTML = '<p class="text-muted"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_NO_DATA'); ?></p>';
@@ -243,24 +252,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
         let html = '<table class="table table-striped table-sm"><thead><tr>';
         data.headers.forEach(header => {
-            html += '<th>' + header + '</th>';
+            html += '<th>' + escapeHtml(header) + '</th>';
         });
         html += '</tr></thead><tbody>';
-        
+
         data.rows.slice(0, 5).forEach(row => {
             html += '<tr>';
             data.headers.forEach(header => {
                 let val = row[header] || '';
                 if (typeof val === 'object') val = JSON.stringify(val).substring(0, 50) + '...';
                 if (typeof val === 'string' && val.length > 50) val = val.substring(0, 50) + '...';
-                html += '<td>' + val + '</td>';
+                html += '<td>' + escapeHtml(val) + '</td>';
             });
             html += '</tr>';
         });
-        
+
         html += '</tbody></table>';
-        html += '<p class="text-muted"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_TOTAL_ROWS'); ?>: ' + data.total + '</p>';
-        
+        html += '<p class="text-muted"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_TOTAL_ROWS'); ?>: ' + escapeHtml(String(data.total)) + '</p>';
+
         previewContent.innerHTML = html;
     }
     

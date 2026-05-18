@@ -18,9 +18,18 @@ use Joomla\CMS\Language\Text;
 
 class ImportController extends BaseController
 {
+    private function checkAccess(): void
+    {
+        $user = Factory::getApplication()->getIdentity();
+        if (!$user->authorise('core.admin', 'com_j2commerce_importexport')) {
+            throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+    }
+
     public function upload()
     {
         Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        $this->checkAccess();
         
         $app = Factory::getApplication();
         $input = $app->input;
@@ -43,6 +52,13 @@ class ImportController extends BaseController
             'application/json',
         ];
 
+        // Enforce 10 MB upload limit
+        $maxBytes = 10 * 1024 * 1024;
+        if (($file['size'] ?? 0) > $maxBytes) {
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_TOO_LARGE')], '', true);
+            $app->close();
+        }
+
         $originalName  = $file['name'] ?? '';
         $fileExtension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
         $detectedMime  = mime_content_type($file['tmp_name']);
@@ -53,7 +69,8 @@ class ImportController extends BaseController
         }
 
         $session = $app->getSession();
-        $tmpPath = JPATH_ROOT . '/tmp/j2commerce_import_' . uniqid() . '_' . basename($originalName);
+        // Use cryptographically random token instead of predictable uniqid()
+        $tmpPath = JPATH_ROOT . '/tmp/j2commerce_import_' . bin2hex(random_bytes(16)) . '.' . $fileExtension;
         
         if (move_uploaded_file($file['tmp_name'], $tmpPath)) {
             $session->set('import_file', $tmpPath, 'j2commerce_import');
@@ -68,6 +85,7 @@ class ImportController extends BaseController
     public function preview()
     {
         Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        $this->checkAccess();
         
         $app = Factory::getApplication();
         $session = $app->getSession();
@@ -82,10 +100,11 @@ class ImportController extends BaseController
         try {
             $model = $this->getModel('Import', 'Administrator');
             $preview = $model->previewFile($filePath);
-            
+
             echo new JsonResponse(['success' => true, 'data' => $preview]);
         } catch (\Exception $e) {
-            echo new JsonResponse(['error' => $e->getMessage()], '', true);
+            \Joomla\CMS\Log\Log::add('Import preview error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_PREVIEW_FAILED')], '', true);
         }
 
         $app->close();
@@ -94,6 +113,7 @@ class ImportController extends BaseController
     public function process()
     {
         Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        $this->checkAccess();
         
         $app = Factory::getApplication();
         $session = $app->getSession();
@@ -123,7 +143,8 @@ class ImportController extends BaseController
                 'errors' => $result['errors']
             ]);
         } catch (\Exception $e) {
-            echo new JsonResponse(['error' => $e->getMessage()], '', true);
+            \Joomla\CMS\Log\Log::add('Import process error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')], '', true);
         }
 
         $app->close();
