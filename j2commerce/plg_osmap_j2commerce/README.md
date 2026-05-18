@@ -11,18 +11,16 @@ Adds all enabled J2Commerce products to the OSMap sitemap automatically.
 ## Description
 
 OSMap does not index J2Commerce product pages out of the box. J2Commerce uses
-`published=-2` menu items for SEF URL generation — a status that OSMap's
+standard `view=products`, `view=product`, and `view=categories` menu items — which OSMap's
 built-in Joomla plugin skips by design.
 
-This plugin bridges the gap: it registers with OSMap for `com_j2store` menu
+This plugin bridges the gap: it registers with OSMap for `com_j2store` and `com_j2commerce` menu
 items (the shop overview) and emits one sitemap node per enabled product, using
 the same routing mechanism as J2Commerce itself. The result is correct SEF URLs
 (`/de/shop/product-alias`) in the sitemap without any manual maintenance.
 
 Products with `enabled=0` in J2Commerce are excluded automatically. New or
-re-enabled products are picked up on the next sitemap request. Each product
-must have a `published=-2` child menu item under the shop menu item —
-J2Commerce creates these automatically when a product is saved.
+re-enabled products are picked up on the next sitemap request.
 
 ## Features
 
@@ -68,15 +66,17 @@ the plugin defaults.
 
 ## How It Works
 
-OSMap calls `getTree()` for every menu item belonging to `com_j2store`. The
-plugin queries all `published=-2` child menu items of that shop item — these
-are the hidden routing entries J2Commerce creates automatically for each
-product. For each entry, the plugin checks that the corresponding J2Commerce
-product exists and has `enabled=1`, then emits a sitemap node.
+OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
+or `com_j2commerce`. The plugin inspects the menu item's `view` parameter and
+queries the products table accordingly:
 
-The sitemap node uses the `path` of the `published=-2` menu item directly as
-the URL (e.g. `/shop/product-alias`). Joomla's SEF router converts this to a
-fully qualified URL (`https://example.com/de/shop/product-alias`).
+- `view=products` — emits all enabled products in the given category (`catid`), or all products if no `catid` is set
+- `view=product` — emits the single product referenced by `id`
+- `view=categories` — emits all enabled products across all categories
+
+Product URLs are built via `Route::_()` so language prefixes, Itemid resolution
+and SEF rules are applied consistently with how J2Store/J2Commerce itself builds
+product URLs (e.g. `/de/shop/product-alias`).
 
 **This plugin requires J2Commerce-based routing.** Product pages must be
 accessible via the shop SEF URL (`/de/shop/product-alias`). Direct
@@ -176,8 +176,7 @@ docker compose down -v
   configuration (**Components → OSMap → Sitemaps → edit → Menus tab**)
 - Check that the product has `enabled=1` in J2Commerce
   (**Components → J2Commerce → Products**)
-- Verify that `published=-2` child menu items exist under the shop menu item
-  (**System → Menus → your menu**, enable "Show hidden items")
+- Verify that your shop menu item uses `view=products`, `view=product`, or `view=categories`
 
 **Only some products appear**
 
@@ -205,7 +204,7 @@ sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInsta
 Verify that:
 1. Joomla's SEF is enabled and `.htaccess` routes non-file requests to `index.php`
 2. `/component/j2store` is not blocked in `.htaccess` (J2Commerce needs it for cart/checkout)
-3. The shop menu item is published and the product has `enabled=1` in J2Commerce
+3. The shop menu item uses `view=products`, `view=product`, or `view=categories` and the product has `enabled=1` in J2Commerce
 
 See the [.htaccess Requirements](#htaccess-requirements) section above.
 
