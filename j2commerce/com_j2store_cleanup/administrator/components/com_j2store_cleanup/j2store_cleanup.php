@@ -235,9 +235,9 @@ if ($task === 'cleanup' && Session::checkToken()) {
     
     // Get extension details for proper uninstall
     $query = $db->getQuery(true)
-        ->select('extension_id, type, element, folder, client_id')
-        ->from('#__extensions')
-        ->where('extension_id IN (' . implode(',', $cids) . ')');
+        ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id']))
+        ->from($db->quoteName('#__extensions'))
+        ->whereIn($db->quoteName('extension_id'), $cids);
     $db->setQuery($query);
     $extensionsToRemove = $db->loadObjectList();
     
@@ -250,9 +250,11 @@ if ($task === 'cleanup' && Session::checkToken()) {
                 $successCount++;
             } else {
                 // Fallback: direct DB delete if uninstall fails
+                $extId       = (int) $ext->extension_id;
                 $deleteQuery = $db->getQuery(true)
-                    ->delete('#__extensions')
-                    ->where('extension_id = ' . (int)$ext->extension_id);
+                    ->delete($db->quoteName('#__extensions'))
+                    ->where($db->quoteName('extension_id') . ' = :extId')
+                    ->bind(':extId', $extId, \Joomla\Database\ParameterType::INTEGER);
                 $db->setQuery($deleteQuery);
                 $db->execute();
                 $warningCount++;
