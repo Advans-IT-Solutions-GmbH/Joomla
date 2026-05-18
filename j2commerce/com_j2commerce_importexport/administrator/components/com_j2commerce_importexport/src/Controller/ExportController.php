@@ -12,6 +12,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Response\JsonResponse;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Language\Text;
@@ -19,6 +20,14 @@ use Joomla\CMS\Uri\Uri;
 
 class ExportController extends BaseController
 {
+    private function checkAccess(): void
+    {
+        $user = Factory::getApplication()->getIdentity();
+        if (!$user->authorise('core.admin', 'com_j2commerce_importexport')) {
+            throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+    }
+
     /**
      * Field descriptions for export documentation
      */
@@ -82,20 +91,29 @@ class ExportController extends BaseController
     public function export()
     {
         Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
-        
+        $this->checkAccess();
+
         $app = Factory::getApplication();
         $input = $app->input;
 
-        $type = $input->get('type', 'products', 'string');
-        $format = $input->get('format', 'csv', 'string');
-        $includeHelp = $input->get('include_help', 1, 'int');
+        $allowedTypes   = ['products_full', 'products', 'categories', 'variants', 'prices'];
+        $allowedFormats = ['csv', 'xml', 'json'];
+        $type           = $input->get('type', 'products', 'string');
+        $format         = $input->get('format', 'csv', 'string');
+        $includeHelp    = $input->get('include_help', 1, 'int');
+
+        if (!in_array($type, $allowedTypes, true)) {
+            $type = 'products';
+        }
+        if (!in_array($format, $allowedFormats, true)) {
+            $format = 'csv';
+        }
 
         try {
-            $model = $this->getModel('Export', 'Administrator');
-            $data = $model->exportData($type);
-            
+            $model    = $this->getModel('Export', 'Administrator');
+            $data     = $model->exportData($type);
             $filename = $type . '_' . date('Y-m-d_H-i-s') . '.' . $format;
-            
+
             switch ($format) {
                 case 'csv':
                     $this->exportCSV($data, $filename, $includeHelp);
@@ -108,7 +126,8 @@ class ExportController extends BaseController
                     break;
             }
         } catch (\Exception $e) {
-            echo new JsonResponse(['error' => $e->getMessage()], '', true);
+            Log::add('Export error: ' . $e->getMessage(), Log::ERROR, 'com_j2commerce_importexport');
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_EXPORT_FAILED')], '', true);
         }
 
         $app->close();
