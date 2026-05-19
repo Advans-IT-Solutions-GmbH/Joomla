@@ -37,7 +37,7 @@ class ImportController extends BaseController
         $file = $input->files->get('import_file');
 
         if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
-            echo new JsonResponse(['error' => 'File upload failed'], '', true);
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED')], '', true);
             $app->close();
         }
 
@@ -76,7 +76,7 @@ class ImportController extends BaseController
             $session->set('import_file', $tmpPath, 'j2commerce_import');
             echo new JsonResponse(['success' => true, 'file' => basename($tmpPath)]);
         } else {
-            echo new JsonResponse(['error' => 'Failed to save file'], '', true);
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_SAVE_FAILED')], '', true);
         }
 
         $app->close();
@@ -93,7 +93,7 @@ class ImportController extends BaseController
         $filePath = $session->get('import_file', '', 'j2commerce_import');
 
         if (!file_exists($filePath)) {
-            echo new JsonResponse(['error' => 'File not found'], '', true);
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')], '', true);
             $app->close();
         }
 
@@ -124,7 +124,7 @@ class ImportController extends BaseController
         $type = $input->get('type', 'products', 'string');
 
         if (!file_exists($filePath)) {
-            echo new JsonResponse(['error' => 'File not found'], '', true);
+            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')], '', true);
             $app->close();
         }
 

@@ -223,7 +223,7 @@ if ($task === 'cleanup' && Session::checkToken()) {
     $cids = array_filter($cids); // Remove zeros
     
     if (empty($cids)) {
-        $app->enqueueMessage('Please select at least one extension to remove.', 'warning');
+        $app->enqueueMessage(Text::_('COM_J2STORE_CLEANUP_MSG_SELECT_ONE'), 'warning');
         $app->redirect('index.php?option=com_j2store_cleanup');
         return;
     }
@@ -267,13 +267,13 @@ if ($task === 'cleanup' && Session::checkToken()) {
     }
     
     if ($successCount > 0) {
-        $app->enqueueMessage('Successfully removed ' . $successCount . ' extension(s).', 'success');
+        $app->enqueueMessage(sprintf(Text::_('COM_J2STORE_CLEANUP_MSG_REMOVED_SUCCESS'), $successCount), 'success');
     }
     if ($warningCount > 0) {
-        $app->enqueueMessage('Partially removed ' . $warningCount . ' extension(s): ' . implode(', ', array_slice($messages, 0, $warningCount)), 'warning');
+        $app->enqueueMessage(sprintf(Text::_('COM_J2STORE_CLEANUP_MSG_REMOVED_WARNING'), $warningCount, implode(', ', array_slice($messages, 0, $warningCount))), 'warning');
     }
     if ($errorCount > 0) {
-        $app->enqueueMessage('Failed to remove ' . $errorCount . ' extension(s): ' . implode(', ', array_slice($messages, $warningCount)), 'error');
+        $app->enqueueMessage(sprintf(Text::_('COM_J2STORE_CLEANUP_MSG_REMOVED_ERROR'), $errorCount, implode(', ', array_slice($messages, $warningCount))), 'error');
     }
     
     $app->redirect('index.php?option=com_j2store_cleanup');

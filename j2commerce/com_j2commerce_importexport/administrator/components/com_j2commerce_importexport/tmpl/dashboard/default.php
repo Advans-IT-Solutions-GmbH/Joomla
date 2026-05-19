@@ -229,10 +229,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 importPreview.style.display = 'block';
                 displayPreview(data.preview);
             } else {
-                alert(data.message || 'Upload failed');
+                alert(data.message || '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED'); ?>');
             }
         })
-        .catch(error => alert('Error: ' + error.message));
+        .catch(error => alert('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED'); ?>: ' + error.message));
     });
     
     function escapeHtml(str) {
@@ -293,10 +293,10 @@ document.addEventListener('DOMContentLoaded', function() {
                       '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_FAILED'); ?>: ' + data.failed);
                 location.reload();
             } else {
-                alert(data.message || 'Import failed');
+                alert(data.message || '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'); ?>');
             }
         })
-        .catch(error => alert('Error: ' + error.message));
+        .catch(error => alert('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'); ?>: ' + error.message));
     });
 });
 </script>
