@@ -1,0 +1,18 @@
+name: Collect Results
+
+# Runs on every PR to main, even when no extension tests are triggered.
+# Required as a branch protection status check so that PRs touching only
+# non-extension files (docs, CI config, etc.) are not blocked indefinitely.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  collect-results:
+    name: Collect Results
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: No extension tests triggered
+        run: echo "No extension tests required for this change."

@@ -163,14 +163,24 @@ Only users with write access (collaborators) can approve or request changes on p
 **Location:** Settings → Branches  
 **Documentation:** https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
 
-- Require a pull request before merging (1 approval required)
-- Dismiss stale approvals when new commits are pushed
-- Require status checks to pass: `Collect Results`
-- Require branches to be up to date before merging
-- Require conversation resolution before merging
-- Require signed commits — all commits must be GPG-signed
-- Do not allow bypassing the above settings (applies to admins)
-- Force pushes and deletions disabled
+**Enabled rules:**
+- ✅ Require a pull request before merging
+- ✅ Dismiss stale pull request approvals when new commits are pushed
+- ✅ Require status checks to pass before merging — required check: `Collect Results`
+- ✅ Require branches to be up to date before merging
+- ✅ Require conversation resolution before merging
+- ✅ Require signed commits
+- ✅ Require linear history
+- ✅ Do not allow bypassing the above settings (applies to admins)
+
+**Disabled rules:**
+- ☐ Require approvals
+- ☐ Require review from Code Owners
+- ☐ Require approval of the most recent reviewable push
+- ☐ Require deployments to succeed before merging
+- ☐ Lock branch
+- ☐ Allow force pushes
+- ☐ Allow deletions
 
 **GPG signing setup (dev environment):**
 A GPG key is configured in this Gitpod environment (`BBB1295FE1391E99`, `pascal.raphael@advans.ch`).
