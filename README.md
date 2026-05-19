@@ -182,16 +182,7 @@ Only users with write access (collaborators) can approve or request changes on p
 - ☐ Allow deletions
 - ☐ Do not allow bypassing the above settings — disabled so that `github-actions[bot]` can push release commits directly to `main`
 
-**GPG signing setup (dev environment):**
-A GPG key is configured in this Gitpod environment (`BBB1295FE1391E99`, `pascal.raphael@advans.ch`).
-The corresponding public key is registered on GitHub under Settings → SSH and GPG keys.
-Git is configured to sign all commits automatically (`commit.gpgsign=true`).
-If the environment is recreated, a new GPG key must be generated, added to GitHub, and configured via:
-```bash
-gpg --batch --gen-key ...   # generate key
-git config --global user.signingkey <KEY_ID>
-git config --global commit.gpgsign true
-```
+
 
 ### Repository Features
 
