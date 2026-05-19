@@ -171,7 +171,6 @@ Only users with write access (collaborators) can approve or request changes on p
 - ✅ Require conversation resolution before merging
 - ✅ Require signed commits
 - ✅ Require linear history
-- ☐ Do not allow bypassing the above settings — **disabled** to allow `github-actions[bot]` to push release commits directly to `main`
 
 **Disabled rules:**
 - ☐ Require approvals
@@ -181,6 +180,7 @@ Only users with write access (collaborators) can approve or request changes on p
 - ☐ Lock branch
 - ☐ Allow force pushes
 - ☐ Allow deletions
+- ☐ Do not allow bypassing the above settings — disabled so that `github-actions[bot]` can push release commits directly to `main`
 
 **GPG signing setup (dev environment):**
 A GPG key is configured in this Gitpod environment (`BBB1295FE1391E99`, `pascal.raphael@advans.ch`).
