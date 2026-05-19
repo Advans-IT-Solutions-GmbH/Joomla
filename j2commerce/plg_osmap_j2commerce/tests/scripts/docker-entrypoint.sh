@@ -208,8 +208,8 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
     SELECT m.id, m.alias, a.id AS article_id, a.title
     FROM ${DB_PREFIX}menu m
     INNER JOIN ${DB_PREFIX}content a
-        ON (m.link LIKE CONCAT('%&id=', a.id, '&%') OR m.link LIKE CONCAT('%&id=', a.id))
-        AND m.link LIKE '%com_content%view=article%'
+        ON ((m.link LIKE CONCAT('%&id=', a.id, '&%') OR m.link LIKE CONCAT('%&id=', a.id))
+        AND m.link LIKE '%com_content%view=article%')
     INNER JOIN ${DB_PREFIX}j2store_products p
         ON p.product_source_id = a.id
         AND p.product_source = 'com_content'
@@ -218,6 +218,8 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
       AND m.parent_id = 9001
       AND m.client_id = 0
     ORDER BY a.title;" 2>/dev/null || true
+
+
 
 echo "OK" > /var/www/html/health.txt
 echo "=== Container ready ==="

@@ -78,9 +78,11 @@ jobs:
             script: 'gdpr'
           - name: '08 - Template Overrides'
             script: 'template_overrides'
+          - name: '09 - AutoCleanup Task'
+            script: 'autocleanup_task'
           - name: '10 - AcyMailing Integration'
             script: 'acymailing'
-          - name: '09 - Uninstall'
+          - name: '11 - Uninstall'
             script: 'uninstall'
     steps:
       - uses: actions/checkout@v4

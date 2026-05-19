@@ -26,6 +26,7 @@
  */
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
@@ -100,21 +101,19 @@ if ($_showConsent && $_privacyArticleId) {
             </div>
         </div>
         <?php if ($_consentRequired) : ?>
-            <script>
-            document.addEventListener('DOMContentLoaded', function () {
-                var forms = document.querySelectorAll('form[action*="j2store"], form.j2store-checkout-form');
-                forms.forEach(function (form) {
-                    form.addEventListener('submit', function (e) {
-                        var consent = document.getElementById('j2commerce_privacy_consent');
-                        if (consent && !consent.checked) {
-                            e.preventDefault();
-                            alert('<?php echo addslashes(Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_REQUIRED_ERROR')); ?>');
-                            consent.focus();
-                        }
-                    });
-                });
-            });
-            </script>
+            <div id="j2commerce-consent-validator"
+                 data-error="<?php echo $this->escape(Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_REQUIRED_ERROR')); ?>"
+                 style="display:none;"></div>
+            <?php
+            // Load external consent validator — avoids inline scripts for CSP compatibility
+            Factory::getApplication()->getDocument()->getWebAssetManager()
+                ->registerAndUseScript(
+                    'plg_privacy_j2commerce.consent-validator',
+                    Uri::root(true) . '/media/plg_privacy_j2commerce/js/consent-validator.js',
+                    [],
+                    ['defer' => true]
+                );
+            ?>
         <?php endif; ?>
     <?php endif; ?>
 

@@ -15,10 +15,11 @@ use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
 use Joomla\Event\DispatcherInterface;
 use Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce;
+use Advans\Plugin\Privacy\J2Commerce\Task\AutoCleanupTask;
 
 return new class implements ServiceProviderInterface
 {
-    public function register(Container $container)
+    public function register(Container $container): void
     {
         $container->set(
             PluginInterface::class,
@@ -31,6 +32,19 @@ return new class implements ServiceProviderInterface
                 $plugin->setDatabase(Factory::getContainer()->get('DatabaseDriver'));
 
                 return $plugin;
+            }
+        );
+
+        // Register the scheduler task so Joomla's task component can discover it
+        $container->set(
+            AutoCleanupTask::class,
+            function (Container $container) {
+                $task = new AutoCleanupTask(
+                    $container->get(DispatcherInterface::class)
+                );
+                $task->setDatabase(Factory::getContainer()->get('DatabaseDriver'));
+
+                return $task;
             }
         );
     }

@@ -83,11 +83,13 @@ class SitemapOutputTest
             return $paths === ['shop/test-product-alpha', 'shop/test-product-beta'];
         });
 
-        $this->test('Generated nodes use menu path as link', function () use ($products) {
+        $this->test('Generated nodes use absolute URL from menu path', function () use ($products) {
             foreach ($products as $p) {
                 $node = $this->buildNode($p, new Registry('{}'));
-                if ($node->link !== $p->path) {
-                    echo "  Expected: {$p->path}\n  Got:      {$node->link}\n";
+                // Plugin builds: rtrim(Uri::root(), '/') . '/' . ltrim($item->path, '/')
+                $expected = rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/' . ltrim($p->path, '/');
+                if ($node->link !== $expected) {
+                    echo "  Expected: {$expected}\n  Got:      {$node->link}\n";
                     return false;
                 }
             }
@@ -207,10 +209,13 @@ class SitemapOutputTest
     }
 
     /**
-     * Replicates the node-building logic from PlgOsmapJ2commerce::getTree().
+     * Replicates the node-building logic from PlgOsmapJ2commerce::printMenuPathNode().
+     * The plugin builds an absolute URL from the menu item's SEF path.
      */
     private function buildNode(object $product, Registry $params): object
     {
+        $link = rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/' . ltrim($product->path, '/');
+
         return (object) [
             'id'         => $product->id,
             'name'       => $product->title,
@@ -219,7 +224,7 @@ class SitemapOutputTest
             'browserNav' => 0,
             'priority'   => $params->get('priority', '0.8'),
             'changefreq' => $params->get('changefreq', 'weekly'),
-            'link'       => $product->path,
+            'link'       => $link,
             'expandible' => false,
         ];
     }

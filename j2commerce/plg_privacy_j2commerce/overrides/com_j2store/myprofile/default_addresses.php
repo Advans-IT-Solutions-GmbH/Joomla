@@ -58,7 +58,7 @@ if ($_privacyEnabled) {
                 <div class="j2store-address-item mb-3 p-3 border rounded" data-address-id="<?php echo (int) $address->j2store_address_id; ?>">
 
                     <address>
-                        <?php echo $address->firstname ?? ''; ?> <?php echo $address->lastname ?? ''; ?><br>
+                        <?php echo $this->escape($address->firstname ?? ''); ?> <?php echo $this->escape($address->lastname ?? ''); ?><br>
                         <?php if (!empty($address->company)) : ?>
                             <?php echo $this->escape($address->company); ?><br>
                         <?php endif; ?>
@@ -72,7 +72,7 @@ if ($_privacyEnabled) {
                     </address>
 
                     <div class="j2store-address-actions">
-                        <a href="<?php echo $address->edit_url ?? '#'; ?>" class="btn btn-sm btn-secondary">
+                        <a href="<?php echo $this->escape($address->edit_url ?? '#'); ?>" class="btn btn-sm btn-secondary">
                             <?php echo JText::_('J2STORE_EDIT'); ?>
                         </a>
 

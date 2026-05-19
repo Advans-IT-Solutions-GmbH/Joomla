@@ -50,7 +50,7 @@ class InstallationTest
         });
 
         $this->test('XML manifest exists', function () {
-            return file_exists(JPATH_PLUGINS . '/osmap/j2commerce/plg_osmap_j2commerce.xml');
+            return file_exists(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.xml');
         });
 
         echo "\n=== Installation Test Summary ===\n";

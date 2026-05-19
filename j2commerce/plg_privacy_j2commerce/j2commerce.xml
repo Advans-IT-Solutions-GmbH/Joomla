@@ -20,7 +20,12 @@
         <folder>src</folder>
         <folder>language</folder>
         <folder>overrides</folder>
+        <folder>media</folder>
     </files>
+
+    <media destination="plg_privacy_j2commerce" folder="media">
+        <folder>js</folder>
+    </media>
 
     <config>
         <fields name="params">

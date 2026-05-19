@@ -44,6 +44,8 @@ class SitemapHttpTest
         echo "Sitemap fetched (" . strlen($xml) . " bytes)\n";
         echo "Response (first 500 chars):\n" . substr($xml, 0, 500) . "\n\n";
 
+
+
         $urls = $this->extractUrls($xml);
         echo "URLs found in sitemap: " . count($urls) . "\n";
         foreach ($urls as $url) {
@@ -55,9 +57,8 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        // The plugin uses the menu item path directly as the link, so OSMap
-        // emits URLs like http://localhost/shop/test-product-alpha.
-        // We match on the product alias which is stable and unique.
+        // The plugin uses the menu item's SEF path (m.path) prepended with Uri::root()
+        // to build absolute URLs. Fixture paths: shop/test-product-alpha, shop/test-product-beta.
         $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-alpha')) return true;
@@ -73,7 +74,7 @@ class SitemapHttpTest
         });
 
         $this->test('Disabled product not in sitemap', function () use ($urls) {
-            // product_source_id=9003 has enabled=0
+            // product_source_id=9003 has enabled=0, its menu item is Itemid=9004 (no fixture)
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-disabled')) return false;
             }
@@ -98,9 +99,6 @@ class SitemapHttpTest
             return $count >= 2;
         });
 
-        // Verify that every product URL in the sitemap actually resolves to HTTP 200.
-        // This catches broken links — e.g. wrong path, missing .htaccess rewrite, or
-        // a URL that was generated correctly but cannot be served by the web server.
         $productUrls = array_filter($urls, fn($u) =>
             str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')
         );

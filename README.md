@@ -163,7 +163,25 @@ Only users with write access (collaborators) can approve or request changes on p
 **Location:** Settings → Branches  
 **Documentation:** https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
 
-Protected branch rules prevent force pushes and ensure code quality standards.
+- Require a pull request before merging (1 approval required)
+- Dismiss stale approvals when new commits are pushed
+- Require status checks to pass: `Collect Results`
+- Require branches to be up to date before merging
+- Require conversation resolution before merging
+- Require signed commits — all commits must be GPG-signed
+- Do not allow bypassing the above settings (applies to admins)
+- Force pushes and deletions disabled
+
+**GPG signing setup (dev environment):**
+A GPG key is configured in this Gitpod environment (`BBB1295FE1391E99`, `pascal.raphael@advans.ch`).
+The corresponding public key is registered on GitHub under Settings → SSH and GPG keys.
+Git is configured to sign all commits automatically (`commit.gpgsign=true`).
+If the environment is recreated, a new GPG key must be generated, added to GitHub, and configured via:
+```bash
+gpg --batch --gen-key ...   # generate key
+git config --global user.signingkey <KEY_ID>
+git config --global commit.gpgsign true
+```
 
 ### Repository Features
 

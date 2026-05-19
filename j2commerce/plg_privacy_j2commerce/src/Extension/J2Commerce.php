@@ -186,7 +186,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $db->getQuery(true)
                 ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
                 ->from($db->quoteName($prefix . 'user'))
-                ->where($db->quoteName('email') . ' = ' . $db->quote($email));
+                ->where($db->quoteName('email') . ' = :email')
+                ->bind(':email', $email);
             $acymUser = $db->setQuery($query)->loadObject();
         } catch (\Exception $e) {
             return null;
@@ -366,10 +367,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $email = $user->email;
 
         try {
-            $query    = $db->getQuery(true)
+            $query  = $db->getQuery(true)
                 ->select('id')
                 ->from($db->quoteName($prefix . 'user'))
-                ->where($db->quoteName('email') . ' = ' . $db->quote($email));
+                ->where($db->quoteName('email') . ' = :email')
+                ->bind(':email', $email);
             $acymId = (int) $db->setQuery($query)->loadResult();
         } catch (\Exception $e) {
             return;
