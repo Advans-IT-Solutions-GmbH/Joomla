@@ -557,6 +557,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             if ($this->isJ2Commerce4($db)) {
                 // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
                 $subQuery = $db->getQuery(true)
                     ->select($db->quoteName('j2store_cart_id'))
                     ->from($db->quoteName('#__j2store_carts'))
@@ -566,7 +567,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $query = $db->getQuery(true)
                     ->delete($db->quoteName('#__j2store_cartitems'))
                     ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
-                    ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')')
+                    ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
                     ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
             } else {
                 // J2Commerce 6.x — tables: #__j2commerce_carts / #__j2commerce_cartitems
@@ -644,6 +645,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     private function getCartCountForUser(DatabaseInterface $db, int $userId): int
     {
         if ($this->isJ2Commerce4($db)) {
+            // #__j2store_cartitems FK to #__j2store_carts is `cart_id`; quantity column is `product_qty`
             $subQuery = $db->getQuery(true)
                 ->select($db->quoteName('j2store_cart_id'))
                 ->from($db->quoteName('#__j2store_carts'))
@@ -651,9 +653,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ->bind(':userId', $userId, ParameterType::INTEGER);
 
             $query = $db->getQuery(true)
-                ->select('COALESCE(SUM(' . $db->quoteName('orderitem_quantity') . '), 0)')
+                ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
                 ->from($db->quoteName('#__j2store_cartitems'))
-                ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')');
+                ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
         } else {
             $subQuery = $db->getQuery(true)
                 ->select($db->quoteName('j2commerce_cart_id'))
@@ -678,16 +680,14 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     private function getCartTotalForUser(DatabaseInterface $db, int $userId): string
     {
         if ($this->isJ2Commerce4($db)) {
-            $subQuery = $db->getQuery(true)
-                ->select($db->quoteName('j2store_cart_id'))
-                ->from($db->quoteName('#__j2store_carts'))
-                ->where($db->quoteName('user_id') . ' = :userId')
-                ->bind(':userId', $userId, ParameterType::INTEGER);
-
+            // #__j2store_cartitems has no price column; prices are in #__j2store_orderitems
+            // joined via cart_id → #__j2store_carts.j2store_cart_id
             $query = $db->getQuery(true)
-                ->select('COALESCE(SUM(' . $db->quoteName('orderitem_finalprice') . '), 0)')
-                ->from($db->quoteName('#__j2store_cartitems'))
-                ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')');
+                ->select('COALESCE(SUM(' . $db->quoteName('oi.orderitem_finalprice') . ' * ' . $db->quoteName('oi.orderitem_quantity') . '), 0)')
+                ->from($db->quoteName('#__j2store_orderitems', 'oi'))
+                ->join('INNER', $db->quoteName('#__j2store_carts', 'c') . ' ON ' . $db->quoteName('c.j2store_cart_id') . ' = ' . $db->quoteName('oi.cart_id'))
+                ->where($db->quoteName('c.user_id') . ' = :userId')
+                ->bind(':userId', $userId, ParameterType::INTEGER);
         } else {
             $subQuery = $db->getQuery(true)
                 ->select($db->quoteName('j2commerce_cart_id'))
