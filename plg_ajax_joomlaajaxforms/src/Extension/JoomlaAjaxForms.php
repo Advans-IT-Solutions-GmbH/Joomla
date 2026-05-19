@@ -544,7 +544,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
         }
 
-        $input = $this->getApplication()->getInput();
+        $input      = $this->getApplication()->getInput();
         $cartitemId = $input->getInt('cartitem_id', 0);
 
         if (!$cartitemId) {
@@ -552,42 +552,46 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            if (!file_exists(JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php')) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND'));
-            }
-            if (!class_exists('J2Store')) {
-                require_once JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php';
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $userId = (int) $user->id;
+
+            if ($this->isJ2Commerce4($db)) {
+                // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                $subQuery = $db->getQuery(true)
+                    ->select($db->quoteName('j2store_cart_id'))
+                    ->from($db->quoteName('#__j2store_carts'))
+                    ->where($db->quoteName('user_id') . ' = :userId')
+                    ->bind(':userId', $userId, ParameterType::INTEGER);
+
+                $query = $db->getQuery(true)
+                    ->delete($db->quoteName('#__j2store_cartitems'))
+                    ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
+                    ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')')
+                    ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
+            } else {
+                // J2Commerce 6.x — tables: #__j2commerce_carts / #__j2commerce_cartitems
+                $subQuery = $db->getQuery(true)
+                    ->select($db->quoteName('j2commerce_cart_id'))
+                    ->from($db->quoteName('#__j2commerce_carts'))
+                    ->where($db->quoteName('user_id') . ' = :userId')
+                    ->bind(':userId', $userId, ParameterType::INTEGER);
+
+                $query = $db->getQuery(true)
+                    ->delete($db->quoteName('#__j2commerce_cartitems'))
+                    ->where($db->quoteName('j2commerce_cartitem_id') . ' = :cartitemId')
+                    ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
+                    ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
             }
 
-            // Remove cart item — restrict to the current user to prevent IDOR
-            $db     = Factory::getContainer()->get(DatabaseInterface::class);
-            $userId = $user->id;
-            $query  = $db->getQuery(true)
-                ->delete($db->quoteName('#__j2store_cartitems'))
-                ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
-                ->where($db->quoteName('user_id') . ' = :userId')
-                ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER)
-                ->bind(':userId', $userId, ParameterType::INTEGER);
             $db->setQuery($query);
             $db->execute();
 
-            // Get updated cart info
-            $helper = \J2Store::helper('Cart');
-            $cartItems = $helper->getItems();
-            $cartCount = 0;
-            $cartTotal = 0;
-            foreach ($cartItems as $item) {
-                $cartCount += $item->orderitem_quantity;
-                $cartTotal += $item->orderitem_finalprice;
-            }
-
-            // Format the total using J2Store currency
-            $currency = \J2Store::currency();
-            $formattedTotal = $currency->format($cartTotal);
+            $cartCount = $this->getCartCountForUser($db, $userId);
+            $cartTotal = $this->getCartTotalForUser($db, $userId);
 
             return $this->jsonSuccess([
                 'cartCount' => $cartCount,
-                'cartTotal' => Text::sprintf('J2STORE_CART_TOTAL', $cartCount, $formattedTotal),
+                'cartTotal' => $cartTotal,
                 'message'   => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_CART_ITEM_REMOVED'),
             ]);
         } catch (\Exception $e) {
@@ -601,28 +605,105 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleGetCartCount(): string
     {
+        $user = $this->getApplication()->getIdentity();
+
+        if (!$user || $user->guest) {
+            return $this->jsonSuccess(['cartCount' => 0]);
+        }
+
         try {
-            if (!file_exists(JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php')) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND'));
-            }
-            if (!class_exists('J2Store')) {
-                require_once JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php';
-            }
+            $db        = Factory::getContainer()->get(DatabaseInterface::class);
+            $userId    = (int) $user->id;
+            $cartCount = $this->getCartCountForUser($db, $userId);
 
-            $helper = \J2Store::helper('Cart');
-            $cartItems = $helper->getItems();
-            $cartCount = 0;
-            foreach ($cartItems as $item) {
-                $cartCount += $item->orderitem_quantity;
-            }
-
-            return $this->jsonSuccess([
-                'cartCount' => $cartCount,
-            ]);
+            return $this->jsonSuccess(['cartCount' => $cartCount]);
         } catch (\Exception $e) {
             Log::add('Cart count error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
             return $this->jsonSuccess(['cartCount' => 0]);
         }
+    }
+
+    /**
+     * Returns true if J2Commerce 4.x is installed (uses #__j2store_* tables).
+     * Returns false for J2Commerce 6.x (uses #__j2commerce_* tables).
+     */
+    private function isJ2Commerce4(DatabaseInterface $db): bool
+    {
+        static $result = null;
+        if ($result === null) {
+            $tables  = $db->getTableList();
+            $prefix  = $db->getPrefix();
+            $result  = in_array($prefix . 'j2store_carts', $tables, true);
+        }
+        return $result;
+    }
+
+    /**
+     * Get total cart item quantity for a user.
+     */
+    private function getCartCountForUser(DatabaseInterface $db, int $userId): int
+    {
+        if ($this->isJ2Commerce4($db)) {
+            $subQuery = $db->getQuery(true)
+                ->select($db->quoteName('j2store_cart_id'))
+                ->from($db->quoteName('#__j2store_carts'))
+                ->where($db->quoteName('user_id') . ' = :userId')
+                ->bind(':userId', $userId, ParameterType::INTEGER);
+
+            $query = $db->getQuery(true)
+                ->select('COALESCE(SUM(' . $db->quoteName('orderitem_quantity') . '), 0)')
+                ->from($db->quoteName('#__j2store_cartitems'))
+                ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')');
+        } else {
+            $subQuery = $db->getQuery(true)
+                ->select($db->quoteName('j2commerce_cart_id'))
+                ->from($db->quoteName('#__j2commerce_carts'))
+                ->where($db->quoteName('user_id') . ' = :userId')
+                ->bind(':userId', $userId, ParameterType::INTEGER);
+
+            $query = $db->getQuery(true)
+                ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
+                ->from($db->quoteName('#__j2commerce_cartitems'))
+                ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
+        }
+
+        $db->setQuery($query);
+
+        return (int) $db->loadResult();
+    }
+
+    /**
+     * Get formatted cart total for a user.
+     */
+    private function getCartTotalForUser(DatabaseInterface $db, int $userId): string
+    {
+        if ($this->isJ2Commerce4($db)) {
+            $subQuery = $db->getQuery(true)
+                ->select($db->quoteName('j2store_cart_id'))
+                ->from($db->quoteName('#__j2store_carts'))
+                ->where($db->quoteName('user_id') . ' = :userId')
+                ->bind(':userId', $userId, ParameterType::INTEGER);
+
+            $query = $db->getQuery(true)
+                ->select('COALESCE(SUM(' . $db->quoteName('orderitem_finalprice') . '), 0)')
+                ->from($db->quoteName('#__j2store_cartitems'))
+                ->where($db->quoteName('j2store_cart_id') . ' IN (' . $subQuery . ')');
+        } else {
+            $subQuery = $db->getQuery(true)
+                ->select($db->quoteName('j2commerce_cart_id'))
+                ->from($db->quoteName('#__j2commerce_carts'))
+                ->where($db->quoteName('user_id') . ' = :userId')
+                ->bind(':userId', $userId, ParameterType::INTEGER);
+
+            $query = $db->getQuery(true)
+                ->select('COALESCE(SUM(' . $db->quoteName('product_subtotal') . '), 0)')
+                ->from($db->quoteName('#__j2commerce_cartitems'))
+                ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
+        }
+
+        $db->setQuery($query);
+
+        return number_format((float) $db->loadResult(), 2);
     }
 
     /**
