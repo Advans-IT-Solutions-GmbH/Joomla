@@ -19,7 +19,7 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Password Reset | `reset` | Password reset email request |
 | Username Reminder | `remind` | Username reminder email request |
 | Profile Editing | `saveProfile` | Update name, email, password |
-| Cart: Remove Item | `removeCartItem` | Remove item from J2Store/J2Commerce cart |
+| Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
 All features can be individually enabled/disabled via plugin parameters.
@@ -28,7 +28,7 @@ All features can be individually enabled/disabled via plugin parameters.
 
 - Joomla 5.x, 6.x, or 7.x
 - PHP 8.1+
-- J2Store or J2Commerce (only for cart features)
+- J2Commerce 4.x or 6.x (only for cart features)
 
 ## Installation
 
@@ -57,7 +57,7 @@ RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password) | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Store/J2Commerce) | Yes |
+| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) | Yes |
 
 ## Usage
 
