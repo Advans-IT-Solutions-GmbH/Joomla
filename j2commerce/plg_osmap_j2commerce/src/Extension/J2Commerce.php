@@ -83,7 +83,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Returns the database driver. Falls back to Factory::getDbo() when OSMap
+     * Returns the database driver. Falls back to the DI container when OSMap
      * loads the plugin via its legacy loader, which does not call setDatabase().
      */
     protected function getDb(): DatabaseInterface
@@ -91,7 +91,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         try {
             return $this->getDatabase();
         } catch (\RuntimeException $e) {
-            return Factory::getDbo();
+            return Factory::getContainer()->get(DatabaseInterface::class);
         }
     }
 
