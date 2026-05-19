@@ -8,7 +8,7 @@
     <license>Proprietary</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <description>COM_J2COMMERCE_IMPORTEXPORT_XML_DESCRIPTION</description>
     
     <targetplatform name="joomla" version="(4\.[0-9]|5\.[0-9]|6\.[0-9])" />
