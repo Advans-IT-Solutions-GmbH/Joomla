@@ -171,7 +171,7 @@ Only users with write access (collaborators) can approve or request changes on p
 - ✅ Require conversation resolution before merging
 - ✅ Require signed commits
 - ✅ Require linear history
-- ✅ Do not allow bypassing the above settings (applies to admins)
+- ☐ Do not allow bypassing the above settings — **disabled** to allow `github-actions[bot]` to push release commits directly to `main`
 
 **Disabled rules:**
 - ☐ Require approvals
