@@ -905,7 +905,7 @@ This plugin complies with Swiss legal requirements:
 - Orders within 10-year retention period: **Kept intact** (not anonymized)
 - Orders outside retention period: **Anonymized** on deletion request
 - Address book entries: **Deleted** immediately on request
-- Cart data: **Deleted** immediately on request
+- Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
 ### Payment Provider Data
 
