@@ -509,11 +509,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 }
             }
         } else {
-            // J2Commerce 6 — billing data is in #__j2commerce_orders directly
+            // J2Commerce 6 — billing data is in #__j2commerce_orderinfos, not in #__j2commerce_orders
             $query = $this->createDbQuery()
-                ->select(['o.*', 'oi.product_name', 'oi.product_sku', 'oi.product_qty', 'oi.product_subtotal'])
+                ->select(['o.*', 'oi.orderitem_name', 'oi.orderitem_sku', 'oi.orderitem_quantity', 'oi.orderitem_finalprice',
+                    'inf.billing_first_name', 'inf.billing_last_name'])
                 ->from($db->quoteName('#__j2commerce_orders', 'o'))
                 ->leftJoin($db->quoteName('#__j2commerce_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
+                ->leftJoin($db->quoteName('#__j2commerce_orderinfos', 'inf') . ' ON o.order_id = inf.order_id')
                 ->where($db->quoteName('o.user_id') . ' = :userid')
                 ->bind(':userid', $user->id, ParameterType::INTEGER);
 
@@ -526,7 +528,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 if (!isset($orders[$orderId])) {
                     $orders[$orderId] = [
                         'order_id'           => $orderId,
-                        'order_state'        => $row['order_status'] ?? '',
+                        'order_state'        => $row['order_state'] ?? '',
                         'order_total'        => $row['order_total'],
                         'currency_code'      => $row['currency_code'],
                         'created_on'         => $row['created_on'],
@@ -536,12 +538,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         'items'              => [],
                     ];
                 }
-                if (!empty($row['product_name'])) {
+                if (!empty($row['orderitem_name'])) {
                     $orders[$orderId]['items'][] = [
-                        'name'     => $row['product_name'],
-                        'sku'      => $row['product_sku'],
-                        'quantity' => $row['product_qty'],
-                        'price'    => $row['product_subtotal'],
+                        'name'     => $row['orderitem_name'],
+                        'sku'      => $row['orderitem_sku'],
+                        'quantity' => $row['orderitem_quantity'],
+                        'price'    => $row['orderitem_finalprice'],
                     ];
                 }
             }
@@ -911,17 +913,39 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $tables = $db->getTableList();
         $prefix = $db->getPrefix();
 
-        $customTable = $this->isJ2Commerce4() ? 'j2store_product_customfields' : 'j2commerce_customfields';
-        if (!in_array($prefix . $customTable, $tables, true)) {
-            return false;
-        }
+        if ($this->isJ2Commerce4()) {
+            // J2Store 4 — product-specific custom fields in #__j2store_product_customfields
+            $customTable = 'j2store_product_customfields';
+            if (!in_array($prefix . $customTable, $tables, true)) {
+                return false;
+            }
 
-        $query = $this->createDbQuery()
-            ->select($db->quoteName('field_value'))
-            ->from($db->quoteName('#__' . $customTable))
-            ->where($db->quoteName('product_id') . ' = :productid')
-            ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
-            ->bind(':productid', $productId, ParameterType::INTEGER);
+            $query = $this->createDbQuery()
+                ->select($db->quoteName('field_value'))
+                ->from($db->quoteName('#__' . $customTable))
+                ->where($db->quoteName('product_id') . ' = :productid')
+                ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
+                ->bind(':productid', $productId, ParameterType::INTEGER);
+        } else {
+            // J2Commerce 6 — product metadata in #__j2commerce_metafields
+            // (owner_id = product_id, owner_resource = 'product', metakey = 'is_lifetime_license')
+            $metaTable = 'j2commerce_metafields';
+            if (!in_array($prefix . $metaTable, $tables, true)) {
+                return false;
+            }
+
+            $resource = 'product';
+            $metakey  = 'is_lifetime_license';
+            $query = $this->createDbQuery()
+                ->select($db->quoteName('metavalue'))
+                ->from($db->quoteName('#__' . $metaTable))
+                ->where($db->quoteName('owner_id') . ' = :productid')
+                ->where($db->quoteName('owner_resource') . ' = :resource')
+                ->where($db->quoteName('metakey') . ' = :metakey')
+                ->bind(':productid', $productId, ParameterType::INTEGER)
+                ->bind(':resource', $resource)
+                ->bind(':metakey', $metakey);
+        }
 
         $db->setQuery($query);
         $fieldValue = $db->loadResult();
@@ -1028,31 +1052,49 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $db->setQuery($query);
             $db->execute();
         } else {
-            // J2Commerce 6 — billing/shipping data is in #__j2commerce_orders directly
+            // J2Commerce 6 — anonymize PII in #__j2commerce_orders
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2commerce_orders'))
                 ->set([
                     $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@example.com'),
                     $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
+                ])
+                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
+                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+            $db->setQuery($query);
+            $db->execute();
+
+            // J2Commerce 6 — billing/shipping data is in #__j2commerce_orderinfos, not in #__j2commerce_orders
+            $subQuery = $this->createDbQuery()
+                ->select($db->quoteName('order_id'))
+                ->from($db->quoteName('#__j2commerce_orders'))
+                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
+                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+
+            $query = $this->createDbQuery()
+                ->update($db->quoteName('#__j2commerce_orderinfos'))
+                ->set([
                     $db->quoteName('billing_first_name') . ' = ' . $db->quote('Anonymized'),
                     $db->quoteName('billing_last_name') . ' = ' . $db->quote('User'),
                     $db->quoteName('billing_phone_1') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_phone_2') . ' = ' . $db->quote(''),
                     $db->quoteName('billing_address_1') . ' = ' . $db->quote(''),
                     $db->quoteName('billing_address_2') . ' = ' . $db->quote(''),
                     $db->quoteName('billing_city') . ' = ' . $db->quote(''),
                     $db->quoteName('billing_zip') . ' = ' . $db->quote(''),
                     $db->quoteName('billing_company') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_tax_number') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_last_name') . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_phone_1') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_address_1') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_address_2') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_city') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_zip') . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_company') . ' = ' . $db->quote(''),
                 ])
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+                ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
             $db->setQuery($query);
             $db->execute();
         }
