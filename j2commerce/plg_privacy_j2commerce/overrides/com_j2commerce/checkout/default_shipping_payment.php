@@ -26,6 +26,10 @@
 \defined('_JEXEC') or die;
 // phpcs:enable PSR1.Files.SideEffects
 
+if (!class_exists('J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper')) {
+    return;
+}
+
 use J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -127,7 +131,9 @@ if ($_showConsent && $_privacyArticleId) {
                         <div class="fw-medium flex-grow-1"><?php echo htmlspecialchars($name); ?></div>
 
                         <?php echo J2CommerceHelper::plugin()->eventWithHtml('BeforeCheckoutPaymentImage', [$method, 'onJ2Commerce'])->getArgument('html', ''); ?>
+                        <?php if (method_exists('J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper', 'getPaymentCardIcons')) : ?>
                         <?php echo J2CommerceHelper::getPaymentCardIcons($element); ?>
+                        <?php endif; ?>
 
                         <?php if (!empty($image)) : ?>
                             <img src="<?php echo htmlspecialchars($image); ?>" alt="" class="flex-shrink-0" style="height:24px;">

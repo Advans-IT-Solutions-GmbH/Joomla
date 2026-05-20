@@ -69,7 +69,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
         
         // Joomla 4/5: use getQuery(true)
-        return $db->getQuery(true);
+        return $this->createDbQuery();
     }
 
     public static function getSubscribedEvents(): array
@@ -199,7 +199,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load subscriber record
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
                 ->from($db->quoteName($prefix . 'user'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -224,7 +224,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load list subscriptions with list names
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select([
                     'uhl.list_id',
                     'uhl.status',
@@ -256,7 +256,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load custom field values (may contain name, address, phone, etc.)
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
                 ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
                 ->leftJoin(
@@ -283,7 +283,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load send/open/click stats per campaign
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select(['us.mail_id', 'us.send_date', 'us.open', 'us.open_date', 'us.bounce',
                           'us.bounce_rule', 'us.unsubscribe', 'us.device', 'us.opened_with',
                           'm.name AS mail_name'])
@@ -314,7 +314,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load URL click history
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select(['uc.mail_id', 'uc.url_id', 'uc.click', 'uc.date_click',
                           'u.url', 'm.name AS mail_name'])
                 ->from($db->quoteName($prefix . 'url_click', 'uc'))
@@ -343,7 +343,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Load action history (incl. IP address)
         try {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery()
                 ->select(['h.date', 'h.ip', 'h.action', 'h.data', 'h.unsubscribe_reason'])
                 ->from($db->quoteName($prefix . 'history', 'h'))
                 ->where($db->quoteName('h.user_id') . ' = ' . (int) $acymUser->id)
@@ -383,7 +383,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $email = $user->email;
 
         try {
-            $query  = $db->getQuery(true)
+            $query  = $this->createDbQuery()
                 ->select('id')
                 ->from($db->quoteName($prefix . 'user'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -410,7 +410,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             foreach ($relatedTables as $table) {
                 $db->setQuery(
-                    $db->getQuery(true)
+                    $this->createDbQuery()
                         ->delete($db->quoteName($prefix . $table))
                         ->where($db->quoteName('user_id') . ' = ' . $acymId)
                 )->execute();
@@ -418,7 +418,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             // Delete subscriber record
             $db->setQuery(
-                $db->getQuery(true)
+                $this->createDbQuery()
                     ->delete($db->quoteName($prefix . 'user'))
                     ->where($db->quoteName('id') . ' = ' . $acymId)
             )->execute();
@@ -951,26 +951,26 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $message .= "═══════════════════════════════════════════════════════\n\n";
 
         if (!empty($retentionCheck['lifetime_licenses_accounting'])) {
-            $message .= "Lifetime-Lizenzen vorhanden. E-Mail wird für Aktivierung benötigt.\n\n";
+            $message .= Text::_('PLG_PRIVACY_J2COMMERCE_RETENTION_LIFETIME_HEADER') . "\n\n";
             foreach ($retentionCheck['lifetime_licenses_accounting'] as $i => $license) {
                 $message .= ($i + 1) . ". {$license['product_name']}\n";
-                $message .= "   Bestellung: {$license['order_number']} vom {$license['order_date']}\n";
-                $message .= "   Betrag: {$license['order_total']} {$license['currency']}\n\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_LINE', $license['order_number'], $license['order_date']) . "\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_AMOUNT_LINE', $license['order_total'], $license['currency']) . "\n\n";
             }
         }
 
         if (!empty($retentionCheck['orders'])) {
-            $message .= "Bestellungen innerhalb der Aufbewahrungsfrist ({$retentionYears} Jahre):\n\n";
+            $message .= Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDERS_HEADER', $retentionYears) . "\n\n";
             foreach ($retentionCheck['orders'] as $i => $order) {
-                $message .= ($i + 1) . ". Bestellung {$order['order_number']}\n";
-                $message .= "   Datum: {$order['order_date']}\n";
-                $message .= "   Betrag: {$order['order_total']} {$order['currency']}\n";
-                $message .= "   Aufbewahrung bis: {$order['retention_end']}\n";
-                $message .= "   Verbleibend: {$order['years_remaining']} Jahre\n\n";
+                $message .= ($i + 1) . ". " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_AMOUNT_LINE', $order['order_total'], $order['currency']) . "\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_UNTIL', $order['retention_end']) . "\n";
+                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_REMAINING', $order['years_remaining']) . "\n\n";
             }
         }
 
-        $message .= "Kontakt: {$supportEmail}\n";
+        $message .= Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT', $supportEmail) . "\n";
 
         return $message;
     }
