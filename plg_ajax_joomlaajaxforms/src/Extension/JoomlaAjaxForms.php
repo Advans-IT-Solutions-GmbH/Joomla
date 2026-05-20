@@ -617,8 +617,13 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            $db        = Factory::getContainer()->get(DatabaseInterface::class);
-            $userId    = (int) $user->id;
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $userId = (int) $user->id;
+
+            if (!$this->isJ2CommerceInstalled($db)) {
+                return $this->jsonSuccess(['cartCount' => 0]);
+            }
+
             $cartCount = $this->getCartCountForUser($db, $userId);
 
             return $this->jsonSuccess(['cartCount' => $cartCount]);
