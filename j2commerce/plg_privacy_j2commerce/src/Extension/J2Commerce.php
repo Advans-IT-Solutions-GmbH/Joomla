@@ -69,7 +69,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
         
         // Joomla 4/5: use getQuery(true)
-        return $this->createDbQuery();
+        return $db->getQuery(true);
     }
 
     public static function getSubscribedEvents(): array
