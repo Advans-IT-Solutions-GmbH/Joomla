@@ -713,14 +713,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('c.user_id') . ' = :userId')
                 ->bind(':userId', $userId, ParameterType::INTEGER);
         } else {
-            // #__j2commerce_cartitems has no price column; prices are in #__j2commerce_orderitems
-            // joined via cart_id → #__j2commerce_carts.j2commerce_cart_id
-            $query = $db->getQuery(true)
-                ->select('COALESCE(SUM(' . $db->quoteName('oi.orderitem_finalprice') . ' * ' . $db->quoteName('oi.orderitem_quantity') . '), 0)')
-                ->from($db->quoteName('#__j2commerce_orderitems', 'oi'))
-                ->join('INNER', $db->quoteName('#__j2commerce_carts', 'c') . ' ON ' . $db->quoteName('c.j2commerce_cart_id') . ' = ' . $db->quoteName('oi.cart_id'))
-                ->where($db->quoteName('c.user_id') . ' = :userId')
-                ->bind(':userId', $userId, ParameterType::INTEGER);
+            // J2Commerce 6: #__j2commerce_cartitems has no price column and #__j2commerce_carts
+            // has no cart_total column. Prices are in #__j2commerce_product_prices (variant-based,
+            // with quantity breaks and customer group rules) — replicating that logic here is not
+            // feasible. Return 0.00; the cart total display should be handled via the J2Commerce
+            // cart view, not via a direct DB query.
+            return '0.00';
         }
 
         $db->setQuery($query);
