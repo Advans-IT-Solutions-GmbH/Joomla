@@ -555,6 +555,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $db     = Factory::getContainer()->get(DatabaseInterface::class);
             $userId = (int) $user->id;
 
+            if (!$this->isJ2CommerceInstalled($db)) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND'));
+            }
+
             if ($this->isJ2Commerce4($db)) {
                 // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
@@ -622,6 +626,21 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             Log::add('Cart count error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
             return $this->jsonSuccess(['cartCount' => 0]);
         }
+    }
+
+    /**
+     * Returns true if any supported version of J2Commerce is installed.
+     */
+    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    {
+        static $installed = null;
+        if ($installed === null) {
+            $tables   = $db->getTableList();
+            $prefix   = $db->getPrefix();
+            $installed = in_array($prefix . 'j2store_carts', $tables, true)
+                      || in_array($prefix . 'j2commerce_carts', $tables, true);
+        }
+        return $installed;
     }
 
     /**
