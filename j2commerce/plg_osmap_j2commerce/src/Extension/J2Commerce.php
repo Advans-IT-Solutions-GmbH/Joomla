@@ -351,7 +351,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Derive the product URL from the parent menu item's SEF path + alias.
         // e.g. parent path "shop" + alias "my-product" → "https://example.com/shop/my-product"
         $basePath = rtrim($parent->path ?? '', '/');
-        $link     = rtrim(Uri::root(), '/') . '/' . ($basePath ? $basePath . '/' : '') . ltrim($product->alias, '/');
+        $link     = rtrim(Uri::root(), '/') . '/' . ($basePath ? $basePath . '/' : '') . rawurlencode(ltrim($product->alias, '/'));
 
         $node = (object) [
             'id'         => $product->id,
