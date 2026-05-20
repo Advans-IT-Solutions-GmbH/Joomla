@@ -187,18 +187,49 @@ docker compose down -v
 
 **Products do not appear in the sitemap**
 
-- Verify the plugin is enabled (**System → Plugins → OSMap J2Commerce**)
-- Confirm the menu containing your shop item is selected in the OSMap sitemap
-  configuration (**Components → OSMap → Sitemaps → edit → Menus tab**)
-- Check that the product has `enabled=1` in J2Commerce/J2Store
-  (**Components → J2Commerce → Products**)
-- Verify that your shop menu item uses `view=products`, `view=product`, or
-  `view=categories`. This is the standard setup and works on any installation.
+1. Verify the plugin is enabled (**System → Plugins → OSMap J2Commerce**)
+2. Confirm the menu containing your shop item is selected in the OSMap sitemap
+   configuration (**Components → OSMap → Sitemaps → edit → Menus tab**)
+3. Verify that your shop menu item uses `view=products`, `view=product`, or
+   `view=categories` — open the menu item in **Menus → your menu** and check
+   the link field
+4. Run these two queries in phpMyAdmin to diagnose the root cause (replace
+   `jos_` with your actual table prefix):
+
+```sql
+-- Are there hidden menu children for the shop item?
+SELECT m.id, m.title, m.path, m.published
+FROM jos_menu m
+WHERE m.published = -2
+  AND m.client_id = 0
+  AND m.parent_id = (
+    SELECT id FROM jos_menu
+    WHERE link LIKE '%option=com_j2store%view=products%'
+      AND published = 1 AND client_id = 0
+    LIMIT 1
+  );
+
+-- Are there enabled products linked to Joomla articles?
+SELECT p.j2store_product_id, p.product_source, p.enabled, a.title, a.state
+FROM jos_j2store_products p
+JOIN jos_content a ON a.id = p.product_source_id
+  AND p.product_source = 'com_content'
+WHERE p.enabled = 1 AND a.state = 1
+LIMIT 20;
+```
+
+If the first query returns rows but the second returns nothing: products are
+disabled (`enabled=0`) or not linked to published articles. Enable them in
+**Components → J2Commerce → Products**.
+
+If both queries return nothing: the products are not linked to Joomla articles
+via `com_content`. This is required — J2Store stores products as Joomla
+articles with a corresponding row in `#__j2store_products`.
 
 **Only some products appear**
 
 Products with `enabled=0` are intentionally excluded. Check the product status
-in J2Commerce/J2Store.
+in **Components → J2Commerce → Products**.
 
 If you use manually created `published=-2` hidden menu items (site-specific
 setup): verify that each product has such an item as a child of the shop menu
