@@ -906,8 +906,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return false;
         }
 
-        $db = $this->getDatabase();
-
         // product_customfields is an optional table created manually (see post-install step 3)
         $db     = $this->getDatabase();
         $tables = $db->getTableList();
