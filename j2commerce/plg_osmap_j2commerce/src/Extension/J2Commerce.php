@@ -138,11 +138,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     $this->emitProductsForCategory($collector, $parent, $params, $catid);
                 }
                 return;
-        }
 
-        // No view parameter: try published=-2 hidden children directly.
-        if ($parentId > 0) {
-            $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId);
+            default:
+                // Unknown view (wishlist, myprofile, checkout, etc.) — emit nothing.
+                // Only try hidden children for menu items with no view parameter at all.
+                if (empty($view) && $parentId > 0) {
+                    $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId);
+                }
+                return;
         }
     }
 
