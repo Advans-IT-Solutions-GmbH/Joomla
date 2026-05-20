@@ -209,9 +209,17 @@ WHERE m.published = -2
     LIMIT 1
   );
 
--- Are there enabled products linked to Joomla articles?
+-- Are there enabled products linked to Joomla articles? (J2Commerce 4.x)
 SELECT p.j2store_product_id, p.product_source, p.enabled, a.title, a.state
 FROM jos_j2store_products p
+JOIN jos_content a ON a.id = p.product_source_id
+  AND p.product_source = 'com_content'
+WHERE p.enabled = 1 AND a.state = 1
+LIMIT 20;
+
+-- J2Commerce 6.x variant (use jos_j2commerce_products instead):
+SELECT p.j2commerce_product_id, p.product_source, p.enabled, a.title, a.state
+FROM jos_j2commerce_products p
 JOIN jos_content a ON a.id = p.product_source_id
   AND p.product_source = 'com_content'
 WHERE p.enabled = 1 AND a.state = 1
