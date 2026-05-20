@@ -43,6 +43,18 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Create a database query object (Joomla 4/5/6 compatible).
+     * Joomla 6 deprecates getQuery(true) in favour of createQuery().
+     *
+     * @param   DatabaseInterface  $db
+     * @return  \Joomla\Database\QueryInterface
+     */
+    private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
      * Intercept AJAX requests before Joomla's SEF redirect.
      *
      * Joomla 5.x encodes & as &amp; in redirect Location headers,
@@ -362,7 +374,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // Check if username/email already exists
         $db = Factory::getContainer()->get(DatabaseInterface::class);
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__users'))
             ->where($db->quoteName('username') . ' = :username')
@@ -372,7 +384,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_USERNAME_EXISTS'));
         }
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__users'))
             ->where($db->quoteName('email') . ' = :email')
@@ -456,7 +468,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // Always return success to prevent email enumeration
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -470,7 +482,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $hashedToken = UserHelper::hashPassword($token);
                 $tokenCreated = Factory::getDate()->toSql();
 
-                $query = $db->getQuery(true)
+                $query = $this->createDbQuery($db)
                     ->update($db->quoteName('#__users'))
                     ->set($db->quoteName('activation') . ' = :activation')
                     ->set($db->quoteName('lastResetTime') . ' = :resetTime')
@@ -513,7 +525,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // Always return success to prevent email enumeration
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -562,26 +574,26 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             if ($this->isJ2Commerce4($db)) {
                 // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
-                $subQuery = $db->getQuery(true)
+                $subQuery = $this->createDbQuery($db)
                     ->select($db->quoteName('j2store_cart_id'))
                     ->from($db->quoteName('#__j2store_carts'))
                     ->where($db->quoteName('user_id') . ' = :userId')
                     ->bind(':userId', $userId, ParameterType::INTEGER);
 
-                $query = $db->getQuery(true)
+                $query = $this->createDbQuery($db)
                     ->delete($db->quoteName('#__j2store_cartitems'))
                     ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
                     ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
                     ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
             } else {
                 // J2Commerce 6.x — tables: #__j2commerce_carts / #__j2commerce_cartitems
-                $subQuery = $db->getQuery(true)
+                $subQuery = $this->createDbQuery($db)
                     ->select($db->quoteName('j2commerce_cart_id'))
                     ->from($db->quoteName('#__j2commerce_carts'))
                     ->where($db->quoteName('user_id') . ' = :userId')
                     ->bind(':userId', $userId, ParameterType::INTEGER);
 
-                $query = $db->getQuery(true)
+                $query = $this->createDbQuery($db)
                     ->delete($db->quoteName('#__j2commerce_cartitems'))
                     ->where($db->quoteName('j2commerce_cartitem_id') . ' = :cartitemId')
                     ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
@@ -671,24 +683,24 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         if ($this->isJ2Commerce4($db)) {
             // #__j2store_cartitems FK to #__j2store_carts is `cart_id`; quantity column is `product_qty`
             // (verified against production DB dump: advansj5_j2store_cartitems has product_qty decimal(12,4))
-            $subQuery = $db->getQuery(true)
+            $subQuery = $this->createDbQuery($db)
                 ->select($db->quoteName('j2store_cart_id'))
                 ->from($db->quoteName('#__j2store_carts'))
                 ->where($db->quoteName('user_id') . ' = :userId')
                 ->bind(':userId', $userId, ParameterType::INTEGER);
 
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
                 ->from($db->quoteName('#__j2store_cartitems'))
                 ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
         } else {
-            $subQuery = $db->getQuery(true)
+            $subQuery = $this->createDbQuery($db)
                 ->select($db->quoteName('j2commerce_cart_id'))
                 ->from($db->quoteName('#__j2commerce_carts'))
                 ->where($db->quoteName('user_id') . ' = :userId')
                 ->bind(':userId', $userId, ParameterType::INTEGER);
 
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
                 ->from($db->quoteName('#__j2commerce_cartitems'))
                 ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
@@ -707,7 +719,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         if ($this->isJ2Commerce4($db)) {
             // #__j2store_cartitems has no price column; prices are in #__j2store_orderitems
             // joined via cart_id → #__j2store_carts.j2store_cart_id
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('COALESCE(SUM(' . $db->quoteName('oi.orderitem_finalprice') . ' * ' . $db->quoteName('oi.orderitem_quantity') . '), 0)')
                 ->from($db->quoteName('#__j2store_orderitems', 'oi'))
                 ->join('INNER', $db->quoteName('#__j2store_carts', 'c') . ' ON ' . $db->quoteName('c.j2store_cart_id') . ' = ' . $db->quoteName('oi.cart_id'))
@@ -814,7 +826,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     {
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select([$db->quoteName('id'), $db->quoteName('title'), $db->quoteName('method')])
                 ->from($db->quoteName('#__user_mfa'))
                 ->where($db->quoteName('user_id') . ' = :userId')
