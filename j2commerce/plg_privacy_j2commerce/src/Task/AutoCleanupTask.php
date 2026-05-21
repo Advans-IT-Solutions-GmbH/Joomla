@@ -218,7 +218,7 @@ class AutoCleanupTask implements SubscriberInterface
                 ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
                 ->where('LOWER(TRIM(' . $db->quoteName('field_value') . ')) = ' . $db->quote('yes'));
         } else {
-            // TODO: J2Commerce 6 has no direct equivalent of j2store_product_customfields.
+            // TODO(#96): J2Commerce 6 has no direct equivalent of j2store_product_customfields.
             // Return false until the correct storage location is confirmed.
             return false;
         }

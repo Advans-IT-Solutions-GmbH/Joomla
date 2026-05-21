@@ -925,7 +925,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
                 ->bind(':productid', $productId, ParameterType::INTEGER);
         } else {
-            // TODO: J2Commerce 6 has no direct equivalent of j2store_product_customfields.
+            // TODO(#96): J2Commerce 6 has no direct equivalent of j2store_product_customfields.
             // #__j2commerce_customfields is a field definition table (no product_id column).
             // Product-specific metadata lives in #__j2commerce_metafields, but whether
             // is_lifetime_license values are written there depends on the installation.
