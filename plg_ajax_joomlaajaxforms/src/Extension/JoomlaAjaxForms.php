@@ -574,11 +574,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             if ($this->isJ2Commerce4($db)) {
                 // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
+                // $userId is (int) — safe to inline in subquery; bind() on subquery objects is lost
+                // when the subquery is cast to string and embedded in the outer query's WHERE clause.
                 $subQuery = $this->createDbQuery($db)
                     ->select($db->quoteName('j2store_cart_id'))
                     ->from($db->quoteName('#__j2store_carts'))
-                    ->where($db->quoteName('user_id') . ' = :userId')
-                    ->bind(':userId', $userId, ParameterType::INTEGER);
+                    ->where($db->quoteName('user_id') . ' = ' . $userId);
 
                 $query = $this->createDbQuery($db)
                     ->delete($db->quoteName('#__j2store_cartitems'))
@@ -590,8 +591,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $subQuery = $this->createDbQuery($db)
                     ->select($db->quoteName('j2commerce_cart_id'))
                     ->from($db->quoteName('#__j2commerce_carts'))
-                    ->where($db->quoteName('user_id') . ' = :userId')
-                    ->bind(':userId', $userId, ParameterType::INTEGER);
+                    ->where($db->quoteName('user_id') . ' = ' . $userId);
 
                 $query = $this->createDbQuery($db)
                     ->delete($db->quoteName('#__j2commerce_cartitems'))
@@ -683,11 +683,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         if ($this->isJ2Commerce4($db)) {
             // #__j2store_cartitems FK to #__j2store_carts is `cart_id`; quantity column is `product_qty`
             // (verified against production DB dump: advansj5_j2store_cartitems has product_qty decimal(12,4))
+            // $userId is (int) — safe to inline; bind() on subquery is lost when cast to string.
             $subQuery = $this->createDbQuery($db)
                 ->select($db->quoteName('j2store_cart_id'))
                 ->from($db->quoteName('#__j2store_carts'))
-                ->where($db->quoteName('user_id') . ' = :userId')
-                ->bind(':userId', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
 
             $query = $this->createDbQuery($db)
                 ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
@@ -697,8 +697,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $subQuery = $this->createDbQuery($db)
                 ->select($db->quoteName('j2commerce_cart_id'))
                 ->from($db->quoteName('#__j2commerce_carts'))
-                ->where($db->quoteName('user_id') . ' = :userId')
-                ->bind(':userId', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
 
             $query = $this->createDbQuery($db)
                 ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
