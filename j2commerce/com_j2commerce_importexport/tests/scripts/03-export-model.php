@@ -190,20 +190,32 @@ class ExportModelTest
 
         $ts = time();
         foreach (['Export Test Alpha', 'Export Test Beta'] as $i => $title) {
+            $now     = date('Y-m-d H:i:s');
             $article = (object)[
-                'title'      => $title,
-                'alias'      => 'export-test-' . $i . '-' . $ts,
-                'introtext'  => 'Export test product',
-                'fulltext'   => '',
-                'state'      => 1,
-                'catid'      => $catId,
-                'created'    => date('Y-m-d H:i:s'),
-                'created_by' => 42,
-                'access'     => 1,
-                'language'   => '*',
-                'params'     => '{}',
-                'metadata'   => '{}',
-                'attribs'    => '{}',
+                'title'            => $title,
+                'alias'            => 'export-test-' . $i . '-' . $ts,
+                'introtext'        => 'Export test product',
+                'fulltext'         => '',
+                'state'            => 1,
+                'catid'            => $catId,
+                'created'          => $now,
+                'created_by'       => 0,
+                'created_by_alias' => '',
+                'modified'         => $now,
+                'modified_by'      => 0,
+                'access'           => 1,
+                'language'         => '*',
+                'attribs'          => '{}',
+                'metadata'         => '{}',
+                'metadesc'         => '',
+                'metakey'          => '',
+                'images'           => '{}',
+                'urls'             => '{}',
+                'note'             => '',
+                'featured'         => 0,
+                'version'          => 1,
+                'ordering'         => 0,
+                'hits'             => 0,
             ];
             $this->db->insertObject('#__content', $article, 'id');
             $this->seededContentIds[] = (int) $this->db->insertid();
