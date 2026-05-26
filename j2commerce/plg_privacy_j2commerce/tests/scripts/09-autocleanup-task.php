@@ -165,13 +165,14 @@ class AutoCleanupTaskTest
         $this->seedTestOrder($recentUserId, 'CLEANUP-RECENT-' . time(), $recentDate);
 
         // Simulate the retention query: users whose ALL orders are older than 10 years
+        $ordersTable = $this->isJ6Stack() ? '#__j2commerce_orders' : '#__j2store_orders';
         $cutoff = date('Y-m-d H:i:s', strtotime('-10 years'));
         $query  = $this->db->getQuery(true)
             ->select('DISTINCT o.user_id')
-            ->from($this->db->quoteName('#__j2store_orders', 'o'))
+            ->from($this->db->quoteName($ordersTable, 'o'))
             ->where($this->db->quoteName('o.user_id') . ' > 0')
             ->where('NOT EXISTS (
-                SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orders', 'o2') . '
+                SELECT 1 FROM ' . $this->db->quoteName($ordersTable, 'o2') . '
                 WHERE ' . $this->db->quoteName('o2.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('o2.created_on') . ' >= :cutoff
             )')
@@ -197,6 +198,7 @@ class AutoCleanupTaskTest
     private function testLifetimeLicenseExemption(): void
     {
         echo "\n--- Lifetime License Exemption ---\n";
+        $tp = $this->isJ6Stack() ? 'j2commerce' : 'j2store';
 
         // A user with an old order but a lifetime license product should be exempt
         $userId  = 9903;
@@ -221,7 +223,7 @@ class AutoCleanupTaskTest
                     'discount'          => 0.00,
                     'product_options'   => '{"license_type":"lifetime"}',
                 ];
-                $this->db->insertObject('#__j2store_orderitems', $itemData);
+                $this->db->insertObject('#__' . $tp . '_orderitems', $itemData);
             } catch (\Exception $e) {
                 // orderitems schema may differ — skip item seeding
             }
@@ -235,10 +237,10 @@ class AutoCleanupTaskTest
         $cutoff = date('Y-m-d H:i:s', strtotime('-10 years'));
         $query  = $this->db->getQuery(true)
             ->select('DISTINCT o.user_id')
-            ->from($this->db->quoteName('#__j2store_orders', 'o'))
+            ->from($this->db->quoteName('#__' . $tp . '_orders', 'o'))
             ->where($this->db->quoteName('o.user_id') . ' > 0')
             ->where('NOT EXISTS (
-                SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orders', 'o2') . '
+                SELECT 1 FROM ' . $this->db->quoteName('#__' . $tp . '_orders', 'o2') . '
                 WHERE ' . $this->db->quoteName('o2.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('o2.created_on') . ' >= :cutoff
             )')
@@ -249,7 +251,7 @@ class AutoCleanupTaskTest
         // building the exemption subquery — the column is absent in some schema variants.
         $orderItemColumns = [];
         try {
-            $orderItemColumns = $this->db->getTableColumns('#__j2store_orderitems');
+            $orderItemColumns = $this->db->getTableColumns('#__' . $tp . '_orderitems');
         } catch (\Exception $e) {
             // table not available
         }
@@ -261,9 +263,9 @@ class AutoCleanupTaskTest
         }
 
         $query->where('NOT EXISTS (
-                SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orderitems', 'oi') . '
-                JOIN ' . $this->db->quoteName('#__j2store_orders', 'ol') . '
-                  ON ' . $this->db->quoteName('ol.j2store_order_id') . ' = ' . $this->db->quoteName('oi.j2store_order_id') . '
+                SELECT 1 FROM ' . $this->db->quoteName('#__' . $tp . '_orderitems', 'oi') . '
+                JOIN ' . $this->db->quoteName('#__' . $tp . '_orders', 'ol') . '
+                  ON ' . $this->db->quoteName('ol.' . $tp . '_order_id') . ' = ' . $this->db->quoteName('oi.' . $tp . '_order_id') . '
                 WHERE ' . $this->db->quoteName('ol.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('oi.product_source_id') . ' IN (' . implode(',', $lifetimeSourceIds) . ')
             )');
@@ -320,9 +322,23 @@ class AutoCleanupTaskTest
         }
     }
 
+    private function isJ6Stack(): bool
+    {
+        if (getenv('J2COMMERCE_STACK') === 'j6') {
+            return true;
+        }
+        try {
+            return count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
     private function seedTestOrder(int $userId, string $orderId, string $createdOn): ?string
     {
         try {
+            $isJ6 = $this->isJ6Stack();
+            $table = $isJ6 ? '#__j2commerce_orders' : '#__j2store_orders';
             $order = (object) [
                 'order_id'       => $orderId,
                 'user_id'        => $userId,
@@ -332,13 +348,18 @@ class AutoCleanupTaskTest
                 'order_tax'      => 0.00,
                 'order_shipping' => 0.00,
                 'order_discount' => 0.00,
-                'order_state_id' => 1,
                 'currency_code'  => 'CHF',
                 'currency_value' => 1.00,
                 'created_on'     => $createdOn,
                 'modified_on'    => $createdOn,
             ];
-            $this->db->insertObject('#__j2store_orders', $order);
+            // Stack-specific state column
+            if ($isJ6) {
+                $order->order_state = 'confirmed';
+            } else {
+                $order->order_state_id = 1;
+            }
+            $this->db->insertObject($table, $order);
 
             return $orderId;
         } catch (\Exception $e) {
@@ -352,10 +373,13 @@ class AutoCleanupTaskTest
             return;
         }
 
+        $isJ6 = $this->isJ6Stack();
+        $ordersTable = $isJ6 ? '#__j2commerce_orders' : '#__j2store_orders';
+
         try {
             $this->db->setQuery(
                 $this->db->getQuery(true)
-                    ->delete($this->db->quoteName('#__j2store_orders'))
+                    ->delete($this->db->quoteName($ordersTable))
                     ->whereIn($this->db->quoteName('user_id'), $userIds)
             )->execute();
 

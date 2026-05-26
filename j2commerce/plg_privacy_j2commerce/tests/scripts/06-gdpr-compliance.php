@@ -59,14 +59,20 @@ class GDPRComplianceTest
         // Test 2: Schema validation — every column the plugin references must exist
         echo "\n--- Schema Validation (Plugin vs Real DB) ---\n";
 
-        $orderCols = $this->getTableColumns('#__j2store_orders');
-        $itemCols = $this->getTableColumns('#__j2store_orderitems');
-        $infoCols = $this->getTableColumns('#__j2store_orderinfos');
-        $addrCols = $this->getTableColumns('#__j2store_addresses');
-        $cartCols = $this->getTableColumns('#__j2store_carts');
+        $isJ6 = $this->isJ6Stack();
+        $prefix = $isJ6 ? 'j2commerce' : 'j2store';
+        $orderPkCol  = $isJ6 ? 'j2commerce_order_id'  : 'j2store_order_id';
+        $addrPkCol   = $isJ6 ? 'j2commerce_address_id' : 'j2store_address_id';
+        $cartPkCol   = $isJ6 ? 'j2commerce_cart_id'    : 'j2store_cart_id';
+
+        $orderCols = $this->getTableColumns("#__{$prefix}_orders");
+        $itemCols  = $this->getTableColumns("#__{$prefix}_orderitems");
+        $infoCols  = $this->getTableColumns("#__{$prefix}_orderinfos");
+        $addrCols  = $this->getTableColumns("#__{$prefix}_addresses");
+        $cartCols  = $this->getTableColumns("#__{$prefix}_carts");
 
         // Columns the plugin SELECT queries reference in orders
-        foreach (['j2store_order_id', 'order_id', 'user_id', 'user_email', 'order_total',
+        foreach ([$orderPkCol, 'order_id', 'user_id', 'user_email', 'order_total',
                    'order_state', 'currency_code', 'created_on', 'customer_note', 'ip_address'] as $col) {
             $this->test("orders.$col exists", in_array($col, $orderCols));
         }
@@ -77,41 +83,44 @@ class GDPRComplianceTest
             $this->test("orderitems.$col exists", in_array($col, $itemCols));
         }
 
-        // Columns in orderinfos
-        foreach (['order_id', 'billing_first_name', 'billing_last_name', 'billing_address_1',
-                   'billing_city', 'billing_zip', 'billing_phone_1', 'billing_company', 'billing_tax_number',
-                   'shipping_first_name', 'shipping_last_name', 'shipping_address_1',
-                   'shipping_city', 'shipping_zip', 'shipping_phone_1'] as $col) {
+        // All PII columns in orderinfos — including previously untested ones
+        foreach ([
+            'order_id',
+            'billing_first_name', 'billing_last_name', 'billing_middle_name',
+            'billing_address_1', 'billing_address_2', 'billing_city', 'billing_zip',
+            'billing_phone_1', 'billing_phone_2', 'billing_fax',
+            'billing_company', 'billing_tax_number',
+            'shipping_first_name', 'shipping_last_name', 'shipping_middle_name',
+            'shipping_address_1', 'shipping_address_2', 'shipping_city', 'shipping_zip',
+            'shipping_phone_1', 'shipping_phone_2', 'shipping_fax',
+            'shipping_company', 'shipping_tax_number',
+        ] as $col) {
             $this->test("orderinfos.$col exists", in_array($col, $infoCols));
         }
 
         // Columns in addresses
-        foreach (['j2store_address_id', 'user_id', 'first_name', 'last_name', 'email',
+        foreach ([$addrPkCol, 'user_id', 'first_name', 'last_name', 'email',
                    'address_1', 'city', 'zip', 'type'] as $col) {
             $this->test("addresses.$col exists", in_array($col, $addrCols));
         }
 
         // Columns in carts
-        foreach (['j2store_cart_id', 'user_id'] as $col) {
+        foreach ([$cartPkCol, 'user_id'] as $col) {
             $this->test("carts.$col exists", in_array($col, $cartCols));
         }
 
         // Test 3: Verify JOIN key types match
         echo "\n--- JOIN Key Type Validation ---\n";
 
-        // orders.order_id and orderitems.order_id must both be varchar
-        $orderIdType = $this->getColumnType('#__j2store_orders', 'order_id');
-        $itemOrderIdType = $this->getColumnType('#__j2store_orderitems', 'order_id');
-        $infoOrderIdType = $this->getColumnType('#__j2store_orderinfos', 'order_id');
+        $orderIdType     = $this->getColumnType("#__{$prefix}_orders",     'order_id');
+        $itemOrderIdType = $this->getColumnType("#__{$prefix}_orderitems",  'order_id');
+        $infoOrderIdType = $this->getColumnType("#__{$prefix}_orderinfos",  'order_id');
 
-        $this->test('orders.order_id is varchar', strpos($orderIdType, 'varchar') !== false,
-            "Got: $orderIdType");
-        $this->test('orderitems.order_id is varchar', strpos($itemOrderIdType, 'varchar') !== false,
-            "Got: $itemOrderIdType");
-        $this->test('orderinfos.order_id is varchar', strpos($infoOrderIdType, 'varchar') !== false,
-            "Got: $infoOrderIdType");
+        $this->test('orders.order_id is varchar',    strpos($orderIdType,     'varchar') !== false, "Got: $orderIdType");
+        $this->test('orderitems.order_id is varchar', strpos($itemOrderIdType, 'varchar') !== false, "Got: $itemOrderIdType");
+        $this->test('orderinfos.order_id is varchar', strpos($infoOrderIdType, 'varchar') !== false, "Got: $infoOrderIdType");
 
-        // Test 4: Negative test — billing_email must NOT exist in orderinfos
+        // Test 4: Negative tests — columns that must NOT exist
         echo "\n--- Negative Tests (columns that must NOT exist) ---\n";
         $this->test('orderinfos does NOT have billing_email', !in_array('billing_email', $infoCols),
             'billing_email would cause query errors');
@@ -123,6 +132,18 @@ class GDPRComplianceTest
         echo "Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    private function isJ6Stack(): bool
+    {
+        if (getenv('J2COMMERCE_STACK') === 'j6') {
+            return true;
+        }
+        try {
+            return count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     private function getTableColumns(string $table): array

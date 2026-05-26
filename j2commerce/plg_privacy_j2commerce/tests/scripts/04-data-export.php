@@ -17,10 +17,12 @@ class DataExportTest
     private $passed = 0;
     private $failed = 0;
     private $testUserId = 100;
+    private string $tp; // table prefix: 'j2store' or 'j2commerce'
 
     public function __construct()
     {
         $this->db = Factory::getContainer()->get('DatabaseDriver');
+        $this->tp = getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store';
     }
 
     private function test($name, $condition, $message = '')
@@ -45,9 +47,9 @@ class DataExportTest
             $query = $this->db->getQuery(true)
                 ->select(['o.*', 'oi.orderitem_name', 'oi.orderitem_sku', 'oi.orderitem_quantity', 'oi.orderitem_price', 'oi.orderitem_finalprice',
                     'inf.billing_first_name', 'inf.billing_last_name'])
-                ->from($this->db->quoteName('#__j2store_orders', 'o'))
-                ->leftJoin($this->db->quoteName('#__j2store_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
-                ->leftJoin($this->db->quoteName('#__j2store_orderinfos', 'inf') . ' ON o.order_id = inf.order_id')
+                ->from($this->db->quoteName('#__' . $this->tp . '_orders', 'o'))
+                ->leftJoin($this->db->quoteName('#__' . $this->tp . '_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
+                ->leftJoin($this->db->quoteName('#__' . $this->tp . '_orderinfos', 'inf') . ' ON o.order_id = inf.order_id')
                 ->where('o.user_id = ' . $this->testUserId);
 
             $this->db->setQuery($query);
@@ -81,7 +83,7 @@ class DataExportTest
         try {
             $query = $this->db->getQuery(true)
                 ->select('*')
-                ->from($this->db->quoteName('#__j2store_addresses'))
+                ->from($this->db->quoteName('#__' . $this->tp . '_addresses'))
                 ->where('user_id = ' . $this->testUserId);
 
             $this->db->setQuery($query);
@@ -105,9 +107,9 @@ class DataExportTest
         echo "\n--- JOIN Integrity ---\n";
         try {
             $query = $this->db->getQuery(true)
-                ->select(['o.order_id', 'COUNT(oi.j2store_orderitem_id) AS item_count'])
-                ->from($this->db->quoteName('#__j2store_orders', 'o'))
-                ->leftJoin($this->db->quoteName('#__j2store_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
+                ->select(['o.order_id', 'COUNT(oi.' . $this->tp . '_orderitem_id) AS item_count'])
+                ->from($this->db->quoteName('#__' . $this->tp . '_orders', 'o'))
+                ->leftJoin($this->db->quoteName('#__' . $this->tp . '_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
                 ->where('o.user_id = ' . $this->testUserId)
                 ->group('o.order_id');
 

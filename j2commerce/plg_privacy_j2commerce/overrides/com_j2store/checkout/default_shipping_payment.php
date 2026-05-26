@@ -38,7 +38,7 @@ $_privacyEnabled      = !empty($_privacyPlugin);
 $_privacyParams       = $_privacyEnabled ? new \Joomla\Registry\Registry($_privacyPlugin->params) : null;
 $_showConsent         = $_privacyEnabled && $_privacyParams->get('show_consent_checkbox', 1);
 $_consentRequired     = $_privacyEnabled && $_privacyParams->get('consent_required', 1);
-$_consentText         = $_privacyEnabled ? $_privacyParams->get('consent_text', Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_DEFAULT_TEXT')) : '';
+$_consentText         = $_privacyEnabled ? $_privacyParams->get('consent_text', Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_CHECKBOX_DEFAULT')) : '';
 $_privacyArticleId    = $_privacyEnabled ? (int) $_privacyParams->get('privacy_article', 0) : 0;
 
 if ($_showConsent && $_privacyArticleId) {

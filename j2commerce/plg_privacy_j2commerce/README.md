@@ -8,7 +8,7 @@
 
 ## Description
 
-GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data.
+GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data. Supports J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables) via runtime detection.
 
 ## Features
 
@@ -23,9 +23,9 @@ GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5. Integrates with
 
 ## Requirements
 
-- Joomla 5.0 or higher
+- Joomla 5.0 or higher (Joomla 6 supported)
 - PHP 8.1 or higher
-- J2Commerce 4.0 or higher
+- J2Commerce 4.0 or higher (J2Commerce 6 supported)
 - Joomla Privacy Component enabled (`com_privacy`)
 
 ---
@@ -174,8 +174,8 @@ The privacy tab in J2Commerce's "My Profile" shows consent status and privacy re
 
 **Consent status lookup** checks three sources in order:
 1. `#__privacy_consents` table (by `user_id` for logged-in, not available for guests)
-2. `#__j2store_orders` by `user_id` (logged-in users)
-3. `#__j2store_orders` by `user_email` (guest users, email from J2Store session)
+2. `#__j2store_orders` / `#__j2commerce_orders` by `user_id` (logged-in users)
+3. `#__j2store_orders` / `#__j2commerce_orders` by `user_email` (guest users)
 
 If an order is found but no `#__privacy_consents` entry exists, one is auto-created.
 
@@ -194,16 +194,24 @@ This plugin is a **native Joomla privacy plugin**, not a J2Commerce plugin. It i
 
 The trade-off is that J2Commerce does not know about it. J2Commerce's `eventWithHtml()` — the mechanism J2Commerce uses to let plugins inject content into its views — only loads plugins from its own `j2store` group. Plugins in the `privacy` group are invisible to it. This means there is no event hook available inside J2Commerce's checkout or MyProfile views that this plugin can use.
 
-Template overrides are the solution: by placing PHP files in `templates/{active-template}/html/com_j2store/`, the overrides run as part of J2Commerce's own rendering and can check for this plugin via `PluginHelper` to conditionally add the consent checkbox and Privacy tab.
+Template overrides are the solution: by placing PHP files in `templates/{active-template}/html/com_j2store/` (J2Commerce 4.x) or `templates/{active-template}/html/com_j2commerce/` (J2Commerce 6.x), the overrides run as part of J2Commerce's own rendering and can check for this plugin via `PluginHelper` to conditionally add the consent checkbox and Privacy tab.
 
 ### Automatic deployment on first install
 
-On first install, `script.php` copies the bundled overrides into every active frontend template:
+On first install, `script.php` copies the bundled overrides into every active frontend template.
 
+**J2Commerce 4.x** (`com_j2store`):
 ```
 templates/{template}/html/com_j2store/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2store/myprofile/default.php
 templates/{template}/html/com_j2store/myprofile/default_addresses.php
+```
+
+**J2Commerce 6.x** (`com_j2commerce`):
+```
+templates/{template}/html/com_j2commerce/checkout/default_shipping_payment.php
+templates/{template}/html/com_j2commerce/myprofile/default.php
+templates/{template}/html/com_j2commerce/myprofile/default_addresses.php
 ```
 
 Rules:
@@ -217,10 +225,12 @@ If the automatic copy was skipped (file already existed, or you are installing o
 
 ```
 # Source (inside the installed plugin)
-JPATH_PLUGINS/privacy/j2commerce/overrides/com_j2store/
+JPATH_PLUGINS/privacy/j2commerce/overrides/com_j2store/      # J2Commerce 4.x
+JPATH_PLUGINS/privacy/j2commerce/overrides/com_j2commerce/   # J2Commerce 6.x
 
 # Destination (repeat for each active template)
-templates/{your-template}/html/com_j2store/
+templates/{your-template}/html/com_j2store/      # J2Commerce 4.x
+templates/{your-template}/html/com_j2commerce/   # J2Commerce 6.x
 ```
 
 ### Requirements
@@ -352,7 +362,7 @@ This step is only required if your shop sells products with perpetual (lifetime)
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
-| `#__j2store_product_customfields` | Marks which products are lifetime licenses | J2Store Custom Fields UI |
+| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
 | `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
 **To mark products as lifetime licenses, navigate to:**
@@ -577,11 +587,18 @@ Payment data (credit card details, bank information) is stored by payment servic
 
 **Detection Method:** J2Store Custom Field
 
-The plugin checks the J2Store Custom Field `is_lifetime_license` for each product:
+The plugin checks the J2Commerce Custom Field `is_lifetime_license` for each product:
 
 ```sql
+-- J2Commerce 4.x
 SELECT field_value 
 FROM #__j2store_product_customfields 
+WHERE product_id = ? 
+AND field_name = 'is_lifetime_license'
+
+-- J2Commerce 6.x
+SELECT field_value 
+FROM #__j2commerce_customfields 
 WHERE product_id = ? 
 AND field_name = 'is_lifetime_license'
 ```
@@ -888,7 +905,7 @@ This plugin complies with Swiss legal requirements:
 - Orders within 10-year retention period: **Kept intact** (not anonymized)
 - Orders outside retention period: **Anonymized** on deletion request
 - Address book entries: **Deleted** immediately on request
-- Cart data: **Deleted** immediately on request
+- Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
 ### Payment Provider Data
 
@@ -1122,9 +1139,9 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ### Technical Details
 
-**Database Table:** `#__j2store_product_customfields`
+**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x)
 
-**Structure:**
+**Structure (J2Commerce 4.x):**
 ```sql
 CREATE TABLE `#__j2store_product_customfields` (
   `j2store_customfield_id` int(11) NOT NULL AUTO_INCREMENT,

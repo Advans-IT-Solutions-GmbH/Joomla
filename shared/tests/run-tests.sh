@@ -20,7 +20,13 @@ if [ ! -f "test.env" ]; then
     exit 1
 fi
 
+# Preserve caller-supplied overrides before sourcing test.env defaults
+_CONTAINER_NAME_OVERRIDE="${CONTAINER_NAME:-}"
+
 source test.env
+
+# Re-apply caller overrides (test.env must not clobber them)
+[ -n "$_CONTAINER_NAME_OVERRIDE" ] && CONTAINER_NAME="$_CONTAINER_NAME_OVERRIDE"
 
 RESULTS_DIR="${RESULTS_DIR:-./test-results}"
 mkdir -p "$RESULTS_DIR"
