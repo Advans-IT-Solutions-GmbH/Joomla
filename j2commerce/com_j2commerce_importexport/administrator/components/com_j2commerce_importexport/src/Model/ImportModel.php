@@ -17,6 +17,14 @@ use Joomla\CMS\Application\ApplicationHelper;
 
 class ImportModel extends BaseDatabaseModel
 {
+    /**
+     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
     const BATCH_SIZE = 100;
 
     public function importProductFull(array $data, array $options = []): array
@@ -80,7 +88,7 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $db = $this->getDatabase();
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('id')
             ->from($db->quoteName('#__categories'))
             ->where('path = :path')
@@ -137,7 +145,7 @@ class ImportModel extends BaseDatabaseModel
         
         // 1. Check by article_id if provided
         if (!empty($data['article_id'])) {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('id')
                 ->from($db->quoteName('#__content'))
                 ->where('id = :id')
@@ -149,7 +157,7 @@ class ImportModel extends BaseDatabaseModel
         // 2. Check by alias if not found by ID
         $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($data['title']);
         if (!$existingId && !empty($alias)) {
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('id')
                 ->from($db->quoteName('#__content'))
                 ->where('alias = :alias')
@@ -161,7 +169,7 @@ class ImportModel extends BaseDatabaseModel
         // 3. Check by SKU via J2Store product -> article link
         if (!$existingId && !empty($data['variants'][0]['sku'])) {
             $sku = $data['variants'][0]['sku'];
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->select('p.product_source_id')
                 ->from($db->quoteName('#__j2store_products', 'p'))
                 ->join('INNER', $db->quoteName('#__j2store_variants', 'v') . ' ON p.j2store_product_id = v.product_id')
@@ -213,7 +221,7 @@ class ImportModel extends BaseDatabaseModel
         $now = Factory::getDate()->toSql();
 
         // Check if product exists
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('j2store_product_id')
             ->from($db->quoteName('#__j2store_products'))
             ->where('product_source_id = :articleid')
@@ -266,7 +274,7 @@ class ImportModel extends BaseDatabaseModel
             $existingId = null;
 
             if ($sku) {
-                $query = $db->getQuery(true)
+                $query = $this->createDbQuery($db)
                     ->select('j2store_variant_id')
                     ->from($db->quoteName('#__j2store_variants'))
                     ->where('sku = :sku')
@@ -336,7 +344,7 @@ class ImportModel extends BaseDatabaseModel
         $db = $this->getDatabase();
         $quantityMode = $options['quantity_mode'] ?? 'replace';
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select(['j2store_productquantity_id', 'quantity'])
             ->from($db->quoteName('#__j2store_productquantities'))
             ->where('variant_id = :variantid')
@@ -375,7 +383,7 @@ class ImportModel extends BaseDatabaseModel
         $db = $this->getDatabase();
 
         // Delete existing tier prices
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->delete($db->quoteName('#__j2store_product_prices'))
             ->where('variant_id = :variantid')
             ->bind(':variantid', $variantId, \Joomla\Database\ParameterType::INTEGER);
@@ -402,7 +410,7 @@ class ImportModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->delete($db->quoteName('#__j2store_productimages'))
             ->where('product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
@@ -438,7 +446,7 @@ class ImportModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->delete($db->quoteName('#__j2store_product_filters'))
             ->where('product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
@@ -464,7 +472,7 @@ class ImportModel extends BaseDatabaseModel
         $groupId = $this->ensureFilterGroup($filter['filter_group_name'] ?? 'Default');
 
         // Find or create filter
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('j2store_filter_id')
             ->from($db->quoteName('#__j2store_filters'))
             ->where('filter_name = :name')
@@ -491,7 +499,7 @@ class ImportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('j2store_filtergroup_id')
             ->from($db->quoteName('#__j2store_filtergroups'))
             ->where('group_name = :name')
@@ -531,7 +539,7 @@ class ImportModel extends BaseDatabaseModel
         $db = $this->getDatabase();
 
         // Delete existing tag mappings
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->delete($db->quoteName('#__contentitem_tag_map'))
             ->where('content_item_id = :articleid')
             ->where('type_alias = ' . $db->quote('com_content.article'))
@@ -561,7 +569,7 @@ class ImportModel extends BaseDatabaseModel
             return (int) $tag['id'];
         }
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('id')
             ->from($db->quoteName('#__tags'))
             ->where('title = :title')
@@ -598,7 +606,7 @@ class ImportModel extends BaseDatabaseModel
             $fieldId = $this->getFieldIdByName($field['name']);
             if (!$fieldId) continue;
 
-            $query = $db->getQuery(true)
+            $query = $this->createDbQuery($db)
                 ->delete($db->quoteName('#__fields_values'))
                 ->where('field_id = :fieldid')
                 ->where('item_id = :itemid')
@@ -619,7 +627,7 @@ class ImportModel extends BaseDatabaseModel
     protected function getFieldIdByName(string $name): ?int
     {
         $db = $this->getDatabase();
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('id')
             ->from($db->quoteName('#__fields'))
             ->where('name = :name')
@@ -660,7 +668,7 @@ class ImportModel extends BaseDatabaseModel
     protected function getComponentId(string $element): int
     {
         $db = $this->getDatabase();
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('extension_id')
             ->from($db->quoteName('#__extensions'))
             ->where('element = :element')

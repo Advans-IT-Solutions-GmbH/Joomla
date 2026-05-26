@@ -16,6 +16,14 @@ use Joomla\CMS\Factory;
 class ExportModel extends BaseDatabaseModel
 {
     /**
+     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
      * Export data based on type
      */
     public function exportData(string $type): array
@@ -45,7 +53,7 @@ class ExportModel extends BaseDatabaseModel
         $products = [];
 
         // Get all J2Store products with Joomla article data
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select([
                 'p.*',
                 'c.id AS article_id',
@@ -127,7 +135,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select(['v.*', 'q.quantity', 'q.on_hold', 'q.sold AS qty_sold'])
             ->from($db->quoteName('#__j2store_variants', 'v'))
             ->leftJoin($db->quoteName('#__j2store_productquantities', 'q') . ' ON q.variant_id = v.j2store_variant_id')
@@ -154,7 +162,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_product_prices'))
             ->where('variant_id = :variantid')
@@ -171,7 +179,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_productimages'))
             ->where('product_id = :productid')
@@ -188,7 +196,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select([
                 'po.*',
                 'o.option_unique_name',
@@ -220,7 +228,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select([
                 'pov.*',
                 'ov.optionvalue_name'
@@ -242,7 +250,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select([
                 'pf.*',
                 'f.filter_name',
@@ -265,7 +273,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_productfiles'))
             ->where('product_id = :productid')
@@ -282,7 +290,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select(['t.id', 't.title', 't.alias'])
             ->from($db->quoteName('#__tags', 't'))
             ->innerJoin($db->quoteName('#__contentitem_tag_map', 'tm') . ' ON tm.tag_id = t.id')
@@ -301,7 +309,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__menu'))
             ->where('link LIKE ' . $db->quote('%option=com_content&view=article&id=' . $articleId . '%'))
@@ -318,7 +326,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select(['f.name', 'f.title AS field_title', 'f.type AS field_type', 'fv.value'])
             ->from($db->quoteName('#__fields_values', 'fv'))
             ->innerJoin($db->quoteName('#__fields', 'f') . ' ON f.id = fv.field_id')
@@ -337,7 +345,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_metafields'))
             ->where('owner_id = :productid')
@@ -354,7 +362,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_products'))
             ->order('j2store_product_id ASC');
@@ -370,7 +378,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__categories'))
             ->where($db->quoteName('extension') . ' = ' . $db->quote('com_content'))
@@ -387,7 +395,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_variants'))
             ->order('j2store_variant_id ASC');
@@ -403,7 +411,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('*')
             ->from($db->quoteName('#__j2store_product_prices'))
             ->order('j2store_productprice_id ASC');
