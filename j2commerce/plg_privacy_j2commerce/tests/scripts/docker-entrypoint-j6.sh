@@ -5,10 +5,19 @@ echo "=== J2Commerce Test Environment Setup (J6 Stack) ==="
 echo "Extension: ${EXTENSION_NAME:-unknown}"
 echo "====================================================="
 
-# Wait for MySQL to be ready
+# Wait for MySQL to be ready (max 120s).
+# Use root credentials for the ping — the joomla user may not yet be
+# provisioned when mysqladmin first succeeds on localhost.
 echo "Waiting for MySQL..."
-until mysql -h mysql -u joomla -pjoomla_pass -e "SELECT 1" &>/dev/null; do
+MYSQL_WAIT=0
+until mysqladmin ping -h mysql -u root -proot_pass --silent 2>/dev/null \
+    || mysql -h mysql -u root -proot_pass -e "SELECT 1" &>/dev/null 2>&1; do
     sleep 2
+    MYSQL_WAIT=$((MYSQL_WAIT + 2))
+    if [ $MYSQL_WAIT -ge 120 ]; then
+        echo "ERROR: MySQL did not become ready within 120s"
+        exit 1
+    fi
 done
 echo "MySQL is ready"
 
