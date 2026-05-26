@@ -996,7 +996,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2store_orders'))
                 ->set([
-                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@example.com'),
+                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'),
                     $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
@@ -1042,7 +1042,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2commerce_orders'))
                 ->set([
-                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@example.com'),
+                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'),
                     $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
@@ -1236,9 +1236,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $table = $this->isJ2Commerce4() ? '#__j2store_addresses' : '#__j2commerce_addresses';
         $pkCol = $this->isJ2Commerce4() ? 'j2store_address_id' : 'j2commerce_address_id';
 
+        // Atomic DELETE with ownership check — avoids TOCTOU race between SELECT and DELETE.
+        // If the address does not belong to $userId, affected rows = 0 → not found.
         $query = $this->createDbQuery()
-            ->select($db->quoteName($pkCol))
-            ->from($db->quoteName($table))
+            ->delete($db->quoteName($table))
             ->where($db->quoteName($pkCol) . ' = :addressid')
             ->where($db->quoteName('user_id') . ' = :userid')
             ->bind(':addressid', $addressId, ParameterType::INTEGER)
@@ -1246,19 +1247,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $db->setQuery($query);
 
-        if (!$db->loadResult()) {
-            return ['success' => false, 'message' => Text::_('PLG_PRIVACY_J2COMMERCE_ADDRESS_NOT_FOUND')];
-        }
-
-        $query = $this->createDbQuery()
-            ->delete($db->quoteName($table))
-            ->where($db->quoteName($pkCol) . ' = :addressid')
-            ->bind(':addressid', $addressId, ParameterType::INTEGER);
-
-        $db->setQuery($query);
-
         try {
             $db->execute();
+
+            if ($db->getAffectedRows() === 0) {
+                return ['success' => false, 'message' => Text::_('PLG_PRIVACY_J2COMMERCE_ADDRESS_NOT_FOUND')];
+            }
 
             $user = $this->getApplication()->getIdentity();
             $this->logActivity('address_deleted', $userId, 'Address ID: ' . $addressId);
