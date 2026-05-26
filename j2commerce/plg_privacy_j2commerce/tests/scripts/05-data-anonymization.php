@@ -226,8 +226,14 @@ class DataAnonymizationTest
 
     private function isJ6Stack(): bool
     {
-        return getenv('J2COMMERCE_STACK') === 'j6'
-            || count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
+        if (getenv('J2COMMERCE_STACK') === 'j6') {
+            return true;
+        }
+        try {
+            return count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     private function getTableColumns(string $table): array

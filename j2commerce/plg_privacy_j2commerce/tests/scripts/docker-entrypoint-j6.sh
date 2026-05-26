@@ -113,22 +113,10 @@ done
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
 
-# Install J2Commerce 6.x
-echo "Installing J2Commerce 6.x..."
-if [ -f /tmp/j2commerce.zip ]; then
-    cp /tmp/j2commerce.zip /var/www/html/tmp/j2commerce.zip
-    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
-        echo "J2Commerce 6 installed via Joomla CLI"
-    else
-        echo "J2Commerce CLI install failed, importing schema directly..."
-        # Fallback: import J2Commerce 6 schema from the installed package SQL
-        find /var/www/html -name "install.j2commerce.sql" 2>/dev/null | head -1 | \
-            xargs -I{} sh -c 'sed "s/#__/'"${DB_PREFIX}"'/g" "{}" | mysql -h mysql -u joomla -pjoomla_pass joomla_db' \
-            && echo "J2Commerce 6 schema imported" \
-            || echo "WARNING: J2Commerce 6 schema import failed — creating minimal schema"
-
-        # Minimal J2Commerce 6 schema for tests if all else fails
-        mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOMINIMAL
+# No public J2Commerce 6.x release exists yet. Import the minimal schema
+# required for privacy plugin tests directly.
+echo "Creating J2Commerce 6 schema..."
+mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null <<EOMINIMAL
 CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_orders (
     j2commerce_order_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     order_id            VARCHAR(50)  NOT NULL,
@@ -224,12 +212,7 @@ CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_cartitems (
     PRIMARY KEY (j2commerce_cartitem_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 EOMINIMAL
-        echo "Minimal J2Commerce 6 schema created"
-    fi
-else
-    echo "ERROR: J2Commerce ZIP not found at /tmp/j2commerce.zip"
-    exit 1
-fi
+echo "J2Commerce 6 schema created"
 
 # Install privacy plugin extension
 echo "Installing privacy plugin extension..."
