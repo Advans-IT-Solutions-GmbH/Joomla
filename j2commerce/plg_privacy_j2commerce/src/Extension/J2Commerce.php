@@ -773,13 +773,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     {
         $db = $this->getDatabase();
 
+        $safeUserId = (int) $userId;
+
         if ($this->isJ2Commerce4()) {
-            // #__j2store_cartitems has no user_id; delete via cart subquery
+            // #__j2store_cartitems has no user_id; delete via cart subquery.
+            // $safeUserId inlined directly — bind() on subquery is lost after __toString().
             $subQuery = $this->createDbQuery()
                 ->select($db->quoteName('j2store_cart_id'))
                 ->from($db->quoteName('#__j2store_carts'))
-                ->where($db->quoteName('user_id') . ' = :userid')
-                ->bind(':userid', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = ' . $safeUserId);
 
             $query = $this->createDbQuery()
                 ->delete($db->quoteName('#__j2store_cartitems'))
@@ -789,17 +791,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             $query = $this->createDbQuery()
                 ->delete($db->quoteName('#__j2store_carts'))
-                ->where($db->quoteName('user_id') . ' = :userid2')
-                ->bind(':userid2', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = :userid')
+                ->bind(':userid', $safeUserId, ParameterType::INTEGER);
             $db->setQuery($query);
             $db->execute();
         } else {
-            // J2Commerce 6 — cartitems have no user_id; delete via cart subquery
+            // J2Commerce 6 — cartitems have no user_id; delete via cart subquery.
             $subQuery = $this->createDbQuery()
                 ->select($db->quoteName('j2commerce_cart_id'))
                 ->from($db->quoteName('#__j2commerce_carts'))
-                ->where($db->quoteName('user_id') . ' = :userid')
-                ->bind(':userid', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = ' . $safeUserId);
 
             $query = $this->createDbQuery()
                 ->delete($db->quoteName('#__j2commerce_cartitems'))
@@ -809,8 +810,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             $query = $this->createDbQuery()
                 ->delete($db->quoteName('#__j2commerce_carts'))
-                ->where($db->quoteName('user_id') . ' = :userid2')
-                ->bind(':userid2', $userId, ParameterType::INTEGER);
+                ->where($db->quoteName('user_id') . ' = :userid')
+                ->bind(':userid', $safeUserId, ParameterType::INTEGER);
             $db->setQuery($query);
             $db->execute();
         }
