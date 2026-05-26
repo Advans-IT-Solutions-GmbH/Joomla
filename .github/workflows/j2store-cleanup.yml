@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
     paths: ['j2commerce/com_j2store_cleanup/**']
+  pull_request:
+    branches: [main]
+    paths: ['j2commerce/com_j2store_cleanup/**']
 
 jobs:
   build:
