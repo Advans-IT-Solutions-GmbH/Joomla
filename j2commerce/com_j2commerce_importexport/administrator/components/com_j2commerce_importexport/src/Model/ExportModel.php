@@ -11,15 +11,49 @@ namespace Advans\Component\J2CommerceImportExport\Administrator\Model;
 defined('_JEXEC') or die;
 
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
-use Joomla\CMS\Factory;
 
 class ExportModel extends BaseDatabaseModel
 {
+    /** @var bool|null Cached J2Commerce 6 detection result */
+    private ?bool $isJ6 = null;
+
     /**
-     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     * Detect J2Commerce 6 by checking for #__j2commerce_products.
      */
-    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    private function isJ2Commerce6(): bool
     {
+        if ($this->isJ6 === null) {
+            $db = $this->getDatabase();
+            $this->isJ6 = in_array($db->getPrefix() . 'j2commerce_products', $db->getTableList(), true);
+        }
+        return $this->isJ6;
+    }
+
+    /**
+     * Return table name — j2store_ prefix for J2Commerce 4, j2commerce_ for J6.
+     */
+    private function t(string $suffix): string
+    {
+        return $this->isJ2Commerce6() ? '#__j2commerce_' . $suffix : '#__j2store_' . $suffix;
+    }
+
+    /**
+     * Return column name — replaces j2store_ prefix with j2commerce_ on J6.
+     */
+    private function col(string $column): string
+    {
+        if ($this->isJ2Commerce6()) {
+            return str_replace('j2store_', 'j2commerce_', $column);
+        }
+        return $column;
+    }
+
+    /**
+     * Create a query object compatible with Joomla 5 and 6.
+     */
+    private function createDbQuery(): \Joomla\Database\QueryInterface
+    {
+        $db = $this->getDatabase();
         return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
     }
 
@@ -53,7 +87,7 @@ class ExportModel extends BaseDatabaseModel
         $products = [];
 
         // Get all J2Store products with Joomla article data
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select([
                 'p.*',
                 'c.id AS article_id',
@@ -82,24 +116,24 @@ class ExportModel extends BaseDatabaseModel
                 'cat.alias AS category_alias',
                 'cat.path AS category_path'
             ])
-            ->from($db->quoteName('#__j2store_products', 'p'))
+            ->from($db->quoteName($this->t('products'), 'p'))
             ->leftJoin($db->quoteName('#__content', 'c') . ' ON c.id = p.product_source_id')
             ->leftJoin($db->quoteName('#__categories', 'cat') . ' ON cat.id = c.catid')
             ->where('p.product_source = ' . $db->quote('com_content'))
-            ->order('p.j2store_product_id ASC');
+            ->order('p.' . $this->col('j2store_product_id') . ' ASC');
 
         $db->setQuery($query);
         $baseProducts = $db->loadAssocList();
 
         foreach ($baseProducts as $product) {
-            $productId = (int) $product['j2store_product_id'];
+            $productId = (int) $product[$this->col('j2store_product_id')];
             $articleId = (int) $product['article_id'];
 
             // Get variants
             $product['variants'] = $this->getProductVariants($productId);
 
             // Get images
-            $product['j2store_images'] = $this->getProductImages($productId);
+            $product['product_images'] = $this->getProductImages($productId);
 
             // Get options
             $product['options'] = $this->getProductOptions($productId);
@@ -135,20 +169,20 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select(['v.*', 'q.quantity', 'q.on_hold', 'q.sold AS qty_sold'])
-            ->from($db->quoteName('#__j2store_variants', 'v'))
-            ->leftJoin($db->quoteName('#__j2store_productquantities', 'q') . ' ON q.variant_id = v.j2store_variant_id')
+            ->from($db->quoteName($this->t('variants'), 'v'))
+            ->leftJoin($db->quoteName($this->t('productquantities'), 'q') . ' ON q.variant_id = v.' . $this->col('j2store_variant_id'))
             ->where('v.product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER)
-            ->order('v.is_master DESC, v.j2store_variant_id ASC');
+            ->order('v.is_master DESC, v.' . $this->col('j2store_variant_id') . ' ASC');
 
         $db->setQuery($query);
         $variants = $db->loadAssocList();
 
         // Get tier prices for each variant
         foreach ($variants as &$variant) {
-            $variantId = (int) $variant['j2store_variant_id'];
+            $variantId = (int) $variant[$this->col('j2store_variant_id')];
             $variant['tier_prices'] = $this->getVariantPrices($variantId);
         }
 
@@ -162,9 +196,9 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_product_prices'))
+            ->from($db->quoteName($this->t('product_prices')))
             ->where('variant_id = :variantid')
             ->bind(':variantid', $variantId, \Joomla\Database\ParameterType::INTEGER);
 
@@ -179,9 +213,9 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_productimages'))
+            ->from($db->quoteName($this->t('productimages')))
             ->where('product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
 
@@ -196,15 +230,15 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select([
                 'po.*',
                 'o.option_unique_name',
                 'o.option_name',
                 'o.type AS option_type'
             ])
-            ->from($db->quoteName('#__j2store_product_options', 'po'))
-            ->leftJoin($db->quoteName('#__j2store_options', 'o') . ' ON o.j2store_option_id = po.option_id')
+            ->from($db->quoteName($this->t('product_options'), 'po'))
+            ->leftJoin($db->quoteName($this->t('options'), 'o') . ' ON o.' . $this->col('j2store_option_id') . ' = po.option_id')
             ->where('po.product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER)
             ->order('po.ordering ASC');
@@ -214,7 +248,7 @@ class ExportModel extends BaseDatabaseModel
 
         // Get option values for each option
         foreach ($options as &$option) {
-            $productOptionId = (int) $option['j2store_productoption_id'];
+            $productOptionId = (int) $option[$this->col('j2store_productoption_id')];
             $option['values'] = $this->getProductOptionValues($productOptionId);
         }
 
@@ -228,13 +262,13 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select([
                 'pov.*',
                 'ov.optionvalue_name'
             ])
-            ->from($db->quoteName('#__j2store_product_optionvalues', 'pov'))
-            ->leftJoin($db->quoteName('#__j2store_optionvalues', 'ov') . ' ON ov.j2store_optionvalue_id = pov.optionvalue_id')
+            ->from($db->quoteName($this->t('product_optionvalues'), 'pov'))
+            ->leftJoin($db->quoteName($this->t('optionvalues'), 'ov') . ' ON ov.' . $this->col('j2store_optionvalue_id') . ' = pov.optionvalue_id')
             ->where('pov.productoption_id = :productoptionid')
             ->bind(':productoptionid', $productOptionId, \Joomla\Database\ParameterType::INTEGER)
             ->order('pov.ordering ASC');
@@ -250,15 +284,15 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select([
                 'pf.*',
                 'f.filter_name',
                 'fg.group_name AS filter_group_name'
             ])
-            ->from($db->quoteName('#__j2store_product_filters', 'pf'))
-            ->leftJoin($db->quoteName('#__j2store_filters', 'f') . ' ON f.j2store_filter_id = pf.filter_id')
-            ->leftJoin($db->quoteName('#__j2store_filtergroups', 'fg') . ' ON fg.j2store_filtergroup_id = f.group_id')
+            ->from($db->quoteName($this->t('product_filters'), 'pf'))
+            ->leftJoin($db->quoteName($this->t('filters'), 'f') . ' ON f.' . $this->col('j2store_filter_id') . ' = pf.filter_id')
+            ->leftJoin($db->quoteName($this->t('filtergroups'), 'fg') . ' ON fg.' . $this->col('j2store_filtergroup_id') . ' = f.group_id')
             ->where('pf.product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
 
@@ -273,9 +307,9 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_productfiles'))
+            ->from($db->quoteName($this->t('productfiles')))
             ->where('product_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
 
@@ -290,7 +324,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select(['t.id', 't.title', 't.alias'])
             ->from($db->quoteName('#__tags', 't'))
             ->innerJoin($db->quoteName('#__contentitem_tag_map', 'tm') . ' ON tm.tag_id = t.id')
@@ -309,7 +343,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
             ->from($db->quoteName('#__menu'))
             ->where('link LIKE ' . $db->quote('%option=com_content&view=article&id=' . $articleId . '%'))
@@ -326,7 +360,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select(['f.name', 'f.title AS field_title', 'f.type AS field_type', 'fv.value'])
             ->from($db->quoteName('#__fields_values', 'fv'))
             ->innerJoin($db->quoteName('#__fields', 'f') . ' ON f.id = fv.field_id')
@@ -345,9 +379,9 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_metafields'))
+            ->from($db->quoteName($this->t('metafields')))
             ->where('owner_id = :productid')
             ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
 
@@ -362,10 +396,10 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_products'))
-            ->order('j2store_product_id ASC');
+            ->from($db->quoteName($this->t('products')))
+            ->order($this->col('j2store_product_id') . ' ASC');
 
         $db->setQuery($query);
         return $db->loadAssocList();
@@ -378,7 +412,7 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
             ->from($db->quoteName('#__categories'))
             ->where($db->quoteName('extension') . ' = ' . $db->quote('com_content'))
@@ -395,10 +429,10 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_variants'))
-            ->order('j2store_variant_id ASC');
+            ->from($db->quoteName($this->t('variants')))
+            ->order($this->col('j2store_variant_id') . ' ASC');
 
         $db->setQuery($query);
         return $db->loadAssocList();
@@ -411,10 +445,10 @@ class ExportModel extends BaseDatabaseModel
     {
         $db = $this->getDatabase();
 
-        $query = $this->createDbQuery($db)
+        $query = $this->createDbQuery()
             ->select('*')
-            ->from($db->quoteName('#__j2store_product_prices'))
-            ->order('j2store_productprice_id ASC');
+            ->from($db->quoteName($this->t('product_prices')))
+            ->order($this->col('j2store_productprice_id') . ' ASC');
 
         $db->setQuery($query);
         return $db->loadAssocList();
