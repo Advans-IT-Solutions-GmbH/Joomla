@@ -8,17 +8,20 @@ RUN apt-get update && apt-get install -y \
 
 RUN echo "PassEnv J2COMMERCE_TEST_MODE" >> /etc/apache2/apache2.conf
 
-# Download J2Commerce from GitHub release
-ARG J2COMMERCE_VERSION=v4.0.20
-RUN curl -sL "https://github.com/j2commerce/j2cart/releases/download/${J2COMMERCE_VERSION}/com_j2store_v4-$(echo ${J2COMMERCE_VERSION} | sed 's/^v//')-pro.zip" \
+# Download J2Commerce 6.x from GitHub release.
+# Previously this installed J2Commerce v4.0.20 (j2cart) on Joomla 6, which
+# never created #__j2commerce_* tables — all J6 code paths were dead.
+ARG J2COMMERCE_VERSION=v6.0.0
+RUN curl -sL "https://github.com/j2commerce/j2commerce/releases/download/${J2COMMERCE_VERSION}/com_j2commerce-$(echo ${J2COMMERCE_VERSION} | sed 's/^v//').zip" \
     -o /tmp/j2commerce.zip
 
 COPY extension.zip /tmp/extension.zip
 
-COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
+COPY scripts/docker-entrypoint-j6.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
-ENV EXTENSION_NAME="J2Commerce Privacy Plugin"
+ENV EXTENSION_NAME="J2Commerce Privacy Plugin (J6)"
+ENV J2COMMERCE_STACK=j6
 
 ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
 CMD ["apache2-foreground"]
