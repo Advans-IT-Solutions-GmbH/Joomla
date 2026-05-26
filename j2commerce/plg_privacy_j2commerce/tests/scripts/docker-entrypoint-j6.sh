@@ -6,14 +6,15 @@ echo "Extension: ${EXTENSION_NAME:-unknown}"
 echo "====================================================="
 
 # Wait for MySQL to be ready (max 120s).
-# Use root credentials for the ping — the joomla user may not yet be
-# provisioned when mysqladmin first succeeds on localhost.
 echo "Waiting for MySQL..."
+echo "  mysql binary: $(which mysql 2>/dev/null || echo 'NOT FOUND')"
 MYSQL_WAIT=0
-until mysqladmin ping -h mysql -u root -proot_pass --silent 2>/dev/null \
-    || mysql -h mysql -u root -proot_pass -e "SELECT 1" &>/dev/null 2>&1; do
-    sleep 2
+until mysql -h mysql -u joomla -pjoomla_pass -e "SELECT 1" >/dev/null 2>&1; do
     MYSQL_WAIT=$((MYSQL_WAIT + 2))
+    if [ $((MYSQL_WAIT % 10)) -eq 0 ]; then
+        echo "  MySQL not ready (${MYSQL_WAIT}s): $(mysql -h mysql -u joomla -pjoomla_pass -e 'SELECT 1' 2>&1 | head -1)"
+    fi
+    sleep 2
     if [ $MYSQL_WAIT -ge 120 ]; then
         echo "ERROR: MySQL did not become ready within 120s"
         exit 1
