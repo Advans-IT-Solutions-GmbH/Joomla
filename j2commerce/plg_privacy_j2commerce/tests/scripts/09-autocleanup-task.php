@@ -198,6 +198,7 @@ class AutoCleanupTaskTest
     private function testLifetimeLicenseExemption(): void
     {
         echo "\n--- Lifetime License Exemption ---\n";
+        $tp = $this->isJ6Stack() ? 'j2commerce' : 'j2store';
 
         // A user with an old order but a lifetime license product should be exempt
         $userId  = 9903;
@@ -222,7 +223,7 @@ class AutoCleanupTaskTest
                     'discount'          => 0.00,
                     'product_options'   => '{"license_type":"lifetime"}',
                 ];
-                $this->db->insertObject('#__j2store_orderitems', $itemData);
+                $this->db->insertObject('#__' . $tp . '_orderitems', $itemData);
             } catch (\Exception $e) {
                 // orderitems schema may differ — skip item seeding
             }
@@ -236,10 +237,10 @@ class AutoCleanupTaskTest
         $cutoff = date('Y-m-d H:i:s', strtotime('-10 years'));
         $query  = $this->db->getQuery(true)
             ->select('DISTINCT o.user_id')
-            ->from($this->db->quoteName('#__j2store_orders', 'o'))
+            ->from($this->db->quoteName('#__' . $tp . '_orders', 'o'))
             ->where($this->db->quoteName('o.user_id') . ' > 0')
             ->where('NOT EXISTS (
-                SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orders', 'o2') . '
+                SELECT 1 FROM ' . $this->db->quoteName('#__' . $tp . '_orders', 'o2') . '
                 WHERE ' . $this->db->quoteName('o2.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('o2.created_on') . ' >= :cutoff
             )')
@@ -250,7 +251,7 @@ class AutoCleanupTaskTest
         // building the exemption subquery — the column is absent in some schema variants.
         $orderItemColumns = [];
         try {
-            $orderItemColumns = $this->db->getTableColumns('#__j2store_orderitems');
+            $orderItemColumns = $this->db->getTableColumns('#__' . $tp . '_orderitems');
         } catch (\Exception $e) {
             // table not available
         }
@@ -262,9 +263,9 @@ class AutoCleanupTaskTest
         }
 
         $query->where('NOT EXISTS (
-                SELECT 1 FROM ' . $this->db->quoteName('#__j2store_orderitems', 'oi') . '
-                JOIN ' . $this->db->quoteName('#__j2store_orders', 'ol') . '
-                  ON ' . $this->db->quoteName('ol.j2store_order_id') . ' = ' . $this->db->quoteName('oi.j2store_order_id') . '
+                SELECT 1 FROM ' . $this->db->quoteName('#__' . $tp . '_orderitems', 'oi') . '
+                JOIN ' . $this->db->quoteName('#__' . $tp . '_orders', 'ol') . '
+                  ON ' . $this->db->quoteName('ol.' . $tp . '_order_id') . ' = ' . $this->db->quoteName('oi.' . $tp . '_order_id') . '
                 WHERE ' . $this->db->quoteName('ol.user_id') . ' = ' . $this->db->quoteName('o.user_id') . '
                 AND ' . $this->db->quoteName('oi.product_source_id') . ' IN (' . implode(',', $lifetimeSourceIds) . ')
             )');

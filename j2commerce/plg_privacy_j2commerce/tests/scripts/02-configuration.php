@@ -14,7 +14,7 @@ class ConfigurationTest
     private $failed = 0;
     
     public function __construct() { 
-        $this->db = Factory::getDbo(); 
+        $this->db = Factory::getContainer()->get('DatabaseDriver'); 
     }
     
     private function test($name, $condition, $message = '') {
@@ -60,22 +60,24 @@ class ConfigurationTest
             $this->test('Support email parameter exists or uses default', $hasEmail);
         }
         
-        // Test 5: Check J2Commerce tables exist (real installation)
+        // Test 5: Check J2Commerce tables exist
         $tables = $this->db->getTableList();
         $prefix = $this->db->getPrefix();
-        
+        $isJ6   = getenv('J2COMMERCE_STACK') === 'j6';
+        $tp     = $isJ6 ? 'j2commerce' : 'j2store';
+
         $this->test('J2Commerce orders table exists',
-            in_array($prefix . 'j2store_orders', $tables));
+            in_array($prefix . $tp . '_orders', $tables));
         $this->test('J2Commerce order items table exists',
-            in_array($prefix . 'j2store_orderitems', $tables));
+            in_array($prefix . $tp . '_orderitems', $tables));
         $this->test('J2Commerce order infos table exists',
-            in_array($prefix . 'j2store_orderinfos', $tables));
+            in_array($prefix . $tp . '_orderinfos', $tables));
         $this->test('J2Commerce addresses table exists',
-            in_array($prefix . 'j2store_addresses', $tables));
+            in_array($prefix . $tp . '_addresses', $tables));
         $this->test('J2Commerce carts table exists',
-            in_array($prefix . 'j2store_carts', $tables));
+            in_array($prefix . $tp . '_carts', $tables));
         $this->test('J2Commerce cart items table exists',
-            in_array($prefix . 'j2store_cartitems', $tables));
+            in_array($prefix . $tp . '_cartitems', $tables));
         
         echo "\n=== Configuration Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

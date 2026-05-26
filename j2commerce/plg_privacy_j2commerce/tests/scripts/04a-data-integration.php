@@ -17,10 +17,12 @@ class DataIntegrationTest
     private $passed = 0;
     private $failed = 0;
     private $testUserId = 100;
+    private string $tp; // 'j2store' or 'j2commerce'
 
     public function __construct()
     {
         $this->db = Factory::getContainer()->get('DatabaseDriver');
+        $this->tp = getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store';
     }
 
     public function test($name, $condition, $message = '')
@@ -46,7 +48,7 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_addresses'))
+            ->from($this->db->quoteName('#__' . $this->tp . '_addresses'))
             ->where('user_id = ' . $this->testUserId);
         $this->db->setQuery($query);
         $addressCount = (int) $this->db->loadResult();
@@ -54,7 +56,7 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_orders'))
+            ->from($this->db->quoteName('#__' . $this->tp . '_orders'))
             ->where('user_id = ' . $this->testUserId);
         $this->db->setQuery($query);
         $orderCount = (int) $this->db->loadResult();
@@ -62,15 +64,15 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_orderinfos'))
-            ->where('order_id IN (SELECT order_id FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE user_id = ' . $this->testUserId . ')');
+            ->from($this->db->quoteName('#__' . $this->tp . '_orderinfos'))
+            ->where('order_id IN (SELECT order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE user_id = ' . $this->testUserId . ')');
         $this->db->setQuery($query);
         $infoCount = (int) $this->db->loadResult();
         $this->test('Test user has order infos', $infoCount >= 2, "Got $infoCount");
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_carts'))
+            ->from($this->db->quoteName('#__' . $this->tp . '_carts'))
             ->where('user_id = ' . $this->testUserId);
         $this->db->setQuery($query);
         $cartCount = (int) $this->db->loadResult();
@@ -84,7 +86,7 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_orders'))
+            ->from($this->db->quoteName('#__' . $this->tp . '_orders'))
             ->where('user_id = ' . $this->testUserId)
             ->where('created_on >= ' . $this->db->quote($cutoffDate));
         $this->db->setQuery($query);
@@ -93,7 +95,7 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_orders'))
+            ->from($this->db->quoteName('#__' . $this->tp . '_orders'))
             ->where('user_id = ' . $this->testUserId)
             ->where('created_on < ' . $this->db->quote($cutoffDate));
         $this->db->setQuery($query);
@@ -113,20 +115,20 @@ class DataIntegrationTest
             'email' => 'delete@test.com',
             'type' => 'billing'
         ];
-        $this->db->insertObject('#__j2store_addresses', $testAddress, 'j2store_address_id');
+        $this->db->insertObject('#__' . $this->tp . '_addresses', $testAddress, $this->tp . '_address_id');
         $insertedId = $this->db->insertid();
         $this->test('Address insert works', $insertedId > 0);
 
         $query = $this->db->getQuery(true)
-            ->delete($this->db->quoteName('#__j2store_addresses'))
-            ->where('j2store_address_id = ' . $insertedId);
+            ->delete($this->db->quoteName('#__' . $this->tp . '_addresses'))
+            ->where(\$this->tp . '_address_id = ' . $insertedId);
         $this->db->setQuery($query);
         $this->db->execute();
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
-            ->from($this->db->quoteName('#__j2store_addresses'))
-            ->where('j2store_address_id = ' . $insertedId);
+            ->from($this->db->quoteName('#__' . $this->tp . '_addresses'))
+            ->where(\$this->tp . '_address_id = ' . $insertedId);
         $this->db->setQuery($query);
         $this->test('Address delete works', (int) $this->db->loadResult() === 0);
 
@@ -139,7 +141,7 @@ class DataIntegrationTest
             'cart_type' => 'cart',
             'created_on' => date('Y-m-d H:i:s')
         ];
-        $this->db->insertObject('#__j2store_carts', $testCart, 'j2store_cart_id');
+        $this->db->insertObject('#__' . $this->tp . '_carts', $testCart, $this->tp . '_cart_id');
         $cartId = $this->db->insertid();
         $this->test('Cart insert works', $cartId > 0);
 
@@ -149,20 +151,20 @@ class DataIntegrationTest
             'variant_id' => 1,
             'product_qty' => 1.0000
         ];
-        $this->db->insertObject('#__j2store_cartitems', $testCartItem, 'j2store_cartitem_id');
+        $this->db->insertObject('#__' . $this->tp . '_cartitems', $testCartItem, \$this->tp . '_cartitem_id');
         $cartItemId = $this->db->insertid();
         $this->test('Cart item insert works', $cartItemId > 0);
 
         // Delete cart items then cart
         $query = $this->db->getQuery(true)
-            ->delete($this->db->quoteName('#__j2store_cartitems'))
+            ->delete($this->db->quoteName('#__' . $this->tp . '_cartitems'))
             ->where('cart_id = ' . $cartId);
         $this->db->setQuery($query);
         $this->db->execute();
 
         $query = $this->db->getQuery(true)
-            ->delete($this->db->quoteName('#__j2store_carts'))
-            ->where('j2store_cart_id = ' . $cartId);
+            ->delete($this->db->quoteName('#__' . $this->tp . '_carts'))
+            ->where(\$this->tp . '_cart_id = ' . $cartId);
         $this->db->setQuery($query);
         $this->db->execute();
         $this->test('Cart delete works', true);
@@ -185,7 +187,7 @@ class DataIntegrationTest
             'currency_value' => 1.00000000,
             'created_on' => date('Y-m-d H:i:s', strtotime('-5 years'))
         ];
-        $this->db->insertObject('#__j2store_orders', $testOrder, 'j2store_order_id');
+        $this->db->insertObject('#__' . $this->tp . '_orders', $testOrder, $this->tp . '_order_id');
         $orderPk = $this->db->insertid();
         $this->test('Test order inserted', $orderPk > 0);
 
@@ -203,25 +205,25 @@ class DataIntegrationTest
             'shipping_city' => 'Secret City',
             'shipping_zip' => '99999',
         ];
-        $this->db->insertObject('#__j2store_orderinfos', $testInfo, 'j2store_orderinfo_id');
+        $this->db->insertObject('#__' . $this->tp . '_orderinfos', $testInfo, \$this->tp . '_orderinfo_id');
         $infoPk = $this->db->insertid();
         $this->test('Test order info inserted', $infoPk > 0);
 
         // Anonymize orders table (user_email, customer_note, ip_address)
         $query = $this->db->getQuery(true)
-            ->update($this->db->quoteName('#__j2store_orders'))
+            ->update($this->db->quoteName('#__' . $this->tp . '_orders'))
             ->set([
                 $this->db->quoteName('user_email') . ' = ' . $this->db->quote('anonymized@example.com'),
                 $this->db->quoteName('customer_note') . ' = ' . $this->db->quote(''),
                 $this->db->quoteName('ip_address') . ' = ' . $this->db->quote(''),
             ])
-            ->where('j2store_order_id = ' . $orderPk);
+            ->where(\$this->tp . '_order_id = ' . $orderPk);
         $this->db->setQuery($query);
         $this->db->execute();
 
         // Anonymize orderinfos table (billing/shipping data)
         $query = $this->db->getQuery(true)
-            ->update($this->db->quoteName('#__j2store_orderinfos'))
+            ->update($this->db->quoteName('#__' . $this->tp . '_orderinfos'))
             ->set([
                 $this->db->quoteName('billing_first_name') . ' = ' . $this->db->quote('Anonymized'),
                 $this->db->quoteName('billing_last_name') . ' = ' . $this->db->quote('User'),
@@ -242,8 +244,8 @@ class DataIntegrationTest
         // Verify orders table anonymization
         $query = $this->db->getQuery(true)
             ->select('user_email')
-            ->from($this->db->quoteName('#__j2store_orders'))
-            ->where('j2store_order_id = ' . $orderPk);
+            ->from($this->db->quoteName('#__' . $this->tp . '_orders'))
+            ->where(\$this->tp . '_order_id = ' . $orderPk);
         $this->db->setQuery($query);
         $order = $this->db->loadObject();
         $this->test('Order user_email anonymized',
@@ -253,8 +255,8 @@ class DataIntegrationTest
         // Verify orderinfos table anonymization
         $query = $this->db->getQuery(true)
             ->select('billing_first_name, billing_address_1, shipping_first_name')
-            ->from($this->db->quoteName('#__j2store_orderinfos'))
-            ->where('j2store_orderinfo_id = ' . $infoPk);
+            ->from($this->db->quoteName('#__' . $this->tp . '_orderinfos'))
+            ->where(\$this->tp . '_orderinfo_id = ' . $infoPk);
         $this->db->setQuery($query);
         $info = $this->db->loadObject();
         $this->test('Orderinfo billing_first_name anonymized',
@@ -268,9 +270,9 @@ class DataIntegrationTest
             'Got: ' . ($info->shipping_first_name ?? 'NULL'));
 
         // Cleanup
-        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__j2store_orderinfos') . ' WHERE j2store_orderinfo_id = ' . $infoPk);
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' WHERE ' . $this->tp . '_orderinfo_id = ' . $infoPk);
         $this->db->execute();
-        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE j2store_order_id = ' . $orderPk);
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE ' . $this->tp . '_order_id = ' . $orderPk);
         $this->db->execute();
 
         echo "\n=== Data Integration Test Summary ===\n";
