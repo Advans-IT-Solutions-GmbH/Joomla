@@ -121,14 +121,14 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->delete($this->db->quoteName('#__' . $this->tp . '_addresses'))
-            ->where(\$this->tp . '_address_id = ' . $insertedId);
+            ->where($this->tp . '_address_id = ' . $insertedId);
         $this->db->setQuery($query);
         $this->db->execute();
 
         $query = $this->db->getQuery(true)
             ->select('COUNT(*)')
             ->from($this->db->quoteName('#__' . $this->tp . '_addresses'))
-            ->where(\$this->tp . '_address_id = ' . $insertedId);
+            ->where($this->tp . '_address_id = ' . $insertedId);
         $this->db->setQuery($query);
         $this->test('Address delete works', (int) $this->db->loadResult() === 0);
 
@@ -151,7 +151,7 @@ class DataIntegrationTest
             'variant_id' => 1,
             'product_qty' => 1.0000
         ];
-        $this->db->insertObject('#__' . $this->tp . '_cartitems', $testCartItem, \$this->tp . '_cartitem_id');
+        $this->db->insertObject('#__' . $this->tp . '_cartitems', $testCartItem, $this->tp . '_cartitem_id');
         $cartItemId = $this->db->insertid();
         $this->test('Cart item insert works', $cartItemId > 0);
 
@@ -164,7 +164,7 @@ class DataIntegrationTest
 
         $query = $this->db->getQuery(true)
             ->delete($this->db->quoteName('#__' . $this->tp . '_carts'))
-            ->where(\$this->tp . '_cart_id = ' . $cartId);
+            ->where($this->tp . '_cart_id = ' . $cartId);
         $this->db->setQuery($query);
         $this->db->execute();
         $this->test('Cart delete works', true);
@@ -205,7 +205,7 @@ class DataIntegrationTest
             'shipping_city' => 'Secret City',
             'shipping_zip' => '99999',
         ];
-        $this->db->insertObject('#__' . $this->tp . '_orderinfos', $testInfo, \$this->tp . '_orderinfo_id');
+        $this->db->insertObject('#__' . $this->tp . '_orderinfos', $testInfo, $this->tp . '_orderinfo_id');
         $infoPk = $this->db->insertid();
         $this->test('Test order info inserted', $infoPk > 0);
 
@@ -217,7 +217,7 @@ class DataIntegrationTest
                 $this->db->quoteName('customer_note') . ' = ' . $this->db->quote(''),
                 $this->db->quoteName('ip_address') . ' = ' . $this->db->quote(''),
             ])
-            ->where(\$this->tp . '_order_id = ' . $orderPk);
+            ->where($this->tp . '_order_id = ' . $orderPk);
         $this->db->setQuery($query);
         $this->db->execute();
 
@@ -245,7 +245,7 @@ class DataIntegrationTest
         $query = $this->db->getQuery(true)
             ->select('user_email')
             ->from($this->db->quoteName('#__' . $this->tp . '_orders'))
-            ->where(\$this->tp . '_order_id = ' . $orderPk);
+            ->where($this->tp . '_order_id = ' . $orderPk);
         $this->db->setQuery($query);
         $order = $this->db->loadObject();
         $this->test('Order user_email anonymized',
@@ -256,7 +256,7 @@ class DataIntegrationTest
         $query = $this->db->getQuery(true)
             ->select('billing_first_name, billing_address_1, shipping_first_name')
             ->from($this->db->quoteName('#__' . $this->tp . '_orderinfos'))
-            ->where(\$this->tp . '_orderinfo_id = ' . $infoPk);
+            ->where($this->tp . '_orderinfo_id = ' . $infoPk);
         $this->db->setQuery($query);
         $info = $this->db->loadObject();
         $this->test('Orderinfo billing_first_name anonymized',
