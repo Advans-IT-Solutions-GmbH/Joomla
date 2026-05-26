@@ -12,16 +12,16 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
-use Joomla\CMS\MVC\Factory\MVCFactory;
 
 class ExportModelTest
 {
     private $db;
     private $passed = 0;
     private $failed = 0;
-    private $seededProductIds = [];
-    private $seededVariantIds = [];
-    private $seededContentIds = [];
+    private $seededProductIds  = [];
+    private $seededVariantIds  = [];
+    private $seededContentIds  = [];
+    private $seededCategoryId  = 0;
 
     public function __construct()
     {
@@ -61,10 +61,20 @@ class ExportModelTest
 
     private function getModel(): \Advans\Component\J2CommerceImportExport\Administrator\Model\ExportModel
     {
-        $app = Factory::getApplication('administrator');
-        /** @var MVCFactory $mvcFactory */
-        $mvcFactory = $app->bootComponent('com_j2commerce_importexport')->getMVCFactory();
-        return $mvcFactory->createModel('Export', 'Administrator');
+        // Instantiate directly — avoids Factory::getApplication('administrator')
+        // which requires a fully booted Joomla app. BaseDatabaseModel uses
+        // DatabaseAwareTrait; inject the DB via setDatabase() after construction.
+        JLoader::registerNamespace(
+            'Advans\Component\J2CommerceImportExport',
+            '/var/www/html/administrator/components/com_j2commerce_importexport/src',
+            false,
+            false,
+            'psr4'
+        );
+        $db    = Factory::getContainer()->get('DatabaseDriver');
+        $model = new \Advans\Component\J2CommerceImportExport\Administrator\Model\ExportModel();
+        $model->setDatabase($db);
+        return $model;
     }
 
     private function testExportProducts(): void
@@ -132,8 +142,52 @@ class ExportModelTest
         }
     }
 
+    private function ensureCategory(): int
+    {
+        // Return an existing content category id, or insert a minimal one.
+        $catId = (int) $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select('id')
+                ->from('#__categories')
+                ->where('extension = ' . $this->db->quote('com_content'))
+                ->where('published = 1')
+                ->setLimit(1)
+        )->loadResult();
+
+        if ($catId > 0) {
+            return $catId;
+        }
+
+        // Insert a minimal category row
+        $cat = (object)[
+            'parent_id'   => 1,
+            'lft'         => 1,
+            'rgt'         => 2,
+            'level'       => 1,
+            'path'        => 'export-test-cat',
+            'extension'   => 'com_content',
+            'title'       => 'Export Test Category',
+            'alias'       => 'export-test-cat-' . time(),
+            'description' => '',
+            'published'   => 1,
+            'access'      => 1,
+            'params'      => '{}',
+            'metadata'    => '{}',
+            'language'    => '*',
+            'created_time' => date('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__categories', $cat, 'id');
+        $id = (int) $this->db->insertid();
+        $this->seededCategoryId = $id;
+        return $id;
+    }
+
     private function seedFixtures(): void
     {
+        // Ensure a usable category exists — catid=2 is the Joomla default
+        // "Uncategorised" category but may be absent in a fresh test container.
+        $catId = $this->ensureCategory();
+
         $ts = time();
         foreach (['Export Test Alpha', 'Export Test Beta'] as $i => $title) {
             $article = (object)[
@@ -142,7 +196,7 @@ class ExportModelTest
                 'introtext'  => 'Export test product',
                 'fulltext'   => '',
                 'state'      => 1,
-                'catid'      => 2,
+                'catid'      => $catId,
                 'created'    => date('Y-m-d H:i:s'),
                 'created_by' => 42,
                 'access'     => 1,
@@ -194,6 +248,16 @@ class ExportModelTest
             try {
                 $this->db->setQuery(
                     $this->db->getQuery(true)->delete($table)->whereIn($pk, $ids)
+                )->execute();
+            } catch (\Exception $e) {}
+        }
+
+        if ($this->seededCategoryId > 0) {
+            try {
+                $this->db->setQuery(
+                    $this->db->getQuery(true)
+                        ->delete('#__categories')
+                        ->where('id = ' . $this->seededCategoryId)
                 )->execute();
             } catch (\Exception $e) {}
         }

@@ -60,9 +60,20 @@ class ImportModelTest
 
     private function getModel(): \Advans\Component\J2CommerceImportExport\Administrator\Model\ImportModel
     {
-        $app = Factory::getApplication('administrator');
-        $mvcFactory = $app->bootComponent('com_j2commerce_importexport')->getMVCFactory();
-        return $mvcFactory->createModel('Import', 'Administrator');
+        // Instantiate directly — avoids Factory::getApplication('administrator')
+        // which requires a fully booted Joomla app. BaseDatabaseModel uses
+        // DatabaseAwareTrait; inject the DB via setDatabase() after construction.
+        JLoader::registerNamespace(
+            'Advans\Component\J2CommerceImportExport',
+            '/var/www/html/administrator/components/com_j2commerce_importexport/src',
+            false,
+            false,
+            'psr4'
+        );
+        $db    = Factory::getContainer()->get('DatabaseDriver');
+        $model = new \Advans\Component\J2CommerceImportExport\Administrator\Model\ImportModel();
+        $model->setDatabase($db);
+        return $model;
     }
 
     private function writeTmp(string $ext, string $content): string
