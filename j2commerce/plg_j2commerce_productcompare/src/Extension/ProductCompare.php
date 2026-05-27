@@ -84,63 +84,27 @@ class ProductCompare extends CMSPlugin
     }
 
     /**
-     * J2Commerce 4 — render compare button after a product in list view.
-     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
+     * Render compare button after a product in list view.
      */
     public function onJ2StoreAfterDisplayProductList(object $product): string
     {
-        if ($this->isJ2Commerce6() || !$this->params->get('show_in_list', 1)) {
+        if (!$this->params->get('show_in_list', 1)) {
             return '';
         }
 
-<<<<<<< Updated upstream
         return $this->renderCompareButton($product->j2store_product_id);
-=======
-        return $this->renderCompareButton((int) $product->j2store_product_id);
->>>>>>> Stashed changes
     }
 
     /**
-     * J2Commerce 4 — render compare button on the product detail page.
-     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
+     * Render compare button on the product detail page.
      */
     public function onJ2StoreAfterDisplayProduct(object $product, string $view): string
     {
-        if ($this->isJ2Commerce6() || !$this->params->get('show_in_detail', 1)) {
+        if (!$this->params->get('show_in_detail', 1)) {
             return '';
         }
 
-<<<<<<< Updated upstream
         return $this->renderCompareButton($product->j2store_product_id);
-=======
-        return $this->renderCompareButton((int) $product->j2store_product_id);
-    }
-
-    /**
-     * J2Commerce 6 — render compare button after each product item in list/category layouts.
-     * Fired via eventWithHtml('AfterProductListItemDisplay', ...) in item_simple.php etc.
-     */
-    public function onAfterProductListItemDisplay(object $product): string
-    {
-        if (!$this->isJ2Commerce6() || !$this->params->get('show_in_list', 1)) {
-            return '';
-        }
-
-        return $this->renderCompareButton((int) $product->j2commerce_product_id);
-    }
-
-    /**
-     * J2Commerce 6 — render compare button after the product detail template.
-     * Fired via eventWithHtml('AfterProductDisplay', ...) in tmpl/product/default.php.
-     */
-    public function onAfterProductDisplay(mixed &$result, mixed &$view, object &$item): string
-    {
-        if (!$this->isJ2Commerce6() || !$this->params->get('show_in_detail', 1)) {
-            return '';
-        }
-
-        return $this->renderCompareButton((int) $item->j2commerce_product_id);
->>>>>>> Stashed changes
     }
 
     /**
