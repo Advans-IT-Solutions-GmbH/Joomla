@@ -12,7 +12,6 @@ defined('_JEXEC') or die;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Toolbar\ToolbarHelper;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Factory;
 
 class HtmlView extends BaseHtmlView
 {
@@ -46,7 +45,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getMenuTypes(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
+        $db = $this->getDatabase();
         $query = $this->createDbQuery($db)
             ->select(['menutype', 'title'])
             ->from($db->quoteName('#__menu_types'))
@@ -57,7 +56,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getViewLevels(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
+        $db = $this->getDatabase();
         $query = $this->createDbQuery($db)
             ->select(['id', 'title'])
             ->from($db->quoteName('#__viewlevels'))
@@ -68,7 +67,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getCategories(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
+        $db = $this->getDatabase();
         $query = $this->createDbQuery($db)
             ->select(['id', 'title', 'level'])
             ->from($db->quoteName('#__categories'))
