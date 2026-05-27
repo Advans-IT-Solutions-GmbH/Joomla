@@ -14,10 +14,7 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
 
-// Bootstrap the component functions without executing the request handler.
-// We define _JEXEC and stub $app so the file can be included safely.
-$app = Factory::getApplication();
-$db  = Factory::getContainer()->get('DatabaseDriver');
+$db = Factory::getContainer()->get('DatabaseDriver');
 
 // Prevent the component from running its task dispatcher on include
 $_GET['task'] = 'display';
