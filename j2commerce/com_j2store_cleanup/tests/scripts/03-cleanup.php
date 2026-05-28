@@ -26,6 +26,14 @@ class CleanupTest
         $this->db = Factory::getContainer()->get(DatabaseInterface::class);
     }
 
+    /** Joomla 4/5/6 compatible query builder. */
+    private function createQuery(): \Joomla\Database\QueryInterface
+    {
+        return method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
+    }
+
     private function test(string $name, bool $condition, string $message = ''): void
     {
         if ($condition) {
@@ -133,7 +141,7 @@ class CleanupTest
         }
 
         echo "\n--- Safety Guard ---\n";
-        $query = $this->db->getQuery(true)
+        $query = $this->createQuery()
             ->select('extension_id')
             ->from('#__extensions')
             ->where('element = ' . $this->db->quote('com_j2store'))
@@ -179,7 +187,7 @@ class CleanupTest
 
     private function extensionExists(string $element): bool
     {
-        $query = $this->db->getQuery(true)
+        $query = $this->createQuery()
             ->select('COUNT(*)')
             ->from('#__extensions')
             ->where('element = ' . $this->db->quote($element));
@@ -203,6 +211,8 @@ class CleanupTest
             $sanitised = array_values(array_filter(array_map('intval', $ids), fn($id) => $id > 0));
             $result = cleanupExtensions($this->db, $sanitised);
 
+            // Both 'success' (clean uninstall) and 'warning' (DB-only removal when files
+            // are already absent) count as non-error outcomes.
             return $result['error'] === 0;
         } catch (\Exception $e) {
             return false;
@@ -216,7 +226,7 @@ class CleanupTest
 
     private function isCoreProtectedById(int $extensionId): bool
     {
-        $query = $this->db->getQuery(true)
+        $query = $this->createQuery()
             ->select('element')
             ->from('#__extensions')
             ->where('extension_id = ' . $extensionId);

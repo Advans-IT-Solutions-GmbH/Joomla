@@ -61,13 +61,20 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
     $extensions = $db->loadObjectList();
 
     foreach ($extensions as $ext) {
+        $uninstalled = false;
         try {
-            $installer = Installer::getInstance();
+            $installer   = Installer::getInstance();
+            $uninstalled = $installer->uninstall($ext->type, $ext->extension_id);
+        } catch (\Throwable $e) {
+            // Installer threw (e.g. missing manifest) — fall through to DB-only removal.
+        }
 
-            if ($installer->uninstall($ext->type, $ext->extension_id)) {
-                $result['success']++;
-            } else {
-                // Fallback: direct DB delete if uninstall fails (e.g. files already gone)
+        if ($uninstalled) {
+            $result['success']++;
+        } else {
+            // Fallback: remove the DB record directly when the installer cannot handle it
+            // (files already gone, no manifest, or installer error).
+            try {
                 $extId = (int) $ext->extension_id;
                 $db->setQuery(
                     createDbQuery($db)
@@ -78,10 +85,10 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
                 $db->execute();
                 $result['warning']++;
                 $result['messages'][] = $ext->element . ' (DB only — files may remain)';
+            } catch (\Throwable $e2) {
+                $result['error']++;
+                $result['messages'][] = $ext->element . ': ' . $e2->getMessage();
             }
-        } catch (\Exception $e) {
-            $result['error']++;
-            $result['messages'][] = $ext->element . ': ' . $e->getMessage();
         }
     }
 
