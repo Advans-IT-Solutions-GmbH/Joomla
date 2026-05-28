@@ -82,101 +82,122 @@ class ExportModelTest
         $model = $rc->newInstanceWithoutConstructor();
         $model->setDatabase($db);
 
-        // Detect stack (J4/J5 vs J6) by checking for j2commerce_products table
+        // Detect stack (J4/J5 vs J6) by checking for j2commerce_products table.
+        // The importexport component can be installed without J2Commerce itself,
+        // so neither table may exist — skip round-trip tests in that case.
         $tables = $db->getTableList();
         $prefix = $db->getPrefix();
         $isJ6   = in_array($prefix . 'j2commerce_products', $tables, true);
+        $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
         $tp     = $isJ6 ? 'j2commerce' : 'j2store';
         $pkProd = $isJ6 ? 'j2commerce_product_id' : 'j2store_product_id';
         $pkVar  = $isJ6 ? 'j2commerce_variant_id'  : 'j2store_variant_id';
 
-        // Seed: #__content article (required FK for products)
-        $article = (object)[
-            'title'      => 'Export Test Product',
-            'alias'      => 'export-test-product-' . uniqid(),
-            'introtext'  => '',
-            'fulltext'   => '',
-            'state'      => 1,
-            'catid'      => 2,
-            'language'   => '*',
-            'access'     => 1,
-            'created'    => date('Y-m-d H:i:s'),
-            'created_by' => 42,
-            'modified'   => date('Y-m-d H:i:s'),
-            'publish_up' => date('Y-m-d H:i:s'),
-            'attribs'    => '{}',
-            'metadata'   => '{}',
-            'metadesc'   => '',
-            'metakey'    => '',
-            'images'     => '{}',
-            'urls'       => '{}',
-            'note'       => '',
-            'featured'   => 0,
-            'version'    => 1,
-            'ordering'   => 0,
-            'hits'       => 0,
-        ];
-        $db->insertObject('#__content', $article, 'id');
-        $articleId = (int) $db->insertid();
+        if (!$isJ6 && !$hasJ4) {
+            // J2Commerce is not installed in this test container — skip DB round-trip tests.
+            echo "SKIP exportData round-trip — J2Commerce tables not present\n";
+            echo "SKIP exportData(products) contains seeded product\n";
+            echo "SKIP exportData(variants) returns array\n";
+            echo "SKIP exportData(variants) contains seeded variant\n";
+            echo "SKIP exportData(categories) returns array\n";
+            echo "SKIP exportData(prices) returns array\n";
+        } else {
+            // Seed: #__content article (required FK for products)
+            $article = (object)[
+                'title'      => 'Export Test Product',
+                'alias'      => 'export-test-product-' . uniqid(),
+                'introtext'  => '',
+                'fulltext'   => '',
+                'state'      => 1,
+                'catid'      => 2,
+                'language'   => '*',
+                'access'     => 1,
+                'created'    => date('Y-m-d H:i:s'),
+                'created_by' => 42,
+                'modified'   => date('Y-m-d H:i:s'),
+                'publish_up' => date('Y-m-d H:i:s'),
+                'attribs'    => '{}',
+                'metadata'   => '{}',
+                'metadesc'   => '',
+                'metakey'    => '',
+                'images'     => '{}',
+                'urls'       => '{}',
+                'note'       => '',
+                'featured'   => 0,
+                'version'    => 1,
+                'ordering'   => 0,
+                'hits'       => 0,
+            ];
+            $db->insertObject('#__content', $article, 'id');
+            $articleId = (int) $db->insertid();
 
-        // Seed: product row
-        $product = (object)[
-            'product_source_id' => $articleId,
-            'product_source'    => 'com_content',
-            'enabled'           => 1,
-            'taxprofile_id'     => 0,
-            'vendor_id'         => 0,
-            'params'            => '{}',
-        ];
-        $db->insertObject('#__' . $tp . '_products', $product, $pkProd);
-        $productId = (int) $db->insertid();
+            // Seed: product row
+            $product = (object)[
+                'product_source_id' => $articleId,
+                'product_source'    => 'com_content',
+                'enabled'           => 1,
+                'taxprofile_id'     => 0,
+                'vendor_id'         => 0,
+                'params'            => '{}',
+            ];
+            $db->insertObject('#__' . $tp . '_products', $product, $pkProd);
+            $productId = (int) $db->insertid();
 
-        // Seed: variant row (master variant)
-        $variant = (object)[
-            'product_id' => $productId,
-            'sku'        => 'EXPORT-TEST-' . $productId,
-            'price'      => 9.99,
-            'is_master'  => 1,
-            'enabled'    => 1,
-            'params'     => '{}',
-        ];
-        $db->insertObject('#__' . $tp . '_variants', $variant, $pkVar);
-        $variantId = (int) $db->insertid();
+            // Seed: variant row (master variant)
+            $variant = (object)[
+                'product_id' => $productId,
+                'sku'        => 'EXPORT-TEST-' . $productId,
+                'price'      => 9.99,
+                'is_master'  => 1,
+                'enabled'    => 1,
+                'params'     => '{}',
+            ];
+            $db->insertObject('#__' . $tp . '_variants', $variant, $pkVar);
+            $variantId = (int) $db->insertid();
 
-        // --- exportData('products') round-trip ---
-        $this->test("exportData('products') returns array", function () use ($model) {
-            return is_array($model->exportData('products'));
-        });
-
-        $this->test('exportData(products) contains seeded product', function () use ($model, $productId, $pkProd) {
-            $rows = $model->exportData('products');
-            foreach ($rows as $row) {
-                if ((int)($row[$pkProd] ?? 0) === $productId) return true;
-            }
-            return false;
-        });
-
-        // --- exportData('variants') round-trip ---
-        $this->test("exportData('variants') returns array", function () use ($model) {
-            return is_array($model->exportData('variants'));
-        });
-
-        $this->test('exportData(variants) contains seeded variant', function () use ($model, $variantId, $pkVar) {
-            $rows = $model->exportData('variants');
-            foreach ($rows as $row) {
-                if ((int)($row[$pkVar] ?? 0) === $variantId) return true;
-            }
-            return false;
-        });
-
-        // --- exportData('categories') and exportData('prices') return arrays ---
-        foreach (['categories', 'prices'] as $type) {
-            $this->test("exportData('$type') returns array", function () use ($model, $type) {
-                return is_array($model->exportData($type));
+            // --- exportData('products') round-trip ---
+            $this->test("exportData('products') returns array", function () use ($model) {
+                return is_array($model->exportData('products'));
             });
+
+            $this->test('exportData(products) contains seeded product', function () use ($model, $productId, $pkProd) {
+                $rows = $model->exportData('products');
+                foreach ($rows as $row) {
+                    if ((int)($row[$pkProd] ?? 0) === $productId) return true;
+                }
+                return false;
+            });
+
+            // --- exportData('variants') round-trip ---
+            $this->test("exportData('variants') returns array", function () use ($model) {
+                return is_array($model->exportData('variants'));
+            });
+
+            $this->test('exportData(variants) contains seeded variant', function () use ($model, $variantId, $pkVar) {
+                $rows = $model->exportData('variants');
+                foreach ($rows as $row) {
+                    if ((int)($row[$pkVar] ?? 0) === $variantId) return true;
+                }
+                return false;
+            });
+
+            // --- exportData('categories') and exportData('prices') return arrays ---
+            foreach (['categories', 'prices'] as $type) {
+                $this->test("exportData('$type') returns array", function () use ($model, $type) {
+                    return is_array($model->exportData($type));
+                });
+            }
+
+            // --- Cleanup fixture ---
+            $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . $tp . '_variants')  . ' WHERE ' . $db->quoteName($pkVar)  . ' = ' . $variantId);
+            $db->execute();
+            $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . $tp . '_products')  . ' WHERE ' . $db->quoteName($pkProd) . ' = ' . $productId);
+            $db->execute();
+            $db->setQuery('DELETE FROM ' . $db->quoteName('#__content') . ' WHERE id = ' . $articleId);
+            $db->execute();
         }
 
-        // --- exportData() throws on unknown type ---
+        // --- exportData() throws on unknown type (always runs) ---
         $this->test('exportData() throws on unknown type', function () use ($model) {
             try {
                 $model->exportData('__invalid__');
@@ -185,14 +206,6 @@ class ExportModelTest
                 return true;
             }
         });
-
-        // --- Cleanup fixture ---
-        $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . $tp . '_variants')  . ' WHERE ' . $db->quoteName($pkVar)  . ' = ' . $variantId);
-        $db->execute();
-        $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . $tp . '_products')  . ' WHERE ' . $db->quoteName($pkProd) . ' = ' . $productId);
-        $db->execute();
-        $db->setQuery('DELETE FROM ' . $db->quoteName('#__content') . ' WHERE id = ' . $articleId);
-        $db->execute();
 
         echo "\n=== Export Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
