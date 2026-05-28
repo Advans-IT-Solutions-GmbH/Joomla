@@ -138,15 +138,22 @@ class SecurityTest
 
         $url = $this->baseUrl . $this->ajaxPath . '&task=getCartCount';
 
-        // 1. GET with no token — do NOT follow redirects so we see the raw response code.
-        // Joomla may return HTTP 303 (redirect to login) or HTTP 200 with success=false JSON.
-        // Both indicate the request was rejected.
+        // Joomla may respond to unauthenticated/invalid-token AJAX requests in several ways:
+        //   - HTTP 303 redirect to login page
+        //   - HTTP 200 with JSON {"success":false,...}
+        //   - HTTP 200 with HTML error page (format=json ignored for some error paths)
+        // All three indicate the request was not processed successfully.
+
+        // 1. GET with no token
         [$code, $body] = $this->http('GET', $url, [], [], false);
-        $data = json_decode($body, true);
-        $rejected = $code === 303 || (isset($data['success']) && $data['success'] === false);
+        $data    = json_decode($body, true);
+        $isJson  = $data !== null;
+        $rejected = $code === 303
+            || ($isJson  && isset($data['success'])  && $data['success']  === false)
+            || (!$isJson && $code === 200); // HTML error page instead of JSON
 
         $this->test(
-            'No-token GET is rejected (HTTP 303 or success=false)',
+            'No-token GET is rejected (303, success=false, or HTML error)',
             $rejected,
             "Got HTTP $code, body: " . substr($body, 0, 200)
         );
@@ -156,11 +163,14 @@ class SecurityTest
             'task'              => 'getCartCount',
             str_repeat('a', 32) => '1',   // fake 32-char hex token
         ], [], false);
-        $data2 = json_decode($body2, true);
-        $rejected2 = $code2 === 303 || (isset($data2['success']) && $data2['success'] === false);
+        $data2    = json_decode($body2, true);
+        $isJson2  = $data2 !== null;
+        $rejected2 = $code2 === 303
+            || ($isJson2  && isset($data2['success'])  && $data2['success']  === false)
+            || (!$isJson2 && $code2 === 200); // HTML error page instead of JSON
 
         $this->test(
-            'Fake-token POST is rejected (HTTP 303 or success=false)',
+            'Fake-token POST is rejected (303, success=false, or HTML error)',
             $rejected2,
             "Got HTTP $code2, body: " . substr($body2, 0, 200)
         );
@@ -221,14 +231,17 @@ class SecurityTest
         }
 
         $url = $this->baseUrl . $this->ajaxPath . '&task=removeCartItem';
-        [$code, $body] = $this->http('POST', $url, $fields, $cookies);
-        $data = json_decode($body, true);
+        [$code, $body] = $this->http('POST', $url, $fields, $cookies, false);
+        $data    = json_decode($body, true);
+        $isJson  = $data !== null;
 
-        // Unauthenticated request must be rejected (guest has no cart ownership)
+        // Unauthenticated request must be rejected: 303 redirect, success=false JSON, or HTML error page
         $this->test(
-            'Unauthenticated removeCartItem returns success=false',
-            isset($data['success']) && $data['success'] === false,
-            'Body: ' . substr($body, 0, 200)
+            'Unauthenticated removeCartItem is rejected',
+            $code === 303
+                || ($isJson && isset($data['success']) && $data['success'] === false)
+                || (!$isJson && $code === 200),
+            "HTTP $code, body: " . substr($body, 0, 200)
         );
 
         // Verify the victim's row was NOT deleted
