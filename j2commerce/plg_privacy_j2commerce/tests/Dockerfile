@@ -18,8 +18,9 @@ RUN curl -sL "https://github.com/j2commerce/j2cart/releases/download/${J2COMMERC
 # Copy extension package
 COPY extension.zip /tmp/extension.zip
 
-# Copy custom entrypoint
+# Copy custom entrypoint and CLI installer
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
+COPY scripts/install-cli.php /usr/local/bin/install-cli.php
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
 ENV EXTENSION_NAME="J2Commerce Privacy Plugin"

@@ -147,11 +147,12 @@ else
     exit 1
 fi
 
-# Install privacy plugin extension
+# Install privacy plugin extension.
+# joomla.php triggers a Uri::getInstance() warning when $_SERVER['HTTP_HOST'] is
+# unset in a CLI context. install-cli.php sets $_SERVER before bootstrapping Joomla.
 echo "Installing privacy plugin extension..."
-cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
-    echo "Extension installed via Joomla CLI"
+if php /usr/local/bin/install-cli.php; then
+    echo "✅ Extension installed via Joomla CLI"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
