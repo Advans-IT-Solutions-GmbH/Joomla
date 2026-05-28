@@ -77,8 +77,9 @@ class ExportModelTest
         }
 
         // --- Runtime: real DB calls ---
+        // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
         $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $model = new ExportModel([], null);
+        $model = $rc->newInstanceWithoutConstructor();
         $model->setDatabase($db);
 
         foreach (['products', 'categories', 'variants', 'prices'] as $type) {

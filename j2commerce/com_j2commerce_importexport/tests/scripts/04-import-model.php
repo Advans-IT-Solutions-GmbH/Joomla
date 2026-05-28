@@ -77,8 +77,9 @@ class ImportModelTest
         }
 
         // --- Runtime: importProductFull() with empty/minimal data does not crash ---
+        // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
         $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $model = new ImportModel([], null);
+        $model = $rc->newInstanceWithoutConstructor();
         $model->setDatabase($db);
 
         $this->test('importProductFull() with missing required fields throws', function () use ($model) {

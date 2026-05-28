@@ -89,6 +89,12 @@ main() {
         docker logs $CONTAINER_NAME 2>&1 | tail -50 || true
         exit 1
     }
+    HEALTH=$(docker exec "$CONTAINER_NAME" cat /var/www/html/health.txt 2>/dev/null || echo "UNKNOWN")
+    if [ "$HEALTH" != "OK" ]; then
+        print_error "Joomla setup failed (health.txt: $HEALTH)"
+        docker logs "$CONTAINER_NAME" 2>&1 | tail -50 || true
+        exit 1
+    fi
     print_success "Joomla is ready"
     
     copy_test_scripts
