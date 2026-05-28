@@ -1,77 +1,107 @@
 <?php
 /**
  * Export Model Tests for J2Commerce Import/Export
- * Validates export model methods and supported formats.
  */
+define('_JEXEC', 1);
+define('JPATH_BASE', '/var/www/html');
+require_once JPATH_BASE . '/includes/defines.php';
+$_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
+$_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+require_once JPATH_BASE . '/includes/framework.php';
+
+use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
+
+// Register component PSR-4 namespace
+spl_autoload_register(function (string $class): void {
+    $prefix = 'Advans\\Component\\J2CommerceImportExport\\Administrator\\';
+    $base   = '/var/www/html/administrator/components/com_j2commerce_importexport/src/';
+    if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
+        return;
+    }
+    $relative = str_replace('\\', '/', substr($class, strlen($prefix)));
+    $file = $base . $relative . '.php';
+    if (file_exists($file)) {
+        require_once $file;
+    }
+});
+
+use Advans\Component\J2CommerceImportExport\Administrator\Model\ExportModel;
 
 class ExportModelTest
 {
-    private $passed = 0;
-    private $failed = 0;
-    private $modelFile = '/var/www/html/administrator/components/com_j2commerce_importexport/src/Model/ExportModel.php';
+    private int $passed = 0;
+    private int $failed = 0;
+
+    private function test(string $name, callable $fn): void
+    {
+        try {
+            $result = $fn();
+            if ($result) {
+                echo "PASS $name\n";
+                $this->passed++;
+            } else {
+                echo "FAIL $name\n";
+                $this->failed++;
+            }
+        } catch (\Throwable $e) {
+            echo "FAIL $name — " . $e->getMessage() . "\n";
+            $this->failed++;
+        }
+    }
 
     public function run(): bool
     {
         echo "=== Export Model Tests ===\n\n";
 
-        $content = file_get_contents($this->modelFile);
+        $rc = new ReflectionClass(ExportModel::class);
 
-        $this->test('ExportModel has exportData method', function () use ($content) {
-            return strpos($content, 'function exportData') !== false;
+        // --- Class structure via reflection ---
+        $this->test('ExportModel uses J2CommerceAwareTrait', function () use ($rc) {
+            foreach (array_keys($rc->getTraits()) as $t) {
+                if (str_ends_with($t, 'J2CommerceAwareTrait')) return true;
+            }
+            return false;
         });
 
-        $this->test('Supports products export', function () use ($content) {
-            return strpos($content, 'exportProducts') !== false;
+        $this->test('exportData() is public', function () use ($rc) {
+            return $rc->hasMethod('exportData') && $rc->getMethod('exportData')->isPublic();
         });
 
-        $this->test('Supports categories export', function () use ($content) {
-            return strpos($content, 'exportCategories') !== false;
-        });
-
-        $this->test('Supports variants export', function () use ($content) {
-            return strpos($content, 'exportVariants') !== false;
-        });
-
-        $this->test('Supports prices export', function () use ($content) {
-            return strpos($content, 'exportPrices') !== false;
-        });
-
-        $this->test('Handles product images', function () use ($content) {
-            return strpos($content, 'getProductImages') !== false;
-        });
-
-        $this->test('Handles product options', function () use ($content) {
-            return strpos($content, 'getProductOptions') !== false;
-        });
-
-        $this->test('Handles product filters', function () use ($content) {
-            return strpos($content, 'getProductFilters') !== false;
-        });
-
-        $this->test('Handles article custom fields', function () use ($content) {
-            return strpos($content, 'getArticleCustomFields') !== false;
-        });
-
-        $this->test('Uses DatabaseAwareTrait or DB access', function () use ($content) {
-            return strpos($content, 'DatabaseAwareTrait') !== false
-                || strpos($content, 'getDatabase') !== false
-                || strpos($content, 'getDbo') !== false;
-        });
-
-        echo "\n=== Export Model Test Summary ===\n";
-        echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
-        return $this->failed === 0;
-    }
-
-    private function test(string $name, callable $fn): void
-    {
-        try {
-            if ($fn()) { echo "✓ {$name}\n"; $this->passed++; }
-            else { echo "✗ {$name}\n"; $this->failed++; }
-        } catch (\Exception $e) {
-            echo "✗ {$name} - Error: {$e->getMessage()}\n";
-            $this->failed++;
+        foreach (['exportProducts', 'exportCategories', 'exportVariants', 'exportPrices',
+                  'exportProductsFull', 'getProductImages', 'getProductOptions',
+                  'getProductFilters', 'getArticleCustomFields'] as $method) {
+            $this->test("$method() exists", function () use ($rc, $method) {
+                return $rc->hasMethod($method);
+            });
         }
+
+        // --- Runtime: real DB calls ---
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $model = new ExportModel([], null);
+        $model->setDatabase($db);
+
+        foreach (['products', 'categories', 'variants', 'prices'] as $type) {
+            $this->test("exportData('$type') returns array", function () use ($model, $type) {
+                return is_array($model->exportData($type));
+            });
+        }
+
+        $this->test('exportData() throws on unknown type', function () use ($model) {
+            try {
+                $model->exportData('__invalid__');
+                return false;
+            } catch (\Exception $e) {
+                return true;
+            }
+        });
+
+        echo "\n=== Export Model Summary ===\n";
+        echo "Passed: {$this->passed}\n";
+        echo "Failed: {$this->failed}\n";
+        echo "Total:  " . ($this->passed + $this->failed) . "\n";
+
+        return $this->failed === 0;
     }
 }
 
