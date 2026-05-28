@@ -104,7 +104,7 @@ class ExportModelTest
             'created_by' => 42,
             'modified'   => date('Y-m-d H:i:s'),
             'publish_up' => date('Y-m-d H:i:s'),
-            'params'     => '{}',
+            'attribs'    => '{}',
             'metadata'   => '{}',
             'images'     => '{}',
             'urls'       => '{}',

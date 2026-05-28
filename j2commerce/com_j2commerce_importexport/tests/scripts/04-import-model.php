@@ -99,7 +99,10 @@ class ImportModelTest
         });
 
         $this->test('importData() with empty file returns result array', function () use ($model) {
-            $result = $model->importData('/dev/null', 'products_full', []);
+            // importData() dispatches on file extension — use an empty .csv so it reaches the empty-data path
+            $tmpCsv = sys_get_temp_dir() . '/importexport-test-empty.csv';
+            file_put_contents($tmpCsv, '');
+            $result = $model->importData($tmpCsv, 'products_full', []);
             return is_array($result)
                 && array_key_exists('imported', $result)
                 && array_key_exists('failed', $result);
