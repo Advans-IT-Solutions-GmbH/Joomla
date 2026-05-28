@@ -1,0 +1,44 @@
+services:
+  joomla:
+    build:
+      context: .
+      dockerfile: Dockerfile.joomla6
+    container_name: com_j2commerce_importexport_j6_test
+    ports:
+      - "8081:80"
+    environment:
+      JOOMLA_DB_HOST: mysql
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: joomla_pass
+      JOOMLA_DB_NAME: joomla_db
+      JOOMLA_SITE_NAME: "Test Site J6"
+      JOOMLA_ADMIN_USER: admin
+      JOOMLA_ADMIN_USERNAME: admin
+      JOOMLA_ADMIN_PASSWORD: "Admin123456789!@#"
+      JOOMLA_ADMIN_EMAIL: admin@test.local
+      J2COMMERCE_STACK: j6
+    volumes:
+      - joomla_j6_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    container_name: com_j2commerce_importexport_j6_test_db
+    environment:
+      MYSQL_DATABASE: joomla_db
+      MYSQL_USER: joomla
+      MYSQL_PASSWORD: joomla_pass
+      MYSQL_ROOT_PASSWORD: root_pass
+    volumes:
+      - mysql_j6_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  joomla_j6_data:
+  mysql_j6_data:

@@ -229,7 +229,7 @@ class ImportModel extends BaseDatabaseModel
 
         // Check if product exists
         $query = $this->createDbQuery($db)
-            ->select(\$this->col($this->col('j2store_product_id')))
+            ->select($this->col('j2store_product_id'))
             ->from($db->quoteName($this->t('products')))
             ->where('product_source_id = :articleid')
             ->where('product_source = ' . $db->quote('com_content'))
@@ -282,7 +282,7 @@ class ImportModel extends BaseDatabaseModel
 
             if ($sku) {
                 $query = $this->createDbQuery($db)
-                    ->select(\$this->col($this->col('j2store_variant_id')))
+                    ->select($this->col('j2store_variant_id'))
                     ->from($db->quoteName($this->t('variants')))
                     ->where('sku = :sku')
                     ->where('product_id = :productid')
@@ -480,7 +480,7 @@ class ImportModel extends BaseDatabaseModel
 
         // Find or create filter
         $query = $this->createDbQuery($db)
-            ->select(\$this->col($this->col('j2store_filter_id')))
+            ->select($this->col('j2store_filter_id'))
             ->from($db->quoteName($this->t('filters')))
             ->where('filter_name = :name')
             ->where('group_id = :groupid')
@@ -507,7 +507,7 @@ class ImportModel extends BaseDatabaseModel
         $db = $this->getDatabase();
 
         $query = $this->createDbQuery($db)
-            ->select(\$this->col($this->col('j2store_filtergroup_id')))
+            ->select($this->col('j2store_filtergroup_id'))
             ->from($db->quoteName($this->t('filtergroups')))
             ->where('group_name = :name')
             ->bind(':name', $name);
