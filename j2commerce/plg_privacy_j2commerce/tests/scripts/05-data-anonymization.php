@@ -10,6 +10,7 @@ $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
 
 class DataAnonymizationTest
 {
@@ -19,7 +20,14 @@ class DataAnonymizationTest
 
     public function __construct()
     {
-        $this->db = Factory::getContainer()->get('DatabaseDriver');
+        $this->db = Factory::getContainer()->get(DatabaseInterface::class);
+    }
+
+    private function createDbQuery(): \Joomla\Database\QueryInterface
+    {
+        return method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
     }
 
     private function test($name, $condition, $message = '')
@@ -130,7 +138,7 @@ class DataAnonymizationTest
         $infoPk = $this->db->insertid();
 
         // Anonymize orders table
-        $query = $this->db->getQuery(true)
+        $query = $this->createDbQuery()
             ->update($this->db->quoteName($ordersTable))
             ->set([
                 $this->db->quoteName('user_email')     . ' = ' . $this->db->quote('anonymized@deleted.invalid'),
@@ -141,7 +149,7 @@ class DataAnonymizationTest
         $this->db->setQuery($query)->execute();
 
         // Anonymize orderinfos table — all PII fields including previously missing ones
-        $query = $this->db->getQuery(true)
+        $query = $this->createDbQuery()
             ->update($this->db->quoteName($orderinfosTable))
             ->set([
                 $this->db->quoteName('billing_first_name')   . ' = ' . $this->db->quote('Anonymized'),
@@ -173,7 +181,7 @@ class DataAnonymizationTest
         $this->db->setQuery($query)->execute();
 
         // Verify orders
-        $query = $this->db->getQuery(true)
+        $query = $this->createDbQuery()
             ->select('user_email, customer_note, ip_address')
             ->from($this->db->quoteName($ordersTable))
             ->where($this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk);
@@ -183,7 +191,7 @@ class DataAnonymizationTest
         $this->test('ip_address cleared', $order->ip_address === '');
 
         // Verify all PII fields in orderinfos
-        $query = $this->db->getQuery(true)
+        $query = $this->createDbQuery()
             ->select('*')
             ->from($this->db->quoteName($orderinfosTable))
             ->where($this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk);
@@ -206,7 +214,7 @@ class DataAnonymizationTest
         $this->test('shipping_tax_number cleared',     $info->shipping_tax_number  === '');
 
         // Financial data must be preserved
-        $query = $this->db->getQuery(true)
+        $query = $this->createDbQuery()
             ->select('order_total')
             ->from($this->db->quoteName($ordersTable))
             ->where($this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk);

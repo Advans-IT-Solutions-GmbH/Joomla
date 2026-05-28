@@ -912,27 +912,23 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $tables = $db->getTableList();
         $prefix = $db->getPrefix();
 
-        if ($this->isJ2Commerce4()) {
-            // J2Store 4 — product-specific custom fields in #__j2store_product_customfields
-            $customTable = 'j2store_product_customfields';
-            if (!in_array($prefix . $customTable, $tables, true)) {
-                return false;
-            }
+        // Both stacks use an optional manually-created product customfields table.
+        // The table is not part of the standard J2Commerce schema — it must be
+        // created manually as part of the post-install setup (see README step 3).
+        $customTable = $this->isJ2Commerce4()
+            ? 'j2store_product_customfields'
+            : 'j2commerce_product_customfields';
 
-            $query = $this->createDbQuery()
-                ->select($db->quoteName('field_value'))
-                ->from($db->quoteName('#__' . $customTable))
-                ->where($db->quoteName('product_id') . ' = :productid')
-                ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
-                ->bind(':productid', $productId, ParameterType::INTEGER);
-        } else {
-            // TODO(#96): J2Commerce 6 has no direct equivalent of j2store_product_customfields.
-            // #__j2commerce_customfields is a field definition table (no product_id column).
-            // Product-specific metadata lives in #__j2commerce_metafields, but whether
-            // is_lifetime_license values are written there depends on the installation.
-            // Until the correct data model is confirmed, return false (no lifetime block).
+        if (!in_array($prefix . $customTable, $tables, true)) {
             return false;
         }
+
+        $query = $this->createDbQuery()
+            ->select($db->quoteName('field_value'))
+            ->from($db->quoteName('#__' . $customTable))
+            ->where($db->quoteName('product_id') . ' = :productid')
+            ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
+            ->bind(':productid', $productId, ParameterType::INTEGER);
 
         $db->setQuery($query);
         $fieldValue = $db->loadResult();

@@ -219,6 +219,17 @@ CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_cartitems (
     product_qty            DECIMAL(15,4) NOT NULL DEFAULT 1.0000,
     PRIMARY KEY (j2commerce_cartitem_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Optional table for lifetime-licence detection (mirrors j2store_product_customfields).
+-- Created here so isLifetimeLicense() can query it on J6 without falling back to J4 tables.
+CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_product_customfields (
+    j2commerce_product_customfield_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    product_id                        INT UNSIGNED NOT NULL DEFAULT 0,
+    field_name                        VARCHAR(255) NOT NULL DEFAULT '',
+    field_value                       VARCHAR(255) NOT NULL DEFAULT '',
+    PRIMARY KEY (j2commerce_product_customfield_id),
+    KEY idx_product_field (product_id, field_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 EOMINIMAL
 echo "J2Commerce 6 schema created"
 
