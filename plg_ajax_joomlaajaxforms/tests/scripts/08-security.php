@@ -139,21 +139,21 @@ class SecurityTest
         $url = $this->baseUrl . $this->ajaxPath . '&task=getCartCount';
 
         // Joomla may respond to unauthenticated/invalid-token AJAX requests in several ways:
-        //   - HTTP 303 redirect to login page
+        //   - HTTP 3xx redirect to login page (301 or 303 depending on Joomla version)
         //   - HTTP 200 with JSON {"success":false,...}
         //   - HTTP 200 with HTML error page (format=json ignored for some error paths)
-        // All three indicate the request was not processed successfully.
+        // All indicate the request was not processed successfully.
 
         // 1. GET with no token
         [$code, $body] = $this->http('GET', $url, [], [], false);
         $data    = json_decode($body, true);
         $isJson  = $data !== null;
-        $rejected = $code === 303
+        $rejected = ($code >= 300 && $code < 400)  // any redirect (301, 303, etc.)
             || ($isJson  && isset($data['success'])  && $data['success']  === false)
             || (!$isJson && $code === 200); // HTML error page instead of JSON
 
         $this->test(
-            'No-token GET is rejected (303, success=false, or HTML error)',
+            'No-token GET is rejected (3xx, success=false, or HTML error)',
             $rejected,
             "Got HTTP $code, body: " . substr($body, 0, 200)
         );
@@ -165,12 +165,12 @@ class SecurityTest
         ], [], false);
         $data2    = json_decode($body2, true);
         $isJson2  = $data2 !== null;
-        $rejected2 = $code2 === 303
+        $rejected2 = ($code2 >= 300 && $code2 < 400)
             || ($isJson2  && isset($data2['success'])  && $data2['success']  === false)
-            || (!$isJson2 && $code2 === 200); // HTML error page instead of JSON
+            || (!$isJson2 && $code2 === 200);
 
         $this->test(
-            'Fake-token POST is rejected (303, success=false, or HTML error)',
+            'Fake-token POST is rejected (3xx, success=false, or HTML error)',
             $rejected2,
             "Got HTTP $code2, body: " . substr($body2, 0, 200)
         );
@@ -235,10 +235,10 @@ class SecurityTest
         $data    = json_decode($body, true);
         $isJson  = $data !== null;
 
-        // Unauthenticated request must be rejected: 303 redirect, success=false JSON, or HTML error page
+        // Unauthenticated request must be rejected: any 3xx redirect, success=false JSON, or HTML error page
         $this->test(
             'Unauthenticated removeCartItem is rejected',
-            $code === 303
+            ($code >= 300 && $code < 400)
                 || ($isJson && isset($data['success']) && $data['success'] === false)
                 || (!$isJson && $code === 200),
             "HTTP $code, body: " . substr($body, 0, 200)
