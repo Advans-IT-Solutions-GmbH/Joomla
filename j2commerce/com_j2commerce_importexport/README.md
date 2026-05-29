@@ -2,8 +2,12 @@
 
 [![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2commerce-import-export.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2commerce-import-export.yml)
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml)
-[![Joomla 5+](https://img.shields.io/badge/Joomla-5.x%20%7C%206.x%20%7C%207.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
+
+## Description
 
 Import and export J2Commerce products with all related Joomla data.
 
@@ -47,9 +51,18 @@ Products are matched and updated (instead of duplicated) using three methods:
 
 ## Requirements
 
-- Joomla 5.x, 6.x or 7.x
+- Joomla 4.x, 5.x or 6.x
 - PHP 8.1 or higher
 - J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
+
+## J2Commerce Version Compatibility
+
+All models use `J2CommerceAwareTrait` for runtime version detection. The trait checks for `#__j2commerce_products` in the database to determine whether J2Commerce 6 is installed:
+
+- **J2Commerce 4.x** — tables prefixed `#__j2store_*`, primary key columns named `j2store_*_id`
+- **J2Commerce 6.x** — tables prefixed `#__j2commerce_*`, primary key columns named `j2commerce_*_id`
+
+The `t('suffix')` helper returns the correct table name and `col('j2store_col')` returns the correct column name for the detected version. No configuration required — detection is automatic.
 
 ## Installation
 
@@ -205,15 +218,6 @@ title,alias,main_image
 | CSV Enclosure | " | Text qualifier for CSV |
 
 ## Development
-
-### J2Commerce Version Compatibility
-
-All models use `J2CommerceAwareTrait` for runtime version detection. The trait checks for `#__j2commerce_products` in the database to determine whether J2Commerce 6 is installed:
-
-- **J2Commerce 4.x** — tables prefixed `#__j2store_*`, primary key columns named `j2store_*_id`
-- **J2Commerce 6.x** — tables prefixed `#__j2commerce_*`, primary key columns named `j2commerce_*_id`
-
-The `t('suffix')` helper returns the correct table name and `col('j2store_col')` returns the correct column name for the detected version. No configuration required — detection is automatic.
 
 ### Structure
 ```
