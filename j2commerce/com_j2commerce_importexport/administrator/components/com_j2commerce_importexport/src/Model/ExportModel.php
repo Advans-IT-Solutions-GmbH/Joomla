@@ -46,40 +46,50 @@ class ExportModel extends BaseDatabaseModel
         $products = [];
 
         // Get all J2Store products with Joomla article data
+        $productPk = $this->col('j2store_product_id');
+
         $query = $this->createDbQuery()
             ->select([
-                'p.*',
-                'c.id AS article_id',
-                'c.title',
-                'c.alias',
-                'c.introtext',
-                'c.fulltext',
-                'c.state AS article_state',
-                'c.catid',
-                'c.created',
-                'c.created_by',
-                'c.modified',
-                'c.publish_up',
-                'c.publish_down',
-                'c.images AS article_images',
-                'c.urls',
-                'c.attribs',
-                'c.metakey',
-                'c.metadesc',
-                'c.metadata',
-                'c.access',
-                'c.featured',
-                'c.language',
-                'c.ordering AS article_ordering',
-                'cat.title AS category_title',
-                'cat.alias AS category_alias',
-                'cat.path AS category_path'
+                $db->quoteName('p') . '.*',
+                $db->quoteName('c') . '.' . $db->quoteName('id') . ' AS ' . $db->quoteName('article_id'),
+                $db->quoteName('c') . '.' . $db->quoteName('title'),
+                $db->quoteName('c') . '.' . $db->quoteName('alias'),
+                $db->quoteName('c') . '.' . $db->quoteName('introtext'),
+                $db->quoteName('c') . '.' . $db->quoteName('fulltext'),
+                $db->quoteName('c') . '.' . $db->quoteName('state') . ' AS ' . $db->quoteName('article_state'),
+                $db->quoteName('c') . '.' . $db->quoteName('catid'),
+                $db->quoteName('c') . '.' . $db->quoteName('created'),
+                $db->quoteName('c') . '.' . $db->quoteName('created_by'),
+                $db->quoteName('c') . '.' . $db->quoteName('modified'),
+                $db->quoteName('c') . '.' . $db->quoteName('publish_up'),
+                $db->quoteName('c') . '.' . $db->quoteName('publish_down'),
+                $db->quoteName('c') . '.' . $db->quoteName('images') . ' AS ' . $db->quoteName('article_images'),
+                $db->quoteName('c') . '.' . $db->quoteName('urls'),
+                $db->quoteName('c') . '.' . $db->quoteName('attribs'),
+                $db->quoteName('c') . '.' . $db->quoteName('metakey'),
+                $db->quoteName('c') . '.' . $db->quoteName('metadesc'),
+                $db->quoteName('c') . '.' . $db->quoteName('metadata'),
+                $db->quoteName('c') . '.' . $db->quoteName('access'),
+                $db->quoteName('c') . '.' . $db->quoteName('featured'),
+                $db->quoteName('c') . '.' . $db->quoteName('language'),
+                $db->quoteName('c') . '.' . $db->quoteName('ordering') . ' AS ' . $db->quoteName('article_ordering'),
+                $db->quoteName('cat') . '.' . $db->quoteName('title') . ' AS ' . $db->quoteName('category_title'),
+                $db->quoteName('cat') . '.' . $db->quoteName('alias') . ' AS ' . $db->quoteName('category_alias'),
+                $db->quoteName('cat') . '.' . $db->quoteName('path') . ' AS ' . $db->quoteName('category_path'),
             ])
             ->from($db->quoteName($this->t('products'), 'p'))
-            ->leftJoin($db->quoteName('#__content', 'c') . ' ON c.id = p.product_source_id')
-            ->leftJoin($db->quoteName('#__categories', 'cat') . ' ON cat.id = c.catid')
-            ->where('p.product_source = ' . $db->quote('com_content'))
-            ->order('p.' . $this->col('j2store_product_id') . ' ASC');
+            ->leftJoin(
+                $db->quoteName('#__content', 'c')
+                . ' ON ' . $db->quoteName('c') . '.' . $db->quoteName('id')
+                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id')
+            )
+            ->leftJoin(
+                $db->quoteName('#__categories', 'cat')
+                . ' ON ' . $db->quoteName('cat') . '.' . $db->quoteName('id')
+                . ' = ' . $db->quoteName('c') . '.' . $db->quoteName('catid')
+            )
+            ->where($db->quoteName('p') . '.' . $db->quoteName('product_source') . ' = ' . $db->quote('com_content'))
+            ->order($db->quoteName('p') . '.' . $db->quoteName($productPk) . ' ASC');
 
         $db->setQuery($query);
         $baseProducts = $db->loadAssocList();
@@ -296,17 +306,36 @@ class ExportModel extends BaseDatabaseModel
     }
 
     /**
-     * Get article menu item
+     * Get article menu item.
+     *
+     * Joomla stores menu links with literal '&' in the database. Some import
+     * paths or older Joomla versions may store '&amp;' instead, so both
+     * patterns are tried.
      */
     protected function getArticleMenuItem(int $articleId): ?array
     {
         $db = $this->getDatabase();
 
+        // Try literal '&' first (standard Joomla storage)
         $query = $this->createDbQuery()
             ->select('*')
             ->from($db->quoteName('#__menu'))
-            ->where('link LIKE ' . $db->quote('%option=com_content&view=article&id=' . $articleId . '%'))
-            ->where('client_id = 0');
+            ->where($db->quoteName('link') . ' LIKE ' . $db->quote('%option=com_content&view=article&id=' . $articleId . '%'))
+            ->where($db->quoteName('client_id') . ' = 0');
+
+        $db->setQuery($query);
+        $row = $db->loadAssoc();
+
+        if ($row) {
+            return $row;
+        }
+
+        // Fallback: '&amp;' encoding (some import paths or older Joomla versions)
+        $query = $this->createDbQuery()
+            ->select('*')
+            ->from($db->quoteName('#__menu'))
+            ->where($db->quoteName('link') . ' LIKE ' . $db->quote('%option=com_content&amp;view=article&amp;id=' . $articleId . '%'))
+            ->where($db->quoteName('client_id') . ' = 0');
 
         $db->setQuery($query);
         return $db->loadAssoc() ?: null;

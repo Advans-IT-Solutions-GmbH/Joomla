@@ -26,16 +26,14 @@ trait J2CommerceAwareTrait
 
     /**
      * Returns true when J2Commerce 6 tables are present.
+     * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
      */
     private function isJ2Commerce6(): bool
     {
         if ($this->isJ6Cache === null) {
-            $db = $this->getDatabase();
-            $this->isJ6Cache = in_array(
-                $db->getPrefix() . 'j2commerce_products',
-                $db->getTableList(),
-                true
-            );
+            $db             = $this->getDatabase();
+            $result         = $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . 'j2commerce_products'))->loadResult();
+            $this->isJ6Cache = !empty($result);
         }
 
         return $this->isJ6Cache;

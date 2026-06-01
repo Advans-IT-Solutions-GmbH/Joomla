@@ -24,12 +24,14 @@ class ImportModel extends BaseDatabaseModel
     /**
      * Returns the current user ID, or 0 in CLI/test contexts where no
      * application is booted (Factory::getApplication() would throw).
+     * Catches \Exception only — PHP Errors (TypeError, ParseError) should
+     * surface rather than be silently swallowed.
      */
     private function getCurrentUserId(): int
     {
         try {
             return (int) Factory::getApplication()->getIdentity()->id;
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             return 0;
         }
     }
