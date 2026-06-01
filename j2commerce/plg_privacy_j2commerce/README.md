@@ -1194,7 +1194,7 @@ This plugin has automated tests that run on every push and on pull requests via 
 ### Running Tests Locally
 
 ```bash
-cd j2commerce/plg_privacy_j2commerce/tests
+cd tests
 docker compose up -d
 timeout 300 bash -c 'until docker exec plg_privacy_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
