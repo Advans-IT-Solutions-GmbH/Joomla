@@ -938,8 +938,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // J2Commerce 6: lifetime-licence flag is stored in #__j2commerce_metafields.
         // Schema (verified against J2Commerce 6 install.mysql.utf8.sql):
         //   owner_id INT, owner_resource VARCHAR, metakey VARCHAR, metavalue TEXT
-        // A DB error here (e.g. column name mismatch after a J2Commerce upgrade)
-        // is caught and returns false so the user is not incorrectly blocked.
         if (!in_array($prefix . 'j2commerce_metafields', $tables, true)) {
             return false;
         }
@@ -948,7 +946,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from($db->quoteName('#__j2commerce_metafields'))
-                ->where($db->quoteName('owner_id')      . ' = :productid')
+                ->where($db->quoteName('owner_id')       . ' = :productid')
                 ->where($db->quoteName('owner_resource') . ' = ' . $db->quote('product'))
                 ->where($db->quoteName('metakey')        . ' = ' . $db->quote('is_lifetime_license'))
                 ->where('LOWER(TRIM(' . $db->quoteName('metavalue') . ')) = ' . $db->quote('yes'))
@@ -958,8 +956,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             return (int) $db->loadResult() > 0;
         } catch (\Exception $e) {
-            Log::add('isLifetimeLicense J6 query failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
-            return false;
+            // Fail-closed: if the query fails (e.g. schema mismatch after a J2Commerce
+            // upgrade), treat the product as a lifetime license. This prevents accidental
+            // anonymization of a paying customer due to a transient DB error.
+            // The operator must resolve the underlying error before erasure can proceed.
+            Log::add('isLifetimeLicense J6 query failed — treating as lifetime license: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return true;
         }
     }
 
