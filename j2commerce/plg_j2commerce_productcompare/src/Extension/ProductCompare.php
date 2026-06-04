@@ -17,10 +17,33 @@ use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Response\JsonResponse;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
+use Joomla\Database\DatabaseAwareInterface;
+use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
+use Joomla\Event\Event;
+use Joomla\Event\SubscriberInterface;
 
-class ProductCompare extends CMSPlugin
+class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, SubscriberInterface
 {
+    use DatabaseAwareTrait;
+
+    /**
+     * Subscribe to J2Commerce 6 events by their full dispatched names.
+     *
+     * J2Commerce 6 dispatches events via PluginHelper::eventWithHtml() which
+     * prepends 'onJ2Commerce' to the event name. Confirmed from J2Commerce 6
+     * PluginHelper source and app_bootstrap5 getSubscribedEvents().
+     * J2Commerce 4 events (onJ2Store*) are handled by the legacy method-name
+     * convention and do not need entries here.
+     */
+    public static function getSubscribedEvents(): array
+    {
+        return [
+            'onJ2CommerceViewProductListHtml' => 'onJ2CommerceViewProductListHtml',
+            'onJ2CommerceViewProductHtml'     => 'onJ2CommerceViewProductHtml',
+        ];
+    }
+
     protected $autoloadLanguage = true;
 
     /**
@@ -50,6 +73,9 @@ class ProductCompare extends CMSPlugin
            ->useScript('plg_j2store_productcompare');
 
         // Configuration for JS — rendered as JSON in <head>, no inline <script> needed
+        // The plugin is installed in group=j2store (see manifest). com_ajax
+        // resolves the plugin by its installed group, so the AJAX URL must
+        // always use group=j2store regardless of the J2Commerce version.
         $doc->addScriptOptions('plg_j2store_productcompare', [
             'maxProducts' => (int) $this->params->get('max_products', 4),
             'ajaxUrl'     => Uri::base() . 'index.php?option=com_ajax&plugin=productcompare&group=j2store&format=json',
@@ -84,27 +110,88 @@ class ProductCompare extends CMSPlugin
     }
 
     /**
-     * Render compare button after a product in list view.
+     * J2Commerce 4 — render compare button after a product in list view.
+     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
      */
     public function onJ2StoreAfterDisplayProductList(object $product): string
     {
-        if (!$this->params->get('show_in_list', 1)) {
+        if (!$this->params->get('show_in_list', 1) || $this->isJ2Commerce6()) {
             return '';
         }
 
-        return $this->renderCompareButton($product->j2store_product_id);
+        return $this->renderCompareButton((int) $product->j2store_product_id);
     }
 
     /**
-     * Render compare button on the product detail page.
+     * J2Commerce 4 — render compare button on the product detail page.
+     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
      */
     public function onJ2StoreAfterDisplayProduct(object $product, string $view): string
     {
-        if (!$this->params->get('show_in_detail', 1)) {
+        if (!$this->params->get('show_in_detail', 1) || $this->isJ2Commerce6()) {
             return '';
         }
 
-        return $this->renderCompareButton($product->j2store_product_id);
+        return $this->renderCompareButton((int) $product->j2store_product_id);
+    }
+
+    /**
+     * J2Commerce 6 — render compare button after each product item in list/category layouts.
+     *
+     * Dispatched as onJ2CommerceViewProductListHtml via:
+     *   eventWithHtml('ViewProductListHtml', [$product, $context, &$displayData])
+     *
+     * Args[0]: product object with j2commerce_product_id
+     * Args[1]: context string
+     * Args[2]: displayData array (by reference)
+     *
+     * HTML is returned via $event->addResult() which PluginHelper collects into 'html'.
+     */
+    public function onJ2CommerceViewProductListHtml(Event $event): void
+    {
+        if (!$this->params->get('show_in_list', 1)) {
+            return;
+        }
+
+        $args    = $event->getArguments();
+        $product = $args[0] ?? null;
+
+        if (!$product || !isset($product->j2commerce_product_id)) {
+            return;
+        }
+
+        $event->addResult($this->renderCompareButton((int) $product->j2commerce_product_id));
+    }
+
+    /**
+     * J2Commerce 6 — render compare button after the product detail template.
+     *
+     * Dispatched as onJ2CommerceViewProductHtml. The dispatch signature varies
+     * across J2Commerce 6 versions and call sites. Rather than relying on a
+     * fixed argument index, scan all arguments for the one that carries
+     * j2commerce_product_id.
+     *
+     * HTML is returned via $event->addResult().
+     */
+    public function onJ2CommerceViewProductHtml(Event $event): void
+    {
+        if (!$this->params->get('show_in_detail', 1)) {
+            return;
+        }
+
+        $item = null;
+        foreach ($event->getArguments() as $arg) {
+            if (is_object($arg) && isset($arg->j2commerce_product_id)) {
+                $item = $arg;
+                break;
+            }
+        }
+
+        if ($item === null) {
+            return;
+        }
+
+        $event->addResult($this->renderCompareButton((int) $item->j2commerce_product_id));
     }
 
     /**
@@ -185,34 +272,69 @@ class ProductCompare extends CMSPlugin
      * @param   int[]  $productIds
      * @return  object[]
      */
+    /**
+     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
+     * Detect J2Commerce 6 by checking for #__j2commerce_products in the database.
+     * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
+     * Cached after first call.
+     */
+    private ?bool $j2commerce6 = null;
+
+    private function isJ2Commerce6(): bool
+    {
+        if ($this->j2commerce6 === null) {
+            $db     = $this->getDatabase();
+            $result = $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . 'j2commerce_products'))->loadResult();
+            $this->j2commerce6 = !empty($result);
+        }
+        return $this->j2commerce6;
+    }
+
     private function getProductsData(array $productIds): array
     {
-        $db = $this->getDatabase();
+        $db  = $this->getDatabase();
+        $j6  = $this->isJ2Commerce6();
 
-        $query = $db->getQuery(true)
+        $productsPk  = $j6 ? 'j2commerce_product_id' : 'j2store_product_id';
+        $variantsPk  = $j6 ? 'j2commerce_variant_id' : 'j2store_variant_id';
+        $productsT   = $j6 ? '#__j2commerce_products' : '#__j2store_products';
+        $variantsT   = $j6 ? '#__j2commerce_variants'  : '#__j2store_variants';
+
+        $query = $this->createDbQuery($db)
             ->select([
-                $db->quoteName('p.j2store_product_id'),
-                $db->quoteName('p.product_source_id'),
-                $db->quoteName('v.j2store_variant_id'),
-                $db->quoteName('v.sku'),
-                $db->quoteName('v.price'),
-                $db->quoteName('v.stock'),
-                $db->quoteName('v.availability'),
-                $db->quoteName('c.title'),
-                $db->quoteName('c.introtext'),
+                $db->quoteName('p') . '.' . $db->quoteName($productsPk),
+                $db->quoteName('p') . '.' . $db->quoteName('product_source_id'),
+                $db->quoteName('v') . '.' . $db->quoteName($variantsPk),
+                $db->quoteName('v') . '.' . $db->quoteName('sku'),
+                $db->quoteName('v') . '.' . $db->quoteName('price'),
+                $db->quoteName('v') . '.' . $db->quoteName('stock'),
+                $db->quoteName('v') . '.' . $db->quoteName('availability'),
+                $db->quoteName('c') . '.' . $db->quoteName('title'),
+                $db->quoteName('c') . '.' . $db->quoteName('introtext'),
             ])
-            ->from($db->quoteName('#__j2store_products', 'p'))
-            ->join('LEFT', $db->quoteName('#__j2store_variants', 'v') . ' ON ' . $db->quoteName('p.j2store_product_id') . ' = ' . $db->quoteName('v.product_id'))
-            ->join('LEFT', $db->quoteName('#__content', 'c') . ' ON ' . $db->quoteName('p.product_source_id') . ' = ' . $db->quoteName('c.id'))
-            ->whereIn($db->quoteName('p.j2store_product_id'), $productIds)
-            ->where($db->quoteName('p.enabled') . ' = 1')
-            ->order($db->quoteName('p.j2store_product_id'));
+            ->from($db->quoteName($productsT, 'p'))
+            ->join('LEFT', $db->quoteName($variantsT, 'v')
+                . ' ON ' . $db->quoteName('v') . '.' . $db->quoteName('product_id')
+                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName($productsPk))
+            ->join('LEFT', $db->quoteName('#__content', 'c')
+                . ' ON ' . $db->quoteName('c') . '.' . $db->quoteName('id')
+                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id'))
+            ->whereIn($db->quoteName('p') . '.' . $db->quoteName($productsPk), $productIds)
+            ->where($db->quoteName('p') . '.' . $db->quoteName('enabled') . ' = 1')
+            ->order($db->quoteName('p') . '.' . $db->quoteName($productsPk));
 
         $db->setQuery($query);
         $products = $db->loadObjectList() ?: [];
 
         foreach ($products as &$product) {
-            $product->options = $this->getProductOptions($product->j2store_product_id);
+            $product->options = $this->getProductOptions((int) $product->$productsPk);
         }
 
         return $products;
@@ -223,11 +345,12 @@ class ProductCompare extends CMSPlugin
      */
     private function getProductOptions(int $productId): array
     {
-        $db = $this->getDatabase();
+        $db      = $this->getDatabase();
+        $optionsT = $this->isJ2Commerce6() ? '#__j2commerce_product_options' : '#__j2store_product_options';
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select([$db->quoteName('option_name'), $db->quoteName('option_value')])
-            ->from($db->quoteName('#__j2store_product_options'))
+            ->from($db->quoteName($optionsT))
             ->where($db->quoteName('product_id') . ' = :productid')
             ->bind(':productid', $productId, ParameterType::INTEGER);
 

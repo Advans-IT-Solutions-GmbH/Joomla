@@ -6,8 +6,6 @@
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
-Help customers make informed purchase decisions with side-by-side product comparison.
-
 ## Description
 
 The J2Commerce Product Compare Plugin adds a visual comparison feature to your store. Customers can select multiple products and view them side-by-side in an elegant modal interface. A persistent comparison bar keeps track of selected products across pages. Fully responsive design works on all devices, with configurable maximum products and customizable styling to match your store's theme.
@@ -28,7 +26,25 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
 - PHP 8.1 or higher
-- J2Commerce 4.x or higher
+- J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables) — plugin group is `j2store` in both cases
+
+### J2Commerce Version Compatibility
+
+The plugin detects the installed J2Commerce version at runtime by checking for `#__j2commerce_products` in the database.
+
+The plugin manifest uses `group="j2store"` permanently. Files install to `plugins/j2store/productcompare/` and the AJAX endpoint is always `group=j2store` on both J2Commerce 4 and 6.
+
+**J2Commerce 4.x**:
+- Events received via legacy method-name convention (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`)
+- DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
+- AJAX URL: `group=j2store`
+
+**J2Commerce 6.x**:
+- Events received via `SubscriberInterface` (`onJ2CommerceViewProductListHtml`, `onJ2CommerceViewProductHtml`)
+- DB tables: `#__j2commerce_products`, `#__j2commerce_variants`, `#__j2commerce_product_options`
+- AJAX URL: `group=j2store`
+
+No configuration required — the correct event handlers and table names are selected automatically.
 
 ## Installation
 1. Download `plg_j2commerce_productcompare.zip`
@@ -83,22 +99,29 @@ This plugin has automated tests that run on every push via GitHub Actions.
 
 ### Test Suites
 
-1. **Installation** - Plugin registration in DB, file deployment
-2. **Configuration** - Plugin params, language files, XML manifest
-3. **Media Files** - CSS/JS deployment and content validation
-4. **Plugin Class** - Method existence and class structure
-5. **AJAX Endpoint** - HTTP tests against com_ajax
-6. **Uninstall** - Clean removal from database and filesystem
+1. **Installation** — plugin registration in DB, file deployment
+2. **Configuration** — plugin params, language files, XML manifest
+3. **Media Files** — CSS/JS deployment and content validation
+4. **Plugin Class** — method existence, `SubscriberInterface`, `isJ2Commerce6()` detection
+5. **AJAX Endpoint** — HTTP tests against com_ajax (J2Commerce 4 and 6 group)
+6. **getProductsData** — DB query compatibility for J2Commerce 4 and 6 table schemas
+7. **Asset Injection** — AJAX URL group selection based on detected version
+8. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
 ```bash
-cd j2commerce/plg_j2commerce_productcompare/tests
+cd tests
 docker compose up -d
-# Wait for container readiness (health.txt written by docker-entrypoint.sh)
 timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
+
+# Joomla 6
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 ## Troubleshooting

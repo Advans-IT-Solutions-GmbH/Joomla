@@ -1,0 +1,25 @@
+FROM joomla:6.1-php8.3-apache
+
+RUN apt-get update && apt-get install -y \
+    unzip \
+    curl \
+    default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
+
+# J2Commerce 6.x — uses #__j2commerce_* tables
+ARG J2COMMERCE_VERSION=v6.0.0
+RUN curl -sL "https://github.com/j2commerce/j2commerce/releases/download/${J2COMMERCE_VERSION}/com_j2commerce-$(echo ${J2COMMERCE_VERSION} | sed 's/^v//').zip" \
+    -o /tmp/j2commerce.zip
+
+COPY extension.zip /tmp/extension.zip
+
+COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
+RUN chmod +x /usr/local/bin/custom-entrypoint.sh
+
+ENV EXTENSION_NAME="Product Compare Plugin (J6)"
+ENV J2COMMERCE_STACK=j6
+
+ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
+CMD ["apache2-foreground"]

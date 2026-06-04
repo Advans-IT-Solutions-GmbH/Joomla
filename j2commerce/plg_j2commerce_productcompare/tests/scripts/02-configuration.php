@@ -39,6 +39,7 @@ class ConfigurationTest
             return $val !== null || true; // param may not be set, that's OK (uses default)
         });
 
+        // Plugin installs to group=j2store (manifest group="j2store")
         $this->test('Language file en-GB exists', function () {
             return file_exists(JPATH_PLUGINS . '/j2store/productcompare/language/en-GB/plg_j2store_productcompare.ini');
         });

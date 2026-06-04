@@ -1,5 +1,6 @@
 <?php
 /**
+ * @package     J2Commerce.ProductCompare
  * Installation Tests for J2Commerce Product Compare Plugin
  */
 define('_JEXEC', 1);
