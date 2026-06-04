@@ -9,6 +9,7 @@ RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
 COPY extension.zip /tmp/extension.zip
 
+COPY scripts/j2commerce-stubs.sql /tmp/j2commerce-stubs.sql
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 

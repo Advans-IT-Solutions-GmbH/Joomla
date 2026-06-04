@@ -45,6 +45,13 @@ mysql -h "${JOOMLA_DB_HOST:-mysql}" -u "${JOOMLA_DB_USER:-joomla}" -p"${JOOMLA_D
     && echo "✅ Extensions enabled" \
     || echo "⚠️ Could not enable extensions via DB"
 
+# Install J2Commerce stub tables so round-trip tests run instead of being skipped
+echo "Installing J2Commerce stub tables..."
+sed "s/#__/${DB_PREFIX}/g" /tmp/j2commerce-stubs.sql | \
+    mysql -h "${JOOMLA_DB_HOST:-mysql}" -u "${JOOMLA_DB_USER:-joomla}" -p"${JOOMLA_DB_PASSWORD:-joomla_pass}" "${JOOMLA_DB_NAME:-joomla_db}" 2>&1 \
+    && echo "✅ J2Commerce stub tables installed" \
+    || echo "⚠️ Could not install J2Commerce stub tables"
+
 echo "OK" > /var/www/html/health.txt
 chown www-data:www-data /var/www/html/health.txt 2>/dev/null || true
 echo "✅ Container ready"
