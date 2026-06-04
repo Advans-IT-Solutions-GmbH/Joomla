@@ -54,7 +54,7 @@ class SafetyChecksTest
      */
     private function classifyExtension($manifest, $ext, $patterns): array
     {
-        if ($ext->element === 'com_j2store') {
+        if ($ext->element === 'com_j2store' || $ext->element === 'com_j2commerce') {
             $version = is_object($manifest) ? ($manifest->version ?? '?') : '?';
             return ['status' => 'core', 'reason' => 'Core component (v' . $version . ')', 'issues' => []];
         }
@@ -130,6 +130,17 @@ class SafetyChecksTest
 
         $result = $this->classifyExtension(null, $ext, $patterns);
         $this->test('com_j2store with null manifest is still core', $result['status'] === 'core');
+
+        // --- com_j2commerce is always core ---
+        echo "\n--- com_j2commerce protection ---\n";
+        $ext6 = (object)['element' => 'com_j2commerce', 'type' => 'component', 'folder' => '', 'client_id' => 1];
+
+        $manifest = (object)['version' => '6.0.0', 'author' => 'J2Commerce'];
+        $result = $this->classifyExtension($manifest, $ext6, $patterns);
+        $this->test('com_j2commerce v6.0.0 is core', $result['status'] === 'core');
+
+        $result = $this->classifyExtension(null, $ext6, $patterns);
+        $this->test('com_j2commerce with null manifest is still core', $result['status'] === 'core');
 
         // --- Extension with clean code = compatible ---
         echo "\n--- Clean extension ---\n";

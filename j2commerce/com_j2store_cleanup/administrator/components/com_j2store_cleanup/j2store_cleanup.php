@@ -253,7 +253,7 @@ function scanForIssues($path, $patterns) {
  * @return array ['status' => string, 'reason' => string, 'issues' => array]
  */
 function classifyExtension($manifest, $ext, $patterns) {
-    if ($ext->element === 'com_j2store') {
+    if ($ext->element === 'com_j2store' || $ext->element === 'com_j2commerce') {
         $version = is_object($manifest) ? ($manifest->version ?? '?') : '?';
         return ['status' => 'core', 'reason' => 'Core component (v' . $version . ')', 'issues' => []];
     }
