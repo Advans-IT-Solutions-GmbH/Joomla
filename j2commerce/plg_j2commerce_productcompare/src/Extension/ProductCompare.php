@@ -337,15 +337,27 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
 
     /**
      * Load product options for a single product.
+     *
+     * J2Commerce 4: #__j2store_product_options has option_name / option_value columns.
+     *
+     * J2Commerce 6: #__j2commerce_product_options is a mapping table with columns
+     * j2commerce_productoption_id, option_id, parent_id, product_id, ordering,
+     * required, is_variant — no option_name/option_value. The option labels live in
+     * a separate #__j2commerce_options table whose schema is not yet confirmed.
+     * Returns empty array on J6 until the full schema is mapped (see #118).
      */
     private function getProductOptions(int $productId): array
     {
-        $db      = $this->getDatabase();
-        $optionsT = $this->isJ2Commerce6() ? '#__j2commerce_product_options' : '#__j2store_product_options';
+        if ($this->isJ2Commerce6()) {
+            // TODO(#118): implement J6 option lookup via #__j2commerce_options join
+            return [];
+        }
+
+        $db = $this->getDatabase();
 
         $query = $this->createDbQuery($db)
             ->select([$db->quoteName('option_name'), $db->quoteName('option_value')])
-            ->from($db->quoteName($optionsT))
+            ->from($db->quoteName('#__j2store_product_options'))
             ->where($db->quoteName('product_id') . ' = :productid')
             ->bind(':productid', $productId, ParameterType::INTEGER);
 
