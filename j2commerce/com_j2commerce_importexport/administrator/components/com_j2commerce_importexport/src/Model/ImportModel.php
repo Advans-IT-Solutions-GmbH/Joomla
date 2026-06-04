@@ -534,9 +534,10 @@ class ImportModel extends BaseDatabaseModel
 
         foreach ($files as $file) {
             $f = (object) [
-                'product_id' => $productId,
+                'product_id'               => $productId,
                 'product_file_display_name' => $file['product_file_display_name'] ?? '',
-                'product_file_save_name' => $file['product_file_save_name'] ?? '',
+                'product_file_save_name'   => $file['product_file_save_name'] ?? '',
+                'download_total'           => (int) ($file['download_total'] ?? 0),
             ];
             $db->insertObject($this->t('productfiles'), $f);
         }

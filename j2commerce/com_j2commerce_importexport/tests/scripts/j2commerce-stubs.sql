@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS `#__j2commerce_productfiles` (
   `product_file_display_name` varchar(255) NOT NULL,
   `product_file_save_name` varchar(255) NOT NULL,
   `product_id` int NOT NULL,
-  `download_total` int NOT NULL DEFAULT 0,
+  `download_total` int NOT NULL,
   PRIMARY KEY (`j2commerce_productfile_id`),
   KEY `productfile_product_id` (`product_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
