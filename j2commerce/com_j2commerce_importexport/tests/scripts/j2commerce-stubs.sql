@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS `#__j2commerce_variants` (
 
 CREATE TABLE IF NOT EXISTS `#__j2commerce_productquantities` (
   `j2commerce_productquantity_id` int NOT NULL AUTO_INCREMENT,
-  `product_attributes` text NOT NULL,
+  `product_attributes` text NOT NULL DEFAULT '',
   `variant_id` int NOT NULL,
   `quantity` int NOT NULL DEFAULT 0,
   `on_hold` int NOT NULL DEFAULT 0,

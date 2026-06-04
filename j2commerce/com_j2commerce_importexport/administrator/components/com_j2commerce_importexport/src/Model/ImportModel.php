@@ -373,10 +373,11 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $qty = (object) [
-            'variant_id' => $variantId,
-            'quantity' => $finalQuantity,
-            'on_hold' => $data['on_hold'] ?? 0,
-            'sold' => $data['qty_sold'] ?? 0,
+            'variant_id'         => $variantId,
+            'product_attributes' => $data['product_attributes'] ?? '',
+            'quantity'           => $finalQuantity,
+            'on_hold'            => $data['on_hold'] ?? 0,
+            'sold'               => $data['qty_sold'] ?? 0,
         ];
 
         if ($existing) {
