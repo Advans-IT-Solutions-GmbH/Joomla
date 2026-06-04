@@ -8,9 +8,6 @@ on:
       - 'j2commerce/plg_osmap_j2commerce/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'j2commerce/plg_osmap_j2commerce/**'
-      - 'shared/**'
 
 jobs:
   build:
@@ -19,7 +16,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build
         run: |
           cd j2commerce/plg_osmap_j2commerce
@@ -27,7 +24,7 @@ jobs:
           ./build.sh
           mkdir -p tests
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/extension.zip
@@ -39,7 +36,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -48,8 +45,8 @@ jobs:
         run: |
           find j2commerce/plg_osmap_j2commerce/src -name "*.php" -exec php -l {} \;
 
-  test:
-    name: ${{ matrix.name }}
+  test-j5:
+    name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -65,6 +62,8 @@ jobs:
             script: 'configuration'
           - name: '03 - Plugin Class'
             script: 'plugin-class'
+          - name: '03b - Plugin Emit'
+            script: 'plugin-emit'
           - name: '04 - Sitemap Output'
             script: 'sitemap'
           - name: '05 - Sitemap HTTP'
@@ -72,12 +71,12 @@ jobs:
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
-      - name: Start environment
+      - name: Start environment (J5)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose up -d
@@ -95,10 +94,10 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ${{ matrix.script }}-logs
+          name: j5-${{ matrix.script }}-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
       - name: Cleanup
         if: always()
@@ -106,14 +105,74 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose down -v
 
+  test-j6:
+    name: ${{ matrix.name }} (J6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Configuration'
+            script: 'configuration'
+          - name: '03 - Plugin Class'
+            script: 'plugin-class'
+          - name: '03b - Plugin Emit'
+            script: 'plugin-emit'
+          - name: '04 - Sitemap Output'
+            script: 'sitemap'
+          - name: '05 - Sitemap HTTP'
+            script: 'sitemap-http'
+          - name: '06 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension-package
+          path: j2commerce/plg_osmap_j2commerce/tests/
+      - name: Start environment (J6)
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          docker compose -f docker-compose.joomla6.yml up -d
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          echo "=== Joomla Container Logs ==="
+          docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run tests
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh ${{ matrix.script }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: j6-${{ matrix.script }}-logs
+          path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          docker compose -f docker-compose.joomla6.yml down -v
+
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-j5, test-j6]
     if: always()
     permissions: {}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
       - name: Collect and display logs
@@ -127,7 +186,7 @@ jobs:
             fi
           done
       - name: Upload combined logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-test-logs
           path: test-artifacts/

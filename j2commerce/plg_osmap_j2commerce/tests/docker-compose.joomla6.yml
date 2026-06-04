@@ -1,0 +1,46 @@
+services:
+  joomla:
+    build:
+      context: .
+      dockerfile: Dockerfile.joomla6
+    container_name: plg_osmap_j2commerce_j6_test
+    ports:
+      - "8081:80"
+    environment:
+      JOOMLA_DB_HOST: mysql
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: joomla_pass
+      JOOMLA_DB_NAME: joomla_db
+      JOOMLA_SITE_NAME: "Test Site J6"
+      JOOMLA_ADMIN_USER: "Super User"
+      JOOMLA_ADMIN_USERNAME: admin
+      JOOMLA_ADMIN_PASSWORD: "Admin123456789!@#"
+      JOOMLA_ADMIN_EMAIL: admin@test.local
+      # Install OSMap and the plugin; no J2Commerce 4 package on J6
+      JOOMLA_EXTENSIONS_PATHS: "/tmp/osmap.zip;/tmp/extension.zip"
+      J2COMMERCE_STACK: j6
+    volumes:
+      - joomla_j6_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    container_name: plg_osmap_j2commerce_j6_test_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+      MYSQL_DATABASE: joomla_db
+      MYSQL_USER: joomla
+      MYSQL_PASSWORD: joomla_pass
+    volumes:
+      - mysql_j6_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  joomla_j6_data:
+  mysql_j6_data:

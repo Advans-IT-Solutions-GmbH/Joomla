@@ -1,0 +1,24 @@
+FROM joomla:6.1-php8.3-apache
+
+RUN apt-get update && apt-get install -y \
+    unzip \
+    curl \
+    default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
+
+ARG OSMAP_VERSION=5.1.3
+RUN curl -fsSL "https://github.com/joomlashack/OSMap/releases/download/v${OSMAP_VERSION}/com_osmap_free_${OSMAP_VERSION}.zip" \
+    -o /tmp/osmap.zip
+
+COPY extension.zip /tmp/extension.zip
+
+COPY scripts/docker-entrypoint-j6.sh /usr/local/bin/custom-entrypoint.sh
+RUN chmod +x /usr/local/bin/custom-entrypoint.sh
+
+ENV EXTENSION_NAME="OSMap J2Commerce Plugin (J6)"
+ENV J2COMMERCE_STACK=j6
+
+ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
+CMD ["apache2-foreground"]

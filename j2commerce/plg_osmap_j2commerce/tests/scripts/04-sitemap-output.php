@@ -20,6 +20,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
 class SitemapOutputTest
@@ -27,6 +28,8 @@ class SitemapOutputTest
     private $db;
     private int $passed = 0;
     private int $failed = 0;
+    private bool $isJ6;
+    private string $productsTable;
 
     // IDs inserted by docker-entrypoint.sh fixtures
     private const SHOP_MENU_ID    = 9001;
@@ -35,25 +38,36 @@ class SitemapOutputTest
 
     public function __construct()
     {
-        $this->db = Factory::getDbo();
+        $this->db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $this->isJ6  = (getenv('J2COMMERCE_STACK') === 'j6');
+        $this->productsTable = $this->isJ6 ? '#__j2commerce_products' : '#__j2store_products';
+    }
+
+    private function createDbQuery(): \Joomla\Database\QueryInterface
+    {
+        return method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
     }
 
     public function run(): bool
     {
         echo "=== Sitemap Output Tests ===\n\n";
 
-        $this->test('Fixture: shop menu item exists (published=1, com_j2store)', function () {
-            $q = $this->db->getQuery(true)
+        $this->test('Fixture: shop menu item exists (published=1)', function () {
+            // J4: link contains com_j2store; J6: link contains com_j2commerce
+            $shopComponent = $this->isJ6 ? 'com_j2commerce' : 'com_j2store';
+            $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from('#__menu')
                 ->where('id = ' . self::SHOP_MENU_ID)
                 ->where('published = 1')
-                ->where('link LIKE ' . $this->db->quote('%com_j2store%'));
+                ->where('link LIKE ' . $this->db->quote('%' . $shopComponent . '%'));
             return (int) $this->db->setQuery($q)->loadResult() === 1;
         });
 
         $this->test('Fixture: 2 product menu items exist (published=-2)', function () {
-            $q = $this->db->getQuery(true)
+            $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from('#__menu')
                 ->where('parent_id = ' . self::SHOP_MENU_ID)
@@ -61,10 +75,10 @@ class SitemapOutputTest
             return (int) $this->db->setQuery($q)->loadResult() === 2;
         });
 
-        $this->test('Fixture: 2 enabled J2Store products exist', function () {
-            $q = $this->db->getQuery(true)
+        $this->test('Fixture: 2 enabled products exist (' . $this->productsTable . ')', function () {
+            $q = $this->createDbQuery()
                 ->select('COUNT(*)')
-                ->from('#__j2store_products')
+                ->from($this->productsTable)
                 ->where('product_source_id IN (9001, 9002)')
                 ->where('enabled = 1');
             return (int) $this->db->setQuery($q)->loadResult() === 2;
@@ -83,11 +97,14 @@ class SitemapOutputTest
             return $paths === ['shop/test-product-alpha', 'shop/test-product-beta'];
         });
 
-        $this->test('Generated nodes use absolute URL from menu path', function () use ($products) {
+        $this->test('Generated nodes use path-based absolute URL', function () use ($products) {
+            $root = rtrim(\Joomla\CMS\Uri\Uri::root(), '/');
             foreach ($products as $p) {
                 $node = $this->buildNode($p, new Registry('{}'));
-                // Plugin builds: rtrim(Uri::root(), '/') . '/' . ltrim($item->path, '/')
-                $expected = rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/' . ltrim($p->path, '/');
+                // Plugin builds absolute URL from m.path (SEF-relative path).
+                // OSMap excludes published=-2 items from its routing cache, so
+                // Itemid-based links produce empty fullLink for these items.
+                $expected = $root . '/' . ltrim($p->path, '/');
                 if ($node->link !== $expected) {
                     echo "  Expected: {$expected}\n  Got:      {$node->link}\n";
                     return false;
@@ -136,7 +153,7 @@ class SitemapOutputTest
         $this->test('Disabled product is excluded from query results', function () {
             // Temporarily disable product alpha
             $this->db->setQuery(
-                'UPDATE #__j2store_products SET enabled=0 WHERE product_source_id=9001'
+                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled=0 WHERE product_source_id=9001'
             )->execute();
 
             $products = $this->runGetTreeQuery(self::SHOP_MENU_ID);
@@ -144,7 +161,7 @@ class SitemapOutputTest
 
             // Re-enable
             $this->db->setQuery(
-                'UPDATE #__j2store_products SET enabled=1 WHERE product_source_id=9001'
+                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled=1 WHERE product_source_id=9001'
             )->execute();
 
             return $count === 1;
@@ -180,8 +197,8 @@ class SitemapOutputTest
      */
     private function runGetTreeQuery(int $parentMenuId): array
     {
-        $db = $this->db;
-        $query = $db->getQuery(true)
+        $db    = $this->db;
+        $query = $this->createDbQuery()
             ->select([
                 $db->quoteName('m.id'),
                 $db->quoteName('m.path'),
@@ -194,7 +211,7 @@ class SitemapOutputTest
                 . ' ON (m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id, ' . $db->quote('&%') . ')'
                 . '  OR m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id))'
                 . ' AND m.link LIKE ' . $db->quote('%com_content%view=article%'))
-            ->join('INNER', $db->quoteName('#__j2store_products', 'p')
+            ->join('INNER', $db->quoteName($this->productsTable, 'p')
                 . ' ON p.product_source_id = a.id'
                 . ' AND p.product_source = ' . $db->quote('com_content')
                 . ' AND p.enabled = 1')
@@ -210,7 +227,8 @@ class SitemapOutputTest
 
     /**
      * Replicates the node-building logic from PlgOsmapJ2commerce::printMenuPathNode().
-     * The plugin builds an absolute URL from the menu item's SEF path.
+     * The plugin builds an absolute URL from the menu item's path field, bypassing
+     * OSMap's router (which excludes published=-2 items from its routing cache).
      */
     private function buildNode(object $product, Registry $params): object
     {

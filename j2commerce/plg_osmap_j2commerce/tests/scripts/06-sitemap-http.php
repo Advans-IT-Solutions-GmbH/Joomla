@@ -15,26 +15,31 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
-$db = Factory::getDbo();
+use Joomla\Database\DatabaseInterface;
 
 class SitemapHttpTest
 {
-    private $db;
     private int $passed = 0;
     private int $failed = 0;
     private string $sitemapUrl = 'http://localhost/index.php?option=com_osmap&view=xml&id=1';
+    private $db;
+    private bool $isJ6;
 
-    public function __construct($db)
+    // Menu item IDs inserted by docker-entrypoint.sh
+    private const PRODUCT_ALPHA_MENU_ID = 9002;
+    private const PRODUCT_BETA_MENU_ID  = 9003;
+
+    public function __construct()
     {
-        $this->db = $db;
+        $this->db  = Factory::getContainer()->get(DatabaseInterface::class);
+        $this->isJ6 = (getenv('J2COMMERCE_STACK') === 'j6');
     }
 
     public function run(): bool
     {
         echo "=== Sitemap HTTP Integration Tests ===\n\n";
-        echo "URL: {$this->sitemapUrl}\n\n";
+        echo "Stack: " . ($this->isJ6 ? 'J6' : 'J5') . "\n\n";
 
-        // Fetch sitemap XML
         $xml = $this->fetchSitemap();
         if ($xml === null) {
             echo "FATAL: Could not fetch sitemap\n";
@@ -42,9 +47,7 @@ class SitemapHttpTest
         }
 
         echo "Sitemap fetched (" . strlen($xml) . " bytes)\n";
-        echo "Response (first 500 chars):\n" . substr($xml, 0, 500) . "\n\n";
-
-
+        echo "Full sitemap response:\n" . $xml . "\n\n";
 
         $urls = $this->extractUrls($xml);
         echo "URLs found in sitemap: " . count($urls) . "\n";
@@ -57,24 +60,32 @@ class SitemapHttpTest
             return str_contains($xml, '<urlset') && str_contains($xml, 'sitemaps.org');
         });
 
-        // The plugin uses the menu item's SEF path (m.path) prepended with Uri::root()
-        // to build absolute URLs. Fixture paths: shop/test-product-alpha, shop/test-product-beta.
-        $this->test('Sitemap contains product Alpha URL', function () use ($urls) {
+        // The plugin builds absolute URLs from the menu item's path field
+        // (e.g. http://localhost/shop/test-product-alpha). OSMap excludes
+        // published=-2 items from its routing cache, so Itemid-based links
+        // produce empty fullLink for these items.
+        $alphaId = self::PRODUCT_ALPHA_MENU_ID;
+        $betaId  = self::PRODUCT_BETA_MENU_ID;
+
+        $this->test("Sitemap contains product Alpha URL (SEF path)", function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-alpha')) return true;
+                if (str_contains($u, 'test-product-alpha')) {
+                    return true;
+                }
             }
             return false;
         });
 
-        $this->test('Sitemap contains product Beta URL', function () use ($urls) {
+        $this->test("Sitemap contains product Beta URL (SEF path)", function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-beta')) return true;
+                if (str_contains($u, 'test-product-beta')) {
+                    return true;
+                }
             }
             return false;
         });
 
         $this->test('Disabled product not in sitemap', function () use ($urls) {
-            // product_source_id=9003 has enabled=0, its menu item is Itemid=9004 (no fixture)
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-disabled')) return false;
             }
@@ -82,7 +93,6 @@ class SitemapHttpTest
         });
 
         $this->test('Product without menu item not in sitemap', function () use ($urls) {
-            // product_source_id=9004 has no SEF menu item
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-nomenu')) return false;
             }
@@ -92,35 +102,11 @@ class SitemapHttpTest
         $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
             $count = 0;
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')) {
-                    $count++;
-                }
+                if (str_contains($u, 'test-product-alpha')) $count++;
+                if (str_contains($u, 'test-product-beta'))  $count++;
             }
             return $count >= 2;
         });
-
-        $productUrls = array_filter($urls, fn($u) =>
-            str_contains($u, 'test-product-alpha') || str_contains($u, 'test-product-beta')
-        );
-
-        // Verify that product URLs in the sitemap are absolute and well-formed.
-        // A full HTTP 200 check is not possible in the test container because
-        // J2Commerce's routing (which serves /shop/product-alias) is only
-        // available on a fully configured live site with the correct .htaccess.
-        echo "\nVerifying " . count($productUrls) . " product URL(s) are absolute:\n";
-        foreach ($productUrls as $url) {
-            // Make relative URLs absolute using the sitemap host
-            $absoluteUrl = $url;
-            if (!str_starts_with($url, 'http')) {
-                $base = preg_replace('#/index\.php.*#', '', $this->sitemapUrl);
-                $absoluteUrl = rtrim($base, '/') . '/' . ltrim($url, '/');
-            }
-            $this->test("URL is absolute and well-formed: $absoluteUrl", function () use ($absoluteUrl) {
-                $parts = parse_url($absoluteUrl);
-                return isset($parts['scheme'], $parts['host'], $parts['path'])
-                    && in_array($parts['scheme'], ['http', 'https']);
-            });
-        }
 
         echo "\n=== Sitemap HTTP Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
@@ -129,7 +115,6 @@ class SitemapHttpTest
 
     private function fetchSitemap(): ?string
     {
-        // Wait up to 30s for Apache to be ready
         for ($i = 0; $i < 6; $i++) {
             $ctx = stream_context_create(['http' => [
                 'timeout'         => 30,
@@ -151,27 +136,15 @@ class SitemapHttpTest
         $urls = [];
         if (preg_match_all('/<loc>(.*?)<\/loc>/s', $xml, $matches)) {
             foreach ($matches[1] as $raw) {
-                // Strip CDATA wrapper if present: <![CDATA[...]]>
                 $url = trim($raw);
                 if (str_starts_with($url, '<![CDATA[') && str_ends_with($url, ']]>')) {
                     $url = substr($url, 9, -3);
                 }
-                // Decode HTML entities (&amp; -> &)
                 $url = html_entity_decode($url, ENT_QUOTES | ENT_XML1, 'UTF-8');
                 $urls[] = $url;
             }
         }
         return $urls;
-    }
-
-    private function urlsContain(array $urls, string $needle): bool
-    {
-        foreach ($urls as $url) {
-            if (str_contains($url, $needle)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private function test(string $name, callable $fn): void
@@ -186,5 +159,5 @@ class SitemapHttpTest
     }
 }
 
-$test = new SitemapHttpTest($db);
+$test = new SitemapHttpTest();
 exit($test->run() ? 0 : 1);

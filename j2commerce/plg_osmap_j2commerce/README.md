@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/advansit/Joomla/actions/workflows/osmap-j2commerce.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/osmap-j2commerce.yml)
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-osmap-j2commerce.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-osmap-j2commerce.yml)
-[![Joomla 5+](https://img.shields.io/badge/Joomla-5.x%20%7C%206.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -57,49 +57,7 @@ products are picked up on the next sitemap request.
    your shop item is selected
 6. Save the sitemap — products appear automatically
 
-## Configuration
-
-**System → Plugins → OSMap J2Commerce**
-
-| Parameter | Default | Description |
-|---|---|---|
-| Priority | `0.8` | Sitemap priority for product pages |
-| Change Frequency | `weekly` | How often search engines should re-crawl product pages |
-
-OSMap's per-menu priority and change frequency settings take precedence over
-the plugin defaults.
-
-## How It Works
-
-OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
-or `com_j2commerce`. The plugin tries two mechanisms in order:
-
-### Mechanism 1 — Standard menu items (primary)
-
-The plugin inspects the menu item's `view` parameter:
-
-- `view=products` — all enabled products in the given category (`catid`), or all products if no `catid`
-- `view=product` — the single product referenced by `id`
-- `view=categories` — all enabled products across all categories
-- `view=categoryalias` — J2Commerce single-category alias; at runtime this redirects to `view=products` with the category's `id`. The plugin treats it identically: products of that category are emitted.
-
-For list views (`products`, `categories`, `categoryalias`), published=-2 hidden
-children are preferred as URL source if present (see Mechanism 2). Only if none
-exist does the plugin build URLs directly. This works on any standard J2Store or
-J2Commerce installation.
-
-### Mechanism 2 — Hidden menu items (fallback, site-specific)
-
-Some installations manually create hidden `com_content` menu items
-(`published=-2`) as children of the shop menu item, one per product. These
-items carry the SEF path directly (e.g. `shop/product-alias`).
-
-If the shop menu item has no `view` parameter, the plugin falls back to
-querying `#__menu` for `published=-2` children, joins `#__content` and the
-products table to verify each product is enabled, and emits the menu item's
-`path` directly as the sitemap URL.
-
-## .htaccess Requirements
+### .htaccess Requirements
 
 This plugin generates SEF URLs of the form `/de/shop/product-alias`. For these
 to resolve correctly, your `.htaccess` must route all non-file requests through
@@ -134,6 +92,50 @@ RewriteRule ^([a-z]{2})?/?index\.php$ /$1/? [R=301,L]
 Product pages (`/de/shop/product-alias`) are served entirely through Joomla's
 SEF routing and do not require any additional rewrite rules.
 
+## Configuration
+
+**System → Plugins → OSMap J2Commerce**
+
+| Parameter | Default | Description |
+|---|---|---|
+| Priority | `0.8` | Sitemap priority for product pages |
+| Change Frequency | `weekly` | How often search engines should re-crawl product pages |
+
+OSMap's per-menu priority and change frequency settings take precedence over
+the plugin defaults.
+
+## Usage
+
+### How It Works
+
+OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
+or `com_j2commerce`. The plugin tries two mechanisms in order:
+
+#### Mechanism 1 — Standard menu items (primary)
+
+The plugin inspects the menu item's `view` parameter:
+
+- `view=products` — all enabled products in the given category (`catid`), or all products if no `catid`
+- `view=product` — the single product referenced by `id`
+- `view=categories` — all enabled products across all categories
+- `view=categoryalias` — J2Commerce single-category alias; at runtime this redirects to `view=products` with the category's `id`. The plugin treats it identically: products of that category are emitted.
+
+For list views (`products`, `categories`, `categoryalias`), published=-2 hidden
+children are preferred as URL source if present (see Mechanism 2). Only if none
+exist does the plugin build URLs directly. This works on any standard J2Store or
+J2Commerce installation.
+
+#### Mechanism 2 — Hidden menu items (fallback, site-specific)
+
+Some installations manually create hidden `com_content` menu items
+(`published=-2`) as children of the shop menu item, one per product. These
+items carry the SEF path directly (e.g. `shop/product-alias`).
+
+If the shop menu item has no `view` parameter, the plugin falls back to
+querying `#__menu` for `published=-2` children, joins `#__content` and the
+products table to verify each product is enabled, and emits the menu item's
+`path` directly as the sitemap URL.
+
 ## Development
 
 ### Structure
@@ -166,21 +168,27 @@ This plugin has automated tests that run on every push via GitHub Actions.
 
 ### Test Suites
 
-1. **Installation** — Plugin registration in DB, file deployment
-2. **Configuration** — Plugin params, language files, XML manifest
+1. **Installation** — plugin registration in DB, file deployment
+2. **Configuration** — plugin params, language files, XML manifest
 3. **Plugin Class** — OSMap interface, `getTree()` method, class loading
-4. **Sitemap Output** — Direct DB query test for `getTree()` result
-5. **Uninstall** — Clean removal from database and filesystem
-6. **Sitemap HTTP** — Full-stack HTTP request against the live sitemap endpoint
+4. **Sitemap Output** — direct DB query test for `getTree()` result
+5. **Sitemap HTTP** — full-stack HTTP request against the live sitemap endpoint
+6. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
 ```bash
 cd tests
 docker compose up -d
-sleep 120  # Wait for Joomla initialization
+timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
+
+# Joomla 6
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 ## Troubleshooting

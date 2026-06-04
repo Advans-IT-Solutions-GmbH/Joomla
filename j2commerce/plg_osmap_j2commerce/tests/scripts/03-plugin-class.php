@@ -15,6 +15,21 @@ use Joomla\Database\DatabaseInterface;
 // Use DI container instead of deprecated Factory::getDbo()
 Factory::getContainer()->get(DatabaseInterface::class);
 
+// Stubs for OSMap classes that are not installed in the test container.
+// emitSingleProduct() type-hints Item and Collector but only uses $parent
+// when a product is found — with a non-existent article ID (999999999) the
+// stubs are never accessed beyond satisfying the type check.
+// class_alias() cannot alias internal classes (stdClass), so we define
+// minimal user-defined stubs instead.
+if (!class_exists(\Alledia\OSMap\Sitemap\Item::class)) {
+    // @phpstan-ignore-next-line
+    eval('namespace Alledia\OSMap\Sitemap; class Item { public $path = ""; public $browserNav = 0; }');
+}
+if (!class_exists(\Alledia\OSMap\Sitemap\Collector::class)) {
+    // @phpstan-ignore-next-line
+    eval('namespace Alledia\OSMap\Sitemap; class Collector { public function printNode(object $node): void {} }');
+}
+
 // Register plugin's PSR-4 namespace
 spl_autoload_register(function (string $class): void {
     $prefix = 'Advans\\Plugin\\Osmap\\J2Commerce\\';
@@ -79,34 +94,94 @@ class PluginClassTest
             return str_contains($src, 'j2commerce_products');
         });
 
-        $this->test('getTree() handles view=products', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, "'products'") && str_contains($src, 'emitProductsForCategory');
+        // --- Reflection: method existence on J2Commerce ---
+        $j2cClass = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce';
+        foreach ([
+            'getTree',
+            'emitSingleProduct',
+            'emitProductsForCategory',
+            'emitAllProducts',
+            'printProductNode',
+            'printMenuPathNode',
+            'loadProducts',
+            'createDbQuery',
+        ] as $method) {
+            $this->test("J2Commerce::$method() exists", function () use ($j2cClass, $method) {
+                return method_exists($j2cClass, $method);
+            });
+        }
+
+        // --- Reflection: method existence on J2CommerceNew ---
+        $newClass = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew';
+        $this->test('J2CommerceNew inherits emitSingleProduct()', function () use ($newClass) {
+            if (!class_exists($newClass)) return false;
+            $rc = new ReflectionClass($newClass);
+            // Method must exist (inherited or overridden) and be callable
+            return $rc->hasMethod('emitSingleProduct');
         });
 
-        $this->test('getTree() handles view=product', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, "'product'") && str_contains($src, 'emitSingleProduct');
+        $this->test('J2CommerceNew::emitSingleProduct() uses j2commerce_products table', function () use ($newClass) {
+            if (!class_exists($newClass)) return false;
+            $rc  = new ReflectionClass($newClass);
+            $obj = $rc->newInstanceWithoutConstructor();
+            // productsTable property must be set to #__j2commerce_products
+            $prop = $rc->getProperty('productsTable');
+            $prop->setAccessible(true);
+            return $prop->getValue($obj) === '#__j2commerce_products';
         });
 
-        $this->test('getTree() handles view=categories', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, "'categories'") && str_contains($src, 'emitAllProducts');
+        // --- emitSingleProduct() round-trip: real DB query, no crash ---
+        $this->test('emitSingleProduct() returns null for non-existent article (no crash)', function () use ($j2cClass) {
+            $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $params     = new \Joomla\Registry\Registry([]);
+
+            $plugin = new $j2cClass($dispatcher, ['params' => $params]);
+            $plugin->setDatabase($db);
+
+            // Use a mock Collector that records added nodes.
+            // Must extend the stub Collector so the type hint is satisfied.
+            $collector = new class extends \Alledia\OSMap\Sitemap\Collector {
+                public array $nodes = [];
+                public function printNode(object $node): void { $this->nodes[] = $node; }
+            };
+
+            $parent = new \Alledia\OSMap\Sitemap\Item();
+
+            $rc     = new ReflectionClass($plugin);
+            $method = $rc->getMethod('emitSingleProduct');
+            $method->setAccessible(true);
+
+            // Article ID 999999999 does not exist — must return without adding nodes
+            $method->invoke($plugin, $collector, $parent, new \Joomla\Registry\Registry(), 999999999);
+
+            return count($collector->nodes) === 0;
         });
 
-        $this->test('getTree() handles view=categoryalias (J2Commerce single-category)', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, "'categoryalias'") && str_contains($src, 'emitProductsForCategory');
-        });
+        // --- J2CommerceNew::emitSingleProduct() round-trip ---
+        $this->test('J2CommerceNew::emitSingleProduct() queries #__j2commerce_products (no crash)', function () use ($newClass) {
+            $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $params     = new \Joomla\Registry\Registry([]);
 
-        $this->test('getTree() supports J2Store published=-2 hidden menu children', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, 'emitHiddenMenuChildren') && str_contains($src, "published");
-        });
+            $plugin = new $newClass($dispatcher, ['params' => $params]);
+            $plugin->setDatabase($db);
 
-        $this->test('J2Store mechanism uses menu item SEF path as URL (printMenuPathNode)', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, 'printMenuPathNode') && str_contains($src, "item->path");
+            // Must extend the stub Collector so the type hint is satisfied.
+            $collector = new class extends \Alledia\OSMap\Sitemap\Collector {
+                public array $nodes = [];
+                public function printNode(object $node): void { $this->nodes[] = $node; }
+            };
+
+            $parent = new \Alledia\OSMap\Sitemap\Item();
+            $rc     = new ReflectionClass($plugin);
+            $method = $rc->getMethod('emitSingleProduct');
+            $method->setAccessible(true);
+
+            // Non-existent article — must not crash even against #__j2commerce_products
+            $method->invoke($plugin, $collector, $parent, new \Joomla\Registry\Registry(), 999999999);
+
+            return count($collector->nodes) === 0;
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";

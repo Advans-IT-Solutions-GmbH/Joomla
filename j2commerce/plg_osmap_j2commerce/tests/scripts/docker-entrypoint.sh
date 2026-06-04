@@ -65,10 +65,11 @@ COM_J2STORE_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_j2store' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
 echo "com_content=${COM_CONTENT_ID}, com_j2store=${COM_J2STORE_ID}"
 
-# Abort if com_j2store is not found
+# Warn if com_j2store is not found — do not abort.
+# On a J6-only installation com_j2store is absent; the plugin still installs
+# and the J2CommerceNew handler covers com_j2commerce menu items.
 if [ "$COM_J2STORE_ID" = "0" ]; then
-    echo "ERROR: com_j2store not found in extensions table"
-    exit 1
+    echo "WARNING: com_j2store not found in extensions table — J4 fixtures will be skipped"
 fi
 
 # Get the parent_id for top-level mainmenu items (= the global root item id).
