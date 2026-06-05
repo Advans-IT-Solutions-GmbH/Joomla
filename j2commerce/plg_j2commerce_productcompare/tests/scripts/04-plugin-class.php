@@ -172,7 +172,10 @@ class PluginClassTest
         // so it works whether the product is at $args[0] (current public source) or
         // $args[2] ([$result, $view, $product] signature reported in review).
         $params1 = new Registry(['show_in_list' => 1, 'show_in_detail' => 1]);
-        $plugin1 = $this->makePlugin($params1);
+        $plugin1 = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
+            $dispatcher,
+            ['params' => $params1]
+        );
 
         // Product at $args[0]
         $ev0 = new \Joomla\Event\Event('onJ2CommerceAfterProductDisplay', [
