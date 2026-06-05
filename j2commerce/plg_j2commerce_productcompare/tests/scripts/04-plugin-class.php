@@ -15,6 +15,32 @@ require_once JPATH_BASE . '/includes/framework.php';
 use Joomla\CMS\Factory;
 use Joomla\Registry\Registry;
 
+/**
+ * Minimal event stub that supports addResult() / getArgument('result').
+ *
+ * \Joomla\Event\Event does not have addResult() — that lives in
+ * \Joomla\CMS\Event\AbstractEvent. This stub is sufficient for testing
+ * plugin handlers that call $event->addResult() and read back results.
+ */
+class TestEvent extends \Joomla\Event\Event
+{
+    private array $results = [];
+
+    public function addResult($value): static
+    {
+        $this->results[] = $value;
+        return $this;
+    }
+
+    public function getArgument(string $name, $default = null): mixed
+    {
+        if ($name === 'result') {
+            return $this->results;
+        }
+        return parent::getArgument($name, $default);
+    }
+}
+
 class PluginClassTest
 {
     private $passed = 0;
@@ -151,7 +177,7 @@ class PluginClassTest
         $this->test('J4 show_in_detail=0 → empty string', $result2 === '');
 
         // J6: onJ2CommerceAfterProductListItemDisplay with show_in_list=0 → no result added
-        $eventList = new \Joomla\Event\Event('onJ2CommerceAfterProductListItemDisplay', [
+        $eventList = new TestEvent('onJ2CommerceAfterProductListItemDisplay', [
             (object)['j2commerce_product_id' => 1],
             'com_j2commerce.category',
         ]);
@@ -160,7 +186,7 @@ class PluginClassTest
             count($eventList->getArgument('result', [])) === 0);
 
         // J6: onJ2CommerceAfterProductDisplay with show_in_detail=0 → no result added
-        $eventDetail = new \Joomla\Event\Event('onJ2CommerceAfterProductDisplay', [
+        $eventDetail = new TestEvent('onJ2CommerceAfterProductDisplay', [
             (object)['j2commerce_product_id' => 1],
         ]);
         $plugin0->onJ2CommerceAfterProductDisplay($eventDetail);
@@ -178,7 +204,7 @@ class PluginClassTest
         );
 
         // Product at $args[0]
-        $ev0 = new \Joomla\Event\Event('onJ2CommerceAfterProductDisplay', [
+        $ev0 = new TestEvent('onJ2CommerceAfterProductDisplay', [
             (object)['j2commerce_product_id' => 42],
             (object)['view' => 'product'],
         ]);
@@ -187,7 +213,7 @@ class PluginClassTest
             count($ev0->getArgument('result', [])) > 0);
 
         // Product at $args[2] ([$result, $view, $product] signature)
-        $ev2 = new \Joomla\Event\Event('onJ2CommerceAfterProductDisplay', [
+        $ev2 = new TestEvent('onJ2CommerceAfterProductDisplay', [
             '',
             (object)['view' => 'product'],
             (object)['j2commerce_product_id' => 43],
