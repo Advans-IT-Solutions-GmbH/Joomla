@@ -192,18 +192,22 @@ class DataIntegrationTest
         $this->test('Test order inserted', $orderPk > 0);
 
         $testInfo = (object) [
-            'order_id' => 'TEST-ANON-001',
+            'order_id'           => 'TEST-ANON-001',
             'billing_first_name' => 'Secret',
-            'billing_last_name' => 'Person',
-            'billing_address_1' => 'Hidden Street 1',
-            'billing_city' => 'Secret City',
-            'billing_zip' => '99999',
-            'billing_phone_1' => '+41 00 000 00 00',
+            'billing_last_name'  => 'Person',
+            'billing_address_1'  => 'Hidden Street 1',
+            'billing_city'       => 'Secret City',
+            'billing_zip'        => '99999',
+            'billing_phone_1'    => '+41 00 000 00 00',
             'shipping_first_name' => 'Secret',
-            'shipping_last_name' => 'Person',
-            'shipping_address_1' => 'Hidden Street 1',
-            'shipping_city' => 'Secret City',
-            'shipping_zip' => '99999',
+            'shipping_last_name'  => 'Person',
+            'shipping_address_1'  => 'Hidden Street 1',
+            'shipping_city'       => 'Secret City',
+            'shipping_zip'        => '99999',
+            // LONGTEXT NOT NULL without DEFAULT — must be set explicitly on J6
+            'all_billing'        => '',
+            'all_shipping'       => '',
+            'all_payment'        => '',
         ];
         $this->db->insertObject('#__' . $this->tp . '_orderinfos', $testInfo, $this->tp . '_orderinfo_id');
         $infoPk = $this->db->insertid();
