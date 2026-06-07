@@ -41,6 +41,18 @@ class TestEvent extends \Joomla\Event\Event
     }
 }
 
+/**
+ * Testable subclass that stubs renderCompareButton() to avoid FileLayout /
+ * Application bootstrap requirements in unit-style tests.
+ */
+class TestableProductCompare extends \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare
+{
+    protected function renderCompareButton(int $productId): string
+    {
+        return '<button data-product-id="' . $productId . '">Compare</button>';
+    }
+}
+
 class PluginClassTest
 {
     private $passed = 0;
@@ -153,7 +165,7 @@ class PluginClassTest
         $params     = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
 
         try {
-            $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
+            $plugin = new TestableProductCompare(
                 $dispatcher,
                 ['params' => $params]
             );
@@ -165,7 +177,7 @@ class PluginClassTest
 
         // J4: onJ2StoreAfterDisplayProductList with show_in_list=0 → empty string
         $params0 = new Registry(['show_in_list' => 0, 'show_in_detail' => 0]);
-        $plugin0 = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
+        $plugin0 = new TestableProductCompare(
             $dispatcher,
             ['params' => $params0]
         );
@@ -198,7 +210,7 @@ class PluginClassTest
         // so it works whether the product is at $args[0] (current public source) or
         // $args[2] ([$result, $view, $product] signature reported in review).
         $params1 = new Registry(['show_in_list' => 1, 'show_in_detail' => 1]);
-        $plugin1 = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
+        $plugin1 = new TestableProductCompare(
             $dispatcher,
             ['params' => $params1]
         );
