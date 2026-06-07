@@ -331,7 +331,7 @@ This step is only required if your shop sells products with perpetual (lifetime)
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
-| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
+| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
 | `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
 **To mark products as lifetime licenses, navigate to:**
@@ -566,10 +566,11 @@ WHERE product_id = ?
 AND field_name = 'is_lifetime_license'
 
 -- J2Commerce 6.x
-SELECT field_value 
-FROM #__j2commerce_customfields 
-WHERE product_id = ? 
-AND field_name = 'is_lifetime_license'
+SELECT metavalue
+FROM #__j2commerce_metafields
+WHERE owner_resource = 'product'
+AND owner_id = ?
+AND metakey = 'is_lifetime_license'
 ```
 
 **Result:**
@@ -1108,7 +1109,7 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ### Technical Details
 
-**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x)
+**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x)
 
 **Structure (J2Commerce 4.x):**
 ```sql
@@ -1121,20 +1122,30 @@ CREATE TABLE `#__j2store_product_customfields` (
 );
 ```
 
-**Example Data:**
+**Example Data (J2Commerce 4.x):**
 ```sql
 INSERT INTO `#__j2store_product_customfields` VALUES
 (1, 123, 'is_lifetime_license', 'Yes'),
 (2, 456, 'is_lifetime_license', 'No');
 ```
 
-**Query:**
+**Query (J2Commerce 4.x):**
 ```sql
-SELECT field_value 
-FROM #__j2store_product_customfields 
-WHERE product_id = 123 
+SELECT field_value
+FROM #__j2store_product_customfields
+WHERE product_id = 123
 AND field_name = 'is_lifetime_license';
 -- Result: 'Yes'
+```
+
+**Query (J2Commerce 6.x):**
+```sql
+SELECT metavalue
+FROM #__j2commerce_metafields
+WHERE owner_resource = 'product'
+AND owner_id = 123
+AND metakey = 'is_lifetime_license';
+-- Result: 'yes'
 ```
 
 ---
