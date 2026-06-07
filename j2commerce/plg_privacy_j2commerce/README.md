@@ -483,7 +483,7 @@ Successful display of the retention notification confirms correct implementation
 Payment data (credit card details, bank information) is stored by payment service providers (Stripe, PayPal, etc.), not by this system. For payment data inquiries, users must contact the respective payment provider directly.
 
 **What gets anonymized (only for orders OUTSIDE retention period):**
-- Email address → `anonymized@example.com`
+- Email address → `anonymized@deleted.invalid`
 - Billing first/last name → `Anonymized` / `User`
 - Shipping first/last name → (cleared)
 - Phone → (cleared)
