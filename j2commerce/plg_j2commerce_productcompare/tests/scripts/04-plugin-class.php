@@ -26,13 +26,13 @@ class TestEvent extends \Joomla\Event\Event
 {
     private array $results = [];
 
-    public function addResult($value): static
+    public function addResult($value)
     {
         $this->results[] = $value;
         return $this;
     }
 
-    public function getArgument(string $name, $default = null): mixed
+    public function getArgument($name, $default = null)
     {
         if ($name === 'result') {
             return $this->results;
