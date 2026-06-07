@@ -137,48 +137,26 @@ class DataAnonymizationTest
         $this->db->insertObject($orderinfosTable, $testInfo, $orderinfoPkCol);
         $infoPk = $this->db->insertid();
 
-        // Anonymize orders table
-        $query = $this->createDbQuery()
-            ->update($this->db->quoteName($ordersTable))
-            ->set([
-                $this->db->quoteName('user_email')     . ' = ' . $this->db->quote('anonymized@deleted.invalid'),
-                $this->db->quoteName('customer_note')  . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('ip_address')     . ' = ' . $this->db->quote(''),
-            ])
-            ->where($this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk);
-        $this->db->setQuery($query)->execute();
+        // Anonymize via the real plugin method — not a hand-rolled SQL copy.
+        // anonymizeOrders() is protected; instantiate the plugin with a real DB
+        // handle and invoke via Reflection.
+        try {
+            $db         = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $plugin     = new \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce(
+                $dispatcher,
+                ['params' => new \Joomla\Registry\Registry([])]
+            );
+            $plugin->setDatabase($db);
 
-        // Anonymize orderinfos table — all PII fields including previously missing ones
-        $query = $this->createDbQuery()
-            ->update($this->db->quoteName($orderinfosTable))
-            ->set([
-                $this->db->quoteName('billing_first_name')   . ' = ' . $this->db->quote('Anonymized'),
-                $this->db->quoteName('billing_last_name')    . ' = ' . $this->db->quote('User'),
-                $this->db->quoteName('billing_middle_name')  . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_address_1')    . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_address_2')    . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_city')         . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_zip')          . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_phone_1')      . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_phone_2')      . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_fax')          . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_company')      . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('billing_tax_number')   . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_first_name')  . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_last_name')   . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_middle_name') . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_address_1')   . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_address_2')   . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_city')        . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_zip')         . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_phone_1')     . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_phone_2')     . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_fax')         . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_company')     . ' = ' . $this->db->quote(''),
-                $this->db->quoteName('shipping_tax_number')  . ' = ' . $this->db->quote(''),
-            ])
-            ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId));
-        $this->db->setQuery($query)->execute();
+            $rc     = new ReflectionClass($plugin);
+            $method = $rc->getMethod('anonymizeOrders');
+            $method->setAccessible(true);
+            $method->invoke($plugin, 998);
+            $this->test('anonymizeOrders() called via plugin', true);
+        } catch (\Throwable $e) {
+            $this->test('anonymizeOrders() called via plugin', false, $e->getMessage());
+        }
 
         // Verify orders
         $query = $this->createDbQuery()

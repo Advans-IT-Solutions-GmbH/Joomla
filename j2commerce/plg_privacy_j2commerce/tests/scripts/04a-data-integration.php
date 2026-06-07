@@ -213,7 +213,7 @@ class DataIntegrationTest
         $query = $this->db->getQuery(true)
             ->update($this->db->quoteName('#__' . $this->tp . '_orders'))
             ->set([
-                $this->db->quoteName('user_email') . ' = ' . $this->db->quote('anonymized@example.com'),
+                $this->db->quoteName('user_email') . ' = ' . $this->db->quote('anonymized@deleted.invalid'),
                 $this->db->quoteName('customer_note') . ' = ' . $this->db->quote(''),
                 $this->db->quoteName('ip_address') . ' = ' . $this->db->quote(''),
             ])
@@ -249,7 +249,7 @@ class DataIntegrationTest
         $this->db->setQuery($query);
         $order = $this->db->loadObject();
         $this->test('Order user_email anonymized',
-            $order->user_email === 'anonymized@example.com',
+            $order->user_email === 'anonymized@deleted.invalid',
             'Got: ' . ($order->user_email ?? 'NULL'));
 
         // Verify orderinfos table anonymization
