@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
 # Download OSMap (joomlashack/OSMap, free edition)
-ARG OSMAP_VERSION=5.1.3
+ARG OSMAP_VERSION=5.1.6
 RUN curl -fsSL "https://github.com/joomlashack/OSMap/releases/download/v${OSMAP_VERSION}/com_osmap_free_${OSMAP_VERSION}.zip" \
     -o /tmp/osmap.zip
 
