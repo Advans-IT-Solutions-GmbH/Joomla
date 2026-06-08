@@ -69,20 +69,14 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
      */
     private function setGroupForInstalledStack(): void
     {
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        // Detect Joomla major version. Joomla 6+ ships with J2Commerce 6 which
+        // imports the j2commerce plugin group. Joomla 4/5 uses J2Store 4 which
+        // imports the j2store group. Using the Joomla version is more reliable
+        // than checking for com_j2commerce in #__extensions, because J2Commerce
+        // may not yet be installed when postflight() runs.
+        $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
 
-        // Detect J2Commerce 6 by checking for com_j2commerce in #__extensions.
-        // On Joomla 4/5 with J2Store 4, com_j2commerce is not installed.
-        // On Joomla 6 with J2Commerce 6, com_j2commerce is present.
-        $q = $this->createDbQuery($db)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_j2commerce'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'));
-        $db->setQuery($q);
-        $isJ2Commerce6 = (int) $db->loadResult() > 0;
-
-        if ($isJ2Commerce6) {
+        if ($isJ6) {
             // J6: canonical location j2commerce/ is correct, nothing to do.
             return;
         }
