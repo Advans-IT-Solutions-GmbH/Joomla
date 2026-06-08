@@ -178,7 +178,7 @@ JSON exports include a `_documentation` section with field descriptions:
           "tier_prices": []
         }
       ],
-      "j2store_images": {
+      "product_images": {
         "main_image": "images/products/product.jpg",
         "main_image_alt": "Product Name"
       },
