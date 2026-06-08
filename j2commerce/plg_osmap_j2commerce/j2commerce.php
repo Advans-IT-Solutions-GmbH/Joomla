@@ -29,21 +29,42 @@ use Joomla\Registry\Registry;
 
 /**
  * OSMap plugin — handles com_j2store (J4/J5) and com_j2commerce (J6).
+ *
+ * OSMap's getPluginsForComponent() creates a fresh PlgOsmapJ2commerce instance
+ * for every component it checks and compares getComponentElement() === $option.
+ * A single instance can therefore only match one component per check.
+ *
+ * To cover both com_j2store and com_j2commerce, getComponentElement() queries
+ * #__extensions without a static cache. When OSMap checks com_j2store it
+ * creates instance A; when it checks com_j2commerce it creates instance B.
+ * Both instances call getComponentElement(), which returns the single installed
+ * element, or — in the mixed migration case — the element that matches the
+ * option OSMap is currently checking (resolved via $this->component, which is
+ * set to 'com_j2commerce' by J2CommerceNew and overridden to 'com_j2store' by
+ * getTree() when the menu item carries option=com_j2store).
+ *
+ * Mixed migration (both components installed):
+ *   - OSMap checks com_j2store  → instance A: getComponentElement() returns
+ *     com_j2store (first in DESC order) → match → getTree() called with
+ *     com_j2store menu items → productsTable = #__j2store_products.
+ *   - OSMap checks com_j2commerce → instance B: getComponentElement() returns
+ *     com_j2store → no match → plugin skipped for com_j2commerce menu items.
+ *
+ * This is a known OSMap limitation: a single plugin element can only match one
+ * component. com_j2commerce menu items in a mixed install are not processed.
+ * Full coverage requires two separate plugin registrations (two elements).
  */
 class PlgOsmapJ2commerce extends J2CommerceNew
 {
     /**
-     * Returns the component this plugin handles.
-     * Detects which J2Commerce version is installed at runtime so OSMap
-     * dispatches getTree() for the correct menu item component.
+     * Returns the component element this instance handles.
+     *
+     * Queries #__extensions without caching so each OSMap instance gets a
+     * fresh result. Returns com_j2store when installed (J4/J5 precedence),
+     * com_j2commerce for J6-only installs, com_j2commerce as fallback.
      */
     public function getComponentElement(): string
     {
-        static $element = null;
-        if ($element !== null) {
-            return $element;
-        }
-
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
             $q  = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
@@ -52,14 +73,12 @@ class PlgOsmapJ2commerce extends J2CommerceNew
               ->where('type = ' . $db->quote('component'))
               ->where('element IN (' . $db->quote('com_j2commerce') . ',' . $db->quote('com_j2store') . ')')
               ->where('enabled = 1')
-              ->order('element ASC');  // ASC: 'com_j2commerce' < 'com_j2store' alphabetically,
-                                      // so J6 takes precedence in a migration scenario where both are present.
-            $element = $db->setQuery($q)->loadResult() ?: 'com_j2commerce';
+              ->order('element DESC') // DESC: com_j2store sorts before com_j2commerce
+              ->setLimit(1);
+            return $db->setQuery($q)->loadResult() ?: 'com_j2commerce';
         } catch (\Throwable $e) {
-            $element = 'com_j2commerce';
+            return 'com_j2commerce';
         }
-
-        return $element;
     }
 
     /**
