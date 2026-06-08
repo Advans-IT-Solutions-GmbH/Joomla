@@ -169,15 +169,26 @@ MAINMENU_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT id FROM ${DB_PREFIX}menu_types WHERE menutype='mainmenu' LIMIT 1;" 2>/dev/null || echo "0")
 echo "mainmenu id: ${MAINMENU_ID}"
 
-# Wait for com_osmap to appear in extensions (installed via JOOMLA_EXTENSIONS_PATHS)
-echo "Waiting for com_osmap in extensions table..."
-for i in $(seq 1 20); do
+# Read com_osmap extension_id — JOOMLA_EXTENSIONS_PATHS installs it, but
+# OSMap's script.php may fail silently leaving com_osmap unregistered.
+# If missing, register it manually (files are already in the filesystem).
+COM_OSMAP_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+    -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
+COM_OSMAP_ID=${COM_OSMAP_ID:-0}
+if [ "$COM_OSMAP_ID" = "0" ]; then
+    echo "com_osmap not in extensions — registering manually..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+        -e "INSERT IGNORE INTO ${DB_PREFIX}extensions
+            (package_id, name, type, element, folder, client_id, enabled, access,
+             protected, locked, manifest_cache, params, custom_data,
+             checked_out, checked_out_time, ordering, state)
+            VALUES (0, 'OSMap', 'component', 'com_osmap', '', 1, 1, 1,
+                    0, 0, '{}', '{}', '',
+                    NULL, NULL, 0, 0);" 2>&1 || true
     COM_OSMAP_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-        -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1;" 2>/dev/null)
+        -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
     COM_OSMAP_ID=${COM_OSMAP_ID:-0}
-    [ "$COM_OSMAP_ID" != "0" ] && break
-    sleep 3
-done
+fi
 echo "com_osmap extension_id: ${COM_OSMAP_ID}"
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
