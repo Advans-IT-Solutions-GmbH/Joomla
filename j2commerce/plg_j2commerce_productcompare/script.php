@@ -45,12 +45,29 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
     public function uninstall($parent)
     {
-        // Remove the J5 mirror directory/symlink if it exists.
-        $j5mirror = JPATH_PLUGINS . '/j2store/productcompare';
-        if (is_link($j5mirror)) {
-            unlink($j5mirror);
-        } elseif (is_dir($j5mirror)) {
-            $this->removeDir($j5mirror);
+        // On J4/J5 the installer mirrors files to plugins/j2store/productcompare/
+        // and registers folder=j2store. Joomla's uninstaller removes the registered
+        // path (j2store/), but the canonical files under j2commerce/ remain.
+        // Remove both paths explicitly so no orphaned files are left behind.
+        $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
+
+        if (!$isJ6) {
+            // Remove canonical j2commerce/ directory (Joomla uninstaller won't touch it
+            // because folder=j2store was set in #__extensions on J4/J5).
+            $j2commerceDir = JPATH_PLUGINS . '/j2commerce/productcompare';
+            if (is_link($j2commerceDir)) {
+                unlink($j2commerceDir);
+            } elseif (is_dir($j2commerceDir)) {
+                $this->removeDir($j2commerceDir);
+            }
+
+            // Remove the j2store/ mirror (symlink or copy).
+            $j5mirror = JPATH_PLUGINS . '/j2store/productcompare';
+            if (is_link($j5mirror)) {
+                unlink($j5mirror);
+            } elseif (is_dir($j5mirror)) {
+                $this->removeDir($j5mirror);
+            }
         }
     }
 
@@ -87,6 +104,13 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
         if (!is_dir($src)) {
             return;
+        }
+
+        // Ensure the parent directory exists (plugins/j2store/ may not exist if no
+        // j2store plugin has been installed yet).
+        $destParent = dirname($dest);
+        if (!is_dir($destParent)) {
+            mkdir($destParent, 0755, true);
         }
 
         // Remove stale destination if it exists (e.g. from a previous install).

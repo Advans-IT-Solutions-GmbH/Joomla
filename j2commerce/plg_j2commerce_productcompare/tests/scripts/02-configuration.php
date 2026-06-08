@@ -24,7 +24,7 @@ class ConfigurationTest
     }
     private function dbq()
     {
-        return $this->dbq();
+        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
     }
 
 

@@ -25,7 +25,7 @@ class InstallationTest
 
     private function dbq(): \Joomla\Database\QueryInterface
     {
-        return $this->dbq();
+        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
     }
 
     public function run(): bool
