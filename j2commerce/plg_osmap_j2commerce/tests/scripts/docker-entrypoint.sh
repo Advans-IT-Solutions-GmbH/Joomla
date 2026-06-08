@@ -173,7 +173,39 @@ COM_OSMAP_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
 echo "com_osmap extension_id: ${COM_OSMAP_ID}"
 
-mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOSQL
+mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+-- Ensure OSMap tables exist (CLI installer may skip SQL when osmylicensesmanager throws)
+CREATE TABLE IF NOT EXISTS \`${DB_PREFIX}osmap_sitemaps\` (
+  \`id\` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+  \`name\` VARCHAR(100) NULL DEFAULT NULL,
+  \`params\` TEXT NULL DEFAULT NULL,
+  \`is_default\` TINYINT(1) NOT NULL DEFAULT '0',
+  \`published\` TINYINT(1) NOT NULL DEFAULT '1',
+  \`created_on\` DATETIME NULL DEFAULT NULL,
+  \`links_count\` INT(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (\`id\`)
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS \`${DB_PREFIX}osmap_sitemap_menus\` (
+  \`sitemap_id\` INT(11) UNSIGNED NOT NULL,
+  \`menutype_id\` INT(11) NOT NULL,
+  \`changefreq\` ENUM('always','hourly','daily','weekly','monthly','yearly','never') NOT NULL DEFAULT 'weekly',
+  \`priority\` FLOAT NOT NULL DEFAULT '0.5',
+  \`ordering\` INT(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (\`sitemap_id\`, \`menutype_id\`)
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS \`${DB_PREFIX}osmap_items_settings\` (
+  \`sitemap_id\` INT(11) UNSIGNED NOT NULL,
+  \`uid\` VARCHAR(100) NOT NULL DEFAULT '',
+  \`settings_hash\` CHAR(32) NOT NULL DEFAULT '',
+  \`published\` TINYINT(1) UNSIGNED NOT NULL DEFAULT '1',
+  \`changefreq\` ENUM('always','hourly','daily','weekly','monthly','yearly','never') NOT NULL DEFAULT 'weekly',
+  \`priority\` FLOAT NOT NULL DEFAULT '0.5',
+  \`format\` TINYINT(1) UNSIGNED NULL DEFAULT '2',
+  PRIMARY KEY (\`sitemap_id\`, \`uid\`, \`settings_hash\`)
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4;
+
 INSERT IGNORE INTO ${DB_PREFIX}osmap_sitemaps (id, name, params, is_default, published, created_on, links_count)
 VALUES (1, 'Test Sitemap', '{}', 1, 1, NOW(), 0);
 
