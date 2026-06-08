@@ -16,14 +16,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build
         run: |
           cd j2commerce/com_j2store_cleanup
           chmod +x build.sh
           ./build.sh
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: extension-package
           path: j2commerce/com_j2store_cleanup/tests/extension.zip
@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -68,8 +68,8 @@ jobs:
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/com_j2store_cleanup/tests/
@@ -91,7 +91,7 @@ jobs:
           cd j2commerce/com_j2store_cleanup/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: j5-${{ matrix.script }}-logs
@@ -126,8 +126,8 @@ jobs:
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/com_j2store_cleanup/tests/
@@ -149,7 +149,7 @@ jobs:
           cd j2commerce/com_j2store_cleanup/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: j6-${{ matrix.script }}-logs
@@ -169,7 +169,7 @@ jobs:
 
     steps:
       - name: Download all test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
 
@@ -185,7 +185,7 @@ jobs:
           done
 
       - name: Upload combined logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-test-logs
           path: test-artifacts/
