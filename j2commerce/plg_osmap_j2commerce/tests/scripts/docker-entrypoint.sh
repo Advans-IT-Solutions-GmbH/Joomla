@@ -228,6 +228,10 @@ VALUES
      'index.php?option=com_osmap&view=xml&id=1',
      'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_OSMAP_ID}, '*', 1, '{}',
      @max_rgt2 + 1, @max_rgt2 + 2);
+-- Update component_id in case COM_OSMAP_ID was 0 at INSERT time
+UPDATE ${DB_PREFIX}menu
+SET component_id = (SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1)
+WHERE id = 9010 AND component_id = 0;
 EOSQL
 echo "OSMap sitemap created"
 
