@@ -101,7 +101,7 @@ echo "DB prefix: ${DB_PREFIX}"
 echo "Installing J2Commerce..."
 if [ -f /tmp/j2commerce.zip ]; then
     cp /tmp/j2commerce.zip /var/www/html/tmp/j2commerce.zip
-    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
         echo "J2Commerce installed via Joomla CLI"
     else
         echo "J2Commerce CLI install failed, trying direct SQL schema import..."
@@ -120,7 +120,7 @@ fi
 # Install privacy plugin extension
 echo "Installing privacy plugin extension..."
 cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
     echo "✅ Extension installed via Joomla CLI"
 else
     echo "ERROR: Extension installation FAILED"
