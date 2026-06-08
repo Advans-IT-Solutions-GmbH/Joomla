@@ -77,7 +77,8 @@ class ConfigurationTest
 
     private function getPluginParams(): Registry
     {
-        $query = $this->db->getQuery(true)
+        $q = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+        $query = $q
             ->select($this->db->quoteName('params'))
             ->from($this->db->quoteName('#__extensions'))
             ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))

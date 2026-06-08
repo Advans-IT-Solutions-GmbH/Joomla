@@ -31,7 +31,7 @@ class InstallationTest
         $expectedFolder = (getenv('J2COMMERCE_STACK') === 'j6') ? 'j2commerce' : 'j2store';
 
         $this->test('Plugin exists in #__extensions', function () use ($expectedFolder) {
-            $query = $this->db->getQuery(true)
+            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
                 ->select('COUNT(*)')
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
@@ -42,7 +42,7 @@ class InstallationTest
         });
 
         $this->test('Plugin is enabled', function () use ($expectedFolder) {
-            $query = $this->db->getQuery(true)
+            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
                 ->select($this->db->quoteName('enabled'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
@@ -53,7 +53,7 @@ class InstallationTest
         });
 
         $this->test('Plugin folder matches stack (' . $expectedFolder . ')', function () use ($expectedFolder) {
-            $query = $this->db->getQuery(true)
+            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
                 ->select($this->db->quoteName('folder'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'));

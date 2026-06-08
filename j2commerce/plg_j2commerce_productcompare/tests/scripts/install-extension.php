@@ -64,7 +64,7 @@ try {
 
         // Verify the extension is actually in the database
         $db = Factory::getDbo();
-        $query = $db->getQuery(true)
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true)
             ->select('extension_id, element, type, folder, enabled')
             ->from('#__extensions')
             ->where('extension_id = ' . (int) $installer->getExtensionId());
