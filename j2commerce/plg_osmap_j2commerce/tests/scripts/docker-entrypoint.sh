@@ -21,6 +21,24 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 done
 echo "Plugin in DB. Prefix: ${DB_PREFIX}"
 
+# Manually extract OSMap into the component directories.
+# JOOMLA_EXTENSIONS_PATHS installs osmap.zip but script.php fails (AbstractScript
+# type error), causing the installer to roll back and remove the files.
+# Extract manually so the component is available for HTTP requests.
+# ZIP layout: admin/ → administrator/components/com_osmap/
+#             site/ → components/com_osmap/
+echo "Extracting OSMap files manually..."
+OSMAP_TMP=$(mktemp -d)
+unzip -q /tmp/osmap.zip -d "$OSMAP_TMP" 2>/dev/null || true
+mkdir -p /var/www/html/administrator/components/com_osmap
+mkdir -p /var/www/html/components/com_osmap
+[ -d "$OSMAP_TMP/admin" ]     && cp -r "$OSMAP_TMP/admin/."     /var/www/html/administrator/components/com_osmap/
+[ -d "$OSMAP_TMP/site" ]      && cp -r "$OSMAP_TMP/site/."      /var/www/html/components/com_osmap/
+[ -f "$OSMAP_TMP/osmap.xml" ] && cp    "$OSMAP_TMP/osmap.xml"   /var/www/html/administrator/components/com_osmap/
+[ -d "$OSMAP_TMP/media" ]     && cp -r "$OSMAP_TMP/media/."     /var/www/html/media/ 2>/dev/null || true
+rm -rf "$OSMAP_TMP"
+echo "OSMap files extracted"
+
 # Patch OSMap Factory::getTable() for Joomla 5 compatibility.
 # Two issues:
 # 1. Table::getInstance() returns false (not null) in Joomla 5 — violates ?Table return type.
