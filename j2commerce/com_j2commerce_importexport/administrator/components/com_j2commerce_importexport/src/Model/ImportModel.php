@@ -72,7 +72,10 @@ class ImportModel extends BaseDatabaseModel
             // 10. Import Custom Fields
             $this->importCustomFields($data['custom_fields'] ?? [], $articleId);
 
-            // 11. Create Menu Item if requested
+            // 11. Import Metafields (J2Commerce 6 only)
+            $this->importProductMetafields($data['metafields'] ?? [], $productId);
+
+            // 12. Create Menu Item if requested
             if (!empty($options['create_menu']) && !empty($data['menu_item'])) {
                 $this->importMenuItem($data['menu_item'], $articleId, $options);
             }
@@ -447,7 +450,151 @@ class ImportModel extends BaseDatabaseModel
 
     protected function importProductOptions(array $options, int $productId): void
     {
-        // Implementation for options import
+        if (empty($options)) {
+            return;
+        }
+
+        $db = $this->getDatabase();
+
+        // Remove existing product_optionvalues rows before deleting product_options,
+        // because product_optionvalues.productoption_id references product_options.
+        $existingProductOptionIds = [];
+        $query = $this->createDbQuery()
+            ->select($this->col('j2store_productoption_id'))
+            ->from($db->quoteName($this->t('product_options')))
+            ->where('product_id = :productid')
+            ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+        $existingProductOptionIds = $db->loadColumn() ?: [];
+
+        foreach ($existingProductOptionIds as $poId) {
+            $poId = (int) $poId;
+            $query = $this->createDbQuery()
+                ->delete($db->quoteName($this->t('product_optionvalues')))
+                ->where('productoption_id = :poid')
+                ->bind(':poid', $poId, \Joomla\Database\ParameterType::INTEGER);
+            $db->setQuery($query);
+            $db->execute();
+        }
+
+        $query = $this->createDbQuery()
+            ->delete($db->quoteName($this->t('product_options')))
+            ->where('product_id = :productid')
+            ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+        $db->execute();
+
+        foreach ($options as $ordering => $optionData) {
+            $optionId = $this->ensureOption($optionData);
+
+            $po = (object) [
+                'option_id'  => $optionId,
+                'parent_id'  => (int) ($optionData['parent_id'] ?? 0),
+                'product_id' => $productId,
+                'ordering'   => (int) ($optionData['ordering'] ?? $ordering),
+                'required'   => (int) ($optionData['required'] ?? 0),
+                'is_variant' => (int) ($optionData['is_variant'] ?? 0),
+            ];
+            $db->insertObject($this->t('product_options'), $po);
+            $productOptionId = (int) $db->insertid();
+
+            foreach ($optionData['values'] ?? [] as $valOrdering => $valueData) {
+                $optionValueId = $this->ensureOptionValue($optionId, $valueData);
+
+                $pov = (object) [
+                    'productoption_id'                  => $productOptionId,
+                    'optionvalue_id'                    => $optionValueId,
+                    'parent_optionvalue'                => $valueData['parent_optionvalue'] ?? '',
+                    'product_optionvalue_price'         => $valueData['product_optionvalue_price'] ?? '0.00000000',
+                    'product_optionvalue_prefix'        => $valueData['product_optionvalue_prefix'] ?? '+',
+                    'product_optionvalue_weight'        => $valueData['product_optionvalue_weight'] ?? '0.00000000',
+                    'product_optionvalue_weight_prefix' => $valueData['product_optionvalue_weight_prefix'] ?? '+',
+                    'product_optionvalue_sku'           => $valueData['product_optionvalue_sku'] ?? '',
+                    'product_optionvalue_default'       => (int) ($valueData['product_optionvalue_default'] ?? 0),
+                    'ordering'                          => (int) ($valueData['ordering'] ?? $valOrdering),
+                    'product_optionvalue_attribs'       => $valueData['product_optionvalue_attribs'] ?? '',
+                ];
+                $db->insertObject($this->t('product_optionvalues'), $pov);
+            }
+        }
+    }
+
+    /**
+     * Find or create an option definition by unique name.
+     */
+    protected function ensureOption(array $optionData): int
+    {
+        $db = $this->getDatabase();
+        $uniqueName = $optionData['option_unique_name'] ?? '';
+
+        if ($uniqueName) {
+            $query = $this->createDbQuery()
+                ->select($this->col('j2store_option_id'))
+                ->from($db->quoteName($this->t('options')))
+                ->where('option_unique_name = :uname')
+                ->bind(':uname', $uniqueName);
+            $db->setQuery($query);
+            $optionId = $db->loadResult();
+
+            if ($optionId) {
+                return (int) $optionId;
+            }
+        }
+
+        $now    = Factory::getDate()->toSql();
+        $userId = $this->getCurrentUserId();
+
+        $o = (object) [
+            'type'              => $optionData['option_type'] ?? $optionData['type'] ?? 'select',
+            'option_unique_name' => $uniqueName ?: ($optionData['option_name'] ?? ''),
+            'option_name'       => $optionData['option_name'] ?? $uniqueName,
+            'ordering'          => (int) ($optionData['ordering'] ?? 0),
+            'enabled'           => 1,
+            'option_params'     => $optionData['option_params'] ?? '',
+            'access'            => (int) ($optionData['access'] ?? 1),
+            'created_on'        => $now,
+            'created_by'        => $userId,
+            'modified_on'       => $now,
+            'modified_by'       => $userId,
+        ];
+        $db->insertObject($this->t('options'), $o);
+
+        return (int) $db->insertid();
+    }
+
+    /**
+     * Find or create an option value definition by name within an option.
+     */
+    protected function ensureOptionValue(int $optionId, array $valueData): int
+    {
+        $db   = $this->getDatabase();
+        $name = $valueData['optionvalue_name'] ?? '';
+
+        if ($name) {
+            $query = $this->createDbQuery()
+                ->select($this->col('j2store_optionvalue_id'))
+                ->from($db->quoteName($this->t('optionvalues')))
+                ->where('option_id = :optionid')
+                ->where('optionvalue_name = :name')
+                ->bind(':optionid', $optionId, \Joomla\Database\ParameterType::INTEGER)
+                ->bind(':name', $name);
+            $db->setQuery($query);
+            $valueId = $db->loadResult();
+
+            if ($valueId) {
+                return (int) $valueId;
+            }
+        }
+
+        $ov = (object) [
+            'option_id'        => $optionId,
+            'optionvalue_name' => $name,
+            'optionvalue_image' => $valueData['optionvalue_image'] ?? '',
+            'ordering'         => (int) ($valueData['ordering'] ?? 0),
+        ];
+        $db->insertObject($this->t('optionvalues'), $ov);
+
+        return (int) $db->insertid();
     }
 
     protected function importProductFilters(array $filters, int $productId): void
@@ -632,6 +779,46 @@ class ImportModel extends BaseDatabaseModel
                 'value' => $field['value'],
             ];
             $db->insertObject('#__fields_values', $fv);
+        }
+    }
+
+    /**
+     * Import metafields for a product (J2Commerce 6 only).
+     *
+     * Replaces all existing metafields for the product, then re-inserts from
+     * the import data. Silently skips on J2Commerce 4 (no metafields table).
+     */
+    protected function importProductMetafields(array $metafields, int $productId): void
+    {
+        if (empty($metafields) || !$this->isJ2Commerce6()) {
+            return;
+        }
+
+        $db  = $this->getDatabase();
+        $now = Factory::getDate()->toSql();
+
+        $query = $this->createDbQuery()
+            ->delete($db->quoteName($this->t('metafields')))
+            ->where('owner_id = :productid')
+            ->where('owner_resource = ' . $db->quote('product'))
+            ->bind(':productid', $productId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+        $db->execute();
+
+        foreach ($metafields as $mf) {
+            $row = (object) [
+                'metakey'        => $mf['metakey'] ?? '',
+                'namespace'      => $mf['namespace'] ?? '',
+                'scope'          => $mf['scope'] ?? '',
+                'metavalue'      => $mf['metavalue'] ?? '',
+                'valuetype'      => $mf['valuetype'] ?? 'string',
+                'description'    => $mf['description'] ?? '',
+                'owner_id'       => $productId,
+                'owner_resource' => 'product',
+                'created_at'     => $mf['created_at'] ?? $now,
+                'updated_at'     => $now,
+            ];
+            $db->insertObject($this->t('metafields'), $row);
         }
     }
 
