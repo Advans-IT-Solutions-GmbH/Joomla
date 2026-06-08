@@ -71,17 +71,18 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
     {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
 
-        // Detect J2Store 4 (J4/J5 stack)
+        // Detect J2Commerce 6 by checking for com_j2commerce in #__extensions.
+        // On Joomla 4/5 with J2Store 4, com_j2commerce is not installed.
+        // On Joomla 6 with J2Commerce 6, com_j2commerce is present.
         $q = $this->createDbQuery($db)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_j2store'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('enabled') . ' = 1');
+            ->where($db->quoteName('element') . ' = ' . $db->quote('com_j2commerce'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'));
         $db->setQuery($q);
-        $isJ2Store4 = (int) $db->loadResult() > 0;
+        $isJ2Commerce6 = (int) $db->loadResult() > 0;
 
-        if (!$isJ2Store4) {
+        if ($isJ2Commerce6) {
             // J6: canonical location j2commerce/ is correct, nothing to do.
             return;
         }
