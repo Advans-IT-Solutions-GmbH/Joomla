@@ -12,42 +12,20 @@ until mysql -h mysql -u joomla -pjoomla_pass -e "SELECT 1" &>/dev/null; do
 done
 echo "MySQL is ready"
 
-# Run original Joomla entrypoint in background
+# Run original Joomla entrypoint in background and wait for it to finish
 /entrypoint.sh apache2-foreground &
 JOOMLA_PID=$!
 
-# Wait for Joomla files to be extracted
-echo "Waiting for Joomla files..."
-sleep 10
+echo "Waiting for Joomla to initialize..."
+TIMEOUT=180
+ELAPSED=0
+while [ ! -f /var/www/html/configuration.php ] && [ $ELAPSED -lt $TIMEOUT ]; do
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+    echo "  Waiting... ($ELAPSED/$TIMEOUT seconds)"
+done
 
-# Check if Joomla needs installation
 if [ ! -f /var/www/html/configuration.php ]; then
-    echo "Installing Joomla via CLI..."
-    
-    # Wait for files to be fully extracted
-    until [ -f /var/www/html/installation/joomla.php ] || [ -f /var/www/html/cli/joomla.php ]; do
-        sleep 2
-    done
-    
-    # Use Joomla CLI installer (Joomla 4+)
-    if [ -f /var/www/html/cli/joomla.php ]; then
-        HTTP_HOST=localhost php /var/www/html/cli/joomla.php site:install \
-            --db-host=mysql \
-            --db-user=joomla \
-            --db-pass=joomla_pass \
-            --db-name=joomla_db \
-            --db-prefix=j_ \
-            --db-type=mysql \
-            --site-name="Test Site" \
-            --admin-user="admin" \
-            --admin-username="admin" \
-            --admin-password="Admin123!" \
-            --admin-email="admin@test.local" \
-            --no-interaction 2>&1 || echo "CLI install attempted"
-    fi
-    
-    # Fallback: Create configuration.php manually if CLI failed
-    if [ ! -f /var/www/html/configuration.php ]; then
         echo "Creating configuration.php manually..."
         cat > /var/www/html/configuration.php << 'EOFCONFIG'
 <?php
@@ -112,16 +90,8 @@ EOFCONFIG
             ON DUPLICATE KEY UPDATE password='$ADMIN_PASS_HASH';
             INSERT INTO j_user_usergroup_map (user_id, group_id) VALUES (42, 8) ON DUPLICATE KEY UPDATE group_id=8;
         " 2>/dev/null || true
-    fi
-    
     echo "Joomla installation complete"
 fi
-
-# Wait for configuration.php
-echo "Waiting for Joomla configuration..."
-until [ -f /var/www/html/configuration.php ]; do
-    sleep 2
-done
 
 # Get DB prefix
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
@@ -151,7 +121,7 @@ fi
 echo "Installing privacy plugin extension..."
 cp /tmp/extension.zip /var/www/html/tmp/extension.zip
 if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
-    echo "Extension installed via Joomla CLI"
+    echo "✅ Extension installed via Joomla CLI"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
