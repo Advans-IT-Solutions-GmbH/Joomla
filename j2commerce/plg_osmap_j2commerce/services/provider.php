@@ -18,6 +18,7 @@ use Advans\Plugin\Osmap\J2Commerce\Extension\J2CommerceNew;
 use Joomla\CMS\Extension\PluginInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
 use Joomla\Event\DispatcherInterface;
@@ -28,7 +29,7 @@ return new class implements ServiceProviderInterface
     {
         $pluginData = (array) PluginHelper::getPlugin('osmap', 'j2commerce');
         $dispatcher = $container->get(DispatcherInterface::class);
-        $db         = Factory::getContainer()->get('DatabaseDriver');
+        $db         = $container->get(DatabaseInterface::class);
         $app        = Factory::getApplication();
 
         // Handle com_j2store menu items (J2Store / legacy)
