@@ -26,8 +26,16 @@ class UninstallTest
     {
         echo "=== Uninstall Tests ===\n\n";
 
-        // Get extension ID before uninstall
-        $result = $this->db->query("SELECT extension_id FROM {$this->dbPrefix}extensions WHERE element = 'productcompare' AND type = 'plugin' AND folder = (getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store')");
+        $group = (getenv('J2COMMERCE_STACK') === 'j6') ? 'j2commerce' : 'j2store';
+
+        // Get extension ID before uninstall — search both possible folders since
+        // the installer may have set folder=j2store on J5 even though the manifest
+        // group is j2commerce.
+        $result = $this->db->query(
+            "SELECT extension_id FROM {$this->dbPrefix}extensions"
+            . " WHERE element = 'productcompare' AND type = 'plugin'"
+            . " AND folder IN ('j2store','j2commerce') LIMIT 1"
+        );
         $row = $result ? $result->fetch_assoc() : null;
         $extensionId = $row ? (int) $row['extension_id'] : 0;
 
@@ -47,13 +55,20 @@ class UninstallTest
         });
 
         $this->test('Plugin removed from #__extensions', function () {
-            $result = $this->db->query("SELECT COUNT(*) as cnt FROM {$this->dbPrefix}extensions WHERE element = 'productcompare' AND folder = (getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store')");
+            $result = $this->db->query(
+                "SELECT COUNT(*) as cnt FROM {$this->dbPrefix}extensions"
+                . " WHERE element = 'productcompare' AND folder IN ('j2store','j2commerce')"
+            );
             $row = $result ? $result->fetch_assoc() : null;
             return $row && (int) $row['cnt'] === 0;
         });
 
-        $this->test('Plugin files removed', function () {
-            return !file_exists('/var/www/html/plugins/' . (getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store') . '/productcompare/src/Extension/ProductCompare.php');
+        $this->test('Plugin files removed', function () use ($group) {
+            // On J5 the canonical files are under j2commerce/, the mirror under j2store/.
+            // After uninstall both should be gone.
+            $j6gone = !file_exists('/var/www/html/plugins/j2commerce/productcompare/src/Extension/ProductCompare.php');
+            $j5gone = !file_exists('/var/www/html/plugins/j2store/productcompare/src/Extension/ProductCompare.php');
+            return $j6gone && $j5gone;
         });
 
         echo "\n=== Uninstall Test Summary ===\n";

@@ -14,22 +14,6 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
     public function preflight($type, $parent)
     {
-        if ($type === 'update') {
-            // Remove any stale j2store group directory left behind by a previous
-            // install that used group=j2store. The plugin now lives in group=j2commerce.
-            $staleDir = JPATH_PLUGINS . '/j2store/productcompare';
-            if (is_dir($staleDir)) {
-                $files = new \RecursiveIteratorIterator(
-                    new \RecursiveDirectoryIterator($staleDir, \RecursiveDirectoryIterator::SKIP_DOTS),
-                    \RecursiveIteratorIterator::CHILD_FIRST
-                );
-                foreach ($files as $f) {
-                    $f->isDir() ? rmdir($f->getRealPath()) : unlink($f->getRealPath());
-                }
-                rmdir($staleDir);
-            }
-        }
-
         return parent::preflight($type, $parent);
     }
 
@@ -59,14 +43,29 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         }
     }
 
+    public function uninstall($parent)
+    {
+        // Remove the J5 mirror directory/symlink if it exists.
+        $j5mirror = JPATH_PLUGINS . '/j2store/productcompare';
+        if (is_link($j5mirror)) {
+            unlink($j5mirror);
+        } elseif (is_dir($j5mirror)) {
+            $this->removeDir($j5mirror);
+        }
+    }
+
     /**
-     * Set the plugin's folder in #__extensions to match the installed J2Commerce stack.
+     * Mirror plugin files to plugins/j2store/productcompare/ on J4/J5 installs.
      *
-     * The manifest installs the plugin into group=j2commerce (J6 default).
-     * On J4/J5 with J2Store 4, J2Store's eventWithHtml() only imports the j2store
-     * group, so the plugin must live in folder=j2store to receive those events.
-     * On J6 with J2Commerce 6, eventWithHtml() imports j2commerce + content,
-     * so folder=j2commerce is correct.
+     * Joomla installs plugin files to plugins/{manifest-group}/ — always j2commerce
+     * here. J2Store 4's eventWithHtml() only imports the j2store group, so the
+     * plugin must also be reachable under plugins/j2store/productcompare/.
+     *
+     * Strategy: keep the canonical files under j2commerce/, create a symlink (or
+     * recursive copy as fallback) at j2store/productcompare/ pointing there, and
+     * update #__extensions.folder to j2store so Joomla's plugin loader finds it.
+     *
+     * On J6 (no com_j2store): nothing to do, folder stays j2commerce.
      */
     private function setGroupForInstalledStack(): void
     {
@@ -82,15 +81,72 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $db->setQuery($q);
         $isJ2Store4 = (int) $db->loadResult() > 0;
 
-        $targetFolder = $isJ2Store4 ? 'j2store' : 'j2commerce';
+        if (!$isJ2Store4) {
+            // J6: canonical location j2commerce/ is correct, nothing to do.
+            return;
+        }
 
+        // J4/J5: mirror files to plugins/j2store/productcompare/ and update DB.
+        $src  = JPATH_PLUGINS . '/j2commerce/productcompare';
+        $dest = JPATH_PLUGINS . '/j2store/productcompare';
+
+        if (!is_dir($src)) {
+            return;
+        }
+
+        // Remove stale destination if it exists (e.g. from a previous install).
+        if (is_link($dest)) {
+            unlink($dest);
+        } elseif (is_dir($dest)) {
+            $this->removeDir($dest);
+        }
+
+        // Prefer symlink (atomic, no duplication); fall back to recursive copy.
+        if (!@symlink($src, $dest)) {
+            $this->copyDir($src, $dest);
+        }
+
+        // Update #__extensions so Joomla's plugin loader resolves the correct path.
         $q = $this->createDbQuery($db)
             ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('folder') . ' = ' . $db->quote($targetFolder))
+            ->set($db->quoteName('folder') . ' = ' . $db->quote('j2store'))
             ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
             ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'));
         $db->setQuery($q);
         $db->execute();
+    }
+
+    /**
+     * Recursively copy a directory tree.
+     */
+    private function copyDir(string $src, string $dest): void
+    {
+        if (!is_dir($dest)) {
+            mkdir($dest, 0755, true);
+        }
+        $iter = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($src, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ($iter as $item) {
+            $target = $dest . '/' . $iter->getSubPathname();
+            $item->isDir() ? mkdir($target, 0755, true) : copy($item->getRealPath(), $target);
+        }
+    }
+
+    /**
+     * Recursively remove a directory tree.
+     */
+    private function removeDir(string $dir): void
+    {
+        $iter = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($iter as $item) {
+            $item->isDir() ? rmdir($item->getRealPath()) : unlink($item->getRealPath());
+        }
+        rmdir($dir);
     }
 
     private function ensureUpdateSite(): void

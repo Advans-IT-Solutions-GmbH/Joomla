@@ -12,7 +12,7 @@ class AjaxEndpointTest
     private $failed = 0;
     private $baseUrl = 'http://localhost';
     // The plugin group is j2store on J4/J5 and j2commerce on J6.
-    private string $pluginGroup;
+    public string $pluginGroup = 'j2store';
 
     private function test(string $name, bool $condition, string $message = ''): void
     {

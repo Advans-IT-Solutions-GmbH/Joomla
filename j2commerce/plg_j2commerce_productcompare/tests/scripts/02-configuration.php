@@ -39,7 +39,8 @@ class ConfigurationTest
             return $val !== null || true; // param may not be set, that's OK (uses default)
         });
 
-        // Plugin installs to group=j2store (manifest group="j2store")
+        // Canonical plugin files always live under j2commerce/ (manifest group).
+        // On J5 a symlink/copy also exists under j2store/ (set by installer script).
         $this->test('Language file en-GB exists', function () {
             return file_exists(JPATH_PLUGINS . '/j2commerce/productcompare/language/en-GB/plg_j2commerce_productcompare.ini');
         });
