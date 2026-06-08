@@ -257,12 +257,12 @@ class GetProductsDataTest
             $this->productsTable            = '#__j2store_products';
             $this->variantsTable            = '#__j2store_variants';
             $this->optionsTable             = '#__j2store_product_options';
-            $this->optionsLabelTable        = '';
-            $this->optionValuesTable        = '';
-            $this->productOptionValuesTable = '';
+            $this->optionsLabelTable        = '#__j2store_options';
+            $this->optionValuesTable        = '#__j2store_optionvalues';
+            $this->productOptionValuesTable = '#__j2store_product_optionvalues';
             $this->productsPk               = 'j2store_product_id';
             $this->variantsPk               = 'j2store_variant_id';
-            $this->optionsPk                = 'j2store_product_option_id';
+            $this->optionsPk                = 'j2store_productoption_id';
         }
     }
 
@@ -357,12 +357,57 @@ class GetProductsDataTest
                 PRIMARY KEY (`j2commerce_product_optionvalue_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         } else {
+            // J2Store 4: product_options is a mapping table (product_id → option_id)
             $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $optionsBase . '` (
                 `' . $optionCol . '`   INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `option_id`            INT UNSIGNED NOT NULL DEFAULT 0,
+                `parent_id`            INT UNSIGNED NOT NULL DEFAULT 0,
                 `product_id`           INT UNSIGNED NOT NULL DEFAULT 0,
-                `option_name`          VARCHAR(255) NOT NULL DEFAULT \'\',
-                `option_value`         VARCHAR(255) NOT NULL DEFAULT \'\',
+                `ordering`             INT          NOT NULL DEFAULT 0,
+                `required`             TINYINT(1)   NOT NULL DEFAULT 0,
+                `is_variant`           TINYINT(1)   NOT NULL DEFAULT 0,
                 PRIMARY KEY (`' . $optionCol . '`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+
+            // J2Store 4: options label table
+            $optionsLabelBase = substr($this->optionsLabelTable, 3);
+            $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $optionsLabelBase . '` (
+                `j2store_option_id`    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `option_name`          VARCHAR(255) NOT NULL DEFAULT \'\',
+                `option_unique_name`   VARCHAR(255) NOT NULL DEFAULT \'\',
+                `type`                 VARCHAR(50)  NOT NULL DEFAULT \'\',
+                `enabled`              TINYINT(1)   NOT NULL DEFAULT 1,
+                `ordering`             INT          NOT NULL DEFAULT 0,
+                PRIMARY KEY (`j2store_option_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+
+            // J2Store 4: option values table
+            $optionValuesBase = substr($this->optionValuesTable, 3);
+            $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $optionValuesBase . '` (
+                `j2store_optionvalue_id`   INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `option_id`                INT UNSIGNED NOT NULL DEFAULT 0,
+                `optionvalue_name`         VARCHAR(255) NOT NULL DEFAULT \'\',
+                `optionvalue_image`        LONGTEXT     NOT NULL,
+                `ordering`                 INT          NOT NULL DEFAULT 0,
+                PRIMARY KEY (`j2store_optionvalue_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+
+            // J2Store 4: product option values mapping table
+            $productOptionValuesBase = substr($this->productOptionValuesTable, 3);
+            $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $productOptionValuesBase . '` (
+                `j2store_product_optionvalue_id`    INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `productoption_id`                  INT UNSIGNED NOT NULL DEFAULT 0,
+                `optionvalue_id`                    INT UNSIGNED DEFAULT NULL,
+                `parent_optionvalue`                TEXT         NOT NULL,
+                `product_optionvalue_price`         DECIMAL(15,8) NOT NULL DEFAULT 0.00000000,
+                `product_optionvalue_prefix`        VARCHAR(255) NOT NULL DEFAULT \'\',
+                `product_optionvalue_weight`        DECIMAL(15,8) NOT NULL DEFAULT 0.00000000,
+                `product_optionvalue_weight_prefix` VARCHAR(255) NOT NULL DEFAULT \'\',
+                `product_optionvalue_sku`           VARCHAR(255) NOT NULL DEFAULT \'\',
+                `product_optionvalue_default`       INT          NOT NULL DEFAULT 0,
+                `ordering`                          INT          NOT NULL DEFAULT 0,
+                `product_optionvalue_attribs`       TEXT         NOT NULL,
+                PRIMARY KEY (`j2store_product_optionvalue_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         }
     }
@@ -498,17 +543,63 @@ class GetProductsDataTest
                 $this->seededProductOptionValueIds[] = (int) $this->db->insertid();
             }
         } else {
+            // J2Store 4: same three-table join as J2Commerce 6, different table/PK names
             foreach ([
                 ['option_name' => 'Colour', 'option_value' => 'Red'],
                 ['option_name' => 'Size',   'option_value' => 'M'],
             ] as $opt) {
-                $option = (object)[
-                    'product_id'   => $this->seededProductIds[0],
-                    'option_name'  => $opt['option_name'],
-                    'option_value' => $opt['option_value'],
+                // 1. Option label
+                $optLabel = (object)[
+                    'option_name'        => $opt['option_name'],
+                    'option_unique_name' => strtolower($opt['option_name']) . '_' . $ts,
+                    'type'               => 'select',
+                    'enabled'            => 1,
+                    'ordering'           => 0,
                 ];
-                $this->db->insertObject($this->optionsTable, $option, $this->optionsPk);
-                $this->seededOptionIds[] = (int) $this->db->insertid();
+                $this->db->insertObject($this->optionsLabelTable, $optLabel, 'j2store_option_id');
+                $optionLabelId = (int) $this->db->insertid();
+                $this->seededOptionLabelIds[] = $optionLabelId;
+
+                // 2. Option value label
+                $optValue = (object)[
+                    'option_id'         => $optionLabelId,
+                    'optionvalue_name'  => $opt['option_value'],
+                    'optionvalue_image' => '',
+                    'ordering'          => 0,
+                ];
+                $this->db->insertObject($this->optionValuesTable, $optValue, 'j2store_optionvalue_id');
+                $optionValueId = (int) $this->db->insertid();
+                $this->seededOptionValueIds[] = $optionValueId;
+
+                // 3. Product → option mapping
+                $productOption = (object)[
+                    'option_id'  => $optionLabelId,
+                    'parent_id'  => 0,
+                    'product_id' => $this->seededProductIds[0],
+                    'ordering'   => 0,
+                    'required'   => 0,
+                    'is_variant' => 0,
+                ];
+                $this->db->insertObject($this->optionsTable, $productOption, $this->optionsPk);
+                $productOptionId = (int) $this->db->insertid();
+                $this->seededOptionIds[] = $productOptionId;
+
+                // 4. Product option → option value mapping
+                $productOptionValue = (object)[
+                    'productoption_id'                  => $productOptionId,
+                    'optionvalue_id'                    => $optionValueId,
+                    'parent_optionvalue'                => '',
+                    'product_optionvalue_price'         => 0,
+                    'product_optionvalue_prefix'        => '+',
+                    'product_optionvalue_weight'        => 0,
+                    'product_optionvalue_weight_prefix' => '+',
+                    'product_optionvalue_sku'           => '',
+                    'product_optionvalue_default'       => 0,
+                    'ordering'                          => 0,
+                    'product_optionvalue_attribs'       => '',
+                ];
+                $this->db->insertObject($this->productOptionValuesTable, $productOptionValue, 'j2store_product_optionvalue_id');
+                $this->seededProductOptionValueIds[] = (int) $this->db->insertid();
             }
         }
     }
@@ -523,7 +614,10 @@ class GetProductsDataTest
             $toDelete[] = [$this->optionValuesTable,        'j2commerce_optionvalue_id',          $this->seededOptionValueIds];
             $toDelete[] = [$this->optionsLabelTable,        'j2commerce_option_id',               $this->seededOptionLabelIds];
         } else {
-            $toDelete[] = [$this->optionsTable, $this->optionsPk, $this->seededOptionIds];
+            $toDelete[] = [$this->productOptionValuesTable, 'j2store_product_optionvalue_id', $this->seededProductOptionValueIds];
+            $toDelete[] = [$this->optionsTable,             $this->optionsPk,                 $this->seededOptionIds];
+            $toDelete[] = [$this->optionValuesTable,        'j2store_optionvalue_id',         $this->seededOptionValueIds];
+            $toDelete[] = [$this->optionsLabelTable,        'j2store_option_id',              $this->seededOptionLabelIds];
         }
 
         $toDelete[] = [$this->variantsTable, $this->variantsPk, $this->seededVariantIds];

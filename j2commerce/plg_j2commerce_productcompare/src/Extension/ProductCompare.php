@@ -343,19 +343,18 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     }
 
     /**
-     * Load product options for a single product.
+     * Load product options for a single product, normalised to [{option_name, option_value}].
      *
-     * J2Commerce 4: #__j2store_product_options has option_name / option_value columns.
-     *
-     * J2Commerce 6: #__j2commerce_product_options is a mapping table (product_id → option_id).
-     * Option labels live in #__j2commerce_options (option_name) and option values in
-     * #__j2commerce_optionvalues (optionvalue_name), joined via #__j2commerce_product_optionvalues.
+     * Both J2Store 4 and J2Commerce 6 use a mapping table:
+     *   product_options (product_id → option_id) + options (option_name) + optionvalues (optionvalue_name)
+     * joined via product_optionvalues.
      */
     private function getProductOptions(int $productId): array
     {
         $db = $this->getDatabase();
 
         if ($this->isJ2Commerce6()) {
+            // J2Commerce 6 schema
             $query = $this->createDbQuery($db)
                 ->select([
                     $db->quoteName('o.option_name', 'option_name'),
@@ -371,21 +370,24 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 ->where($db->quoteName('po.product_id') . ' = :productid')
                 ->bind(':productid', $productId, ParameterType::INTEGER)
                 ->order($db->quoteName('po.ordering') . ' ASC');
-
-            $db->setQuery($query);
-
-            try {
-                return $db->loadAssocList() ?: [];
-            } catch (\Exception $e) {
-                return [];
-            }
+        } else {
+            // J2Store 4 schema: product_options is also a mapping table
+            $query = $this->createDbQuery($db)
+                ->select([
+                    $db->quoteName('o.option_name', 'option_name'),
+                    $db->quoteName('ov.optionvalue_name', 'option_value'),
+                ])
+                ->from($db->quoteName('#__j2store_product_options', 'po'))
+                ->join('LEFT', $db->quoteName('#__j2store_options', 'o')
+                    . ' ON ' . $db->quoteName('o.j2store_option_id') . ' = ' . $db->quoteName('po.option_id'))
+                ->join('LEFT', $db->quoteName('#__j2store_product_optionvalues', 'pov')
+                    . ' ON ' . $db->quoteName('pov.productoption_id') . ' = ' . $db->quoteName('po.j2store_productoption_id'))
+                ->join('LEFT', $db->quoteName('#__j2store_optionvalues', 'ov')
+                    . ' ON ' . $db->quoteName('ov.j2store_optionvalue_id') . ' = ' . $db->quoteName('pov.optionvalue_id'))
+                ->where($db->quoteName('po.product_id') . ' = :productid')
+                ->bind(':productid', $productId, ParameterType::INTEGER)
+                ->order($db->quoteName('po.ordering') . ' ASC');
         }
-
-        $query = $this->createDbQuery($db)
-            ->select([$db->quoteName('option_name'), $db->quoteName('option_value')])
-            ->from($db->quoteName('#__j2store_product_options'))
-            ->where($db->quoteName('product_id') . ' = :productid')
-            ->bind(':productid', $productId, ParameterType::INTEGER);
 
         $db->setQuery($query);
 
