@@ -102,7 +102,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         }
 
         // Update #__extensions so Joomla's plugin loader resolves the correct path.
-        $q = $this->createDbQuery($db)
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $q  = $this->createDbQuery($db)
             ->update($db->quoteName('#__extensions'))
             ->set($db->quoteName('folder') . ' = ' . $db->quote('j2store'))
             ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))

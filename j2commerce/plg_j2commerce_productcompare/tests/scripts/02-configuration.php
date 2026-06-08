@@ -22,6 +22,11 @@ class ConfigurationTest
     {
         $this->db = Factory::getDbo();
     }
+    private function dbq()
+    {
+        return $this->dbq();
+    }
+
 
     public function run(): bool
     {
@@ -77,7 +82,7 @@ class ConfigurationTest
 
     private function getPluginParams(): Registry
     {
-        $q = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+        $q = $this->dbq();
         $query = $q
             ->select($this->db->quoteName('params'))
             ->from($this->db->quoteName('#__extensions'))

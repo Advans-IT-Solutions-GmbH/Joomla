@@ -177,7 +177,7 @@ class GetProductsDataTest
     {
         // catid=2 may not exist; find or create a valid com_content category
         $db    = $this->db;
-        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true)
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__categories'))
             ->where($db->quoteName('extension') . ' = ' . $db->quote('com_content'))
@@ -535,9 +535,9 @@ class GetProductsDataTest
                 continue;
             }
             try {
-                $this->db->setQuery(
-                    method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)->delete($table)->whereIn($pk, $ids)
-                )->execute();
+                $q = (method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true))
+                    ->delete($table)->whereIn($pk, $ids);
+                $this->db->setQuery($q)->execute();
             } catch (\Exception $e) {
                 // non-fatal
             }

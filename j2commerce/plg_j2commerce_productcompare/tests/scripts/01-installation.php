@@ -23,6 +23,11 @@ class InstallationTest
         $this->db = Factory::getDbo();
     }
 
+    private function dbq(): \Joomla\Database\QueryInterface
+    {
+        return $this->dbq();
+    }
+
     public function run(): bool
     {
         echo "=== Installation Tests ===\n\n";
@@ -31,7 +36,7 @@ class InstallationTest
         $expectedFolder = (getenv('J2COMMERCE_STACK') === 'j6') ? 'j2commerce' : 'j2store';
 
         $this->test('Plugin exists in #__extensions', function () use ($expectedFolder) {
-            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
+            $query = $this->dbq()
                 ->select('COUNT(*)')
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
@@ -42,7 +47,7 @@ class InstallationTest
         });
 
         $this->test('Plugin is enabled', function () use ($expectedFolder) {
-            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
+            $query = $this->dbq()
                 ->select($this->db->quoteName('enabled'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
@@ -53,7 +58,7 @@ class InstallationTest
         });
 
         $this->test('Plugin folder matches stack (' . $expectedFolder . ')', function () use ($expectedFolder) {
-            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true)
+            $query = $this->dbq()
                 ->select($this->db->quoteName('folder'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'));
