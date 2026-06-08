@@ -38,13 +38,16 @@ mkdir -p /var/www/html/components/com_osmap
 [ -f "$OSMAP_TMP/osmap.xml" ]  && cp    "$OSMAP_TMP/osmap.xml"    /var/www/html/administrator/components/com_osmap/
 [ -d "$OSMAP_TMP/media" ]      && cp -r "$OSMAP_TMP/media/."      /var/www/html/media/ 2>/dev/null || true
 rm -rf "$OSMAP_TMP"
-# Register com_osmap in extensions table (CLI installer skipped due to TypeError)
+# Register com_osmap in extensions table (CLI installer skipped due to TypeError).
+# J6 extensions table has custom_data TEXT NOT NULL (no default) — must be included.
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "INSERT IGNORE INTO ${DB_PREFIX}extensions
-        (name, type, element, folder, client_id, enabled, access, protected,
-         manifest_cache, params, custom_data, system_data, checked_out, checked_out_time, ordering, state)
-        VALUES ('OSMap', 'component', 'com_osmap', '', 1, 1, 1, 0,
-                '{}', '{}', '', '', 0, NULL, 0, 0);" 2>/dev/null || true
+        (package_id, name, type, element, folder, client_id, enabled, access,
+         protected, locked, manifest_cache, params, custom_data,
+         checked_out, checked_out_time, ordering, state)
+        VALUES (0, 'OSMap', 'component', 'com_osmap', '', 1, 1, 1,
+                0, 0, '{}', '{}', '',
+                NULL, NULL, 0, 0);" 2>&1 || true
 echo "OSMap files extracted and registered in extensions table"
 
 echo "Waiting for plugin in DB..."
@@ -85,7 +88,7 @@ if [ -z "${COM_J2COMMERCE_ID}" ]; then
     # Use only columns present in all Joomla versions; || true prevents set -e
     # from aborting on schema mismatches.
     mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null \
-        -e "INSERT IGNORE INTO ${DB_PREFIX}extensions (name, type, element, folder, client_id, enabled, access, protected, manifest_cache, params, checked_out, checked_out_time, ordering, state) VALUES ('com_j2commerce', 'component', 'com_j2commerce', '', 0, 1, 1, 0, '', '{}', 0, '0000-00-00 00:00:00', 0, 0);" || true
+        -e "INSERT IGNORE INTO ${DB_PREFIX}extensions (package_id, name, type, element, folder, client_id, enabled, access, protected, locked, manifest_cache, params, custom_data, checked_out, checked_out_time, ordering, state) VALUES (0, 'com_j2commerce', 'component', 'com_j2commerce', '', 0, 1, 1, 0, 0, '{}', '{}', '', NULL, NULL, 0, 0);" || true
     COM_J2COMMERCE_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
         -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_j2commerce' AND type='component' LIMIT 1;" 2>/dev/null || echo "")
     COM_J2COMMERCE_ID=${COM_J2COMMERCE_ID:-${COM_CONTENT_ID}}
@@ -217,19 +220,7 @@ COM_OSMAP_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
 COM_OSMAP_ID=${COM_OSMAP_ID:-0}
 echo "com_osmap extension_id: ${COM_OSMAP_ID}"
 
-# If OSMap CLI install failed (J6 AbstractScript type error), register com_osmap manually
-# so Joomla's router can activate the component for the sitemap HTTP test.
-if [ "$COM_OSMAP_ID" = "0" ]; then
-    echo "OSMap not in extensions table — registering com_osmap manually..."
-    mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-        -e "INSERT IGNORE INTO ${DB_PREFIX}extensions
-            (name, type, element, folder, client_id, enabled, access, protected, manifest_cache, params, custom_data, system_data, checked_out, checked_out_time, ordering, state)
-            VALUES ('OSMap', 'component', 'com_osmap', '', 1, 1, 1, 0, '{}', '{}', '', '', 0, NULL, 0, 0);" 2>/dev/null || true
-    COM_OSMAP_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-        -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_osmap' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")
-    COM_OSMAP_ID=${COM_OSMAP_ID:-0}
-    echo "com_osmap extension_id after manual insert: ${COM_OSMAP_ID}"
-fi
+echo "com_osmap extension_id: ${COM_OSMAP_ID}"
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 INSERT IGNORE INTO ${DB_PREFIX}osmap_sitemaps (id, name, params, is_default, published, created_on, links_count)
