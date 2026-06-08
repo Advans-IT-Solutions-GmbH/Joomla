@@ -125,8 +125,8 @@ VALUES
     (9001, 9001, 'com_content', 'simple', 1, 0, '{}'),
     (9002, 9002, 'com_content', 'simple', 1, 0, '{}');
 
--- Menu items: shop parent (published=1) + product children (published=1)
--- published=-2 items are skipped by OSMap's menu traversal; use published=1
+-- Menu items: shop parent (published=1) + product children (published=-2)
+-- published=-2 = hidden from navigation but routable; OSMap includes these in sitemaps
 SET @max_rgt = (SELECT COALESCE(MAX(rgt), 10) FROM ${DB_PREFIX}menu);
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -138,11 +138,11 @@ VALUES
      @max_rgt + 1, @max_rgt + 6),
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
      @max_rgt + 2, @max_rgt + 3),
     (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
      'index.php?option=com_content&view=article&id=9002&Itemid=9003',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
      @max_rgt + 4, @max_rgt + 5);
 
 -- Expand global root rgt to include new items

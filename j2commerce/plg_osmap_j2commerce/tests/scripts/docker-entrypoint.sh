@@ -129,19 +129,19 @@ VALUES
     (9003, 9003, 'DISABLED',  19.00, 1),
     (9004, 9004, 'NOMENU',    29.00, 1);
 
--- SEF menu items (published=1, children of shop 9001)
--- published=-2 items are skipped by OSMap's menu traversal; use published=1
+-- SEF menu items (published=-2, children of shop 9001)
+-- published=-2 = hidden from navigation but routable; OSMap includes these in sitemaps
 -- Only Alpha (9002) and Beta (9003) — disabled and nomenu have no SEF item
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params, lft, rgt)
 VALUES
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
      @max_rgt + 2, @max_rgt + 3),
     (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
      'index.php?option=com_content&view=article&id=9002&Itemid=9003',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, '{}',
      @max_rgt + 4, @max_rgt + 5);
 EOSQL
 
