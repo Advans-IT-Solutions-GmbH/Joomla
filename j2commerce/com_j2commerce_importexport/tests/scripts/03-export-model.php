@@ -149,6 +149,7 @@ class ExportModelTest
                 'sku'        => 'EXPORT-TEST-' . $productId,
                 'price'      => 9.99,
                 'is_master'  => 1,
+                'isdefault_variant' => 1,
                 'enabled'    => 1,
                 'params'     => '{}',
             ];

@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `#__j2commerce_variants` (
   `availability` int DEFAULT NULL,
   `sold` decimal(12,4) DEFAULT NULL,
   `allow_backorder` int NOT NULL DEFAULT 0,
-  `isdefault_variant` int NOT NULL DEFAULT 0,
+  `isdefault_variant` int NOT NULL,
   `enabled` tinyint NOT NULL DEFAULT 1,
   PRIMARY KEY (`j2commerce_variant_id`),
   KEY `variant_product_id` (`product_id`)

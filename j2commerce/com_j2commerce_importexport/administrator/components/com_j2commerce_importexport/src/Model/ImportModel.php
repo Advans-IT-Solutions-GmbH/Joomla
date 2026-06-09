@@ -318,6 +318,7 @@ class ImportModel extends BaseDatabaseModel
                 'notify_qty' => $variantData['notify_qty'] ?? 0,
                 'availability' => $variantData['availability'] ?? 1,
                 'allow_backorder' => $variantData['allow_backorder'] ?? 0,
+                'isdefault_variant' => $variantData['isdefault_variant'] ?? 0,
                 'params' => $variantData['params'] ?? '{}',
                 'modified_on' => $now,
                 'modified_by' => $userId,
