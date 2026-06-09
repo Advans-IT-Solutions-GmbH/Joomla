@@ -37,6 +37,12 @@ mkdir -p /var/www/html/components/com_osmap
 [ -d "$OSMAP_TMP/site" ]       && cp -r "$OSMAP_TMP/site/."       /var/www/html/components/com_osmap/
 [ -f "$OSMAP_TMP/osmap.xml" ]  && cp    "$OSMAP_TMP/osmap.xml"    /var/www/html/administrator/components/com_osmap/
 [ -d "$OSMAP_TMP/media" ]      && cp -r "$OSMAP_TMP/media/."      /var/www/html/media/ 2>/dev/null || true
+# OSMap include.php expects the bundled framework at this Joomla library path.
+[ -d "$OSMAP_TMP/extensions/ShackFramework" ] && {
+    rm -rf /var/www/html/libraries/allediaframework
+    mkdir -p /var/www/html/libraries/allediaframework
+    cp -r "$OSMAP_TMP/extensions/ShackFramework/." /var/www/html/libraries/allediaframework/
+}
 rm -rf "$OSMAP_TMP"
 # Register com_osmap in extensions table (CLI installer skipped due to TypeError).
 # J6 extensions table has custom_data TEXT NOT NULL (no default) — must be included.
