@@ -309,6 +309,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         $variantsPk  = $j6 ? 'j2commerce_variant_id' : 'j2store_variant_id';
         $productsT   = $j6 ? '#__j2commerce_products' : '#__j2store_products';
         $variantsT   = $j6 ? '#__j2commerce_variants'  : '#__j2store_variants';
+        $quantitiesT  = $j6 ? '#__j2commerce_productquantities' : '#__j2store_productquantities';
 
         $query = $this->createDbQuery($db)
             ->select([
@@ -318,6 +319,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 $db->quoteName('v') . '.' . $db->quoteName('sku'),
                 $db->quoteName('v') . '.' . $db->quoteName('price'),
                 $db->quoteName('v') . '.' . $db->quoteName('availability'),
+                'COALESCE(' . $db->quoteName('pq.quantity') . ', 0) AS ' . $db->quoteName('stock'),
                 $db->quoteName('c') . '.' . $db->quoteName('title'),
                 $db->quoteName('c') . '.' . $db->quoteName('introtext'),
             ])
@@ -325,6 +327,9 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             ->join('LEFT', $db->quoteName($variantsT, 'v')
                 . ' ON ' . $db->quoteName('v') . '.' . $db->quoteName('product_id')
                 . ' = ' . $db->quoteName('p') . '.' . $db->quoteName($productsPk))
+            ->join('LEFT', $db->quoteName($quantitiesT, 'pq')
+                . ' ON ' . $db->quoteName('pq') . '.' . $db->quoteName('variant_id')
+                . ' = ' . $db->quoteName('v') . '.' . $db->quoteName($variantsPk))
             ->join('LEFT', $db->quoteName('#__content', 'c')
                 . ' ON ' . $db->quoteName('c') . '.' . $db->quoteName('id')
                 . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id'))

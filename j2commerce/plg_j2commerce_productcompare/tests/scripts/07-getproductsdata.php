@@ -14,6 +14,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
@@ -35,6 +36,7 @@ class GetProductsDataTest
     private $failed = 0;
     private $seededProductIds  = [];
     private $seededVariantIds  = [];
+    private $seededQuantityIds = [];
     private $seededContentIds  = [];
     private $seededOptionIds   = [];
 
@@ -100,11 +102,15 @@ class GetProductsDataTest
             $this->test('Product has sku',           isset($p->sku));
             $this->test('Product has price',         isset($p->price));
             $this->test('Product has availability',  array_key_exists('availability', (array) $p));
+            $this->test('Product has stock',         array_key_exists('stock', (array) $p));
             $this->test('Product has options key',   isset($p->options) && is_array($p->options));
 
             // Product 0 has options — verify they're loaded on both J4 and J6
             $p1 = array_values(array_filter($products, fn($x) => (int)$x->$pkCol === $this->seededProductIds[0]))[0] ?? null;
             if ($p1) {
+                $this->test('Product with quantity: stock is loaded from productquantities',
+                    (int) $p1->stock === 7,
+                    'Expected stock 7, got ' . ($p1->stock ?? 'missing'));
                 $this->test('Product with options: options not empty', !empty($p1->options),
                     'Expected options for product ' . $this->seededProductIds[0]);
                 $optionNames = array_column($p1->options, 'option_name');
@@ -114,9 +120,48 @@ class GetProductsDataTest
             // Product 1 has no options — verify empty array, no crash
             $p2 = array_values(array_filter($products, fn($x) => (int)$x->$pkCol === $this->seededProductIds[1]))[0] ?? null;
             if ($p2) {
+                $this->test('Product with zero quantity: stock is zero',
+                    (int) $p2->stock === 0,
+                    'Expected stock 0, got ' . ($p2->stock ?? 'missing'));
                 $this->test('Product without options: options is empty array',
                     isset($p2->options) && $p2->options === []);
             }
+
+            $this->testTableRendersStockStatus($products);
+        }
+    }
+
+    private function testTableRendersStockStatus(array $products): void
+    {
+        echo "\n--- Table layout stock rendering ---\n";
+
+        try {
+            $group  = $this->isJ6 ? 'j2commerce' : 'j2store';
+            $path   = JPATH_PLUGINS . '/' . $group . '/productcompare/tmpl/table.php';
+            $view   = new class {
+                public function escape($value): string
+                {
+                    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+                }
+            };
+            $render = function (array $products) use ($path): string {
+                ob_start();
+                include $path;
+                return ob_get_clean();
+            };
+            $html = $render->call($view, $products);
+
+            $inStockLabel  = Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_IN_STOCK');
+            $outStockLabel = Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_OUT_OF_STOCK');
+
+            $this->test('Table renders in-stock label for positive quantity',
+                str_contains($html, $inStockLabel),
+                'Expected label ' . $inStockLabel);
+            $this->test('Table renders out-of-stock label for zero quantity',
+                str_contains($html, $outStockLabel),
+                'Expected label ' . $outStockLabel);
+        } catch (\Throwable $e) {
+            $this->test('Table layout renders stock statuses', false, $e->getMessage());
         }
     }
 
@@ -215,6 +260,8 @@ class GetProductsDataTest
     private string $productsTable;
     /** @var string Variants table name */
     private string $variantsTable;
+    /** @var string Product quantities table name */
+    private string $productQuantitiesTable;
     /** @var string Product options mapping table name */
     private string $optionsTable;
     /** @var string Options label table (J6 only) */
@@ -227,6 +274,8 @@ class GetProductsDataTest
     private string $productsPk;
     /** @var string Variants PK column */
     private string $variantsPk;
+    /** @var string Product quantities PK column */
+    private string $quantitiesPk;
     /** @var string Options PK column */
     private string $optionsPk;
     /** @var int[] Seeded j2commerce_options IDs (J6 only) */
@@ -246,22 +295,26 @@ class GetProductsDataTest
         if ($this->isJ6) {
             $this->productsTable            = '#__j2commerce_products';
             $this->variantsTable            = '#__j2commerce_variants';
+            $this->productQuantitiesTable   = '#__j2commerce_productquantities';
             $this->optionsTable             = '#__j2commerce_product_options';
             $this->optionsLabelTable        = '#__j2commerce_options';
             $this->optionValuesTable        = '#__j2commerce_optionvalues';
             $this->productOptionValuesTable = '#__j2commerce_product_optionvalues';
             $this->productsPk               = 'j2commerce_product_id';
             $this->variantsPk               = 'j2commerce_variant_id';
+            $this->quantitiesPk             = 'j2commerce_productquantity_id';
             $this->optionsPk                = 'j2commerce_productoption_id';
         } else {
             $this->productsTable            = '#__j2store_products';
             $this->variantsTable            = '#__j2store_variants';
+            $this->productQuantitiesTable   = '#__j2store_productquantities';
             $this->optionsTable             = '#__j2store_product_options';
             $this->optionsLabelTable        = '#__j2store_options';
             $this->optionValuesTable        = '#__j2store_optionvalues';
             $this->productOptionValuesTable = '#__j2store_product_optionvalues';
             $this->productsPk               = 'j2store_product_id';
             $this->variantsPk               = 'j2store_variant_id';
+            $this->quantitiesPk             = 'j2store_productquantity_id';
             $this->optionsPk                = 'j2store_productoption_id';
         }
     }
@@ -274,11 +327,13 @@ class GetProductsDataTest
 
         $productCol = $this->productsPk;
         $variantCol = $this->variantsPk;
+        $quantityCol = $this->quantitiesPk;
         $optionCol  = $this->optionsPk;
 
         // '#__j2store_products' → strip '#__' prefix, then prepend real DB prefix
         $productsBase = substr($this->productsTable, 3); // strip '#__'
         $variantsBase = substr($this->variantsTable, 3);
+        $quantitiesBase = substr($this->productQuantitiesTable, 3);
         $optionsBase  = substr($this->optionsTable, 3);
 
         $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $productsBase . '` (
@@ -301,6 +356,17 @@ class GetProductsDataTest
             `params`               TEXT         NOT NULL,
             `isdefault`            TINYINT(1)   NOT NULL DEFAULT 0,
             PRIMARY KEY (`' . $variantCol . '`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+
+        $this->db->setQuery('CREATE TABLE IF NOT EXISTS `' . $prefix . $quantitiesBase . '` (
+            `' . $quantityCol . '` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `product_attributes`   TEXT         NOT NULL,
+            `variant_id`           INT UNSIGNED NOT NULL DEFAULT 0,
+            `quantity`             INT          NOT NULL DEFAULT 0,
+            `on_hold`              INT          NOT NULL DEFAULT 0,
+            `sold`                 INT          NOT NULL DEFAULT 0,
+            PRIMARY KEY (`' . $quantityCol . '`),
+            KEY `variantidx` (`variant_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
 
         if ($this->isJ6) {
@@ -480,6 +546,18 @@ class GetProductsDataTest
             $this->seededVariantIds[] = (int)$this->db->insertid();
         }
 
+        foreach ($this->seededVariantIds as $i => $variantId) {
+            $quantity = (object)[
+                'product_attributes' => '',
+                'variant_id'         => $variantId,
+                'quantity'           => $i === 0 ? 7 : 0,
+                'on_hold'            => 0,
+                'sold'               => 0,
+            ];
+            $this->db->insertObject($this->productQuantitiesTable, $quantity, $this->quantitiesPk);
+            $this->seededQuantityIds[] = (int)$this->db->insertid();
+        }
+
         // Options for product 0 only
         if ($this->isJ6) {
             // J6: seed via the three-table join:
@@ -620,7 +698,8 @@ class GetProductsDataTest
             $toDelete[] = [$this->optionsLabelTable,        'j2store_option_id',              $this->seededOptionLabelIds];
         }
 
-        $toDelete[] = [$this->variantsTable, $this->variantsPk, $this->seededVariantIds];
+        $toDelete[] = [$this->productQuantitiesTable, $this->quantitiesPk, $this->seededQuantityIds];
+        $toDelete[] = [$this->variantsTable,          $this->variantsPk,   $this->seededVariantIds];
         $toDelete[] = [$this->productsTable, $this->productsPk, $this->seededProductIds];
         $toDelete[] = ['#__content',         'id',              $this->seededContentIds];
 
