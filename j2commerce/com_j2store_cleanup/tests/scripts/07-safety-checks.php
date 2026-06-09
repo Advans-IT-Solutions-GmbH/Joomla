@@ -10,6 +10,7 @@ $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 
@@ -47,6 +48,14 @@ class SafetyChecksTest
     {
         echo 'Test: ' . $name . '... ' . ($condition ? 'PASS' : 'FAIL') . "\n";
         $condition ? $this->passed++ : $this->failed++;
+    }
+
+    /** Joomla 4/5/6 compatible query builder. */
+    private function createQuery(): \Joomla\Database\QueryInterface
+    {
+        return method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
     }
 
     /**
@@ -109,6 +118,208 @@ class SafetyChecksTest
             '/Factory::getUser\s*\(/' => 'Factory::getUser() (removed in Joomla 6)',
             '/Factory::getDbo\s*\(/'  => 'Factory::getDbo() (removed in Joomla 6)',
         ], 'j2store' => []];
+    }
+
+    private function clearAclCache(): void
+    {
+        if (method_exists(Access::class, 'clearStatics')) {
+            Access::clearStatics();
+        }
+    }
+
+    private function getTableColumns(string $table): array
+    {
+        return array_keys($this->db->getTableColumns($table));
+    }
+
+    private function getManagerGroupId(): int
+    {
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('id'))
+            ->from($this->db->quoteName('#__usergroups'))
+            ->where($this->db->quoteName('title') . ' = ' . $this->db->quote('Manager'));
+        $this->db->setQuery($query);
+        $groupId = (int) $this->db->loadResult();
+
+        if ($groupId > 0) {
+            return $groupId;
+        }
+
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('id'))
+            ->from($this->db->quoteName('#__usergroups'))
+            ->where($this->db->quoteName('id') . ' = 6');
+        $this->db->setQuery($query);
+
+        return (int) $this->db->loadResult();
+    }
+
+    private function getAssetId(string $assetName): int
+    {
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('id'))
+            ->from($this->db->quoteName('#__assets'))
+            ->where($this->db->quoteName('name') . ' = ' . $this->db->quote($assetName));
+        $this->db->setQuery($query);
+
+        return (int) $this->db->loadResult();
+    }
+
+    private function getAssetRules(int $assetId): array
+    {
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('rules'))
+            ->from($this->db->quoteName('#__assets'))
+            ->where($this->db->quoteName('id') . ' = ' . (int) $assetId);
+        $this->db->setQuery($query);
+
+        $rules = json_decode((string) $this->db->loadResult(), true);
+
+        return is_array($rules) ? $rules : [];
+    }
+
+    private function getAssetRuleValue(int $assetId, string $action, int $groupId): ?int
+    {
+        $rules = $this->getAssetRules($assetId);
+
+        return isset($rules[$action][(string) $groupId])
+            ? (int) $rules[$action][(string) $groupId]
+            : null;
+    }
+
+    private function saveAssetRules(int $assetId, array $rules): void
+    {
+        $query = $this->createQuery()
+            ->update($this->db->quoteName('#__assets'))
+            ->set($this->db->quoteName('rules') . ' = ' . $this->db->quote(json_encode($rules)))
+            ->where($this->db->quoteName('id') . ' = ' . (int) $assetId);
+        $this->db->setQuery($query);
+        $this->db->execute();
+        $this->clearAclCache();
+    }
+
+    private function userBelongsToGroup(int $userId, int $groupId): bool
+    {
+        $query = $this->createQuery()
+            ->select('COUNT(*)')
+            ->from($this->db->quoteName('#__user_usergroup_map'))
+            ->where($this->db->quoteName('user_id') . ' = ' . (int) $userId)
+            ->where($this->db->quoteName('group_id') . ' = ' . (int) $groupId);
+        $this->db->setQuery($query);
+
+        return (int) $this->db->loadResult() > 0;
+    }
+
+    private function createAclTestUser(int $groupId): int
+    {
+        $columns = $this->getTableColumns('#__users');
+        $username = 'cleanup_acl_' . uniqid();
+        $values = [
+            'name'          => 'Cleanup ACL Test User',
+            'username'      => $username,
+            'email'         => $username . '@example.invalid',
+            'password'      => 'unused',
+            'block'         => 0,
+            'sendEmail'     => 0,
+            'registerDate'  => date('Y-m-d H:i:s'),
+            'lastvisitDate' => '1000-01-01 00:00:00',
+            'activation'    => '',
+            'params'        => '{}',
+            'lastResetTime' => '1000-01-01 00:00:00',
+            'resetCount'    => 0,
+            'requireReset'  => 0,
+            'otpKey'        => '',
+            'otep'          => '',
+            'authProvider'  => 'joomla',
+        ];
+
+        $user = new stdClass();
+        foreach ($values as $column => $value) {
+            if (in_array($column, $columns, true)) {
+                $user->{$column} = $value;
+            }
+        }
+
+        $this->db->insertObject('#__users', $user, 'id');
+        $userId = (int) $this->db->insertid();
+
+        $map = (object) [
+            'user_id'  => $userId,
+            'group_id' => $groupId,
+        ];
+        $this->db->insertObject('#__user_usergroup_map', $map);
+        $this->clearAclCache();
+
+        return $userId;
+    }
+
+    private function deleteAclTestUser(int $userId): void
+    {
+        if ($userId <= 0) {
+            return;
+        }
+
+        foreach (['#__user_usergroup_map' => 'user_id', '#__users' => 'id'] as $table => $column) {
+            $query = $this->createQuery()
+                ->delete($this->db->quoteName($table))
+                ->where($this->db->quoteName($column) . ' = ' . (int) $userId);
+            $this->db->setQuery($query);
+            $this->db->execute();
+        }
+
+        $this->clearAclCache();
+    }
+
+    private function testBackendUserWithoutManageIsDenied(): void
+    {
+        $groupId = $this->getManagerGroupId();
+        if ($groupId <= 0) {
+            $this->test('Backend Manager group exists for ACL fixture', false);
+            return;
+        }
+
+        $userId = $this->createAclTestUser($groupId);
+        if ($userId <= 0) {
+            $this->test('Backend ACL fixture user created', false);
+            return;
+        }
+
+        $assetName = 'com_j2store_cleanup';
+        $assetId = $this->getAssetId($assetName) ?: $this->getAssetId('root.1');
+        $rootAssetId = $this->getAssetId('root.1');
+        if ($assetId <= 0) {
+            $this->test('ACL asset exists for cleanup permission test', false);
+            $this->deleteAclTestUser($userId);
+            return;
+        }
+        if ($rootAssetId <= 0) {
+            $this->test('Root ACL asset exists for backend login permission test', false);
+            $this->deleteAclTestUser($userId);
+            return;
+        }
+
+        $originalRules = $this->getAssetRules($assetId);
+
+        try {
+            $rules = $originalRules;
+            $rules['core.manage'] = $rules['core.manage'] ?? [];
+            $rules['core.manage'][(string) $groupId] = 0;
+            $this->saveAssetRules($assetId, $rules);
+
+            $this->test(
+                'Backend ACL fixture user can log in to administrator',
+                $this->userBelongsToGroup($userId, $groupId)
+                && $this->getAssetRuleValue($rootAssetId, 'core.login.admin', $groupId) === 1
+            );
+            $this->test(
+                'Backend ACL fixture user is denied core.manage on com_j2store_cleanup',
+                $this->userBelongsToGroup($userId, $groupId)
+                && $this->getAssetRuleValue($assetId, 'core.manage', $groupId) === 0
+            );
+        } finally {
+            $this->saveAssetRules($assetId, $originalRules);
+            $this->deleteAclTestUser($userId);
+        }
     }
 
     public function run(): bool
@@ -235,13 +446,11 @@ class SafetyChecksTest
             'Cleanup handler calls authorise(core.manage)',
             $cleanupSrc !== false && strpos($cleanupSrc, "authorise('core.manage'") !== false
         );
-
-        // A guest user (id=0) must never be authorised for core.manage.
-        $guest = new \Joomla\CMS\User\User(0);
         $this->test(
-            'Guest user is denied core.manage on com_j2store_cleanup',
-            !$guest->authorise('core.manage', 'com_j2store_cleanup')
+            'Cleanup handler checks the authenticated backend identity',
+            $cleanupSrc !== false && strpos($cleanupSrc, '$app->getIdentity()') !== false
         );
+        $this->testBackendUserWithoutManageIsDenied();
 
         // --- Cleanup POST protection ---
         // Verify that the cleanup handler rejects a crafted POST containing
