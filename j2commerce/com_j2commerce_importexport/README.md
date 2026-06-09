@@ -242,6 +242,12 @@ com_j2commerce_importexport/
 
 This component has automated tests that run on every push via GitHub Actions.
 
+### Test Scope Note
+
+The Joomla 6 model tests run against J2Commerce 6-compatible stub tables created by the test entrypoint. These stubs intentionally keep strict schema requirements such as `isdefault_variant NOT NULL` without a test default, so model SQL is exercised against the expected table and column contract. They do not install the full J2Commerce 6 application or cover J2Commerce events, plugins, pricing internals, or other application logic.
+
+The export controller test currently verifies controller structure, supported formats, field documentation, and access/header code paths by source inspection. It is not a full HTTP export test and does not yet cover CSRF failure handling, rollback behavior, or response content type end to end.
+
 ### Test Suites
 
 1. **Installation** — component registration in DB, file deployment
