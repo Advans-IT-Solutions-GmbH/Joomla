@@ -69,6 +69,13 @@ rsync -av --exclude="$BUILD_DIR" \
     --exclude="*.zip" \
     --exclude="build.env" \
     --exclude="tests" \
+    --exclude="tests-*" \
+    --exclude="Dockerfile" \
+    --exclude="Dockerfile.*" \
+    --exclude="docker-compose*.yml" \
+    --exclude="docker-compose*.yaml" \
+    --exclude="compose*.yml" \
+    --exclude="compose*.yaml" \
     --exclude=".git" \
     --exclude=".gitignore" \
     --exclude="node_modules" \
@@ -86,6 +93,11 @@ cd ..
 
 # Get package size
 PACKAGE_SIZE=$(du -h "$PACKAGE_NAME" | cut -f1)
+
+VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-package.sh"
+if [ -x "$VERIFY_SCRIPT" ]; then
+    "$VERIFY_SCRIPT"
+fi
 
 echo ""
 echo -e "${GREEN}Build successful${NC}"

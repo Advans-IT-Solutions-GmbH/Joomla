@@ -36,5 +36,17 @@ echo ""
 echo "Package contents:"
 unzip -l "$PACKAGE_NAME"
 
+if unzip -l "$PACKAGE_NAME" | awk '{print $4}' | grep -Eq '(^|/)tests($|/)|(^|/)tests-[^/]+($|/)'; then
+    echo ""
+    echo -e "${RED}Error: Package contains test directories${NC}"
+    exit 1
+fi
+
+if unzip -l "$PACKAGE_NAME" | awk '{print $4}' | grep -Eq '(^|/)Dockerfile(\.[^/]*)?$|(^|/)(docker-compose|compose)[^/]*\.ya?ml$'; then
+    echo ""
+    echo -e "${RED}Error: Package contains Docker or Compose files${NC}"
+    exit 1
+fi
+
 echo ""
 echo -e "${GREEN}Package verification complete${NC}"
