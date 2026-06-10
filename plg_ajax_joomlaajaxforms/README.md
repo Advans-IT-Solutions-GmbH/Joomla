@@ -174,7 +174,7 @@ This plugin has automated tests that run on every push and on pull requests via 
 
 Two additional CI jobs exercise the plugin against real J2Commerce installations:
 
-**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.3-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds cart data for a test user, then verifies:
+**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds cart data for a test user, then verifies:
 - `isJ2CommerceInstalled()` returns `true`, `isJ2Commerce4()` returns `true`
 - `getCartCountForUser(999)` returns 3 (matching seeded rows)
 - IDOR: unauthenticated `removeCartItem` rejected, row not deleted

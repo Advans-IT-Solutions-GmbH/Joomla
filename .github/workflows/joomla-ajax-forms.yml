@@ -29,10 +29,22 @@ jobs:
           PACKAGE="plg_ajax_joomlaajaxforms_v${VERSION}.zip"
           zip -r "$PACKAGE" . \
             -x "*.git*" \
+            -x "tests" \
             -x "tests/*" \
-            -x "tests-j2c4/*" \
-            -x "tests-j2c6/*" \
+            -x "tests-*" \
+            -x "tests-*/*" \
+            -x "Dockerfile" \
+            -x "Dockerfile.*" \
+            -x "docker-compose*.yml" \
+            -x "docker-compose*.yaml" \
+            -x "compose*.yml" \
+            -x "compose*.yaml" \
             -x "*.zip"
+          if unzip -Z1 "$PACKAGE" | grep -Eq '(^|/)(tests/|tests-[^/]+/|Dockerfile(\.[^/]*)?$|(docker-compose|compose)[^/]*\.ya?ml$)'; then
+            echo "ERROR: Package contains test, Docker, or Compose files"
+            unzip -Z1 "$PACKAGE" | grep -E '(^|/)(tests/|tests-[^/]+/|Dockerfile(\.[^/]*)?$|(docker-compose|compose)[^/]*\.ya?ml$)' || true
+            exit 1
+          fi
           echo "Built: $PACKAGE"
           ls -la "$PACKAGE"
           cp "$PACKAGE" tests/extension.zip
@@ -392,9 +404,11 @@ jobs:
       - name: Build J2Commerce 6 from source
         run: |
           git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
           cd /tmp/j2commerce6-src && php build/build_package.php
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          sha256sum "$ZIP"
           cp "$ZIP" "$GITHUB_WORKSPACE/plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip"
 
       - name: Build image
