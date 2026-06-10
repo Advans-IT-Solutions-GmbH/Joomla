@@ -177,6 +177,34 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose -f docker-compose.joomla6.yml down -v
 
+  official-j5-j2c4:
+    name: OSMap / official-j5-j2c4
+    runs-on: ubuntu-latest
+    needs: test-j5
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verify official J5/J2C4 matrix
+        run: |
+          if [ "${{ needs.test-j5.result }}" != "success" ]; then
+            echo "Official J5/J2C4 matrix did not pass: ${{ needs.test-j5.result }}"
+            exit 1
+          fi
+
+  official-j6-j2c6:
+    name: OSMap / official-j6-j2c6
+    runs-on: ubuntu-latest
+    needs: test-j6
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verify official J6/J2C6 matrix
+        run: |
+          if [ "${{ needs.test-j6.result }}" != "success" ]; then
+            echo "Official J6/J2C6 matrix did not pass: ${{ needs.test-j6.result }}"
+            exit 1
+          fi
+
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
