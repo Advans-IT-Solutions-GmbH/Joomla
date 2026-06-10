@@ -509,7 +509,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 }
             }
         } else {
-            // J2Commerce 6 — billing data is in #__j2commerce_orderinfos, not in #__j2commerce_orders
+            // J2Commerce 6 — billing data is in #__j2commerce_orderinfos, not in #__j2commerce_orders.
+            // FK in #__j2commerce_orderitems and #__j2commerce_orderinfos is order_id (VARCHAR),
+            // not j2commerce_order_id (the PK of #__j2commerce_orders).
             $query = $this->createDbQuery()
                 ->select(['o.*', 'oi.orderitem_name', 'oi.orderitem_sku', 'oi.orderitem_quantity', 'oi.orderitem_finalprice',
                     'inf.billing_first_name', 'inf.billing_last_name'])
@@ -830,6 +832,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('o.user_id') . ' = :userid')
                 ->bind(':userid', $userId, ParameterType::INTEGER);
         } else {
+            // FK in #__j2commerce_orderitems is order_id (VARCHAR), not j2commerce_order_id.
             $query = $this->createDbQuery()
                 ->select(['o.j2commerce_order_id', 'o.order_id AS order_number', 'o.created_on', 'o.order_total', 'o.currency_code', 'oi.product_id'])
                 ->from($db->quoteName('#__j2commerce_orders', 'o'))
@@ -913,7 +916,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $prefix = $db->getPrefix();
 
         if ($this->isJ2Commerce4()) {
-            // J2Store 4 — product-specific custom fields in #__j2store_product_customfields
+            // J2Commerce 4: optional manually-created table (see post-install step 3).
             $customTable = 'j2store_product_customfields';
             if (!in_array($prefix . $customTable, $tables, true)) {
                 return false;
@@ -925,19 +928,42 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('product_id') . ' = :productid')
                 ->where($db->quoteName('field_name') . ' = ' . $db->quote('is_lifetime_license'))
                 ->bind(':productid', $productId, ParameterType::INTEGER);
-        } else {
-            // TODO(#96): J2Commerce 6 has no direct equivalent of j2store_product_customfields.
-            // #__j2commerce_customfields is a field definition table (no product_id column).
-            // Product-specific metadata lives in #__j2commerce_metafields, but whether
-            // is_lifetime_license values are written there depends on the installation.
-            // Until the correct data model is confirmed, return false (no lifetime block).
+
+            $db->setQuery($query);
+            $fieldValue = $db->loadResult();
+
+            return $fieldValue !== null && strtolower(trim($fieldValue)) === 'yes';
+        }
+
+        // J2Commerce 6: lifetime-licence flag is stored in #__j2commerce_metafields.
+        // Schema (verified against J2Commerce 6 install.mysql.utf8.sql):
+        //   owner_id INT, owner_resource VARCHAR, metakey VARCHAR, metavalue TEXT
+        if (!in_array($prefix . 'j2commerce_metafields', $tables, true)) {
             return false;
         }
 
-        $db->setQuery($query);
-        $fieldValue = $db->loadResult();
+        try {
+            $query = $this->createDbQuery()
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__j2commerce_metafields'))
+                ->where($db->quoteName('owner_id')       . ' = :productid')
+                ->where($db->quoteName('owner_resource') . ' = ' . $db->quote('product'))
+                ->where($db->quoteName('metakey')        . ' = ' . $db->quote('is_lifetime_license'))
+                ->where('LOWER(TRIM(' . $db->quoteName('metavalue') . ')) = ' . $db->quote('yes'))
+                ->bind(':productid', $productId, ParameterType::INTEGER);
 
-        return $fieldValue !== null && strtolower(trim($fieldValue)) === 'yes';
+            $db->setQuery($query);
+
+            return (int) $db->loadResult() > 0;
+        } catch (\Exception $e) {
+            // Fail-closed: if the query fails (e.g. schema mismatch after a J2Commerce
+            // upgrade), treat the product as a lifetime license. This prevents accidental
+            // anonymization of a paying customer due to a transient DB error.
+            // The operator must resolve the underlying error before erasure can proceed.
+            Log::add('isLifetimeLicense J6 query failed — treating as lifetime license: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return true;
+        }
     }
 
     protected function formatRetentionMessage(array $retentionCheck): string
@@ -1016,24 +1042,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2store_orderinfos'))
                 ->set([
-                    $db->quoteName('billing_first_name') . ' = ' . $db->quote('Anonymized'),
-                    $db->quoteName('billing_last_name') . ' = ' . $db->quote('User'),
-                    $db->quoteName('billing_phone_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_city') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_zip') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_company') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_tax_number') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_first_name')  . ' = ' . $db->quote('Anonymized'),
+                    $db->quoteName('billing_last_name')   . ' = ' . $db->quote('User'),
+                    $db->quoteName('billing_middle_name') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_phone_1')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_phone_2')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_fax')         . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_address_1')   . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_address_2')   . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_city')        . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_zip')         . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_company')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_tax_number')  . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_last_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_city') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_zip') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_company') . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_last_name')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_middle_name'). ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_phone_1')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_phone_2')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_fax')        . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_address_1')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_address_2')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_city')       . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_zip')        . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_company')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_tax_number') . ' = ' . $db->quote(''),
+                    $db->quoteName('all_billing')         . ' = ' . $db->quote(''),
+                    $db->quoteName('all_shipping')        . ' = ' . $db->quote(''),
+                    $db->quoteName('all_payment')         . ' = ' . $db->quote(''),
                 ])
                 ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
             $db->setQuery($query);
@@ -1062,24 +1097,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2commerce_orderinfos'))
                 ->set([
-                    $db->quoteName('billing_first_name') . ' = ' . $db->quote('Anonymized'),
-                    $db->quoteName('billing_last_name') . ' = ' . $db->quote('User'),
-                    $db->quoteName('billing_phone_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_city') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_zip') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_company') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_tax_number') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_first_name')  . ' = ' . $db->quote('Anonymized'),
+                    $db->quoteName('billing_last_name')   . ' = ' . $db->quote('User'),
+                    $db->quoteName('billing_middle_name') . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_phone_1')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_phone_2')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_fax')         . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_address_1')   . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_address_2')   . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_city')        . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_zip')         . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_company')     . ' = ' . $db->quote(''),
+                    $db->quoteName('billing_tax_number')  . ' = ' . $db->quote(''),
                     $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_last_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_1') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_2') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_city') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_zip') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_company') . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_last_name')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_middle_name'). ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_phone_1')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_phone_2')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_fax')        . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_address_1')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_address_2')  . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_city')       . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_zip')        . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_company')    . ' = ' . $db->quote(''),
+                    $db->quoteName('shipping_tax_number') . ' = ' . $db->quote(''),
+                    $db->quoteName('all_billing')         . ' = ' . $db->quote(''),
+                    $db->quoteName('all_shipping')        . ' = ' . $db->quote(''),
+                    $db->quoteName('all_payment')         . ' = ' . $db->quote(''),
                 ])
                 ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
             $db->setQuery($query);

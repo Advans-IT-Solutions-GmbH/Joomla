@@ -4,14 +4,15 @@
  *
  * Verifies that:
  * - Bundled override source files are present in the installed plugin
- * - Overrides were deployed to all active frontend templates on first install
  * - Deployed overrides contain the PluginHelper check (not empty stubs)
  * - No override was deployed to admin templates (client_id = 1)
+ *
+ * Stack-aware: J2Commerce 4/5 uses com_j2store paths; J2Commerce 6 uses com_j2commerce.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
-$_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 use Joomla\CMS\Factory;
@@ -19,8 +20,8 @@ use Joomla\CMS\Factory;
 class TemplateOverridesTest
 {
     private $db;
-    private $passed = 0;
-    private $failed = 0;
+    private int $passed = 0;
+    private int $failed = 0;
 
     private const OVERRIDE_FILES = [
         'checkout/default_shipping_payment.php',
@@ -45,15 +46,30 @@ class TemplateOverridesTest
         return false;
     }
 
+    /** Detect J2Commerce 6 by presence of #__j2commerce_products table. */
+    private function isJ6(): bool
+    {
+        static $result = null;
+        if ($result === null) {
+            $tables = $this->db->getTableList();
+            $result = in_array($this->db->getPrefix() . 'j2commerce_products', $tables, true);
+        }
+        return $result;
+    }
+
     public function run(): bool
     {
         echo "=== Template Override Tests ===\n\n";
 
-        $pluginOverrideDir = JPATH_BASE . '/plugins/privacy/j2commerce/overrides/com_j2store';
+        $comName           = $this->isJ6() ? 'com_j2commerce' : 'com_j2store';
+        $pluginOverrideDir = JPATH_BASE . '/plugins/privacy/j2commerce/overrides/' . $comName;
+
+        echo "Stack: " . ($this->isJ6() ? 'J2Commerce 6 (com_j2commerce)' : 'J2Commerce 4/5 (com_j2store)') . "\n\n";
 
         // 1. Source files present in installed plugin
         echo "-- Source files in plugin --\n";
-        $this->test('Override source directory exists', is_dir($pluginOverrideDir));
+        $this->test('Override source directory exists', is_dir($pluginOverrideDir),
+            "Expected: $pluginOverrideDir");
 
         foreach (self::OVERRIDE_FILES as $file) {
             $this->test(
@@ -71,7 +87,7 @@ class TemplateOverridesTest
                 $this->test(
                     "Source $file uses PluginHelper",
                     strpos($content, 'PluginHelper') !== false,
-                    'PluginHelper check missing — override may not conditionally render privacy content'
+                    'PluginHelper check missing'
                 );
             }
         }
@@ -92,13 +108,13 @@ class TemplateOverridesTest
         }
 
         foreach ($templates as $tpl) {
-            $tplBase = JPATH_BASE . '/templates/' . $tpl . '/html/com_j2store';
+            $tplBase = JPATH_BASE . '/templates/' . $tpl . '/html/' . $comName;
             foreach (self::OVERRIDE_FILES as $file) {
                 $dest = $tplBase . '/' . $file;
                 $this->test(
                     "[$tpl] $file deployed",
                     file_exists($dest),
-                    "File not found: templates/$tpl/html/com_j2store/$file"
+                    "File not found: templates/$tpl/html/$comName/$file"
                 );
             }
         }
@@ -115,11 +131,11 @@ class TemplateOverridesTest
         $adminTemplates = $this->db->loadColumn() ?: [];
 
         foreach ($adminTemplates as $tpl) {
-            $dest = JPATH_BASE . '/administrator/templates/' . $tpl . '/html/com_j2store';
+            $dest = JPATH_BASE . '/administrator/templates/' . $tpl . '/html/' . $comName;
             $this->test(
-                "[$tpl] no com_j2store overrides in admin template",
+                "[$tpl] no $comName overrides in admin template",
                 !is_dir($dest),
-                "Unexpected directory: administrator/templates/$tpl/html/com_j2store"
+                "Unexpected directory: administrator/templates/$tpl/html/$comName"
             );
         }
 

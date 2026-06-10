@@ -10,6 +10,10 @@
 
 GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data. Supports J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables) via runtime detection.
 
+### Compatibility Test Scope
+
+The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
+
 ## Features
 
 - **Checkout Consent Checkbox** — Privacy consent during checkout via template override
@@ -27,37 +31,6 @@ GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrate
 - PHP 8.1 or higher
 - J2Commerce 4.0 or higher (J2Commerce 6 supported)
 - Joomla Privacy Component enabled (`com_privacy`)
-
----
-
-## Table of Contents
-
-### Quick Start
-1. [Installation](#installation)
-2. [Quick Setup Guide](#quick-setup-guide)
-3. [Configuration](#configuration)
-4. [Joomla Privacy Framework](#joomla-privacy-framework)
-
-### Core Features
-4. [Features Overview](#features-overview)
-5. [How It Works](#how-it-works)
-6. [Lifetime License Detection](#lifetime-license-detection)
-7. [Template Integration](#template-integration)
-
-### User Guides
-8. [Usage Guide](#usage-guide)
-9. [Administrator Guide](#administrator-guide)
-10. [Workflow Examples](#workflow-examples)
-
-### Configuration
-11. [Legal Basis Examples](#legal-basis-examples)
-12. [Multi-Language Support](#multi-language-support)
-13. [J2Store Custom Fields](#j2store-custom-fields)
-
-### Technical
-14. [Testing](#testing)
-15. [Development](#development)
-16. [Support](#support)
 
 ---
 
@@ -362,7 +335,7 @@ This step is only required if your shop sells products with perpetual (lifetime)
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
-| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
+| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
 | `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
 **To mark products as lifetime licenses, navigate to:**
@@ -514,7 +487,7 @@ Successful display of the retention notification confirms correct implementation
 Payment data (credit card details, bank information) is stored by payment service providers (Stripe, PayPal, etc.), not by this system. For payment data inquiries, users must contact the respective payment provider directly.
 
 **What gets anonymized (only for orders OUTSIDE retention period):**
-- Email address → `anonymized@example.com`
+- Email address → `anonymized@deleted.invalid`
 - Billing first/last name → `Anonymized` / `User`
 - Shipping first/last name → (cleared)
 - Phone → (cleared)
@@ -597,10 +570,11 @@ WHERE product_id = ?
 AND field_name = 'is_lifetime_license'
 
 -- J2Commerce 6.x
-SELECT field_value 
-FROM #__j2commerce_customfields 
-WHERE product_id = ? 
-AND field_name = 'is_lifetime_license'
+SELECT metavalue
+FROM #__j2commerce_metafields
+WHERE owner_resource = 'product'
+AND owner_id = ?
+AND metakey = 'is_lifetime_license'
 ```
 
 **Result:**
@@ -1139,7 +1113,7 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ### Technical Details
 
-**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_customfields` (J2Commerce 6.x)
+**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x)
 
 **Structure (J2Commerce 4.x):**
 ```sql
@@ -1152,23 +1126,77 @@ CREATE TABLE `#__j2store_product_customfields` (
 );
 ```
 
-**Example Data:**
+**Example Data (J2Commerce 4.x):**
 ```sql
 INSERT INTO `#__j2store_product_customfields` VALUES
 (1, 123, 'is_lifetime_license', 'Yes'),
 (2, 456, 'is_lifetime_license', 'No');
 ```
 
-**Query:**
+**Query (J2Commerce 4.x):**
 ```sql
-SELECT field_value 
-FROM #__j2store_product_customfields 
-WHERE product_id = 123 
+SELECT field_value
+FROM #__j2store_product_customfields
+WHERE product_id = 123
 AND field_name = 'is_lifetime_license';
 -- Result: 'Yes'
 ```
 
+**Query (J2Commerce 6.x):**
+```sql
+SELECT metavalue
+FROM #__j2commerce_metafields
+WHERE owner_resource = 'product'
+AND owner_id = 123
+AND metakey = 'is_lifetime_license';
+-- Result: 'yes'
+```
+
 ---
+
+## Development
+
+### Building
+
+```bash
+./build.sh
+```
+
+Creates: `plg_privacy_j2commerce.zip`
+
+## Automated Testing
+
+This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
+
+### Test Suites
+
+1. **Installation** — plugin registration in DB, file deployment, template overrides
+2. **Configuration** — plugin params, language files, XML manifest
+3. **Plugin Class** — method existence and class structure
+4. **Data Export** — `onPrivacyExportRequest` output validation
+5. **Data Integration** — test data setup and CRUD operations
+6. **Data Anonymization** — `onPrivacyRemoveData` retention logic
+7. **GDPR Compliance** — all DSGVO-relevant methods and hooks
+8. **Template Overrides** — override source files and deployment verification
+9. **AutoCleanup Task** — scheduled task registration and execution
+10. **AcyMailing Integration** — newsletter consent sync
+11. **Uninstall** — clean removal from database and filesystem
+
+### Running Tests Locally
+
+```bash
+cd tests
+docker compose up -d
+timeout 300 bash -c 'until docker exec plg_privacy_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose down -v
+
+# Joomla 6
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec plg_privacy_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
+```
 
 ## Troubleshooting
 
@@ -1193,56 +1221,6 @@ AND field_name = 'is_lifetime_license';
 - **Status:** Recurring subscription lifecycle management not included in current version
 - **Recommended Approach:** Apply standard accounting retention periods to subscription orders
 - **Enterprise Requirements:** Contact Advans IT Solutions for custom subscription handling implementation
-
-## Automated Testing
-
-This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
-
-### Test Suites
-
-1. **Installation** — Plugin registration in DB, file deployment, template overrides
-2. **Configuration** — Plugin params, language files, XML manifest
-3. **Plugin Class** — Method existence and class structure
-4. **Data Integration** — Test data setup and CRUD operations
-5. **Privacy Export** — `onPrivacyExportRequest` output validation
-6. **Data Anonymization** — `onPrivacyRemoveData` retention logic
-7. **GDPR Compliance** — All DSGVO-relevant methods and hooks
-8. **Template Overrides** — Override source files and deployment verification
-9. **Uninstall** — Clean removal from database and filesystem
-
-### Running Tests Locally
-
-```bash
-cd tests
-docker compose up -d
-./run-tests.sh all
-docker compose down -v
-```
-
-## Development
-
-### Build
-
-```bash
-./build.sh
-```
-
-Creates: `plg_privacy_j2commerce.zip`
-
-### Key Classes
-
-**J2Commerce.php:**
-- `onPrivacyExportRequest()` — Export user data
-- `onPrivacyCanRemoveData()` — Check if deletion allowed
-- `onPrivacyRemoveData()` — Perform deletion/anonymization
-- `checkRetentionPeriod()` — Check retention periods
-- `isLifetimeLicense()` — Check custom field
-
-**AutoCleanupTask.php:**
-- `autoCleanup()` — Main cleanup logic
-- `hasLifetimeLicense()` — Check for lifetime licenses
-- `partialAnonymizeUserData()` — Keep email, delete rest
-- `anonymizeUserData()` — Full anonymization
 
 ## Support & Contact
 
