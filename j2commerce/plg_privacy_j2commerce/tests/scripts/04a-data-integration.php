@@ -139,7 +139,12 @@ class DataIntegrationTest
             'user_id' => 999,
             'session_id' => 'test-delete-session',
             'cart_type' => 'cart',
-            'created_on' => date('Y-m-d H:i:s')
+            'created_on' => date('Y-m-d H:i:s'),
+            'modified_on' => date('Y-m-d H:i:s'),
+            'customer_ip' => '127.0.0.1',
+            'cart_params' => '{}',
+            'cart_browser' => '{}',
+            'cart_analytics' => '{}',
         ];
         $this->db->insertObject('#__' . $this->tp . '_carts', $testCart, $this->tp . '_cart_id');
         $cartId = $this->db->insertid();
@@ -149,6 +154,10 @@ class DataIntegrationTest
             'cart_id' => $cartId,
             'product_id' => 1,
             'variant_id' => 1,
+            'vendor_id' => 0,
+            'product_type' => 'simple',
+            'cartitem_params' => '{}',
+            'product_options' => '[]',
             'product_qty' => 1.0000
         ];
         $this->db->insertObject('#__' . $this->tp . '_cartitems', $testCartItem, $this->tp . '_cartitem_id');
@@ -175,17 +184,37 @@ class DataIntegrationTest
         // Insert order + orderinfo
         $testOrder = (object) [
             'order_id' => 'TEST-ANON-001',
+            'cart_id' => 0,
+            'invoice_prefix' => 'INV-',
+            'invoice_number' => 1001,
+            'token' => 'test-anon-token',
             'user_id' => 999,
             'user_email' => 'anon@test.com',
             'order_total' => 100.00000,
             'order_subtotal' => 90.00000,
             'order_tax' => 10.00000,
             'order_shipping' => 0.00000,
+            'order_shipping_tax' => 0.00000,
             'order_discount' => 0.00000,
+            'order_credit' => 0.00000,
+            'order_surcharge' => 0.00000,
+            'orderpayment_type' => 'manual',
+            'transaction_id' => '',
+            'transaction_status' => 'confirmed',
+            'transaction_details' => '',
+            'currency_id' => 1,
             'order_state_id' => 1,
+            'order_state' => 'confirmed',
             'currency_code' => 'CHF',
             'currency_value' => 1.00000000,
-            'created_on' => date('Y-m-d H:i:s', strtotime('-5 years'))
+            'ip_address' => '127.0.0.1',
+            'is_shippable' => 0,
+            'is_including_tax' => 1,
+            'customer_note' => '',
+            'customer_language' => '*',
+            'customer_group' => 'default',
+            'created_on' => date('Y-m-d H:i:s', strtotime('-5 years')),
+            'modified_on' => date('Y-m-d H:i:s', strtotime('-5 years')),
         ];
         $this->db->insertObject('#__' . $this->tp . '_orders', $testOrder, $this->tp . '_order_id');
         $orderPk = $this->db->insertid();
@@ -305,6 +334,11 @@ class DataIntegrationTest
                 'session_id' => 'delete-test-' . uniqid(),
                 'cart_type'  => 'cart',
                 'created_on' => date('Y-m-d H:i:s'),
+                'modified_on' => date('Y-m-d H:i:s'),
+                'customer_ip' => '127.0.0.1',
+                'cart_params' => '{}',
+                'cart_browser' => '{}',
+                'cart_analytics' => '{}',
             ];
             $this->db->insertObject('#__' . $this->tp . '_carts', $cart, $cartPkCol);
             $cartId    = (int) $this->db->insertid();
@@ -314,6 +348,10 @@ class DataIntegrationTest
                 'cart_id'     => $cartId,
                 'product_id'  => 1,
                 'variant_id'  => 1,
+                'vendor_id'   => 0,
+                'product_type' => 'simple',
+                'cartitem_params' => '{}',
+                'product_options' => '[]',
                 'product_qty' => 1.0,
             ];
             $this->db->insertObject('#__' . $this->tp . '_cartitems', $item, $cartitemPkCol);

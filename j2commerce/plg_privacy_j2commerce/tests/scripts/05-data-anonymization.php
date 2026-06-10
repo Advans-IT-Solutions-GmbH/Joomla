@@ -83,25 +83,40 @@ class DataAnonymizationTest
         $orderinfosTable = $isJ6 ? '#__j2commerce_orderinfos' : '#__j2store_orderinfos';
         $orderPkCol    = $isJ6 ? 'j2commerce_order_id'    : 'j2store_order_id';
         $orderinfoPkCol = $isJ6 ? 'j2commerce_orderinfo_id' : 'j2store_orderinfo_id';
-        $orderStateCol = $isJ6 ? 'order_state'             : 'order_state_id';
-        $orderStateVal = $isJ6 ? 'confirmed'               : 1;
-
         $orderId = 'ANON-TEST-' . time();
         $testOrder = (object) [
             'order_id'       => $orderId,
+            'cart_id'        => 0,
+            'invoice_prefix' => 'INV-',
+            'invoice_number' => 5001,
+            'token'          => 'anon-token',
             'user_id'        => 998,
             'user_email'     => 'private@example.com',
             'order_total'    => 50.00000,
             'order_subtotal' => 45.00000,
             'order_tax'      => 5.00000,
             'order_shipping' => 0.00000,
+            'order_shipping_tax' => 0.00000,
             'order_discount' => 0.00000,
-            $orderStateCol   => $orderStateVal,
+            'order_credit'   => 0.00000,
+            'order_surcharge' => 0.00000,
+            'orderpayment_type' => 'manual',
+            'transaction_id' => '',
+            'transaction_status' => 'confirmed',
+            'transaction_details' => '',
+            'currency_id'    => 1,
+            'order_state_id' => 1,
+            'order_state'    => 'confirmed',
             'currency_code'  => 'CHF',
             'currency_value' => 1.00000000,
             'customer_note'  => 'Please deliver before 5pm',
             'ip_address'     => '192.168.1.100',
+            'is_shippable'   => 0,
+            'is_including_tax' => 1,
+            'customer_language' => '*',
+            'customer_group' => 'default',
             'created_on'     => date('Y-m-d H:i:s', strtotime('-12 years')),
+            'modified_on'    => date('Y-m-d H:i:s', strtotime('-12 years')),
         ];
         $this->db->insertObject($ordersTable, $testOrder, $orderPkCol);
         $orderPk = $this->db->insertid();

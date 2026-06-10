@@ -74,6 +74,11 @@ class DataIsolationTest
                 'session_id' => 'iso-test-' . $userId . '-' . uniqid(),
                 'cart_type'  => 'cart',
                 'created_on' => date('Y-m-d H:i:s'),
+                'modified_on' => date('Y-m-d H:i:s'),
+                'customer_ip' => '127.0.0.1',
+                'cart_params' => '{}',
+                'cart_browser' => '{}',
+                'cart_analytics' => '{}',
             ];
             $this->db->insertObject('#__' . $this->tp . '_carts', $cart, $cartPkCol);
             $cartId = (int) $this->db->insertid();
@@ -82,6 +87,10 @@ class DataIsolationTest
                 'cart_id'     => $cartId,
                 'product_id'  => 1,
                 'variant_id'  => 1,
+                'vendor_id'   => 0,
+                'product_type' => 'simple',
+                'cartitem_params' => '{}',
+                'product_options' => '[]',
                 'product_qty' => 1.0,
             ];
             $this->db->insertObject('#__' . $this->tp . '_cartitems', $item, $cartitemPkCol);

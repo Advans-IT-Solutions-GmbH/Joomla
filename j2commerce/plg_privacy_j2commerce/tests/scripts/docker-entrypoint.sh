@@ -97,23 +97,18 @@ fi
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
 
-# Install J2Commerce (real installation from GitHub release)
-echo "Installing J2Commerce..."
-if [ -f /tmp/j2commerce.zip ]; then
-    cp /tmp/j2commerce.zip /var/www/html/tmp/j2commerce.zip
-    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
-        echo "J2Commerce installed via Joomla CLI"
+# Install J2Store/J2Commerce 4 (real installation from official release)
+echo "Installing J2Store/J2Commerce 4..."
+if [ -f /tmp/j2commerce4.zip ]; then
+    cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip 2>&1; then
+        echo "J2Store/J2Commerce 4 installed via Joomla CLI"
     else
-        echo "J2Commerce CLI install failed, trying direct SQL schema import..."
-        # Fallback: download and import SQL schema directly from GitHub
-        curl -sL "https://raw.githubusercontent.com/j2commerce/j2cart/main/administrator/components/com_j2store/sql/install/mysql/install.j2store.sql" \
-            | sed "s/#__/${DB_PREFIX}/g" \
-            | mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null \
-            && echo "J2Commerce schema imported from GitHub" \
-            || echo "WARNING: J2Commerce schema import failed"
+        echo "ERROR: J2Store/J2Commerce 4 installation FAILED"
+        exit 1
     fi
 else
-    echo "ERROR: J2Commerce ZIP not found at /tmp/j2commerce.zip"
+    echo "ERROR: J2Store/J2Commerce 4 ZIP not found at /tmp/j2commerce4.zip"
     exit 1
 fi
 
