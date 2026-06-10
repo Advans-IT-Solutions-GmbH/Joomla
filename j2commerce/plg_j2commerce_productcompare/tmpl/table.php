@@ -12,7 +12,7 @@
  *                         ->options     (array)   key/value pairs of product options
  *
  * Template override path:
- *   templates/{your-template}/html/plg_j2store_productcompare/table.php
+ *   templates/{your-template}/html/plg_j2commerce_productcompare/table.php
  */
 defined('_JEXEC') or die;
 
@@ -23,6 +23,14 @@ if (empty($products)) : ?>
     <p><?php echo Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_NO_PRODUCTS'); ?></p>
 <?php return;
 endif;
+
+$formatPrice = static function ($value): string {
+    try {
+        return HTMLHelper::_('currency.format', $value);
+    } catch (\Throwable $e) {
+        return number_format((float) $value, 2);
+    }
+};
 ?>
 <div class="table-responsive">
     <table class="j2store-comparison-table">
@@ -44,7 +52,7 @@ endif;
             <tr>
                 <th scope="row"><?php echo Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_PRICE'); ?></th>
                 <?php foreach ($products as $product) : ?>
-                    <td><?php echo HTMLHelper::_('currency.format', $product->price ?? 0); ?></td>
+                    <td><?php echo $formatPrice($product->price ?? 0); ?></td>
                 <?php endforeach; ?>
             </tr>
             <tr>

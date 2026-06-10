@@ -18,6 +18,7 @@ services:
       JOOMLA_ADMIN_USERNAME: admin
       JOOMLA_ADMIN_PASSWORD: Admin123456789!@#
       JOOMLA_ADMIN_EMAIL: admin@test.local
+      EXPECTED_CORE_COMPONENT: ${EXPECTED_CORE_COMPONENT:-}
     volumes:
       - joomla_data:/var/www/html
     depends_on:

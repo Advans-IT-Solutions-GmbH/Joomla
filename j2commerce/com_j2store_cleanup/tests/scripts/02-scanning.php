@@ -203,6 +203,21 @@ class ScanningTest
         $this->test('Clean code: no issues on J5', count($this->scanForIssues($d, $p5)) === 0);
         $this->test('Clean code: no issues on J4', count($this->scanForIssues($d, $p4)) === 0);
 
+        // --- $this->app pattern (J6 removal) ---
+        echo "\n--- \$this->app pattern ---\n";
+        $d = $this->makeDir('j6_thisapp_getdocument');
+        file_put_contents($d . '/a.php', "<?php\n\$this->app->getDocument();\n");
+        $this->test('J6: $this->app->getDocument() flagged', count($this->scanForIssues($d, $p6)) > 0);
+
+        $d = $this->makeDir('j6_thisapp_getinput');
+        file_put_contents($d . '/a.php', "<?php\n\$this->app->getInput();\n");
+        $this->test('J6: $this->app->getInput() flagged', count($this->scanForIssues($d, $p6)) > 0);
+
+        // $this->application (with 'lication' suffix) must NOT be flagged — it's a valid J5 pattern
+        $d = $this->makeDir('j5_thisapplication');
+        file_put_contents($d . '/a.php', "<?php\n\$this->application->getDocument();\n");
+        $this->test('J5: $this->application NOT flagged', count($this->scanForIssues($d, $p6)) === 0);
+
         // --- F0F not flagged (J2Commerce ships it) ---
         echo "\n--- J2Commerce F0F ---\n";
         $d = $this->makeDir('fof');

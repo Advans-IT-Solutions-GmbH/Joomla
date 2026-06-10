@@ -2,6 +2,7 @@
 
 [![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml)
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml)
+[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
@@ -23,10 +24,14 @@ Until now, there was no automated way to remove old J2Store extensions that are 
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 4.x, 5.x or 6.x
 - PHP 8.1 or higher
 - Administrator access
 - ⚠️ Backup recommended before use
+
+## Joomla 6 Compatibility
+
+On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The component uses `Factory::getContainer()->get(DatabaseInterface::class)` and a `createDbQuery()` helper that calls `$db->createQuery()` on Joomla 6 and `$db->getQuery(true)` on Joomla 4/5. No configuration required — the correct API is selected at runtime.
 
 ## Installation
 1. Download `com_j2store_cleanup.zip`
@@ -96,8 +101,8 @@ This component has automated tests that run on every push via GitHub Actions.
 
 1. **Installation** - Component registration, file deployment
 2. **Scanning** - Version detection, authorUrl/authorEmail checks, protected extensions
-3. **Cleanup** - Extension removal, batch removal, isolation tests
-4. **Component Functions** - Main file function validation
+3. **Cleanup** - Extension removal, batch removal, isolation tests (Joomla 5 and 6)
+4. **Component Functions** - Main file function validation (`createDbQuery`, `cleanupExtensions`)
 5. **Safety Checks** - Protected extensions list, edge cases
 6. **Uninstall** - Component removal, verification
 

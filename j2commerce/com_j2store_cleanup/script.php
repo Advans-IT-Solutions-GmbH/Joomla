@@ -41,7 +41,7 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
         $updateUrl = 'https://raw.githubusercontent.com/advansit/Joomla/main/j2commerce/com_j2store_cleanup/updates/update.xml';
         $element = 'com_j2store_cleanup';
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select($db->quoteName('extension_id'))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('element') . ' = :element')
@@ -52,7 +52,7 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
 
         if (!$extensionId) { return; }
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select($db->quoteName('update_site_id'))
             ->from($db->quoteName('#__update_sites'))
             ->where($db->quoteName('location') . ' = :url')
@@ -61,12 +61,12 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
         $siteId = (int) $db->loadResult();
 
         if ($siteId) {
-            $query = $db->getQuery(true)->select('COUNT(*)')->from($db->quoteName('#__update_sites_extensions'))
+            $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__update_sites_extensions'))
                 ->where($db->quoteName('update_site_id') . ' = :siteId')->where($db->quoteName('extension_id') . ' = :extId')
                 ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
             $db->setQuery($query);
             if (!(int) $db->loadResult()) {
-                $query = $db->getQuery(true)->insert($db->quoteName('#__update_sites_extensions'))
+                $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites_extensions'))
                     ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
                     ->values(':siteId, :extId')
                     ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
@@ -78,7 +78,7 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
 
         $name = 'J2Store Cleanup';
         $sType = 'extension';
-        $query = $db->getQuery(true)->insert($db->quoteName('#__update_sites'))
+        $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites'))
             ->columns([$db->quoteName('name'), $db->quoteName('type'), $db->quoteName('location'), $db->quoteName('enabled')])
             ->values(':name, :type, :url, 1')
             ->bind(':name', $name)->bind(':type', $sType)->bind(':url', $updateUrl);
@@ -86,11 +86,19 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
         $db->execute();
         $siteId = (int) $db->insertid();
 
-        $query = $db->getQuery(true)->insert($db->quoteName('#__update_sites_extensions'))
+        $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites_extensions'))
             ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
             ->values(':siteId, :extId')
             ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
         $db->setQuery($query);
         $db->execute();
+    }
+
+    /**
+     * Creates a query object compatible with Joomla 5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
     }
 }

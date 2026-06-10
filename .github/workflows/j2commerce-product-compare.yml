@@ -16,14 +16,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build
         run: |
           cd j2commerce/plg_j2commerce_productcompare
           chmod +x build.sh
           ./build.sh
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: extension-package
           path: j2commerce/plg_j2commerce_productcompare/tests/extension.zip
@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -44,8 +44,8 @@ jobs:
         run: |
           find j2commerce/plg_j2commerce_productcompare -name "*.php" -exec php -l {} \;
 
-  test:
-    name: ${{ matrix.name }}
+  test-j5:
+    name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -65,15 +65,19 @@ jobs:
             script: 'plugin-class'
           - name: '05 - AJAX Endpoint'
             script: 'ajax'
-          - name: '06 - Uninstall'
+          - name: '06 - getProductsData'
+            script: 'getproductsdata'
+          - name: '07 - Asset Injection'
+            script: 'asset-injection'
+          - name: '08 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: j2commerce/plg_j2commerce_productcompare/tests/
-      - name: Start environment
+      - name: Start environment (J5)
         run: |
           cd j2commerce/plg_j2commerce_productcompare/tests
           docker compose up -d
@@ -84,17 +88,16 @@ jobs:
         if: always()
         run: |
           cd j2commerce/plg_j2commerce_productcompare/tests
-          echo "=== Joomla Container Logs ==="
           docker compose logs joomla 2>&1 | tail -100 || true
       - name: Run tests
         run: |
           cd j2commerce/plg_j2commerce_productcompare/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ${{ matrix.script }}-logs
+          name: j5-${{ matrix.script }}-logs
           path: j2commerce/plg_j2commerce_productcompare/tests/test-results/*.txt
       - name: Cleanup
         if: always()
@@ -102,16 +105,119 @@ jobs:
           cd j2commerce/plg_j2commerce_productcompare/tests
           docker compose down -v
 
+  test-j6:
+    name: ${{ matrix.name }} (J6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Configuration'
+            script: 'configuration'
+          - name: '03 - Media Files'
+            script: 'media'
+          - name: '04 - Plugin Class'
+            script: 'plugin-class'
+          - name: '05 - AJAX Endpoint'
+            script: 'ajax'
+          - name: '06 - getProductsData'
+            script: 'getproductsdata'
+          - name: '07 - Asset Injection'
+            script: 'asset-injection'
+          - name: '08 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension-package
+          path: j2commerce/plg_j2commerce_productcompare/tests/
+      - name: Setup PHP for J2Commerce build
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: zip
+      - name: Build J2Commerce 6 from source
+        run: |
+          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          cd /tmp/j2commerce6-src && php build/build_package.php
+          ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          sha256sum "$ZIP"
+          cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/plg_j2commerce_productcompare/tests/j2commerce6.zip"
+      - name: Start environment (J6)
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          docker compose -f docker-compose.joomla6.yml up -d
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run tests
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          chmod +x run-tests.sh
+          J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh ${{ matrix.script }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: j6-${{ matrix.script }}-logs
+          path: j2commerce/plg_j2commerce_productcompare/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          docker compose -f docker-compose.joomla6.yml down -v
+
+  official-j5-j2c4:
+    name: Product Compare / official-j5-j2c4
+    runs-on: ubuntu-latest
+    needs: test-j5
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verify official J5/J2C4 matrix
+        run: |
+          if [ "${{ needs.test-j5.result }}" != "success" ]; then
+            echo "Official J5/J2C4 matrix did not pass: ${{ needs.test-j5.result }}"
+            exit 1
+          fi
+
+  official-j6-j2c6:
+    name: Product Compare / official-j6-j2c6
+    runs-on: ubuntu-latest
+    needs: test-j6
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verify official J6/J2C6 matrix
+        run: |
+          if [ "${{ needs.test-j6.result }}" != "success" ]; then
+            echo "Official J6/J2C6 matrix did not pass: ${{ needs.test-j6.result }}"
+            exit 1
+          fi
+
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-j5, test-j6]
     if: always()
     permissions: {}
 
     steps:
       - name: Download all test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
 
@@ -127,7 +233,7 @@ jobs:
           done
 
       - name: Upload combined logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-test-logs
           path: test-artifacts/
