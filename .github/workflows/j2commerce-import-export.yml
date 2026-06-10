@@ -156,7 +156,16 @@ jobs:
       - name: Start environment (J6)
         run: |
           cd j2commerce/com_j2commerce_importexport/tests
-          docker compose -f docker-compose.joomla6.yml up -d
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_j2commerce_importexport_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
