@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -173,7 +173,7 @@ jobs:
 
       - name: Create Release
         if: steps.version.outputs.bump != 'none'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: privacy-v${{ steps.version.outputs.new }}
           make_latest: true
@@ -221,6 +221,6 @@ jobs:
 
       - name: Attest build provenance
         if: steps.version.outputs.bump != 'none'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}

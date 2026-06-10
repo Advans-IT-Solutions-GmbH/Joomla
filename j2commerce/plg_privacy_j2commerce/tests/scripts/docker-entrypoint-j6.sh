@@ -35,7 +35,7 @@ if [ ! -f /var/www/html/configuration.php ]; then
     done
 
     if [ -f /var/www/html/cli/joomla.php ]; then
-        php /var/www/html/cli/joomla.php site:install \
+        HTTP_HOST=localhost php /var/www/html/cli/joomla.php site:install \
             --db-host=mysql \
             --db-user=joomla \
             --db-pass=joomla_pass \
@@ -121,111 +121,24 @@ done
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
 
-# No public J2Commerce 6.x release exists yet. Import the minimal schema
-# required for privacy plugin tests directly.
-echo "Creating J2Commerce 6 schema..."
-mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db 2>/dev/null <<EOMINIMAL
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_orders (
-    j2commerce_order_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    order_id            VARCHAR(50)  NOT NULL,
-    user_id             INT UNSIGNED NOT NULL DEFAULT 0,
-    user_email          VARCHAR(255) NOT NULL DEFAULT '',
-    order_total         DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    order_subtotal      DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    order_tax           DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    order_shipping      DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    order_discount      DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    order_state         VARCHAR(50)  NOT NULL DEFAULT '',
-    currency_code       VARCHAR(10)  NOT NULL DEFAULT 'CHF',
-    currency_value      DECIMAL(15,8) NOT NULL DEFAULT 1.00000000,
-    customer_note       TEXT,
-    ip_address          VARCHAR(45)  NOT NULL DEFAULT '',
-    created_on          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    modified_on         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (j2commerce_order_id),
-    UNIQUE KEY uq_order_id (order_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_orderitems (
-    j2commerce_orderitem_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    order_id                VARCHAR(50)  NOT NULL,
-    product_id              INT UNSIGNED NOT NULL DEFAULT 0,
-    orderitem_name          VARCHAR(255) NOT NULL DEFAULT '',
-    orderitem_sku           VARCHAR(100) NOT NULL DEFAULT '',
-    orderitem_quantity      DECIMAL(15,4) NOT NULL DEFAULT 1.0000,
-    orderitem_price         DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    orderitem_finalprice    DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
-    PRIMARY KEY (j2commerce_orderitem_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_orderinfos (
-    j2commerce_orderinfo_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    order_id                VARCHAR(50)  NOT NULL,
-    billing_first_name      VARCHAR(100) NOT NULL DEFAULT '',
-    billing_last_name       VARCHAR(100) NOT NULL DEFAULT '',
-    billing_middle_name     VARCHAR(100) NOT NULL DEFAULT '',
-    billing_address_1       VARCHAR(255) NOT NULL DEFAULT '',
-    billing_address_2       VARCHAR(255) NOT NULL DEFAULT '',
-    billing_city            VARCHAR(100) NOT NULL DEFAULT '',
-    billing_zip             VARCHAR(20)  NOT NULL DEFAULT '',
-    billing_company         VARCHAR(255) NOT NULL DEFAULT '',
-    billing_tax_number      VARCHAR(100) NOT NULL DEFAULT '',
-    billing_phone_1         VARCHAR(50)  NOT NULL DEFAULT '',
-    billing_phone_2         VARCHAR(50)  NOT NULL DEFAULT '',
-    billing_fax             VARCHAR(50)  NOT NULL DEFAULT '',
-    shipping_first_name     VARCHAR(100) NOT NULL DEFAULT '',
-    shipping_last_name      VARCHAR(100) NOT NULL DEFAULT '',
-    shipping_middle_name    VARCHAR(100) NOT NULL DEFAULT '',
-    shipping_address_1      VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_address_2      VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_city           VARCHAR(100) NOT NULL DEFAULT '',
-    shipping_zip            VARCHAR(20)  NOT NULL DEFAULT '',
-    shipping_company        VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_tax_number     VARCHAR(100) NOT NULL DEFAULT '',
-    shipping_phone_1        VARCHAR(50)  NOT NULL DEFAULT '',
-    shipping_phone_2        VARCHAR(50)  NOT NULL DEFAULT '',
-    shipping_fax            VARCHAR(50)  NOT NULL DEFAULT '',
-    PRIMARY KEY (j2commerce_orderinfo_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_addresses (
-    j2commerce_address_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    user_id               INT UNSIGNED NOT NULL DEFAULT 0,
-    first_name            VARCHAR(100) NOT NULL DEFAULT '',
-    last_name             VARCHAR(100) NOT NULL DEFAULT '',
-    email                 VARCHAR(255) NOT NULL DEFAULT '',
-    address_1             VARCHAR(255) NOT NULL DEFAULT '',
-    address_2             VARCHAR(255) NOT NULL DEFAULT '',
-    city                  VARCHAR(100) NOT NULL DEFAULT '',
-    zip                   VARCHAR(20)  NOT NULL DEFAULT '',
-    company               VARCHAR(255) NOT NULL DEFAULT '',
-    type                  VARCHAR(20)  NOT NULL DEFAULT 'billing',
-    PRIMARY KEY (j2commerce_address_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_carts (
-    j2commerce_cart_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    user_id            INT UNSIGNED NOT NULL DEFAULT 0,
-    session_id         VARCHAR(200) NOT NULL DEFAULT '',
-    cart_type          VARCHAR(20)  NOT NULL DEFAULT 'cart',
-    created_on         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (j2commerce_cart_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS ${DB_PREFIX}j2commerce_cartitems (
-    j2commerce_cartitem_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    cart_id                INT UNSIGNED NOT NULL DEFAULT 0,
-    product_id             INT UNSIGNED NOT NULL DEFAULT 0,
-    product_qty            DECIMAL(15,4) NOT NULL DEFAULT 1.0000,
-    PRIMARY KEY (j2commerce_cartitem_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-EOMINIMAL
-echo "J2Commerce 6 schema created"
+echo "Installing J2Commerce 6 via Joomla CLI..."
+if [ -f /tmp/j2commerce6.zip ]; then
+    cp /tmp/j2commerce6.zip /var/www/html/tmp/j2commerce6.zip
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce6.zip 2>&1; then
+        echo "J2Commerce 6 installed via Joomla CLI"
+    else
+        echo "ERROR: J2Commerce 6 installation FAILED"
+        exit 1
+    fi
+else
+    echo "ERROR: J2Commerce 6 ZIP not found at /tmp/j2commerce6.zip"
+    exit 1
+fi
 
 # Install privacy plugin extension
 echo "Installing privacy plugin extension..."
 cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
     echo "Extension installed via Joomla CLI"
 else
     echo "ERROR: Extension installation FAILED"
@@ -252,33 +165,35 @@ VALUES
 (100, 'Test', 'User', 'test@example.com', 'Teststrasse 1', 'Zürich', '8000', 'billing'),
 (100, 'Test', 'User', 'test@example.com', 'Teststrasse 1', 'Zürich', '8000', 'shipping');
 
--- Order within retention period (1 year old)
-INSERT INTO ${DB_PREFIX}j2commerce_orders (order_id, user_id, user_email, order_total, order_subtotal, order_tax, order_shipping, order_discount, order_state, currency_code, currency_value, created_on)
-VALUES ('ORD-J6-2024-001', 100, 'test@example.com', 199.00000, 180.00000, 19.00000, 0.00000, 0.00000, 'confirmed', 'CHF', 1.00000000, DATE_SUB(NOW(), INTERVAL 1 YEAR));
-
--- Order outside retention period (11 years old)
-INSERT INTO ${DB_PREFIX}j2commerce_orders (order_id, user_id, user_email, order_total, order_subtotal, order_tax, order_shipping, order_discount, order_state, currency_code, currency_value, created_on)
-VALUES ('ORD-J6-2013-001', 100, 'test@example.com', 99.00000, 90.00000, 9.00000, 0.00000, 0.00000, 'confirmed', 'CHF', 1.00000000, DATE_SUB(NOW(), INTERVAL 11 YEAR));
-
--- Order infos with all PII fields (including billing_fax, billing_middle_name, etc.)
-INSERT INTO ${DB_PREFIX}j2commerce_orderinfos (order_id, billing_first_name, billing_last_name, billing_middle_name, billing_address_1, billing_city, billing_zip, billing_phone_1, billing_phone_2, billing_fax, billing_company, billing_tax_number, shipping_first_name, shipping_last_name, shipping_middle_name, shipping_address_1, shipping_city, shipping_zip, shipping_phone_1, shipping_phone_2, shipping_fax, shipping_tax_number)
-VALUES
-('ORD-J6-2024-001', 'Test', 'User', 'M.', 'Teststrasse 1', 'Zürich', '8000', '+41 44 123 45 67', '+41 79 123 45 67', '+41 44 123 45 68', 'Test AG', 'CHE-123.456.789', 'Test', 'User', 'M.', 'Teststrasse 1', 'Zürich', '8000', '+41 44 123 45 67', '+41 79 123 45 67', '+41 44 123 45 68', 'CHE-123.456.789'),
-('ORD-J6-2013-001', 'Test', 'User', 'M.', 'Alte Strasse 5', 'Bern', '3000', '+41 31 987 65 43', '', '', 'Test AG', '', 'Test', 'User', '', 'Alte Strasse 5', 'Bern', '3000', '+41 31 987 65 43', '', '', '');
-
--- Order items
-INSERT INTO ${DB_PREFIX}j2commerce_orderitems (order_id, product_id, orderitem_sku, orderitem_name, orderitem_quantity, orderitem_price, orderitem_finalprice)
-VALUES
-('ORD-J6-2024-001', 1, 'PROD-J6-001', 'Test Product J6', 1.0000, 180.00000, 199.00000),
-('ORD-J6-2013-001', 2, 'PROD-J6-002', 'Old Product J6', 1.0000, 90.00000, 99.00000);
-
 -- Cart
-INSERT INTO ${DB_PREFIX}j2commerce_carts (user_id, session_id, cart_type, created_on)
-VALUES (100, 'test-session-j6-123', 'cart', NOW());
+INSERT INTO ${DB_PREFIX}j2commerce_carts (user_id, session_id, cart_type, created_on, modified_on, customer_ip, cart_params, cart_browser, cart_analytics)
+VALUES (100, 'test-session-j6-123', 'cart', NOW(), NOW(), '127.0.0.1', '{}', '{}', '{}');
+SET @privacy_cart_id = LAST_INSERT_ID();
 
 -- Cart item
-INSERT INTO ${DB_PREFIX}j2commerce_cartitems (cart_id, product_id, product_qty)
-VALUES (LAST_INSERT_ID(), 1, 2.0000);
+INSERT INTO ${DB_PREFIX}j2commerce_cartitems (cart_id, product_id, variant_id, vendor_id, product_type, cartitem_params, product_qty, product_options)
+VALUES (@privacy_cart_id, 1, 1, 0, 'simple', '{}', 2.0000, '[]');
+SET @privacy_cartitem_id = LAST_INSERT_ID();
+
+-- Order within retention period (1 year old)
+INSERT INTO ${DB_PREFIX}j2commerce_orders (order_id, cart_id, invoice_prefix, invoice_number, token, user_id, user_email, order_total, order_subtotal, order_tax, order_shipping, order_shipping_tax, order_discount, order_credit, order_surcharge, orderpayment_type, transaction_id, transaction_status, transaction_details, currency_id, currency_code, currency_value, ip_address, is_shippable, is_including_tax, customer_note, customer_language, customer_group, order_state_id, order_state, created_on, modified_on)
+VALUES ('ORD-J6-2024-001', @privacy_cart_id, 'INV-', 2024001, 'token-2024', 100, 'test@example.com', 199.00000, 180.00000, 19.00000, 0.00000, 0.00000, 0.00000, 0.00000, 0.00000, 'manual', '', 'confirmed', '', 1, 'CHF', 1.00000, '127.0.0.1', 0, 1, '', '*', 'default', 1, 'confirmed', DATE_SUB(NOW(), INTERVAL 1 YEAR), DATE_SUB(NOW(), INTERVAL 1 YEAR));
+
+-- Order outside retention period (11 years old)
+INSERT INTO ${DB_PREFIX}j2commerce_orders (order_id, cart_id, invoice_prefix, invoice_number, token, user_id, user_email, order_total, order_subtotal, order_tax, order_shipping, order_shipping_tax, order_discount, order_credit, order_surcharge, orderpayment_type, transaction_id, transaction_status, transaction_details, currency_id, currency_code, currency_value, ip_address, is_shippable, is_including_tax, customer_note, customer_language, customer_group, order_state_id, order_state, created_on, modified_on)
+VALUES ('ORD-J6-2013-001', @privacy_cart_id, 'INV-', 2013001, 'token-2013', 100, 'test@example.com', 99.00000, 90.00000, 9.00000, 0.00000, 0.00000, 0.00000, 0.00000, 0.00000, 'manual', '', 'confirmed', '', 1, 'CHF', 1.00000, '127.0.0.1', 0, 1, '', '*', 'default', 1, 'confirmed', DATE_SUB(NOW(), INTERVAL 11 YEAR), DATE_SUB(NOW(), INTERVAL 11 YEAR));
+
+-- Order infos with all PII fields (including billing_fax, billing_middle_name, etc.)
+INSERT INTO ${DB_PREFIX}j2commerce_orderinfos (order_id, billing_first_name, billing_last_name, billing_middle_name, billing_address_1, billing_city, billing_zip, billing_phone_1, billing_phone_2, billing_fax, billing_company, billing_tax_number, shipping_first_name, shipping_last_name, shipping_middle_name, shipping_address_1, shipping_city, shipping_zip, shipping_phone_1, shipping_phone_2, shipping_fax, shipping_tax_number, all_billing, all_shipping, all_payment)
+VALUES
+('ORD-J6-2024-001', 'Test', 'User', 'M.', 'Teststrasse 1', 'Zürich', '8000', '+41 44 123 45 67', '+41 79 123 45 67', '+41 44 123 45 68', 'Test AG', 'CHE-123.456.789', 'Test', 'User', 'M.', 'Teststrasse 1', 'Zürich', '8000', '+41 44 123 45 67', '+41 79 123 45 67', '+41 44 123 45 68', 'CHE-123.456.789', '', '', ''),
+('ORD-J6-2013-001', 'Test', 'User', 'M.', 'Alte Strasse 5', 'Bern', '3000', '+41 31 987 65 43', '', '', 'Test AG', '', 'Test', 'User', '', 'Alte Strasse 5', 'Bern', '3000', '+41 31 987 65 43', '', '', '', '', '', '');
+
+-- Order items
+INSERT INTO ${DB_PREFIX}j2commerce_orderitems (order_id, cart_id, cartitem_id, product_id, product_type, variant_id, vendor_id, orderitem_sku, orderitem_name, orderitem_attributes, orderitem_quantity, orderitem_taxprofile_id, orderitem_per_item_tax, orderitem_tax, orderitem_discount, orderitem_discount_tax, orderitem_price, orderitem_option_price, orderitem_finalprice, orderitem_finalprice_with_tax, orderitem_finalprice_without_tax, orderitem_params, created_on, created_by, orderitem_weight, orderitem_weight_total)
+VALUES
+('ORD-J6-2024-001', @privacy_cart_id, @privacy_cartitem_id, 1, 'simple', 1, 0, 'PROD-J6-001', 'Test Product J6', '', '1', 0, 0.00000, 19.00000, 0.00000, 0.00000, 180.00000, 0.00000, 199.00000, 199.00000, 180.00000, '{}', DATE_SUB(NOW(), INTERVAL 1 YEAR), 0, '0', '0'),
+('ORD-J6-2013-001', @privacy_cart_id, @privacy_cartitem_id, 2, 'simple', 2, 0, 'PROD-J6-002', 'Old Product J6', '', '1', 0, 0.00000, 9.00000, 0.00000, 0.00000, 90.00000, 0.00000, 99.00000, 99.00000, 90.00000, '{}', DATE_SUB(NOW(), INTERVAL 11 YEAR), 0, '0', '0');
 EOSQL
 echo "J2Commerce 6 test data inserted"
 

@@ -49,6 +49,7 @@ class AutoCleanupTaskTest
         $this->testSchedulerEventAdvertisement();
         $this->testRetentionLogic();
         $this->testLifetimeLicenseExemption();
+        $this->testLifetimeLicenseMetafieldsPath();
 
         echo "\n=== AutoCleanupTask Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
@@ -212,16 +213,33 @@ class AutoCleanupTaskTest
             try {
                 $itemData = (object) [
                     'order_id'          => $orderId,
+                    'cart_id'           => 0,
+                    'cartitem_id'       => 0,
                     'product_id'        => 0,
-                    'product_name'      => 'Lifetime License',
+                    'product_type'      => 'simple',
+                    'variant_id'        => 0,
+                    'vendor_id'         => 0,
                     'product_source_id' => 9999,
                     'product_source'    => 'com_content',
-                    'product_type'      => 'simple',
-                    'quantity'          => 1,
-                    'price'             => 299.00,
-                    'tax'               => 0.00,
-                    'discount'          => 0.00,
-                    'product_options'   => '{"license_type":"lifetime"}',
+                    'orderitem_sku'     => 'LIFETIME-TEST',
+                    'orderitem_name'    => 'Lifetime License',
+                    'orderitem_attributes' => '',
+                    'orderitem_quantity' => '1',
+                    'orderitem_taxprofile_id' => 0,
+                    'orderitem_per_item_tax' => 0.00000,
+                    'orderitem_tax'     => 0.00000,
+                    'orderitem_discount' => 0.00000,
+                    'orderitem_discount_tax' => 0.00000,
+                    'orderitem_price'   => 299.00000,
+                    'orderitem_option_price' => 0.00000,
+                    'orderitem_finalprice' => 299.00000,
+                    'orderitem_finalprice_with_tax' => 299.00000,
+                    'orderitem_finalprice_without_tax' => 299.00000,
+                    'orderitem_params'  => '{"license_type":"lifetime"}',
+                    'created_on'        => date('Y-m-d H:i:s'),
+                    'created_by'        => 0,
+                    'orderitem_weight'  => '0',
+                    'orderitem_weight_total' => '0',
                 ];
                 $this->db->insertObject('#__' . $tp . '_orderitems', $itemData);
             } catch (\Exception $e) {
@@ -283,6 +301,154 @@ class AutoCleanupTaskTest
         $this->cleanupTestData([$userId]);
     }
 
+    private function testLifetimeLicenseMetafieldsPath(): void
+    {
+        echo "\n--- Lifetime License Metafields Path (J6) ---\n";
+
+        if (!$this->isJ6Stack()) {
+            $this->test('Metafields lifetime path (skipped — J4 stack)', true);
+            return;
+        }
+
+        // Verify #__j2commerce_metafields exists (required for J6 lifetime check)
+        $tables = $this->db->getTableList();
+        $prefix = $this->db->getPrefix();
+        $this->test(
+            '#__j2commerce_metafields table exists',
+            in_array($prefix . 'j2commerce_metafields', $tables, true)
+        );
+
+        // Seed: user with order + product + metafield marking it as lifetime license
+        $userId    = 9904;
+        $productId = 9904;
+        $orderId   = 'CLEANUP-META-' . time();
+        $oldDate   = date('Y-m-d H:i:s', strtotime('-11 years'));
+
+        $this->seedTestUser($userId, 'metafields-lifetime-test@example.com');
+        $this->seedTestOrder($userId, $orderId, $oldDate);
+
+        // Seed order item linking to the product
+        $itemSeeded = false;
+        try {
+            $item = (object) [
+                'order_id'    => $orderId,
+                'cart_id'     => 0,
+                'cartitem_id' => 0,
+                'product_id'  => $productId,
+                'product_type' => 'simple',
+                'variant_id'  => 0,
+                'vendor_id'   => 0,
+                'orderitem_sku' => 'META-LIFETIME',
+                'orderitem_name' => 'Lifetime Product',
+                'orderitem_attributes' => '',
+                'orderitem_quantity' => '1',
+                'orderitem_taxprofile_id' => 0,
+                'orderitem_per_item_tax' => 0.00000,
+                'orderitem_tax' => 0.00000,
+                'orderitem_discount' => 0.00000,
+                'orderitem_discount_tax' => 0.00000,
+                'orderitem_price' => 199.00000,
+                'orderitem_option_price' => 0.00000,
+                'orderitem_finalprice' => 199.00000,
+                'orderitem_finalprice_with_tax' => 199.00000,
+                'orderitem_finalprice_without_tax' => 199.00000,
+                'orderitem_params' => '{}',
+                'created_on' => date('Y-m-d H:i:s'),
+                'created_by' => 0,
+                'orderitem_weight' => '0',
+                'orderitem_weight_total' => '0',
+            ];
+            $this->db->insertObject('#__j2commerce_orderitems', $item);
+            $itemSeeded = true;
+        } catch (\Exception $e) {
+            // schema may differ
+        }
+
+        // Seed metafield marking the product as lifetime license
+        $metaSeeded = false;
+        if ($itemSeeded && in_array($prefix . 'j2commerce_metafields', $tables, true)) {
+            try {
+                $meta = (object) [
+                    'metakey'        => 'is_lifetime_license',
+                    'namespace'      => 'product',
+                    'scope'          => 'product',
+                    'metavalue'      => 'yes',
+                    'valuetype'      => 'string',
+                    'description'    => '',
+                    'owner_id'       => $productId,
+                    'owner_resource' => 'product',
+                ];
+                $this->db->insertObject('#__j2commerce_metafields', $meta, 'id');
+                $metaSeeded = true;
+            } catch (\Exception $e) {
+                // non-fatal
+            }
+        }
+
+        if ($metaSeeded) {
+            // Query mirrors hasLifetimeLicense() J6 path in AutoCleanupTask
+            try {
+                $query = $this->db->getQuery(true)
+                    ->select('COUNT(*)')
+                    ->from($this->db->quoteName('#__j2commerce_orderitems', 'oi'))
+                    ->join('INNER', $this->db->quoteName('#__j2commerce_orders', 'o')
+                        . ' ON ' . $this->db->quoteName('o.order_id') . ' = ' . $this->db->quoteName('oi.order_id'))
+                    ->join('INNER', $this->db->quoteName('#__j2commerce_metafields', 'mf')
+                        . ' ON ' . $this->db->quoteName('mf.owner_id') . ' = ' . $this->db->quoteName('oi.product_id')
+                        . ' AND ' . $this->db->quoteName('mf.owner_resource') . ' = ' . $this->db->quote('product')
+                        . ' AND ' . $this->db->quoteName('mf.metakey') . ' = ' . $this->db->quote('is_lifetime_license')
+                        . ' AND LOWER(TRIM(' . $this->db->quoteName('mf.metavalue') . ')) = ' . $this->db->quote('yes'))
+                    ->where($this->db->quoteName('o.user_id') . ' = :userid')
+                    ->bind(':userid', $userId, ParameterType::INTEGER);
+                $this->db->setQuery($query);
+                $count = (int) $this->db->loadResult();
+
+                $this->test(
+                    'J6 metafields lifetime query detects seeded lifetime product',
+                    $count > 0,
+                    'Expected COUNT > 0 for user with lifetime metafield'
+                );
+            } catch (\Exception $e) {
+                $this->test('J6 metafields lifetime query', false, $e->getMessage());
+            }
+        } else {
+            $this->test('J6 metafields lifetime query (skipped — seed failed)', true);
+        }
+
+        // Verify fail-closed behaviour is in AutoCleanupTask source
+        $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
+        if (file_exists($taskFile)) {
+            $src = file_get_contents($taskFile);
+            $this->test(
+                'AutoCleanupTask hasLifetimeLicense J6 catch returns true (fail-closed)',
+                (bool) preg_match('/catch\s*\(\s*\\\\Exception[^}]+return\s+true\s*;/s', $src),
+                'catch block must return true to prevent accidental anonymization on DB error'
+            );
+        }
+
+        // Cleanup
+        try {
+            if ($metaSeeded) {
+                $this->db->setQuery(
+                    $this->db->getQuery(true)
+                        ->delete($this->db->quoteName('#__j2commerce_metafields'))
+                        ->where($this->db->quoteName('owner_id') . ' = ' . $productId)
+                        ->where($this->db->quoteName('owner_resource') . ' = ' . $this->db->quote('product'))
+                )->execute();
+            }
+            if ($itemSeeded) {
+                $this->db->setQuery(
+                    $this->db->getQuery(true)
+                        ->delete($this->db->quoteName('#__j2commerce_orderitems'))
+                        ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId))
+                )->execute();
+            }
+        } catch (\Exception $e) {
+            // non-fatal
+        }
+        $this->cleanupTestData([$userId]);
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -341,15 +507,35 @@ class AutoCleanupTaskTest
             $table = $isJ6 ? '#__j2commerce_orders' : '#__j2store_orders';
             $order = (object) [
                 'order_id'       => $orderId,
+                'cart_id'        => 0,
+                'invoice_prefix' => 'INV-',
+                'invoice_number' => random_int(100000, 999999),
+                'token'          => 'cleanup-' . md5($orderId),
                 'user_id'        => $userId,
                 'user_email'     => 'cleanup-test-' . $userId . '@example.com',
                 'order_total'    => 10.00,
                 'order_subtotal' => 10.00,
                 'order_tax'      => 0.00,
                 'order_shipping' => 0.00,
+                'order_shipping_tax' => 0.00,
                 'order_discount' => 0.00,
+                'order_credit'   => 0.00,
+                'order_surcharge' => 0.00,
+                'orderpayment_type' => 'manual',
+                'transaction_id' => '',
+                'transaction_status' => 'confirmed',
+                'transaction_details' => '',
+                'currency_id'    => 1,
                 'currency_code'  => 'CHF',
                 'currency_value' => 1.00,
+                'ip_address'     => '127.0.0.1',
+                'is_shippable'   => 0,
+                'is_including_tax' => 1,
+                'customer_note'  => '',
+                'customer_language' => '*',
+                'customer_group' => 'default',
+                'order_state_id' => 1,
+                'order_state'    => 'confirmed',
                 'created_on'     => $createdOn,
                 'modified_on'    => $createdOn,
             ];

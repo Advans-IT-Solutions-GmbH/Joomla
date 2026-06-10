@@ -664,11 +664,15 @@ const JoomlaAjaxForms = {
                         }
                     }
                 });
-                // Update subtotal
-                if (data.data && data.data.cartTotal) {
+                // Update subtotal — hide when total is unavailable (cartTotal === '0.00')
+                if (data.data && typeof data.data.cartTotal !== 'undefined') {
                     var subtotal = document.querySelector('.top-subtotal span');
                     if (subtotal) {
-                        subtotal.innerHTML = data.data.cartTotal;
+                        if (data.data.cartTotal === '0.00') {
+                            subtotal.closest('.top-subtotal') && (subtotal.closest('.top-subtotal').style.display = 'none');
+                        } else {
+                            subtotal.innerHTML = data.data.cartTotal;
+                        }
                     }
                 }
                 if (callback) callback(null, data);

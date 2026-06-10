@@ -27,6 +27,8 @@
         <language tag="en-GB">language/en-GB/plg_ajax_joomlaajaxforms.sys.ini</language>
         <language tag="de-DE">language/de-DE/plg_ajax_joomlaajaxforms.ini</language>
         <language tag="de-DE">language/de-DE/plg_ajax_joomlaajaxforms.sys.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_ajax_joomlaajaxforms.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_ajax_joomlaajaxforms.sys.ini</language>
     </languages>
 
     <config>
@@ -100,4 +102,6 @@
             https://raw.githubusercontent.com/advansit/Joomla/main/plg_ajax_joomlaajaxforms/updates/update.xml
         </server>
     </updateservers>
+    <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
 </extension>

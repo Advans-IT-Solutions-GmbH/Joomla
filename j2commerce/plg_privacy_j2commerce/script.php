@@ -24,6 +24,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /** @var string[] Files skipped because they already existed */
     private array $_overridesSkipped = [];
 
+    /**
+     * Returns a fresh query object compatible with Joomla 5 and 6.
+     * Joomla 6 introduced DatabaseInterface::createQuery(); Joomla 5 uses getQuery(true).
+     */
+    private function dbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
     public function postflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
@@ -215,7 +224,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * Copy template overrides to all active frontend templates on first install.
      *
      * Only copies files that do not already exist — never overwrites customisations.
-     * Overrides are sourced from overrides/com_j2store/ inside the plugin package.
+     * Overrides for both com_j2store (J2Commerce 4.x) and com_j2commerce (J2Commerce 6.x)
+     * are deployed so the plugin works regardless of which version is installed.
      *
      * WHY OVERRIDES ARE NEEDED
      * J2Commerce's eventWithHtml() only imports plugins in the 'j2store' group.
@@ -226,14 +236,10 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      */
     private function copyTemplateOverrides($parent): void
     {
-        $sourcePath = $parent->getParent()->getPath('source') . '/overrides/com_j2store';
-
-        if (!is_dir($sourcePath)) {
-            return;
-        }
+        $sourceBase = $parent->getParent()->getPath('source') . '/overrides';
 
         $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->select([$db->quoteName('element')])
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('type') . ' = ' . $db->quote('template'))
@@ -249,32 +255,43 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             'myprofile/default_addresses.php',
         ];
 
+        // Deploy overrides for both J2Commerce 4.x (com_j2store) and 6.x (com_j2commerce)
+        $components = ['com_j2store', 'com_j2commerce'];
+
         $copied  = [];
         $skipped = [];
 
-        foreach ($templates as $template) {
-            $templateHtmlPath = JPATH_SITE . '/templates/' . $template . '/html/com_j2store';
+        foreach ($components as $component) {
+            $sourcePath = $sourceBase . '/' . $component;
 
-            foreach ($overrideFiles as $file) {
-                $dest = $templateHtmlPath . '/' . $file;
-                $src  = $sourcePath . '/' . $file;
+            if (!is_dir($sourcePath)) {
+                continue;
+            }
 
-                if (!file_exists($src)) {
-                    continue;
-                }
+            foreach ($templates as $template) {
+                $templateHtmlPath = JPATH_SITE . '/templates/' . $template . '/html/' . $component;
 
-                if (file_exists($dest)) {
-                    $skipped[] = $template . '/html/com_j2store/' . $file;
-                    continue;
-                }
+                foreach ($overrideFiles as $file) {
+                    $dest = $templateHtmlPath . '/' . $file;
+                    $src  = $sourcePath . '/' . $file;
 
-                $destDir = dirname($dest);
-                if (!is_dir($destDir)) {
-                    mkdir($destDir, 0755, true);
-                }
+                    if (!file_exists($src)) {
+                        continue;
+                    }
 
-                if (copy($src, $dest)) {
-                    $copied[] = $template . '/html/com_j2store/' . $file;
+                    if (file_exists($dest)) {
+                        $skipped[] = $template . '/html/' . $component . '/' . $file;
+                        continue;
+                    }
+
+                    $destDir = dirname($dest);
+                    if (!is_dir($destDir)) {
+                        mkdir($destDir, 0755, true);
+                    }
+
+                    if (copy($src, $dest)) {
+                        $copied[] = $template . '/html/' . $component . '/' . $file;
+                    }
                 }
             }
         }
@@ -294,7 +311,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $element = 'j2commerce';
         $folder = 'privacy';
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->select($db->quoteName('extension_id'))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('element') . ' = :element')
@@ -309,7 +326,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->select($db->quoteName('update_site_id'))
             ->from($db->quoteName('#__update_sites'))
             ->where($db->quoteName('location') . ' = :url')
@@ -318,7 +335,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $siteId = (int) $db->loadResult();
 
         if ($siteId) {
-            $query = $db->getQuery(true)
+            $query = $this->dbQuery($db)
                 ->select('COUNT(*)')
                 ->from($db->quoteName('#__update_sites_extensions'))
                 ->where($db->quoteName('update_site_id') . ' = :siteId')
@@ -328,7 +345,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $db->setQuery($query);
 
             if (!(int) $db->loadResult()) {
-                $query = $db->getQuery(true)
+                $query = $this->dbQuery($db)
                     ->insert($db->quoteName('#__update_sites_extensions'))
                     ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
                     ->values(':siteId, :extId')
@@ -340,7 +357,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->insert($db->quoteName('#__update_sites'))
             ->columns([
                 $db->quoteName('name'),
@@ -358,7 +375,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $db->execute();
         $siteId = (int) $db->insertid();
 
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->insert($db->quoteName('#__update_sites_extensions'))
             ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
             ->values(':siteId, :extId')

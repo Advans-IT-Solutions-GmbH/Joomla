@@ -8,7 +8,7 @@
  *   $buttonClass (string) CSS classes from plugin params
  *
  * Template override path:
- *   templates/{your-template}/html/plg_j2store_productcompare/button.php
+ *   templates/{your-template}/html/plg_j2commerce_productcompare/button.php
  */
 defined('_JEXEC') or die;
 ?>

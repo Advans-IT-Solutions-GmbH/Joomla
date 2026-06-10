@@ -7,7 +7,7 @@
  *   $ajaxUrl     (string) URL for the AJAX comparison endpoint
  *
  * Template override path:
- *   templates/{your-template}/html/plg_j2store_productcompare/bar.php
+ *   templates/{your-template}/html/plg_j2commerce_productcompare/bar.php
  */
 defined('_JEXEC') or die;
 

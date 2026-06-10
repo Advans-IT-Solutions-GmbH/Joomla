@@ -12,42 +12,20 @@ until mysql -h mysql -u joomla -pjoomla_pass -e "SELECT 1" &>/dev/null; do
 done
 echo "MySQL is ready"
 
-# Run original Joomla entrypoint in background
+# Run original Joomla entrypoint in background and wait for it to finish
 /entrypoint.sh apache2-foreground &
 JOOMLA_PID=$!
 
-# Wait for Joomla files to be extracted
-echo "Waiting for Joomla files..."
-sleep 10
+echo "Waiting for Joomla to initialize..."
+TIMEOUT=180
+ELAPSED=0
+while [ ! -f /var/www/html/configuration.php ] && [ $ELAPSED -lt $TIMEOUT ]; do
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+    echo "  Waiting... ($ELAPSED/$TIMEOUT seconds)"
+done
 
-# Check if Joomla needs installation
 if [ ! -f /var/www/html/configuration.php ]; then
-    echo "Installing Joomla via CLI..."
-    
-    # Wait for files to be fully extracted
-    until [ -f /var/www/html/installation/joomla.php ] || [ -f /var/www/html/cli/joomla.php ]; do
-        sleep 2
-    done
-    
-    # Use Joomla CLI installer (Joomla 4+)
-    if [ -f /var/www/html/cli/joomla.php ]; then
-        php /var/www/html/cli/joomla.php site:install \
-            --db-host=mysql \
-            --db-user=joomla \
-            --db-pass=joomla_pass \
-            --db-name=joomla_db \
-            --db-prefix=j_ \
-            --db-type=mysql \
-            --site-name="Test Site" \
-            --admin-user="admin" \
-            --admin-username="admin" \
-            --admin-password="Admin123!" \
-            --admin-email="admin@test.local" \
-            --no-interaction 2>&1 || echo "CLI install attempted"
-    fi
-    
-    # Fallback: Create configuration.php manually if CLI failed
-    if [ ! -f /var/www/html/configuration.php ]; then
         echo "Creating configuration.php manually..."
         cat > /var/www/html/configuration.php << 'EOFCONFIG'
 <?php
@@ -112,46 +90,33 @@ EOFCONFIG
             ON DUPLICATE KEY UPDATE password='$ADMIN_PASS_HASH';
             INSERT INTO j_user_usergroup_map (user_id, group_id) VALUES (42, 8) ON DUPLICATE KEY UPDATE group_id=8;
         " 2>/dev/null || true
-    fi
-    
     echo "Joomla installation complete"
 fi
-
-# Wait for configuration.php
-echo "Waiting for Joomla configuration..."
-until [ -f /var/www/html/configuration.php ]; do
-    sleep 2
-done
 
 # Get DB prefix
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
 
-# Install J2Commerce (real installation from GitHub release)
-echo "Installing J2Commerce..."
-if [ -f /tmp/j2commerce.zip ]; then
-    cp /tmp/j2commerce.zip /var/www/html/tmp/j2commerce.zip
-    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce.zip 2>&1; then
-        echo "J2Commerce installed via Joomla CLI"
+# Install J2Store/J2Commerce 4 (real installation from official release)
+echo "Installing J2Store/J2Commerce 4..."
+if [ -f /tmp/j2commerce4.zip ]; then
+    cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip 2>&1; then
+        echo "J2Store/J2Commerce 4 installed via Joomla CLI"
     else
-        echo "J2Commerce CLI install failed, trying direct SQL schema import..."
-        # Fallback: download and import SQL schema directly from GitHub
-        curl -sL "https://raw.githubusercontent.com/j2commerce/j2cart/main/administrator/components/com_j2store/sql/install/mysql/install.j2store.sql" \
-            | sed "s/#__/${DB_PREFIX}/g" \
-            | mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null \
-            && echo "J2Commerce schema imported from GitHub" \
-            || echo "WARNING: J2Commerce schema import failed"
+        echo "ERROR: J2Store/J2Commerce 4 installation FAILED"
+        exit 1
     fi
 else
-    echo "ERROR: J2Commerce ZIP not found at /tmp/j2commerce.zip"
+    echo "ERROR: J2Store/J2Commerce 4 ZIP not found at /tmp/j2commerce4.zip"
     exit 1
 fi
 
 # Install privacy plugin extension
 echo "Installing privacy plugin extension..."
 cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
-    echo "Extension installed via Joomla CLI"
+if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+    echo "✅ Extension installed via Joomla CLI"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
@@ -166,7 +131,7 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 
 # Insert test data into real J2Commerce tables
 echo "Inserting test data..."
-mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOSQL
+mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOSQL
 -- Create test user (ID 100)
 INSERT IGNORE INTO ${DB_PREFIX}users (id, name, username, email, password, block, sendEmail, registerDate, params)
 VALUES (100, 'Test User', 'testuser', 'test@example.com', '', 0, 0, NOW(), '{}');
@@ -211,7 +176,7 @@ echo "Test data inserted"
 # Install minimal AcyMailing schema for integration tests.
 # Only the tables the plugin accesses are created — no full AcyMailing install required.
 echo "Installing AcyMailing test schema..."
-mysql -h mysql -u joomla -pjoomla_pass joomla_db 2>/dev/null << EOACYM
+mysql -h mysql -u joomla -pjoomla_pass joomla_db << EOACYM
 CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_configuration (
     id    INT UNSIGNED NOT NULL AUTO_INCREMENT,
     name  VARCHAR(255) NOT NULL,
