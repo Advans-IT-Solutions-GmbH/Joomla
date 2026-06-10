@@ -17,11 +17,12 @@ RUN rm -rf /usr/src/joomla/* /var/www/html/* \
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
 COPY extension.zip /tmp/extension.zip
+COPY j2commerce6.zip /tmp/j2commerce6.zip
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
-ENV EXTENSION_NAME="Cleanup Component (J6)"
+ENV EXTENSION_NAME="Cleanup Component (Official J6/J2C6)"
 
 ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
 CMD ["apache2-foreground"]

@@ -20,11 +20,13 @@ class SafetyChecksTest
     private $passed = 0;
     private $failed = 0;
     private $tmpDir;
+    private string $expectedCoreComponent;
 
     public function __construct()
     {
         $this->db = Factory::getContainer()->get(DatabaseInterface::class);
         $this->tmpDir = sys_get_temp_dir() . '/j2cleanup_safety_' . uniqid();
+        $this->expectedCoreComponent = (string) getenv('EXPECTED_CORE_COMPONENT');
         mkdir($this->tmpDir, 0755, true);
     }
 
@@ -416,20 +418,28 @@ class SafetyChecksTest
             $this->test($v['author'] . ' legacy plugin is incompatible', $result['status'] === 'incompatible');
         }
 
-        // --- Database: com_j2store exists ---
+        // --- Database: expected core component exists ---
         echo "\n--- Database verification ---\n";
-        $query = $this->db->getQuery(true)
-            ->select('COUNT(*)')
-            ->from('#__extensions')
-            ->where('element = ' . $this->db->quote('com_j2store'));
-        $this->db->setQuery($query);
-        $exists = (int)$this->db->loadResult() > 0;
+        $expectedElements = $this->expectedCoreComponent !== ''
+            ? [$this->expectedCoreComponent]
+            : ['com_j2store'];
 
-        if ($exists) {
-            $this->test('com_j2store exists in database', true);
-        } else {
-            echo "Note: com_j2store not installed, skipping\n";
-            $this->test('Database check skipped', true);
+        foreach ($expectedElements as $expectedElement) {
+            $query = $this->db->getQuery(true)
+                ->select('COUNT(*)')
+                ->from('#__extensions')
+                ->where('element = ' . $this->db->quote($expectedElement));
+            $this->db->setQuery($query);
+            $exists = (int)$this->db->loadResult() > 0;
+
+            if ($exists) {
+                $this->test("$expectedElement exists in database", true);
+            } elseif ($this->expectedCoreComponent !== '') {
+                $this->test("$expectedElement exists in database", false);
+            } else {
+                echo "Note: $expectedElement not installed, skipping\n";
+                $this->test('Database check skipped', true);
+            }
         }
 
         // --- ACL: core.manage required for cleanup action ---
@@ -468,8 +478,12 @@ class SafetyChecksTest
             $extId = (int) $this->db->loadResult();
 
             if (!$extId) {
-                echo "Note: $element not installed, skipping POST protection test\n";
-                $this->test("$element POST protection skipped", true);
+                if ($this->expectedCoreComponent === $element) {
+                    $this->test("$element installed for POST protection test", false);
+                } else {
+                    echo "Note: $element not installed, skipping POST protection test\n";
+                    $this->test("$element POST protection skipped", true);
+                }
                 continue;
             }
 
