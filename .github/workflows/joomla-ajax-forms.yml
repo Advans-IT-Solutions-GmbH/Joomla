@@ -109,7 +109,16 @@ jobs:
       - name: Start test environment
         run: |
           cd plg_ajax_joomlaajaxforms/tests
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose down -v || true
+            sleep 20
+          done
           timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
       
       - name: Run tests
@@ -178,7 +187,16 @@ jobs:
       - name: Start environment (J6)
         run: |
           cd plg_ajax_joomlaajaxforms/tests
-          docker compose -f docker-compose.joomla6.yml up -d
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
@@ -322,7 +340,16 @@ jobs:
       - name: Start environment
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c4
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose down -v || true
+            sleep 20
+          done
           timeout 360 bash -c 'until docker exec plg_ajax_j2c4_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
 
       - name: Show container logs
@@ -421,7 +448,16 @@ jobs:
       - name: Start environment
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c6
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose down -v || true
+            sleep 20
+          done
           timeout 360 bash -c 'until docker exec plg_ajax_j2c6_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
 
       - name: Show container logs
