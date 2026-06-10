@@ -94,13 +94,7 @@ class ExportModelTest
         $pkVar  = $isJ6 ? 'j2commerce_variant_id'  : 'j2store_variant_id';
 
         if (!$isJ6 && !$hasJ4) {
-            // J2Commerce is not installed in this test container — skip DB round-trip tests.
-            echo "SKIP exportData round-trip — J2Commerce tables not present\n";
-            echo "SKIP exportData(products) contains seeded product\n";
-            echo "SKIP exportData(variants) returns array\n";
-            echo "SKIP exportData(variants) contains seeded variant\n";
-            echo "SKIP exportData(categories) returns array\n";
-            echo "SKIP exportData(prices) returns array\n";
+            $this->test('J2Commerce tables are present', fn () => false);
         } else {
             // Seed: #__content article (required FK for products)
             $article = (object)[
@@ -135,9 +129,14 @@ class ExportModelTest
             $product = (object)[
                 'product_source_id' => $articleId,
                 'product_source'    => 'com_content',
+                'product_type'      => 'simple',
+                'visibility'        => 1,
                 'enabled'           => 1,
                 'taxprofile_id'     => 0,
                 'vendor_id'         => 0,
+                'addtocart_text'    => '',
+                'up_sells'          => '',
+                'cross_sells'       => '',
                 'params'            => '{}',
             ];
             $db->insertObject('#__' . $tp . '_products', $product, $pkProd);
@@ -148,6 +147,10 @@ class ExportModelTest
                 'product_id' => $productId,
                 'sku'        => 'EXPORT-TEST-' . $productId,
                 'price'      => 9.99,
+                'pricing_calculator' => 'standard',
+                'shipping'   => 1,
+                'quantity_restriction' => 0,
+                'allow_backorder' => 0,
                 'is_master'  => 1,
                 'isdefault_variant' => 1,
                 'enabled'    => 1,

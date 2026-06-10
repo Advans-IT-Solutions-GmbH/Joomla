@@ -139,6 +139,13 @@ jobs:
         with:
           name: extension-package
           path: j2commerce/com_j2commerce_importexport/tests/
+      - name: Build J2Commerce 6 from source
+        run: |
+          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          cd /tmp/j2commerce6-src && php build/build_package.php
+          ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/com_j2commerce_importexport/tests/j2commerce6.zip"
       - name: Start environment (J6)
         run: |
           cd j2commerce/com_j2commerce_importexport/tests

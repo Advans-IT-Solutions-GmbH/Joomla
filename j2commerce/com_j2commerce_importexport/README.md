@@ -244,7 +244,7 @@ This component has automated tests that run on every push via GitHub Actions.
 
 ### Test Scope Note
 
-The Joomla 6 model tests run against J2Commerce 6-compatible stub tables created by the test entrypoint. These stubs intentionally keep strict schema requirements such as `isdefault_variant NOT NULL` without a test default, so model SQL is exercised against the expected table and column contract. They do not install the full J2Commerce 6 application or cover J2Commerce events, plugins, pricing internals, or other application logic.
+The compatibility jobs install the extension ZIP into official Joomla Full Package images with real J2Commerce runtimes: Joomla 5.4.6 with J2Store/J2Commerce 4.1.4 and Joomla 6.1.1 with a J2Commerce 6 package built from the official `j2commerce/j2commerce` repository. Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
 
 The export controller test currently verifies controller structure, supported formats, field documentation, and access/header code paths by source inspection. It is not a full HTTP export test and does not yet cover CSRF failure handling, rollback behavior, or response content type end to end.
 

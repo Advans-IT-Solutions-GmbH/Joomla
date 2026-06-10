@@ -27,6 +27,29 @@ fi
 echo "✅ Joomla is initialized"
 sleep 5
 
+if [ -f /tmp/j2commerce6.zip ]; then
+    echo "Installing J2Commerce 6 via Joomla CLI..."
+    cp /tmp/j2commerce6.zip /var/www/html/tmp/j2commerce6.zip
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce6.zip; then
+        echo "✅ J2Commerce 6 installed via Joomla CLI"
+    else
+        echo "❌ J2Commerce 6 installation FAILED via Joomla CLI"
+        exit 1
+    fi
+elif [ -f /tmp/j2commerce4.zip ]; then
+    echo "Installing J2Commerce 4 via Joomla CLI..."
+    cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip; then
+        echo "✅ J2Commerce 4 installed via Joomla CLI"
+    else
+        echo "❌ J2Commerce 4 installation FAILED via Joomla CLI"
+        exit 1
+    fi
+else
+    echo "❌ No J2Commerce runtime ZIP found"
+    exit 1
+fi
+
 echo "Installing extension via Joomla CLI..."
 cp /tmp/extension.zip /var/www/html/tmp/extension.zip
 if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
@@ -44,13 +67,6 @@ mysql -h "${JOOMLA_DB_HOST:-mysql}" -u "${JOOMLA_DB_USER:-joomla}" -p"${JOOMLA_D
     -e "UPDATE ${DB_PREFIX}extensions SET enabled = 1 WHERE enabled = 0 AND type = 'plugin';" 2>&1 \
     && echo "✅ Extensions enabled" \
     || echo "⚠️ Could not enable extensions via DB"
-
-# Install J2Commerce stub tables so round-trip tests run instead of being skipped
-echo "Installing J2Commerce stub tables..."
-sed "s/#__/${DB_PREFIX}/g" /tmp/j2commerce-stubs.sql | \
-    mysql -h "${JOOMLA_DB_HOST:-mysql}" -u "${JOOMLA_DB_USER:-joomla}" -p"${JOOMLA_DB_PASSWORD:-joomla_pass}" "${JOOMLA_DB_NAME:-joomla_db}" 2>&1 \
-    && echo "✅ J2Commerce stub tables installed" \
-    || echo "⚠️ Could not install J2Commerce stub tables"
 
 echo "OK" > /var/www/html/health.txt
 chown www-data:www-data /var/www/html/health.txt 2>/dev/null || true

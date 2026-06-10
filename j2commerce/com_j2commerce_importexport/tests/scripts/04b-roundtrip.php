@@ -88,10 +88,10 @@ class RoundTripTest
         $hasJ4  = in_array($prefix . 'j2store_products', $tables, true);
 
         if (!$this->isJ6 && !$hasJ4) {
-            echo "SKIP all round-trip tests — J2Commerce tables not present\n";
+            $this->test('J2Commerce tables are present', fn () => false);
             echo "\n=== Round-Trip Test Summary ===\n";
-            echo "Passed: 0\nFailed: 0\n";
-            return true;
+            echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
+            return false;
         }
 
         $sku   = 'RT-TEST-' . uniqid();
@@ -109,8 +109,21 @@ class RoundTripTest
             'category'       => 'Round-Trip Test Category',
             'sku'            => $sku,
             'price'          => 29.99,
+            'visibility'     => 1,
+            'addtocart_text' => '',
+            'up_sells'       => '',
+            'cross_sells'    => '',
             'variants'       => [
-                ['sku' => $sku . '-V1', 'price' => 29.99, 'is_master' => 1],
+                [
+                    'sku' => $sku . '-V1',
+                    'price' => 29.99,
+                    'is_master' => 1,
+                    'isdefault_variant' => 1,
+                    'pricing_calculator' => 'standard',
+                    'shipping' => 1,
+                    'quantity_restriction' => 0,
+                    'allow_backorder' => 0,
+                ],
             ],
             'product_images' => [],
             'options'        => [],

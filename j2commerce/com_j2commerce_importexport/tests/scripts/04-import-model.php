@@ -102,7 +102,7 @@ class ImportModelTest
         $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
 
         if (!$isJ6 && !$hasJ4) {
-            echo "SKIP importProductFull() round-trip — J2Commerce tables not present\n";
+            $this->test('J2Commerce tables are present', fn () => false);
         } else {
             $this->test('importProductFull() with minimal data succeeds', function () use ($model) {
                 $data = [
@@ -111,6 +111,10 @@ class ImportModelTest
                     'category'    => 'Import Test Category',
                     'sku'         => 'IMP-TEST-' . uniqid(),
                     'price'       => 19.99,
+                    'visibility'  => 1,
+                    'addtocart_text' => '',
+                    'up_sells'    => '',
+                    'cross_sells' => '',
                     'variants'    => [],
                     'product_images' => [],
                     'options'     => [],
