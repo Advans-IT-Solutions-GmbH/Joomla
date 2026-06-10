@@ -1,5 +1,6 @@
 <?php
 /**
+ * @package     J2Commerce.ProductCompare
  * Installation Tests for J2Commerce Product Compare Plugin
  */
 define('_JEXEC', 1);
@@ -22,47 +23,55 @@ class InstallationTest
         $this->db = Factory::getDbo();
     }
 
+    private function dbq(): \Joomla\Database\QueryInterface
+    {
+        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+    }
+
     public function run(): bool
     {
         echo "=== Installation Tests ===\n\n";
 
-        $this->test('Plugin exists in #__extensions', function () {
-            $query = $this->db->getQuery(true)
+        // The installer sets folder=j2store on J4/J5 (J2Store 4) and folder=j2commerce on J6.
+        $expectedFolder = (getenv('J2COMMERCE_STACK') === 'j6') ? 'j2commerce' : 'j2store';
+
+        $this->test('Plugin exists in #__extensions', function () use ($expectedFolder) {
+            $query = $this->dbq()
                 ->select('COUNT(*)')
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
                 ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
-                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('j2store'));
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote($expectedFolder));
             $this->db->setQuery($query);
             return (int) $this->db->loadResult() === 1;
         });
 
-        $this->test('Plugin is enabled', function () {
-            $query = $this->db->getQuery(true)
+        $this->test('Plugin is enabled', function () use ($expectedFolder) {
+            $query = $this->dbq()
                 ->select($this->db->quoteName('enabled'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
                 ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
-                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('j2store'));
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote($expectedFolder));
             $this->db->setQuery($query);
             return (int) $this->db->loadResult() === 1;
         });
 
-        $this->test('Plugin folder is j2store', function () {
-            $query = $this->db->getQuery(true)
+        $this->test('Plugin folder matches stack (' . $expectedFolder . ')', function () use ($expectedFolder) {
+            $query = $this->dbq()
                 ->select($this->db->quoteName('folder'))
                 ->from($this->db->quoteName('#__extensions'))
                 ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'));
             $this->db->setQuery($query);
-            return $this->db->loadResult() === 'j2store';
+            return $this->db->loadResult() === $expectedFolder;
         });
 
-        $this->test('Plugin class file deployed', function () {
-            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/src/Extension/ProductCompare.php');
+        $this->test('Plugin class file deployed', function () use ($expectedFolder) {
+            return file_exists(JPATH_PLUGINS . '/' . $expectedFolder . '/productcompare/src/Extension/ProductCompare.php');
         });
 
-        $this->test('Services provider deployed', function () {
-            return file_exists(JPATH_PLUGINS . '/j2store/productcompare/services/provider.php');
+        $this->test('Services provider deployed', function () use ($expectedFolder) {
+            return file_exists(JPATH_PLUGINS . '/' . $expectedFolder . '/productcompare/services/provider.php');
         });
 
         echo "\n=== Installation Test Summary ===\n";

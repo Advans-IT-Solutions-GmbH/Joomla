@@ -8,7 +8,7 @@
     // and read here via Joomla.getOptions(). This avoids inline <script> blocks
     // and works correctly with Joomla's asset pipeline.
     const options = (typeof Joomla !== 'undefined' && Joomla.getOptions)
-        ? (Joomla.getOptions('plg_j2store_productcompare') || {})
+        ? (Joomla.getOptions('plg_j2commerce_productcompare') || {})
         : {};
 
     const ProductCompare = {

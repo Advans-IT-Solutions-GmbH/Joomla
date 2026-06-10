@@ -6,8 +6,6 @@
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
-Help customers make informed purchase decisions with side-by-side product comparison.
-
 ## Description
 
 The J2Commerce Product Compare Plugin adds a visual comparison feature to your store. Customers can select multiple products and view them side-by-side in an elegant modal interface. A persistent comparison bar keeps track of selected products across pages. Fully responsive design works on all devices, with configurable maximum products and customizable styling to match your store's theme.
@@ -28,7 +26,29 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
 - PHP 8.1 or higher
-- J2Commerce 4.x or higher
+- J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
+
+### J2Commerce Version Compatibility
+
+The plugin detects the installed J2Commerce version at runtime by checking for `#__j2commerce_products` in the database.
+
+The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 4/5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
+
+**J2Commerce 4.x (Joomla 4/5)**:
+- Events received via legacy method-name convention (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`)
+- DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
+- AJAX URL: `group=j2store`
+
+**J2Commerce 6.x (Joomla 6)**:
+- DB tables: `#__j2commerce_products`, `#__j2commerce_variants`, `#__j2commerce_product_options`
+- AJAX URL: `group=j2commerce`
+- The plugin subscribes to `onJ2CommerceAfterProductListItemDisplay` and `onJ2CommerceAfterProductDisplay` via `SubscriberInterface`.
+
+No configuration required — table names and event handlers are selected automatically at runtime.
+
+### Compatibility Test Scope
+
+The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is skipped when the test document is not HTML, so the automated run should not be described as a complete browser-rendering proof for J2Commerce 6 product list/detail pages.
 
 ## Installation
 1. Download `plg_j2commerce_productcompare.zip`
@@ -61,16 +81,16 @@ plg_j2commerce_productcompare/
 ├── README.md
 ├── VERSION
 ├── LICENSE.txt
-├── plg_j2commerce_productcompare.xml   # Joomla manifest (group="j2store", element="productcompare")
+├── plg_j2commerce_productcompare.xml   # Joomla manifest (group="j2commerce", element="productcompare")
 ├── build.sh
 ├── services/provider.php
 ├── src/Extension/ProductCompare.php
 ├── language/ (en-GB, de-DE, fr-FR)
-├── media/ (js, css)                    # Installed to media/plg_j2store_productcompare/
+├── media/ (js, css)                    # Installed to media/plg_j2commerce_productcompare/
 └── tests/
 ```
 
-Installed path: `plugins/j2store/productcompare/`
+Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2store/productcompare/` (Joomla 4/5 mirror)
 
 ### Building
 ```bash
@@ -83,22 +103,29 @@ This plugin has automated tests that run on every push via GitHub Actions.
 
 ### Test Suites
 
-1. **Installation** - Plugin registration in DB, file deployment
-2. **Configuration** - Plugin params, language files, XML manifest
-3. **Media Files** - CSS/JS deployment and content validation
-4. **Plugin Class** - Method existence and class structure
-5. **AJAX Endpoint** - HTTP tests against com_ajax
-6. **Uninstall** - Clean removal from database and filesystem
+1. **Installation** — plugin registration in DB, file deployment
+2. **Configuration** — plugin params, language files, XML manifest
+3. **Media Files** — CSS/JS deployment and content validation
+4. **Plugin Class** — method existence, `SubscriberInterface`, `isJ2Commerce6()` detection
+5. **AJAX Endpoint** — HTTP tests against com_ajax (J2Commerce 4 and 6 group)
+6. **getProductsData** — DB query compatibility for J2Commerce 4 and 6 table schemas
+7. **Asset Injection** — AJAX URL group selection based on detected version
+8. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
 ```bash
-cd j2commerce/plg_j2commerce_productcompare/tests
+cd tests
 docker compose up -d
-# Wait for container readiness (health.txt written by docker-entrypoint.sh)
 timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
+
+# Joomla 6
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 ## Troubleshooting
@@ -151,8 +178,9 @@ All HTML rendered by this plugin can be overridden from your active Joomla templ
 
 The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution order (first match wins):
 
-1. `templates/{your-template}/html/plg_j2store_productcompare/{layout}.php`
-2. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default
+1. `templates/{your-template}/html/plg_j2commerce_productcompare/{layout}.php`
+2. `plugins/j2commerce/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 6)
+3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 4/5 mirror)
 
 ### Available layouts
 
@@ -167,13 +195,13 @@ The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution ord
 
 1. Create the override directory in your template:
    ```
-   templates/{your-template}/html/plg_j2store_productcompare/
+   templates/{your-template}/html/plg_j2commerce_productcompare/
    ```
 
 2. Copy the layout file(s) you want to override from the plugin:
    ```
-   plugins/j2store/productcompare/tmpl/button.php  →  templates/{your-template}/html/plg_j2store_productcompare/button.php
-   plugins/j2store/productcompare/tmpl/table.php   →  templates/{your-template}/html/plg_j2store_productcompare/table.php
+   plugins/j2commerce/productcompare/tmpl/button.php  →  templates/{your-template}/html/plg_j2commerce_productcompare/button.php
+   plugins/j2commerce/productcompare/tmpl/table.php   →  templates/{your-template}/html/plg_j2commerce_productcompare/table.php
    ```
    You only need to copy the files you actually want to change.
 
@@ -238,7 +266,7 @@ In your `button.php` override:
 
 ### CSS customization
 
-The plugin loads `media/plg_j2store_productcompare/css/productcompare.css` via Joomla's WebAssetManager. To override styles, add CSS to your template's stylesheet — the plugin CSS uses non-`!important` rules so template styles take precedence naturally.
+The plugin loads `media/plg_j2commerce_productcompare/css/productcompare.css` via Joomla's WebAssetManager. To override styles, add CSS to your template's stylesheet — the plugin CSS uses non-`!important` rules so template styles take precedence naturally.
 
 Key CSS classes:
 
@@ -326,8 +354,8 @@ This extension supports the following languages:
 
 Users can add additional language files by creating new language folders following Joomla's language structure:
 ```
-language/{language-tag}/plg_j2store_productcompare.ini
-language/{language-tag}/plg_j2store_productcompare.sys.ini
+language/{language-tag}/plg_j2commerce_productcompare.ini
+language/{language-tag}/plg_j2commerce_productcompare.sys.ini
 ```
 
 ## Accessibility

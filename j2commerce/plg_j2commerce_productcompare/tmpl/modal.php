@@ -5,7 +5,7 @@
  * No variables — content is loaded via AJAX into #compare-modal-body.
  *
  * Template override path:
- *   templates/{your-template}/html/plg_j2store_productcompare/modal.php
+ *   templates/{your-template}/html/plg_j2commerce_productcompare/modal.php
  */
 defined('_JEXEC') or die;
 

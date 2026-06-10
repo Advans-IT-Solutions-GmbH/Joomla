@@ -7,6 +7,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
 
 $app = Factory::getApplication();
 $input = $app->input;
@@ -25,11 +26,19 @@ if (empty($productIds)) {
     return;
 }
 
-$db = Factory::getContainer()->get('DatabaseDriver');
-$query = $db->getQuery(true)
+$db = Factory::getContainer()->get(DatabaseInterface::class);
+
+// Detect J2Commerce version: J2Commerce 6 uses #__j2commerce_products
+$tables       = $db->getTableList();
+$prefix       = $db->getPrefix();
+$isJ2Commerce6 = in_array($prefix . 'j2commerce_products', $tables, true);
+$productsTable = $isJ2Commerce6 ? '#__j2commerce_products' : '#__j2store_products';
+$productPk     = $isJ2Commerce6 ? 'j2commerce_product_id' : 'j2store_product_id';
+
+$query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
     ->select('*')
-    ->from($db->quoteName('#__j2store_products'))
-    ->whereIn($db->quoteName('j2store_product_id'), $productIds);
+    ->from($db->quoteName($productsTable))
+    ->whereIn($db->quoteName($productPk), $productIds);
 
 $db->setQuery($query);
 $products = $db->loadObjectList();
@@ -62,7 +71,7 @@ if (empty($products)) {
                             <div class="product-header">
                                 <h4><?php echo (int) $product->product_source_id; ?></h4>
                                 <button type="button" class="btn btn-sm btn-danger"
-                                        onclick="J2CommerceProductCompare.removeProduct(<?php echo (int) $product->j2store_product_id; ?>); location.reload();">
+                                        onclick="J2CommerceProductCompare.removeProduct(<?php echo (int) $product->$productPk; ?>); location.reload();">
                                     <?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_REMOVE'); ?>
                                 </button>
                             </div>
@@ -74,7 +83,7 @@ if (empty($products)) {
                 <tr>
                     <td><strong><?php echo Text::_('PLG_J2STORE_PRODUCTCOMPARE_PRODUCT_ID'); ?></strong></td>
                     <?php foreach ($products as $product): ?>
-                        <td><?php echo (int) $product->j2store_product_id; ?></td>
+                        <td><?php echo (int) $product->$productPk; ?></td>
                     <?php endforeach; ?>
                 </tr>
                 <tr>

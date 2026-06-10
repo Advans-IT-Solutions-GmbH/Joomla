@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<extension type="plugin" group="j2store" method="upgrade">
+<extension type="plugin" group="j2commerce" method="upgrade">
     <autoloadLanguage>true</autoloadLanguage>
     <scriptfile>script.php</scriptfile>
     <name>PLG_J2COMMERCE_PRODUCTCOMPARE</name>
@@ -25,7 +25,7 @@
         <folder>media</folder>
     </files>
 
-    <media destination="plg_j2store_productcompare" folder="media">
+    <media destination="plg_j2commerce_productcompare" folder="media">
         <folder>js</folder>
         <folder>css</folder>
         <filename>joomla.asset.json</filename>

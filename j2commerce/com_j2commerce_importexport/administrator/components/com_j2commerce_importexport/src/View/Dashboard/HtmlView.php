@@ -12,10 +12,17 @@ defined('_JEXEC') or die;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Toolbar\ToolbarHelper;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Factory;
 
 class HtmlView extends BaseHtmlView
 {
+    /**
+     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
     protected $menutypes;
     protected $viewlevels;
     protected $categories;
@@ -38,8 +45,8 @@ class HtmlView extends BaseHtmlView
 
     protected function getMenuTypes(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
-        $query = $db->getQuery(true)
+        $db = $this->getDatabase();
+        $query = $this->createDbQuery($db)
             ->select(['menutype', 'title'])
             ->from($db->quoteName('#__menu_types'))
             ->order('title ASC');
@@ -49,8 +56,8 @@ class HtmlView extends BaseHtmlView
 
     protected function getViewLevels(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
-        $query = $db->getQuery(true)
+        $db = $this->getDatabase();
+        $query = $this->createDbQuery($db)
             ->select(['id', 'title'])
             ->from($db->quoteName('#__viewlevels'))
             ->order('ordering ASC');
@@ -60,8 +67,8 @@ class HtmlView extends BaseHtmlView
 
     protected function getCategories(): array
     {
-        $db = Factory::getContainer()->get('DatabaseDriver');
-        $query = $db->getQuery(true)
+        $db = $this->getDatabase();
+        $query = $this->createDbQuery($db)
             ->select(['id', 'title', 'level'])
             ->from($db->quoteName('#__categories'))
             ->where('extension = ' . $db->quote('com_content'))

@@ -7,7 +7,7 @@ class MediaFilesTest
 {
     private $passed = 0;
     private $failed = 0;
-    private $mediaPath = '/var/www/html/media/plg_j2store_productcompare';
+    private $mediaPath = '/var/www/html/media/plg_j2commerce_productcompare';
 
     public function run(): bool
     {
