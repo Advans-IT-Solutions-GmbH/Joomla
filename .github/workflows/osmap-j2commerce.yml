@@ -79,7 +79,18 @@ jobs:
       - name: Start environment (J5)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose down -v || true
+            sleep 20
+          done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
@@ -151,7 +162,18 @@ jobs:
       - name: Start environment (J6)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          docker compose -f docker-compose.joomla6.yml up -d
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
