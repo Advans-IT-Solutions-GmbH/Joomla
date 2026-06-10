@@ -38,6 +38,10 @@ class ImportModel extends BaseDatabaseModel
 
     public function importProductFull(array $data, array $options = []): array
     {
+        if (trim((string) ($data['title'] ?? '')) === '') {
+            throw new \InvalidArgumentException('Product title is required for import.');
+        }
+
         $db = $this->getDatabase();
         $db->transactionStart();
 
@@ -167,7 +171,8 @@ class ImportModel extends BaseDatabaseModel
         }
         
         // 2. Check by alias if not found by ID
-        $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($data['title']);
+        $title = (string) $data['title'];
+        $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($title);
         if (!$existingId && !empty($alias)) {
             $query = $this->createDbQuery($db)
                 ->select('id')
@@ -193,7 +198,7 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $article = (object) [
-            'title' => $data['title'],
+            'title' => $title,
             'alias' => $alias,
             'introtext' => $data['introtext'] ?? '',
             'fulltext' => $data['fulltext'] ?? '',
