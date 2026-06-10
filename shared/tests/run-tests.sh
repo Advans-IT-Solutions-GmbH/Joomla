@@ -47,11 +47,7 @@ run_test() {
     
     print_header "Running: $test_name"
     
-    # Pass J2COMMERCE_STACK into the container if set on the runner (overrides Dockerfile ENV).
-    local docker_env_args=()
-    [ -n "${J2COMMERCE_STACK:-}" ] && docker_env_args+=(-e "J2COMMERCE_STACK=${J2COMMERCE_STACK}")
-
-    if docker exec "${docker_env_args[@]}" "$CONTAINER_NAME" php "/var/www/html/tests/scripts/${test_script}" > "$result_file" 2>&1; then
+    if docker exec "$CONTAINER_NAME" php "/var/www/html/tests/scripts/${test_script}" > "$result_file" 2>&1; then
         cat "$result_file"
         print_success "$test_name PASSED"
         return 0
