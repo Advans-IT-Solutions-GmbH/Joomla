@@ -44,8 +44,8 @@ jobs:
         run: |
           find j2commerce/com_j2store_cleanup -name "*.php" -exec php -l {} \;
 
-  test:
-    name: ${{ matrix.name }}
+  test-j5:
+    name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -73,10 +73,19 @@ jobs:
         with:
           name: extension-package
           path: j2commerce/com_j2store_cleanup/tests/
-      - name: Start environment
+      - name: Start environment (J5)
         run: |
           cd j2commerce/com_j2store_cleanup/tests
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose down -v || true
+            sleep 20
+          done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_j2store_cleanup_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
@@ -94,7 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ${{ matrix.script }}-logs
+          name: j5-${{ matrix.script }}-logs
           path: j2commerce/com_j2store_cleanup/tests/test-results/*.txt
       - name: Cleanup
         if: always()
@@ -102,10 +111,175 @@ jobs:
           cd j2commerce/com_j2store_cleanup/tests
           docker compose down -v
 
+  test-j6:
+    name: ${{ matrix.name }} (J6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Scanning'
+            script: 'scanning'
+          - name: '03 - Cleanup'
+            script: 'cleanup'
+          - name: '04 - Component Functions'
+            script: 'functions'
+          - name: '05 - Safety Checks'
+            script: 'safety'
+          - name: '06 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension-package
+          path: j2commerce/com_j2store_cleanup/tests/
+      - name: Start environment (J6)
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec com_j2store_cleanup_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          echo "=== Joomla Container Logs ==="
+          docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run tests
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh ${{ matrix.script }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: j6-${{ matrix.script }}-logs
+          path: j2commerce/com_j2store_cleanup/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          docker compose -f docker-compose.joomla6.yml down -v
+
+  official-j5-j2c4:
+    name: Cleanup / official-j5-j2c4
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension-package
+          path: j2commerce/com_j2store_cleanup/tests/
+      - name: Start official J5/J2C4 environment
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          for attempt in 1 2 3; do
+            if EXPECTED_CORE_COMPONENT=com_j2store docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            EXPECTED_CORE_COMPONENT=com_j2store docker compose down -v || true
+            sleep 20
+          done
+          timeout 300 bash -c 'until docker exec com_j2store_cleanup_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+      - name: Run core protection safety checks
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          chmod +x run-tests.sh
+          ./run-tests.sh safety
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: official-j5-j2c4-safety-logs
+          path: j2commerce/com_j2store_cleanup/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          EXPECTED_CORE_COMPONENT=com_j2store docker compose down -v
+
+  official-j6-j2c6:
+    name: Cleanup / official-j6-j2c6
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: extension-package
+          path: j2commerce/com_j2store_cleanup/tests/
+      - name: Setup PHP for J2Commerce build
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: zip
+      - name: Build J2Commerce 6 from source
+        run: |
+          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          cd /tmp/j2commerce6-src && php build/build_package.php
+          ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          sha256sum "$ZIP"
+          cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/com_j2store_cleanup/tests/j2commerce6.zip"
+      - name: Start official J6/J2C6 environment
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.official-j6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.official-j6.yml down -v || true
+            sleep 20
+          done
+          timeout 300 bash -c 'until docker exec com_j2store_cleanup_official_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+      - name: Run core protection safety checks
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=com_j2store_cleanup_official_j6_test ./run-tests.sh safety
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: official-j6-j2c6-safety-logs
+          path: j2commerce/com_j2store_cleanup/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/com_j2store_cleanup/tests
+          docker compose -f docker-compose.official-j6.yml down -v
+
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-j5, test-j6, official-j5-j2c4, official-j6-j2c6]
     if: always()
     permissions: {}
 
