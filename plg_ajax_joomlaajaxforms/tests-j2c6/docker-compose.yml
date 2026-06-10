@@ -1,0 +1,37 @@
+services:
+  db:
+    image: mariadb:10.6
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: joomla_test
+      MYSQL_USER: joomla
+      MYSQL_PASSWORD: joomla
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  joomla:
+    image: plg_ajax_j2c6_test
+    container_name: plg_ajax_j2c6_test
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JOOMLA_DB_HOST: db
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: joomla
+      JOOMLA_DB_NAME: joomla_test
+      JOOMLA_SITE_NAME: "Advans J2C6 Test"
+      JOOMLA_ADMIN_USER: "Admin"
+      JOOMLA_ADMIN_USERNAME: "admin"
+      JOOMLA_ADMIN_PASSWORD: "AdvansTest1234!"
+      JOOMLA_ADMIN_EMAIL: "admin@test.local"
+      JOOMLA_DB_PREFIX: "jos_"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/www/html/health.txt"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 300s

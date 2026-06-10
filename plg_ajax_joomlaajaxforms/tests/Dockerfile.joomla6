@@ -1,9 +1,8 @@
-FROM joomla:5.4-php8.2-apache
+FROM joomla:6.1-php8.3-apache
 
-ARG JOOMLA_VERSION=5.4.6
+ARG JOOMLA_VERSION=6.1.1
 ARG JOOMLA_PACKAGE_URL=https://github.com/joomla/joomla-cms/releases/download/${JOOMLA_VERSION}/Joomla_${JOOMLA_VERSION}-Stable-Full_Package.zip
 
-# Install required packages
 RUN apt-get update && apt-get install -y \
     unzip \
     curl \
@@ -15,17 +14,14 @@ RUN rm -rf /usr/src/joomla/* /var/www/html/* \
     && unzip -q /tmp/joomla.zip -d /usr/src/joomla \
     && rm /tmp/joomla.zip
 
-# Configure MySQL client to skip SSL
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
-# Copy extension package
 COPY extension.zip /tmp/extension.zip
 
-# Copy custom entrypoint
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
-ENV EXTENSION_NAME="Joomla AJAX Forms Plugin"
+ENV EXTENSION_NAME="Joomla AJAX Forms Plugin (J6)"
 
 ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
 CMD ["apache2-foreground"]
