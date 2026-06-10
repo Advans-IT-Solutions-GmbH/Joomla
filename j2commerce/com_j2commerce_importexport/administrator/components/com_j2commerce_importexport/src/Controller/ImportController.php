@@ -21,7 +21,7 @@ class ImportController extends BaseController
     private function checkAccess(): void
     {
         $user = Factory::getApplication()->getIdentity();
-        if (!$user->authorise('core.admin', 'com_j2commerce_importexport')) {
+        if (!$user->authorise('core.manage', 'com_j2commerce_importexport')) {
             throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
     }

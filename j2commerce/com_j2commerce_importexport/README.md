@@ -4,8 +4,9 @@
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-importexport.yml)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
-[![Joomla 7](https://img.shields.io/badge/Joomla-7.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
+
+## Description
 
 Import and export J2Commerce products with all related Joomla data.
 
@@ -49,9 +50,18 @@ Products are matched and updated (instead of duplicated) using three methods:
 
 ## Requirements
 
-- Joomla 5.x, 6.x or 7.x
+- Joomla 5.x or 6.x
 - PHP 8.1 or higher
-- J2Commerce/J2Store 4.x or higher
+- J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
+
+### J2Commerce Version Compatibility
+
+All models use `J2CommerceAwareTrait` for runtime version detection. The trait checks for `#__j2commerce_products` in the database to determine whether J2Commerce 6 is installed:
+
+- **J2Commerce 4.x** — tables prefixed `#__j2store_*`, primary key columns named `j2store_*_id`
+- **J2Commerce 6.x** — tables prefixed `#__j2commerce_*`, primary key columns named `j2commerce_*_id`
+
+The `t('suffix')` helper returns the correct table name and `col('j2store_col')` returns the correct column name for the detected version. No configuration required — detection is automatic.
 
 ## Installation
 
@@ -59,6 +69,17 @@ Products are matched and updated (instead of duplicated) using three methods:
 2. **System → Extensions → Install**
 3. Upload and install
 4. Access via **Components → J2Commerce Import/Export**
+
+## Configuration
+
+**Components → J2Commerce Import/Export → Options**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Batch Size | 100 | Records per batch (10-1000) |
+| Default Format | JSON | Export format |
+| CSV Delimiter | ; | Field separator for CSV |
+| CSV Enclosure | " | Text qualifier for CSV |
 
 ## Usage
 
@@ -157,7 +178,7 @@ JSON exports include a `_documentation` section with field descriptions:
           "tier_prices": []
         }
       ],
-      "j2store_images": {
+      "product_images": {
         "main_image": "images/products/product.jpg",
         "main_image_alt": "Product Name"
       },
@@ -195,17 +216,6 @@ title,alias,main_image
 | `main_image` | No | Path relative to Joomla root, e.g., `images/products/img.jpg` |
 | `category_path` | No | Category path like `shop/electronics` (auto-creates if missing) |
 
-## Configuration
-
-**Components → J2Commerce Import/Export → Options**
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Batch Size | 100 | Records per batch (10-1000) |
-| Default Format | JSON | Export format |
-| CSV Delimiter | ; | Field separator for CSV |
-| CSV Enclosure | " | Text qualifier for CSV |
-
 ## Development
 
 ### Structure
@@ -218,7 +228,8 @@ com_j2commerce_importexport/
 │   │   │   ├── Controller/
 │   │   │   ├── Model/
 │   │   │   │   ├── ExportModel.php
-│   │   │   │   └── ImportModel.php
+│   │   │   │   ├── ImportModel.php
+│   │   │   │   └── J2CommerceAwareTrait.php   ← version detection + table helpers
 │   │   │   └── View/Dashboard/
 │   │   └── tmpl/dashboard/
 │   └── language/ (en-GB, de-DE, fr-FR)
@@ -231,23 +242,35 @@ com_j2commerce_importexport/
 
 This component has automated tests that run on every push via GitHub Actions.
 
+### Test Scope Note
+
+The compatibility jobs install the extension ZIP into official Joomla Full Package images with real J2Commerce runtimes: Joomla 5.4.6 with J2Store/J2Commerce 4.1.4 and Joomla 6.1.1 with a J2Commerce 6 package built from the official `j2commerce/j2commerce` repository. Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
+
+The export controller test currently verifies controller structure, supported formats, field documentation, and access/header code paths by source inspection. It is not a full HTTP export test and does not yet cover CSRF failure handling, rollback behavior, or response content type end to end.
+
 ### Test Suites
 
-1. **Installation** — Component registration in DB, file deployment
-2. **Configuration** — Component params, language files, XML manifest
-3. **Export** — JSON, CSV, XML export output validation
-4. **Import** — Full product import, duplicate detection, quantity modes
-5. **Uninstall** — Clean removal from database and filesystem
+1. **Installation** — component registration in DB, file deployment
+2. **Component Structure** — directory layout, manifest, language files
+3. **Export Model** — JSON, CSV, XML export output validation (J2Commerce 4 and 6)
+4. **Import Model** — full product import, duplicate detection, quantity modes (J2Commerce 4 and 6)
+5. **Export Controller** — `core.manage` access check
+6. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
 ```bash
-cd j2commerce/com_j2commerce_importexport/tests
+cd tests
 docker compose up -d
-# Wait for container readiness (health.txt written by docker-entrypoint.sh)
 timeout 300 bash -c 'until docker exec com_j2commerce_importexport_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
+
+# Joomla 6
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec com_j2commerce_importexport_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 ## Troubleshooting
@@ -271,6 +294,12 @@ docker compose down -v
 ### Duplicate Products Created
 **Problem:** Re-importing creates new products instead of updating  
 **Solution:** Enable "Update existing products" in import options. Ensure the import file contains `article_id`, `alias`, or `sku` values that match existing products.
+
+## Multi-Language Support
+
+- English (`en-GB`)
+- German (`de-DE`)
+- French (`fr-FR`)
 
 ## Support & Contact
 
