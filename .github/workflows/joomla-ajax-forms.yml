@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Build extension
         run: |
@@ -50,7 +50,7 @@ jobs:
           cp "$PACKAGE" tests/extension.zip
       
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/plg_ajax_joomlaajaxforms_*.zip
@@ -93,10 +93,10 @@ jobs:
             script: 'uninstall'
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Download package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/tests/
@@ -129,7 +129,7 @@ jobs:
       
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: j5-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests/test-results/*.txt
@@ -229,10 +229,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Download package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: ./
@@ -520,7 +520,7 @@ jobs:
 
     steps:
       - name: Download all test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: test-artifacts/
 
@@ -543,7 +543,7 @@ jobs:
             exit 1
           fi
       - name: Upload combined logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-test-logs
           path: test-artifacts/
