@@ -4,10 +4,11 @@
 [![Release](https://github.com/advansit/Joomla/actions/workflows/release-joomla-ajax-forms.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-joomla-ajax-forms.yml)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
-[![Joomla 7](https://img.shields.io/badge/Joomla-7.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
-A Joomla plugin that provides AJAX handling for user forms, authentication, profile management, and J2Store/J2Commerce cart operations — without page reloads.
+## Description
+
+A Joomla plugin that provides AJAX handling for user forms, authentication, profile management, and J2Commerce cart operations — without page reloads.
 
 ## Features
 
@@ -19,16 +20,16 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Password Reset | `reset` | Password reset email request |
 | Username Reminder | `remind` | Username reminder email request |
 | Profile Editing | `saveProfile` | Update name, email, password |
-| Cart: Remove Item | `removeCartItem` | Remove item from J2Store/J2Commerce cart |
+| Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
 All features can be individually enabled/disabled via plugin parameters.
 
 ## Requirements
 
-- Joomla 5.x, 6.x, or 7.x
+- Joomla 5.x or 6.x
 - PHP 8.1+
-- J2Store or J2Commerce (only for cart features)
+- J2Commerce 4.x or 6.x (only for cart features)
 
 ## Installation
 
@@ -57,7 +58,24 @@ RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password) | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Store/J2Commerce) | Yes |
+| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) | Yes |
+
+### J2Commerce Cart Compatibility
+
+The cart features support both J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The version is detected at runtime by checking whether `#__j2store_carts` exists in the database.
+
+If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, cart operations return a `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` error — the cart feature is silently unavailable without breaking other plugin functionality.
+
+**Schema differences handled automatically:**
+
+| Operation | J2Commerce 4.x | J2Commerce 6.x |
+|---|---|---|
+| Cart item count | `SUM(product_qty)` from `#__j2store_cartitems` joined via `cart_id` | `SUM(product_qty)` from `#__j2commerce_cartitems` joined via `cart_id` |
+| Cart total | Returns `"0.00"` — see limitation below | Returns `"0.00"` — see limitation below |
+| Remove item | DELETE from `#__j2store_cartitems` WHERE `cart_id IN (SELECT j2store_cart_id ...)` | DELETE from `#__j2commerce_cartitems` WHERE `cart_id IN (SELECT j2commerce_cart_id ...)` |
+
+**Limitation — cart total (both versions):**
+`cartTotal` always returns `"0.00"`. Computing a correct total requires joining to the pricing engine (tier prices, customer group rules, coupons, taxes), which is not feasible in a lightweight plugin query. The frontend should suppress display of the total when `cartTotal === "0.00"` and rely on the J2Commerce cart view for the authoritative total.
 
 ## Usage
 
@@ -109,7 +127,92 @@ Error responses use J2Commerce-compatible format:
 }
 ```
 
-## Known Pitfalls
+## Development
+
+### Structure
+
+```
+plg_ajax_joomlaajaxforms/
+├── joomlaajaxforms.xml
+├── build.sh
+├── script.php
+├── services/provider.php
+├── src/Extension/JoomlaAjaxForms.php
+├── language/ (en-GB, de-DE, fr-FR)
+├── media/js/
+└── tests/
+```
+
+### Building
+
+```bash
+./build.sh
+```
+
+Creates: `plg_ajax_joomlaajaxforms.zip`
+
+## Automated Testing
+
+This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
+
+### Test Suites
+
+1. **Installation** — plugin registration in DB, file deployment
+2. **Configuration** — plugin params, language files, XML manifest
+3. **AJAX Endpoint** — unauthenticated access rejection
+4. **Login** — AJAX login, MFA redirect flow
+5. **Registration** — AJAX user registration
+6. **Password Reset** — reset email request
+7. **Username Reminder** — reminder email request
+8. **Security** — CSRF rejection (no-token GET, fake-token POST), IDOR protection (unauthenticated removeCartItem rejected, victim row not deleted)
+9. **Uninstall** — clean removal from database and filesystem
+10. **Profile** — AJAX profile save (name, email, password)
+11. **J2Store Cart** — cart count, remove item, J2Commerce 4/6 detection
+12. **htaccess Check** — `.htaccess` rule validation
+
+### Full-Install Tests (J2Commerce)
+
+Two additional CI jobs exercise the plugin against real J2Commerce installations:
+
+**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds cart data for a test user, then verifies:
+- `isJ2CommerceInstalled()` returns `true`, `isJ2Commerce4()` returns `true`
+- `getCartCountForUser(999)` returns 3 (matching seeded rows)
+- IDOR: unauthenticated `removeCartItem` rejected, row not deleted
+- Authenticated `removeCartItem` deletes the row and returns updated `cartCount`
+
+**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source (`git clone j2commerce/j2commerce && php build/build_package.php`) since no public release ZIP exists. Tests mirror the J2C4 suite against `#__j2commerce_*` tables.
+
+### Running Tests Locally
+
+```bash
+# Standard tests (Joomla 5 + Joomla 6, no J2Commerce)
+cd tests
+docker compose up -d
+timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+./run-tests.sh all
+docker compose down -v
+
+# J2Commerce 4 full-install tests (Joomla 5 + J2Commerce 4)
+cd tests-j2c4
+# Place com_j2store ZIP as extension.zip and j2store4.zip in this directory first
+docker compose up -d
+timeout 360 bash -c 'until docker exec plg_ajax_j2c4_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+./run-tests.sh all
+docker compose down -v
+
+# J2Commerce 6 full-install tests (Joomla 6 + J2Commerce 6)
+cd tests-j2c6
+# Build J2Commerce 6 from source first:
+#   git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2c6-src
+#   cd /tmp/j2c6-src && php build/build_package.php
+#   cp docs/packages/pkg_j2commerce_*.zip tests-j2c6/j2commerce6.zip
+docker compose up -d
+timeout 360 bash -c 'until docker exec plg_ajax_j2c6_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+./run-tests.sh all
+docker compose down -v
+```
+
+## Troubleshooting
 
 ### AJAX context differs from normal Joomla requests
 
@@ -142,7 +245,7 @@ After AJAX login with MFA enabled, the plugin redirects the browser to Joomla's 
 
 Joomla registers `JoomlaStorage::close()` as a PHP shutdown function. Session data written via `$session->set()` is automatically serialized into `$_SESSION['joomla']` when `exit()` is called. An explicit `$session->close()` before `$app->close()` is not necessary.
 
-## Joomla Compatibility
+### Joomla 6 API Compatibility
 
 The plugin avoids all APIs deprecated in Joomla 6:
 
@@ -150,17 +253,6 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - Uses `MailerFactoryInterface` instead of `Factory::getMailer()`
 - Uses `UserFactoryInterface` instead of `User::getInstance()`
 - Uses `->getInput()` instead of `->input`
-
-## Automated Testing
-
-12 test scripts run on every push and on pull requests via GitHub Actions: installation, configuration, endpoint access, login/MFA, registration, reset, remind, security, profile, J2Store cart, .htaccess validation, and uninstall.
-
-```bash
-cd plg_ajax_joomlaajaxforms/tests
-docker compose up -d
-./run-tests.sh all
-docker compose down -v
-```
 
 ## Multi-Language Support
 

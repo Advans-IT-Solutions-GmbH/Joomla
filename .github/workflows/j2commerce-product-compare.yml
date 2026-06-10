@@ -7,6 +7,7 @@ on:
     paths: ['j2commerce/plg_j2commerce_productcompare/**']
   pull_request:
     branches: [main]
+    paths: ['j2commerce/plg_j2commerce_productcompare/**']
 
 jobs:
   build:

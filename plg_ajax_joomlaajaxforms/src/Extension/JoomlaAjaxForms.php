@@ -24,6 +24,7 @@ use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\CMS\User\UserHelper;
+use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Event\DispatcherInterface;
@@ -31,6 +32,7 @@ use Joomla\Event\SubscriberInterface;
 
 class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 {
+    use DatabaseAwareTrait;
     protected $autoloadLanguage = true;
 
     public static function getSubscribedEvents(): array
@@ -40,6 +42,18 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             'onAjaxJoomlaajaxforms' => 'onAjaxJoomlaajaxforms',
             'onBeforeRender'        => 'onBeforeRender',
         ];
+    }
+
+    /**
+     * Create a database query object (Joomla 4/5/6 compatible).
+     * Joomla 6 deprecates getQuery(true) in favour of createQuery().
+     *
+     * @param   DatabaseInterface  $db
+     * @return  \Joomla\Database\QueryInterface
+     */
+    private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
     }
 
     /**
@@ -213,17 +227,13 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $session = $this->getApplication()->getSession();
                 $session->set('application.queue', []);
 
-                // Find the profile page URL via the menu system.
-                // We look up the Itemid and let Route::_() build the
-                // SEF URL with the correct language prefix.
+                // Find the profile page URL via a direct DB query.
+                // Direct DB query instead of Menu::getItems() to avoid loading the full menu tree.
                 $profileUrl = Uri::base();
-                $menu = $this->getApplication()->getMenu();
-                if ($menu) {
-                    $items = $menu->getItems(['component', 'link'], ['com_j2store', 'index.php?option=com_j2store&view=myprofile']);
-                    if (!empty($items)) {
-                        $sefPath = Route::_('index.php?Itemid=' . $items[0]->id, false);
-                        $profileUrl = rtrim(Uri::base(), '/') . '/' . ltrim($sefPath, '/');
-                    }
+                $profileItemId = $this->getMyProfileMenuItemId();
+                if ($profileItemId) {
+                    $sefPath = Route::_('index.php?Itemid=' . $profileItemId, false);
+                    $profileUrl = rtrim(Uri::base(), '/') . '/' . ltrim($sefPath, '/');
                 }
                 $session->set('com_users.return_url', $profileUrl);
 
@@ -236,9 +246,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                     false
                 );
 
+                // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
                 return $this->jsonSuccess([
-                    'redirect' => $captiveUrl,
-                    'message'  => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_MFA_REQUIRED'),
+                    'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_MFA_REQUIRED'),
+                    'data'    => ['redirect' => $captiveUrl],
                 ]);
             }
 
@@ -260,12 +271,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $session->set('com_users.return_url', '');
 
             if (empty($redirect)) {
-                $redirect = Route::_('index.php?option=com_j2store&view=myprofile', false);
+                $profileItemId = $this->getMyProfileMenuItemId();
+                $redirect = $profileItemId
+                    ? Route::_('index.php?Itemid=' . $profileItemId, false)
+                    : Route::_('index.php?option=' . ($this->isJ2Commerce4($this->getDatabase()) ? 'com_j2store' : 'com_j2commerce') . '&view=myprofile', false);
             }
 
+            // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
             return $this->jsonSuccess([
-                'redirect' => $redirect,
-                'message'  => Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_SUCCESS', $user->name),
+                'message' => Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_SUCCESS', $user->name),
+                'data'    => ['redirect' => $redirect],
             ]);
         }
 
@@ -306,9 +321,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $redirect = Uri::base();
             }
 
+            // JS reads redirect from data.data.redirect (logout handler line 613)
             return $this->jsonSuccess([
-                'redirect' => $redirect,
-                'message'  => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_LOGOUT_SUCCESS'),
+                'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_LOGOUT_SUCCESS'),
+                'data'    => ['redirect' => $redirect],
             ]);
         }
 
@@ -360,9 +376,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         // Check if username/email already exists
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $db = $this->getDatabase();
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__users'))
             ->where($db->quoteName('username') . ' = :username')
@@ -372,7 +388,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_USERNAME_EXISTS'));
         }
 
-        $query = $db->getQuery(true)
+        $query = $this->createDbQuery($db)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__users'))
             ->where($db->quoteName('email') . ' = :email')
@@ -383,10 +399,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            $user = new \Joomla\CMS\User\User();
-            $user->name = $name;
+            // new User() is removed in Joomla 6 — use UserFactoryInterface instead.
+            $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById(0);
+            $user->name     = $name;
             $user->username = $username;
-            $user->email = $email;
+            $user->email    = $email;
             $user->password = UserHelper::hashPassword($password);
 
             $userActivation = $usersConfig->get('useractivation');
@@ -455,8 +472,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         // Always return success to prevent email enumeration
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $db = $this->getDatabase();
+            $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -470,7 +487,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $hashedToken = UserHelper::hashPassword($token);
                 $tokenCreated = Factory::getDate()->toSql();
 
-                $query = $db->getQuery(true)
+                $query = $this->createDbQuery($db)
                     ->update($db->quoteName('#__users'))
                     ->set($db->quoteName('activation') . ' = :activation')
                     ->set($db->quoteName('lastResetTime') . ' = :resetTime')
@@ -512,8 +529,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         // Always return success to prevent email enumeration
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $db = $this->getDatabase();
+            $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('email') . ' = :email')
@@ -544,7 +561,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
         }
 
-        $input = $this->getApplication()->getInput();
+        $input      = $this->getApplication()->getInput();
         $cartitemId = $input->getInt('cartitem_id', 0);
 
         if (!$cartitemId) {
@@ -552,43 +569,62 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            if (!file_exists(JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php')) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND'));
-            }
-            if (!class_exists('J2Store')) {
-                require_once JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php';
+            $db = $this->getDatabase();
+            $userId = (int) $user->id;
+
+            if (!$this->isJ2CommerceInstalled($db)) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND'));
             }
 
-            // Remove cart item — restrict to the current user to prevent IDOR
-            $db     = Factory::getContainer()->get(DatabaseInterface::class);
-            $userId = $user->id;
-            $query  = $db->getQuery(true)
-                ->delete($db->quoteName('#__j2store_cartitems'))
-                ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
-                ->where($db->quoteName('user_id') . ' = :userId')
-                ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER)
-                ->bind(':userId', $userId, ParameterType::INTEGER);
+            if ($this->isJ2Commerce4($db)) {
+                // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
+                // $userId is (int) — safe to inline in subquery; bind() on subquery objects is lost
+                // when the subquery is cast to string and embedded in the outer query's WHERE clause.
+                $subQuery = $this->createDbQuery($db)
+                    ->select($db->quoteName('j2store_cart_id'))
+                    ->from($db->quoteName('#__j2store_carts'))
+                    ->where($db->quoteName('user_id') . ' = ' . $userId);
+
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName('#__j2store_cartitems'))
+                    ->where($db->quoteName('j2store_cartitem_id') . ' = :cartitemId')
+                    ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
+                    ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
+            } else {
+                // J2Commerce 6.x — tables: #__j2commerce_carts / #__j2commerce_cartitems
+                $subQuery = $this->createDbQuery($db)
+                    ->select($db->quoteName('j2commerce_cart_id'))
+                    ->from($db->quoteName('#__j2commerce_carts'))
+                    ->where($db->quoteName('user_id') . ' = ' . $userId);
+
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName('#__j2commerce_cartitems'))
+                    ->where($db->quoteName('j2commerce_cartitem_id') . ' = :cartitemId')
+                    ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')')
+                    ->bind(':cartitemId', $cartitemId, ParameterType::INTEGER);
+            }
+
             $db->setQuery($query);
             $db->execute();
 
-            // Get updated cart info
-            $helper = \J2Store::helper('Cart');
-            $cartItems = $helper->getItems();
-            $cartCount = 0;
-            $cartTotal = 0;
-            foreach ($cartItems as $item) {
-                $cartCount += $item->orderitem_quantity;
-                $cartTotal += $item->orderitem_finalprice;
+            // If no row was deleted the item either doesn't exist or belongs to a
+            // different user. The query is already user-scoped so nothing was deleted,
+            // but we must not return success — that would silently confirm the item ID.
+            if ($db->getAffectedRows() === 0) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_CART_ITEM_NOT_FOUND'));
             }
 
-            // Format the total using J2Store currency
-            $currency = \J2Store::currency();
-            $formattedTotal = $currency->format($cartTotal);
+            $cartCount = $this->getCartCountForUser($db, $userId);
+            $cartTotal = $this->getCartTotalForUser($db, $userId);
 
+            // JS reads cartCount/cartTotal from data.data.* (see joomlaajaxforms.js removeCartItem handler)
             return $this->jsonSuccess([
-                'cartCount' => $cartCount,
-                'cartTotal' => Text::sprintf('J2STORE_CART_TOTAL', $cartCount, $formattedTotal),
-                'message'   => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_CART_ITEM_REMOVED'),
+                'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_CART_ITEM_REMOVED'),
+                'data'    => [
+                    'cartCount' => $cartCount,
+                    'cartTotal' => $cartTotal,
+                ],
             ]);
         } catch (\Exception $e) {
             Log::add('Cart remove error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
@@ -601,28 +637,147 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleGetCartCount(): string
     {
+        $user = $this->getApplication()->getIdentity();
+
+        if (!$user || $user->guest) {
+            return $this->jsonSuccess(['data' => ['cartCount' => 0]]);
+        }
+
         try {
-            if (!file_exists(JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php')) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND'));
-            }
-            if (!class_exists('J2Store')) {
-                require_once JPATH_ADMINISTRATOR . '/components/com_j2store/helpers/j2store.php';
+            $db = $this->getDatabase();
+            $userId = (int) $user->id;
+
+            if (!$this->isJ2CommerceInstalled($db)) {
+                return $this->jsonSuccess(['data' => ['cartCount' => 0]]);
             }
 
-            $helper = \J2Store::helper('Cart');
-            $cartItems = $helper->getItems();
-            $cartCount = 0;
-            foreach ($cartItems as $item) {
-                $cartCount += $item->orderitem_quantity;
-            }
+            $cartCount = $this->getCartCountForUser($db, $userId);
 
-            return $this->jsonSuccess([
-                'cartCount' => $cartCount,
-            ]);
+            // JS reads cartCount from data.data.* (see joomlaajaxforms.js getCartCount handler)
+            return $this->jsonSuccess(['data' => ['cartCount' => $cartCount]]);
         } catch (\Exception $e) {
             Log::add('Cart count error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
-            return $this->jsonSuccess(['cartCount' => 0]);
+            return $this->jsonSuccess(['data' => ['cartCount' => 0]]);
         }
+    }
+
+    /**
+     * Returns true if any supported version of J2Commerce is installed.
+     */
+    /**
+     * Returns the menu item ID for the J2Store/J2Commerce "myprofile" view,
+     * or null if no such menu item exists.
+     *
+     * Uses a direct DB query instead of Menu::getItems() to avoid loading
+     * the full menu tree. Works on J4/J5/J6.
+     */
+    private function getMyProfileMenuItemId(): ?int
+    {
+        $db = $this->getDatabase();
+        $j4 = $this->isJ2Commerce4($db);
+
+        $option = $j4 ? 'com_j2store' : 'com_j2commerce';
+        $link   = 'index.php?option=' . $option . '&view=myprofile';
+
+        $q = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__menu'))
+            ->where($db->quoteName('link') . ' = :link')
+            ->where($db->quoteName('client_id') . ' = 0')
+            ->where($db->quoteName('published') . ' = 1')
+            ->bind(':link', $link)
+            ->setLimit(1);
+
+        $db->setQuery($q);
+        $id = $db->loadResult();
+
+        return $id ? (int) $id : null;
+    }
+
+    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    {
+        static $installed = null;
+        if ($installed === null) {
+            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
+            $prefix    = $db->getPrefix();
+            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
+            $j4 = $db->loadResult() !== null;
+            if (!$j4) {
+                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2commerce_carts'));
+                $j6 = $db->loadResult() !== null;
+            }
+            $installed = $j4 || (!$j4 && ($j6 ?? false));
+        }
+        return $installed;
+    }
+
+    /**
+     * Returns true if J2Commerce 4.x is installed (uses #__j2store_* tables).
+     * Returns false for J2Commerce 6.x (uses #__j2commerce_* tables).
+     */
+    private function isJ2Commerce4(DatabaseInterface $db): bool
+    {
+        static $result = null;
+        if ($result === null) {
+            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
+            $prefix = $db->getPrefix();
+            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
+            $result = $db->loadResult() !== null;
+        }
+        return $result;
+    }
+
+    /**
+     * Get total cart item quantity for a user.
+     */
+    private function getCartCountForUser(DatabaseInterface $db, int $userId): int
+    {
+        if ($this->isJ2Commerce4($db)) {
+            // #__j2store_cartitems FK to #__j2store_carts is `cart_id`; quantity column is `product_qty`
+            // (verified against production DB dump: advansj5_j2store_cartitems has product_qty decimal(12,4))
+            // $userId is (int) — safe to inline; bind() on subquery is lost when cast to string.
+            $subQuery = $this->createDbQuery($db)
+                ->select($db->quoteName('j2store_cart_id'))
+                ->from($db->quoteName('#__j2store_carts'))
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
+
+            $query = $this->createDbQuery($db)
+                ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
+                ->from($db->quoteName('#__j2store_cartitems'))
+                ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
+        } else {
+            $subQuery = $this->createDbQuery($db)
+                ->select($db->quoteName('j2commerce_cart_id'))
+                ->from($db->quoteName('#__j2commerce_carts'))
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
+
+            $query = $this->createDbQuery($db)
+                ->select('COALESCE(SUM(' . $db->quoteName('product_qty') . '), 0)')
+                ->from($db->quoteName('#__j2commerce_cartitems'))
+                ->where($db->quoteName('cart_id') . ' IN (' . $subQuery . ')');
+        }
+
+        try {
+            return (int) $db->setQuery($query)->loadResult();
+        } catch (\Throwable $e) {
+            // Cart table does not exist (component not installed) — return 0.
+            return 0;
+        }
+    }
+
+    /**
+     * Get formatted cart total for a user.
+     *
+     * Both J2Commerce 4 and 6 store cart line items without a price column
+     * (#__j2store_cartitems / #__j2commerce_cartitems contain only product_qty
+     * and variant_id). Computing a correct total requires joining to the pricing
+     * engine (tier prices, customer group rules, coupons, taxes) — not feasible
+     * in a lightweight plugin query. Returns '0.00' for both versions; the
+     * frontend should hide the total display when cartTotal === '0.00'.
+     */
+    private function getCartTotalForUser(DatabaseInterface $db, int $userId): string
+    {
+        return '0.00';
     }
 
     /**
@@ -711,8 +866,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function getMfaMethods(int $userId): array
     {
         try {
-            $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $db->getQuery(true)
+            $db = $this->getDatabase();
+            $query = $this->createDbQuery($db)
                 ->select([$db->quoteName('id'), $db->quoteName('title'), $db->quoteName('method')])
                 ->from($db->quoteName('#__user_mfa'))
                 ->where($db->quoteName('user_id') . ' = :userId')

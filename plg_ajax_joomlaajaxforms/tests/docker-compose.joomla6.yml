@@ -1,51 +1,43 @@
-version: '3.8'
-
 services:
   joomla:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: com_j2store_cleanup_test
+      dockerfile: Dockerfile.joomla6
+    container_name: plg_ajax_joomlaajaxforms_j6_test
     ports:
-      - "8080:80"
+      - "8081:80"
     environment:
       JOOMLA_DB_HOST: mysql
       JOOMLA_DB_USER: joomla
       JOOMLA_DB_PASSWORD: joomla_pass
       JOOMLA_DB_NAME: joomla_db
-      JOOMLA_SITE_NAME: "Test Site"
-      JOOMLA_ADMIN_USER: admin
+      JOOMLA_SITE_NAME: "Test Site J6"
+      JOOMLA_ADMIN_USER: "Super User"
       JOOMLA_ADMIN_USERNAME: admin
-      JOOMLA_ADMIN_PASSWORD: Admin123456789!@#
+      JOOMLA_ADMIN_PASSWORD: "Admin123456789!@#"
       JOOMLA_ADMIN_EMAIL: admin@test.local
-      EXPECTED_CORE_COMPONENT: ${EXPECTED_CORE_COMPONENT:-}
     volumes:
-      - joomla_data:/var/www/html
+      - joomla_j6_data:/var/www/html
     depends_on:
       mysql:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   mysql:
     image: mysql:8.0
-    container_name: com_j2store_cleanup_test_mysql
+    container_name: plg_ajax_joomlaajaxforms_j6_test_mysql
     environment:
       MYSQL_ROOT_PASSWORD: root_pass
       MYSQL_DATABASE: joomla_db
       MYSQL_USER: joomla
       MYSQL_PASSWORD: joomla_pass
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_j6_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
 volumes:
-  joomla_data:
-  mysql_data:
+  joomla_j6_data:
+  mysql_j6_data:
