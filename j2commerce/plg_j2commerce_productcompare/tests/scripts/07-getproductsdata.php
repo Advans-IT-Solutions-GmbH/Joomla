@@ -341,8 +341,13 @@ class GetProductsDataTest
             `product_source_id`    INT UNSIGNED NOT NULL DEFAULT 0,
             `product_source`       VARCHAR(100) NOT NULL DEFAULT \'\',
             `product_type`         VARCHAR(50)  NOT NULL DEFAULT \'simple\',
+            `visibility`           TINYINT(1)   NOT NULL DEFAULT 1,
             `enabled`              TINYINT(1)   NOT NULL DEFAULT 1,
             `taxprofile_id`        INT UNSIGNED NOT NULL DEFAULT 0,
+            `vendor_id`            INT UNSIGNED NOT NULL DEFAULT 0,
+            `addtocart_text`       VARCHAR(255) NOT NULL DEFAULT \'\',
+            `up_sells`             TEXT         NOT NULL,
+            `cross_sells`          TEXT         NOT NULL,
             `params`               TEXT         NOT NULL,
             PRIMARY KEY (`' . $productCol . '`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
@@ -353,6 +358,13 @@ class GetProductsDataTest
             `sku`                  VARCHAR(255) NOT NULL DEFAULT \'\',
             `price`                DECIMAL(15,5) NOT NULL DEFAULT 0.00000,
             `availability`         INT          DEFAULT NULL,
+            `pricing_calculator`   VARCHAR(64)  NOT NULL DEFAULT \'standard\',
+            `shipping`             TINYINT(1)   NOT NULL DEFAULT 1,
+            `quantity_restriction` TINYINT(1)   NOT NULL DEFAULT 0,
+            `allow_backorder`      TINYINT(1)   NOT NULL DEFAULT 0,
+            `is_master`            TINYINT(1)   NOT NULL DEFAULT 1,
+            `isdefault_variant`    TINYINT(1)   NOT NULL DEFAULT 0,
+            `enabled`              TINYINT(1)   NOT NULL DEFAULT 1,
             `params`               TEXT         NOT NULL,
             `isdefault`            TINYINT(1)   NOT NULL DEFAULT 0,
             PRIMARY KEY (`' . $variantCol . '`)
@@ -524,8 +536,13 @@ class GetProductsDataTest
                 'product_source_id' => $this->seededContentIds[$p['idx']],
                 'product_source'    => 'com_content',
                 'product_type'      => 'simple',
+                'visibility'        => 1,
                 'enabled'           => $p['enabled'],
                 'taxprofile_id'     => 0,
+                'vendor_id'         => 0,
+                'addtocart_text'    => '',
+                'up_sells'          => '',
+                'cross_sells'       => '',
                 'params'            => '{}',
             ];
             $this->db->insertObject($this->productsTable, $product, $this->productsPk);
@@ -538,9 +555,16 @@ class GetProductsDataTest
                 'product_id'   => $productId,
                 'sku'          => 'TEST-SKU-' . $i . '-' . $ts,
                 'price'        => 10.00 + ($i * 5),
-                'availability' => 1,
-                'params'       => '{}',
-                'isdefault'    => 1,
+                'availability'         => 1,
+                'pricing_calculator'   => 'standard',
+                'shipping'             => 1,
+                'quantity_restriction' => 0,
+                'allow_backorder'      => 0,
+                'is_master'            => 1,
+                'isdefault_variant'    => 1,
+                'enabled'              => 1,
+                'params'               => '{}',
+                'isdefault'            => 1,
             ];
             $this->db->insertObject($this->variantsTable, $variant, $this->variantsPk);
             $this->seededVariantIds[] = (int)$this->db->insertid();
