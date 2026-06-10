@@ -169,9 +169,11 @@ jobs:
       - name: Build J2Commerce 6 from source
         run: |
           git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
           cd /tmp/j2commerce6-src && php build/build_package.php
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          sha256sum "$ZIP"
           cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/plg_privacy_j2commerce/tests/j2commerce6.zip"
       - name: Start environment (J6)
         run: |

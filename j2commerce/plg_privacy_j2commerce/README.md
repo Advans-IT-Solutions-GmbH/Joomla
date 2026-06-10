@@ -10,6 +10,10 @@
 
 GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data. Supports J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables) via runtime detection.
 
+### Compatibility Test Scope
+
+The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
+
 ## Features
 
 - **Checkout Consent Checkbox** — Privacy consent during checkout via template override
