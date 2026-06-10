@@ -39,7 +39,7 @@ jobs:
           path: plg_ajax_joomlaajaxforms/plg_ajax_joomlaajaxforms_*.zip
           retention-days: 7
 
-  test:
+  test-j5:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: build
@@ -93,7 +93,7 @@ jobs:
         run: |
           cd plg_ajax_joomlaajaxforms/tests
           docker compose up -d
-          sleep 60
+          timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
       
       - name: Run tests
         run: |
@@ -105,7 +105,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.script }}-logs
+          name: j5-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests/test-results/*.txt
           retention-days: 7
       
@@ -114,6 +114,78 @@ jobs:
         run: |
           cd plg_ajax_joomlaajaxforms/tests
           docker compose down -v
+
+  test-j6:
+    name: ${{ matrix.name }} (J6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Configuration'
+            script: 'configuration'
+          - name: '03 - AJAX Endpoint'
+            script: 'ajax-endpoint'
+          - name: '04 - Login'
+            script: 'login'
+          - name: '05 - Registration'
+            script: 'registration'
+          - name: '06 - Reset Request'
+            script: 'reset-request'
+          - name: '07 - Remind Request'
+            script: 'remind-request'
+          - name: '08 - Security'
+            script: 'security'
+          - name: '10 - Profile'
+            script: 'profile'
+          - name: '11 - J2Store Cart'
+            script: 'j2store-cart'
+          - name: '12 - Htaccess Check'
+            script: 'htaccess-check'
+          - name: '09 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-package
+          path: plg_ajax_joomlaajaxforms/tests/
+      - name: Rename package
+        run: mv plg_ajax_joomlaajaxforms/tests/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests/extension.zip
+      - name: Start environment (J6)
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests
+          docker compose -f docker-compose.joomla6.yml up -d
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests
+          docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run tests
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: j6-${{ matrix.script }}-logs
+          path: plg_ajax_joomlaajaxforms/tests/test-results/*.txt
+          retention-days: 7
+      - name: Cleanup
+        if: always()
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests
+          docker compose -f docker-compose.joomla6.yml down -v
 
   validate:
     name: Validate Package
@@ -175,10 +247,185 @@ jobs:
           
           echo "Language files are present"
 
+  test-j2c4-full:
+    name: ${{ matrix.name }} (J5+J2C4)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Configuration'
+            script: 'configuration'
+          - name: '03 - AJAX Endpoint'
+            script: 'ajax-endpoint'
+          - name: '04 - Login'
+            script: 'login'
+          - name: '05 - Registration'
+            script: 'registration'
+          - name: '06 - Reset Request'
+            script: 'reset-request'
+          - name: '07 - Remind Request'
+            script: 'remind-request'
+          - name: '08 - Security'
+            script: 'security'
+          - name: '10 - Profile'
+            script: 'profile'
+          - name: '11 - J2Store Cart'
+            script: 'j2store-cart'
+          - name: '12 - htaccess Check'
+            script: 'htaccess-check'
+          - name: '09 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-package
+          path: plg_ajax_joomlaajaxforms/tests-j2c4/
+
+      - name: Rename package
+        run: mv plg_ajax_joomlaajaxforms/tests-j2c4/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests-j2c4/extension.zip
+
+      - name: Build image
+        run: |
+          docker build \
+            -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
+            --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.3/com_j2store_v4-4.1.3-pro.zip \
+            -t plg_ajax_j2c4_test \
+            .
+
+      - name: Start environment
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c4
+          docker compose up -d
+          timeout 360 bash -c 'until docker exec plg_ajax_j2c4_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+
+      - name: Show container logs
+        if: always()
+        run: docker logs plg_ajax_j2c4_test 2>&1 | tail -80 || true
+
+      - name: Run ${{ matrix.name }}
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c4
+          ./run-tests.sh ${{ matrix.script }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: j2c4-${{ matrix.script }}-logs
+          path: plg_ajax_joomlaajaxforms/tests-j2c4/test-results/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c4
+          docker compose down -v
+
+  test-j2c6-full:
+    name: ${{ matrix.name }} (J6+J2C6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: '01 - Installation'
+            script: 'installation'
+          - name: '02 - Configuration'
+            script: 'configuration'
+          - name: '03 - AJAX Endpoint'
+            script: 'ajax-endpoint'
+          - name: '04 - Login'
+            script: 'login'
+          - name: '05 - Registration'
+            script: 'registration'
+          - name: '06 - Reset Request'
+            script: 'reset-request'
+          - name: '07 - Remind Request'
+            script: 'remind-request'
+          - name: '08 - Security'
+            script: 'security'
+          - name: '10 - Profile'
+            script: 'profile'
+          - name: '11 - J2Store Cart'
+            script: 'j2store-cart'
+          - name: '12 - htaccess Check'
+            script: 'htaccess-check'
+          - name: '09 - Uninstall'
+            script: 'uninstall'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-package
+          path: plg_ajax_joomlaajaxforms/tests-j2c6/
+
+      - name: Rename package
+        run: mv plg_ajax_joomlaajaxforms/tests-j2c6/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests-j2c6/extension.zip
+
+      - name: Build J2Commerce 6 from source
+        run: |
+          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          cd /tmp/j2commerce6-src && php build/build_package.php
+          ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          cp "$ZIP" "$GITHUB_WORKSPACE/plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip"
+
+      - name: Build image
+        run: |
+          docker build \
+            -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
+            -t plg_ajax_j2c6_test \
+            .
+
+      - name: Start environment
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c6
+          docker compose up -d
+          timeout 360 bash -c 'until docker exec plg_ajax_j2c6_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+
+      - name: Show container logs
+        if: always()
+        run: docker logs plg_ajax_j2c6_test 2>&1 | tail -80 || true
+
+      - name: Run ${{ matrix.name }}
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c6
+          ./run-tests.sh ${{ matrix.script }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: j2c6-${{ matrix.script }}-logs
+          path: plg_ajax_joomlaajaxforms/tests-j2c6/test-results/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd plg_ajax_joomlaajaxforms/tests-j2c6
+          docker compose down -v
+
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-j5, test-j6, test-j2c4-full, test-j2c6-full]
     if: always()
     permissions: {}
 
@@ -199,6 +446,13 @@ jobs:
             fi
           done
 
+      - name: Fail if any job failed
+        if: always()
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
+            exit 1
+          fi
       - name: Upload combined logs
         uses: actions/upload-artifact@v4
         with:
