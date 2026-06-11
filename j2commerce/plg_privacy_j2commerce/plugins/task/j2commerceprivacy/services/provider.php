@@ -1,6 +1,6 @@
 <?php
 /**
- * @package     J2Commerce Privacy Plugin
+ * @package     J2Commerce Privacy Cleanup Task Plugin
  * @subpackage  Services
  * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
  * @license     Proprietary
@@ -8,14 +8,13 @@
 
 defined('_JEXEC') or die;
 
+use Advans\Plugin\Task\J2CommercePrivacy\Extension\J2CommercePrivacy;
 use Joomla\CMS\Extension\PluginInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
-use Joomla\Event\DispatcherInterface;
-use Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce;
 
 return new class implements ServiceProviderInterface
 {
@@ -24,9 +23,8 @@ return new class implements ServiceProviderInterface
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new J2Commerce(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('privacy', 'j2commerce')
+                $plugin = new J2CommercePrivacy(
+                    (array) PluginHelper::getPlugin('task', 'j2commerceprivacy')
                 );
                 $plugin->setApplication(Factory::getApplication());
                 $plugin->setDatabase($container->get(DatabaseInterface::class));

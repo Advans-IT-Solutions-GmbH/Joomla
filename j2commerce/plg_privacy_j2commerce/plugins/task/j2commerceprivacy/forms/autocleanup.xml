@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<form>
+    <fields name="params">
+        <fieldset name="task_params">
+            <field
+                name="retention_years"
+                type="number"
+                label="PLG_TASK_J2COMMERCEPRIVACY_RETENTION_YEARS_LABEL"
+                description="PLG_TASK_J2COMMERCEPRIVACY_RETENTION_YEARS_DESC"
+                default="10"
+                min="1"
+                max="30"
+                step="1"
+                required="true"
+                filter="integer"
+                validate="number"
+            />
+            <field
+                name="anonymize_orders"
+                type="radio"
+                label="PLG_TASK_J2COMMERCEPRIVACY_ANONYMIZE_ORDERS_LABEL"
+                description="PLG_TASK_J2COMMERCEPRIVACY_ANONYMIZE_ORDERS_DESC"
+                default="1"
+                layout="joomla.form.field.radio.switcher"
+                required="true"
+                filter="integer"
+            >
+                <option value="1">JYES</option>
+                <option value="0">JNO</option>
+            </field>
+            <field
+                name="delete_addresses"
+                type="radio"
+                label="PLG_TASK_J2COMMERCEPRIVACY_DELETE_ADDRESSES_LABEL"
+                description="PLG_TASK_J2COMMERCEPRIVACY_DELETE_ADDRESSES_DESC"
+                default="1"
+                layout="joomla.form.field.radio.switcher"
+                required="true"
+                filter="integer"
+            >
+                <option value="1">JYES</option>
+                <option value="0">JNO</option>
+            </field>
+        </fieldset>
+    </fields>
+</form>

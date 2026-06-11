@@ -1,8 +1,8 @@
 <?php
 /**
- * AutoCleanupTask Tests
+ * J2Commerce Privacy Cleanup Task Tests
  *
- * Verifies that AutoCleanupTask is correctly registered in the DI container,
+ * Verifies that the bundled task plugin is registered in the DI container,
  * responds to scheduler events, and executes retention-based cleanup correctly.
  */
 
@@ -42,16 +42,17 @@ class AutoCleanupTaskTest
 
     public function run(): bool
     {
-        echo "=== AutoCleanupTask Tests ===\n\n";
+        echo "=== J2Commerce Privacy Cleanup Task Tests ===\n\n";
 
         $this->testClassExists();
         $this->testDiRegistration();
+        $this->testBundledInstaller();
         $this->testSchedulerEventAdvertisement();
         $this->testRetentionLogic();
         $this->testLifetimeLicenseExemption();
         $this->testLifetimeLicenseMetafieldsPath();
 
-        echo "\n=== AutoCleanupTask Test Summary ===\n";
+        echo "\n=== J2Commerce Privacy Cleanup Task Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";
 
@@ -64,8 +65,22 @@ class AutoCleanupTaskTest
     {
         echo "--- Class and File ---\n";
 
-        $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
-        $this->test('AutoCleanupTask.php exists', file_exists($taskFile));
+        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
+        $this->test('Task plugin class exists', file_exists($taskFile));
+
+        $manifest = JPATH_BASE . '/plugins/task/j2commerceprivacy/j2commerceprivacy.xml';
+        $this->test('Task plugin manifest exists', file_exists($manifest));
+
+        if (file_exists($manifest)) {
+            $manifestSrc = file_get_contents($manifest);
+            $this->test(
+                'Task plugin manifest uses task group',
+                str_contains($manifestSrc, 'group="task"')
+            );
+        }
+
+        $form = JPATH_BASE . '/plugins/task/j2commerceprivacy/forms/autocleanup.xml';
+        $this->test('Task parameter form exists', file_exists($form));
 
         // TaskPluginTrait is part of com_scheduler which is not installed in the
         // test container. Loading the file causes a PHP fatal at compile time
@@ -74,18 +89,33 @@ class AutoCleanupTaskTest
             $src = file_get_contents($taskFile);
 
             $this->test(
-                'AutoCleanupTask uses TaskPluginTrait',
+                'Task plugin uses TaskPluginTrait',
                 str_contains($src, 'use TaskPluginTrait')
             );
 
             $this->test(
-                'AutoCleanupTask implements SubscriberInterface',
+                'Task plugin extends CMSPlugin',
+                str_contains($src, 'extends CMSPlugin')
+            );
+
+            $this->test(
+                'Task plugin implements SubscriberInterface',
                 str_contains($src, 'implements SubscriberInterface')
             );
 
             $this->test(
-                'AutoCleanupTask defines getSubscribedEvents',
+                'Task plugin defines getSubscribedEvents',
                 str_contains($src, 'getSubscribedEvents')
+            );
+
+            $this->test(
+                'Task plugin advertises the Joomla scheduler routine ID',
+                str_contains($src, 'plg_task_j2commerceprivacy.autocleanup')
+            );
+
+            $this->test(
+                'Task plugin links the autocleanup form',
+                str_contains($src, "'form'") && str_contains($src, "'autocleanup'")
             );
         }
     }
@@ -94,8 +124,8 @@ class AutoCleanupTaskTest
     {
         echo "\n--- DI Container Registration ---\n";
 
-        $providerFile = JPATH_BASE . '/plugins/privacy/j2commerce/services/provider.php';
-        $this->test('provider.php exists', file_exists($providerFile));
+        $providerFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/services/provider.php';
+        $this->test('task provider.php exists', file_exists($providerFile));
 
         if (!file_exists($providerFile)) {
             return;
@@ -104,13 +134,58 @@ class AutoCleanupTaskTest
         $providerSource = file_get_contents($providerFile);
 
         $this->test(
-            'provider.php references AutoCleanupTask',
-            str_contains($providerSource, 'AutoCleanupTask')
+            'task provider.php references J2CommercePrivacy',
+            str_contains($providerSource, 'J2CommercePrivacy')
         );
 
         $this->test(
-            'provider.php registers AutoCleanupTask::class as service key',
-            str_contains($providerSource, 'AutoCleanupTask::class')
+            'task provider.php registers PluginInterface service',
+            str_contains($providerSource, 'PluginInterface::class')
+        );
+
+        $this->test(
+            'task provider.php loads task plugin config',
+            str_contains($providerSource, "PluginHelper::getPlugin('task', 'j2commerceprivacy')")
+        );
+
+        $privacyProvider = JPATH_BASE . '/plugins/privacy/j2commerce/services/provider.php';
+        if (file_exists($privacyProvider)) {
+            $privacyProviderSource = file_get_contents($privacyProvider);
+            $this->test(
+                'privacy provider no longer registers hidden scheduler service',
+                !str_contains($privacyProviderSource, 'AutoCleanupTask')
+            );
+        }
+    }
+
+    private function testBundledInstaller(): void
+    {
+        echo "\n--- Bundled Task Plugin Installer ---\n";
+
+        $scriptFile = JPATH_BASE . '/plugins/privacy/j2commerce/script.php';
+
+        if (!file_exists($scriptFile)) {
+            $this->test('Privacy installer script exists', false);
+            return;
+        }
+
+        $src = file_get_contents($scriptFile);
+
+        $this->test(
+            'installer installs bundled task plugin',
+            str_contains($src, '/plugins/task/j2commerceprivacy')
+        );
+
+        $this->test(
+            'installer enables bundled task plugin',
+            str_contains($src, 'setTaskPluginEnabled(true)')
+        );
+
+        $this->test(
+            'installer migrates legacy routine ID only',
+            str_contains($src, 'plg_privacy_j2commerce.autocleanup')
+                && str_contains($src, 'plg_task_j2commerceprivacy.autocleanup')
+                && !str_contains($src, "privacy.consent'")
         );
     }
 
@@ -121,7 +196,7 @@ class AutoCleanupTaskTest
         // com_scheduler is not installed in the test container — TaskPluginTrait
         // causes a PHP fatal at class-load time. Verify event subscriptions via
         // static source analysis instead of runtime reflection.
-        $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
+        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
 
         if (!file_exists($taskFile)) {
             $this->test('Event subscriptions (skipped — file not found)', true);
@@ -386,7 +461,7 @@ class AutoCleanupTaskTest
         }
 
         if ($metaSeeded) {
-            // Query mirrors hasLifetimeLicense() J6 path in AutoCleanupTask
+            // Query mirrors hasLifetimeLicense() J6 path in the task plugin.
             try {
                 $query = $this->db->getQuery(true)
                     ->select('COUNT(*)')
@@ -415,13 +490,13 @@ class AutoCleanupTaskTest
             $this->test('J6 metafields lifetime query (skipped — seed failed)', true);
         }
 
-        // Verify fail-closed behaviour is in AutoCleanupTask source
-        $taskFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Task/AutoCleanupTask.php';
+        // Verify fail-closed behaviour is in the task plugin source
+        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
         if (file_exists($taskFile)) {
             $src = file_get_contents($taskFile);
             $this->test(
-                'AutoCleanupTask hasLifetimeLicense J6 catch returns true (fail-closed)',
-                (bool) preg_match('/catch\s*\(\s*\\\\Exception[^}]+return\s+true\s*;/s', $src),
+                'Task plugin hasLifetimeLicense J6 catch returns true (fail-closed)',
+                (bool) preg_match('/catch\s*\(\s*\\\\Throwable[^}]+return\s+true\s*;/s', $src),
                 'catch block must return true to prevent accidental anonymization on DB error'
             );
         }

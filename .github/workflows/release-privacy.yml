@@ -96,6 +96,10 @@ jobs:
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
             j2commerce.xml
+          sed -i \
+            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+            plugins/task/j2commerceprivacy/j2commerceprivacy.xml
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'

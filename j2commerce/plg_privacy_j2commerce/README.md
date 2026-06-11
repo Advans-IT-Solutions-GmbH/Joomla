@@ -71,10 +71,10 @@ The plugin requires mandatory configuration before operation. A detailed setup w
 2. Configure retention periods and legal compliance parameters
 3. **Verify template overrides** — deployed automatically on first install; check the postflight message for which files were copied or skipped (see [Template Integration](#template-integration))
 4. **Create a hidden menu item for Privacy Requests** (see below)
-5. Create J2Store Custom Field for license type identification (optional, for lifetime licenses)
-6. Establish automated cleanup scheduling
+5. Configure lifetime-license flags if your shop sells perpetual licenses (optional)
+6. Establish automated cleanup scheduling with the bundled task plugin
 
-Note: Failure to complete the Custom Field configuration will result in incorrect license type detection and potential data retention violations.
+Note: Failure to configure the lifetime-license flag for perpetual-license products can result in full anonymization after the retention period expires.
 
 ### Required: Privacy Request Menu Item
 
@@ -327,7 +327,7 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 
 ### Estimated Implementation Time: 20-30 minutes
 
-### Step 1: Configure J2Store Custom Field (Optional — Lifetime License Detection Only)
+### Step 1: Configure Lifetime-License Flags (Optional)
 
 This step is only required if your shop sells products with perpetual (lifetime) licenses. The plugin functions fully without it — lifetime license detection is simply skipped.
 
@@ -335,30 +335,13 @@ This step is only required if your shop sells products with perpetual (lifetime)
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
-| `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | J2Commerce Custom Fields UI |
+| `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | Insert product metafields with `owner_resource = product`, `metakey = is_lifetime_license`, `metavalue = yes` |
+| `#__j2store_product_customfields` (J2Commerce 4.x) | Marks which products are lifetime licenses | Optional custom field table used by this plugin |
 | `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
-**To mark products as lifetime licenses, navigate to:**
-```
-Components → J2Store → Setup → Custom Fields → New
-```
+For J2Commerce 6, insert the metafield row shown in the post-installation message for every perpetual-license product. For J2Commerce 4 / J2Store, create and populate `#__j2store_product_customfields` as shown in the post-installation message.
 
-**Configure as follows:**
-
-| Setting | Value |
-|---------|-------|
-| **Field Name** | `is_lifetime_license` |
-| **Field Label** | Lifetime License |
-| **Field Type** | Radio |
-| **Display in** | Product |
-| **Required** | No |
-| **Published** | Yes |
-| **Options** | Yes / No |
-| **Default Value** | No |
-
-Click **Save & Close** to persist the configuration.
-
-> **Note:** The `#__license_keys` table (for issued license keys) is a separate table not visible in the J2Commerce Custom Fields UI. See the Post-Install Message for the SQL to create it.
+> **Note:** The `#__license_keys` table, if present, belongs to the Advans licensing system and is not used by the cleanup task for lifetime-license detection.
 
 ---
 
@@ -366,11 +349,9 @@ Click **Save & Close** to persist the configuration.
 
 For each product requiring perpetual license handling:
 
-1. Navigate to: `Components → J2Store → Catalog → Products`
-2. Open the product
-3. Scroll to **Custom Fields** section
-4. Set **Lifetime License: Yes**
-5. **Save & Close**
+1. Find the product ID in J2Commerce / J2Store.
+2. Insert the appropriate lifetime-license flag for your J2Commerce version.
+3. Verify the stored value is `yes` or `Yes`; the cleanup query compares case-insensitively.
 
 Repeat this process for all products requiring perpetual license data retention.
 
@@ -432,12 +413,14 @@ Persist configuration changes.
 
 Navigate to: `System → Scheduled Tasks → New`
 
-1. Select task type: **J2Commerce - Automatic Data Cleanup**
-2. Configure execution parameters:
+1. Verify the plugin **Task - J2Commerce Privacy Cleanup** is enabled.
+2. Select task type: **J2Commerce - Automatic data cleanup**
+3. Configure task parameters to match the Privacy plugin retention settings.
+4. Configure execution parameters:
    - **Execution Frequency:** Daily
    - **Execution Time:** 02:00 (recommended for minimal system load)
    - **Status:** Enabled
-3. Save configuration
+5. Save configuration
 
 ---
 
@@ -445,7 +428,7 @@ Navigate to: `System → Scheduled Tasks → New`
 
 Validate the implementation using the following test procedure:
 
-1. Create a test product with Custom Field `Lifetime License` set to `Yes`
+1. Create a test product with lifetime-license flag `is_lifetime_license = yes`
 2. Generate a test order for the configured product
 3. Initiate a data removal request via `Users → Privacy → Requests → New Request`
 4. Attempt data deletion via `Complete Request → Delete Data`
@@ -558,9 +541,9 @@ Payment data (credit card details, bank information) is stored by payment servic
 
 ### How It Works
 
-**Detection Method:** J2Store Custom Field
+**Detection Method:** Version-specific product metadata
 
-The plugin checks the J2Commerce Custom Field `is_lifetime_license` for each product:
+The plugin and bundled task check `is_lifetime_license` for each product:
 
 ```sql
 -- J2Commerce 4.x
@@ -578,9 +561,8 @@ AND metakey = 'is_lifetime_license'
 ```
 
 **Result:**
-- `field_value = 'Yes'` → Lifetime License
-- `field_value = 'No'` → Regular Product
-- `field_value = NULL` → Regular Product (field not set)
+- `metavalue` / `field_value` = `yes` → Lifetime License
+- missing or any other value → Regular Product
 
 ### Technical Implementation Rationale
 
@@ -590,7 +572,7 @@ AND metakey = 'is_lifetime_license'
 - Language-dependent pattern matching
 - Prone to false positive classifications
 
-**Current Implementation:** Structured metadata via J2Store Custom Fields
+**Current Implementation:** Structured product metadata
 - Explicit boolean classification per product
 - Eliminates ambiguity in product type determination
 - Language-agnostic implementation
@@ -773,7 +755,7 @@ This plugin intercepts the deletion step to apply retention logic before any dat
 
 **View scheduled task:**
 ```
-System → Scheduled Tasks → J2Commerce - Automatic Data Cleanup
+System → Scheduled Tasks → J2Commerce - Automatic data cleanup
 ```
 
 **View logs:**
@@ -944,7 +926,7 @@ This plugin does not store or have access to complete payment details. Users mus
 
 ### Scheduled Task Settings
 
-**Access:** `System → Scheduled Tasks → J2Commerce - Automatic Data Cleanup`
+**Access:** `System → Scheduled Tasks → J2Commerce - Automatic data cleanup`
 
 **Recommended Settings:**
 - **Frequency:** Daily
@@ -1094,11 +1076,11 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ---
 
-## J2Store Custom Fields
+## Lifetime License Metadata
 
-### Why Custom Fields?
+### Why Explicit Metadata?
 
-**The plugin uses J2Store's built-in Custom Fields feature to detect Lifetime Licenses.**
+**The plugin uses explicit product metadata to detect Lifetime Licenses.**
 
 **Advantages:**
 - • No J2Store code modifications needed
@@ -1113,7 +1095,15 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ### Technical Details
 
-**Database Table:** `#__j2store_product_customfields` (J2Commerce 4.x) / `#__j2commerce_metafields` (J2Commerce 6.x)
+**Database Table:** `#__j2commerce_metafields` (J2Commerce 6.x) / `#__j2store_product_customfields` (J2Commerce 4.x)
+
+**Example Data (J2Commerce 6.x):**
+```sql
+INSERT INTO `#__j2commerce_metafields`
+  (`owner_id`, `owner_resource`, `metakey`, `metavalue`)
+VALUES
+  (123, 'product', 'is_lifetime_license', 'yes');
+```
 
 **Structure (J2Commerce 4.x):**
 ```sql
