@@ -462,11 +462,13 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return;
         }
 
+        $enabledValue = $enabled ? 1 : 0;
+
         $query = $this->dbQuery($db)
             ->update($db->quoteName('#__extensions'))
             ->set($db->quoteName('enabled') . ' = :enabled')
             ->where($db->quoteName('extension_id') . ' = :extensionId')
-            ->bind(':enabled', $enabled ? 1 : 0, ParameterType::INTEGER)
+            ->bind(':enabled', $enabledValue, ParameterType::INTEGER)
             ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
         $db->setQuery($query);
         $db->execute();
