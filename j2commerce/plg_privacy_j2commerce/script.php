@@ -37,6 +37,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     public function postflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
+            $packageSource = $parent->getParent()->getPath('source');
+
             // Remove old manifest filename (renamed to j2commerce.xml in 1.2.8)
             $oldManifest = JPATH_PLUGINS . '/privacy/j2commerce/plg_privacy_j2commerce.xml';
             if (file_exists($oldManifest)) {
@@ -45,18 +47,19 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             $this->ensureUpdateSite();
             $this->removeLegacyAutoCleanupTaskFile();
-            $this->installTaskPlugin($parent);
-            $this->migrateLegacySchedulerTasks();
 
             // Deploy template overrides on first install only (never overwrite)
             if ($type === 'install') {
-                $this->copyTemplateOverrides($parent);
+                $this->copyTemplateOverrides($packageSource);
             }
+
+            $this->installTaskPlugin($packageSource);
+            $this->migrateLegacySchedulerTasks();
 
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
             $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
-            $lang->load('plg_privacy_j2commerce', $parent->getParent()->getPath('source'));
+            $lang->load('plg_privacy_j2commerce', $packageSource);
 
             // Inline styles — Joomla 5 <joomla-alert> strips <style> tags
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid';
@@ -255,9 +258,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * plugin inside J2Commerce's checkout or MyProfile views. Template overrides
      * are the only way to integrate without patching rendered HTML.
      */
-    private function copyTemplateOverrides($parent): void
+    private function copyTemplateOverrides(string $packageSource): void
     {
-        $sourceBase = $parent->getParent()->getPath('source') . '/overrides';
+        $sourceBase = $packageSource . '/overrides';
 
         $db        = Factory::getContainer()->get(DatabaseInterface::class);
         $templates = $this->getFrontendTemplates($db);
@@ -432,9 +435,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /**
      * Install or update the bundled Joomla task plugin.
      */
-    private function installTaskPlugin($parent): void
+    private function installTaskPlugin(string $packageSource): void
     {
-        $source = $parent->getParent()->getPath('source') . '/plugins/task/j2commerceprivacy';
+        $source = $packageSource . '/plugins/task/j2commerceprivacy';
 
         if (!is_dir($source) || !is_file($source . '/j2commerceprivacy.xml')) {
             Factory::getApplication()->enqueueMessage(
