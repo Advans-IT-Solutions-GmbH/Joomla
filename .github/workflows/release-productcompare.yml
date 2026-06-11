@@ -123,9 +123,27 @@ jobs:
               <update>
                   <name>J2Commerce Product Compare</name>
                   <description>Product comparison for J2Commerce</description>
-                  <element>j2commerce_productcompare</element>
+                  <element>productcompare</element>
                   <type>plugin</type>
                   <folder>j2commerce</folder>
+                  <client>site</client>
+                  <version>$VERSION</version>
+                  <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_j2commerce_productcompare</infourl>
+                  <downloads>
+                      <downloadurl type="full" format="zip">https://github.com/advansit/Joomla/releases/download/productcompare-v$VERSION/$PACKAGE</downloadurl>
+                  </downloads>
+                  <tags>
+                      <tag>stable</tag>
+                  </tags>
+                  <targetplatform name="joomla" version="(4\.[0-9]|5\.[0-9]|6\.[0-9])" />
+                  <php_minimum>8.1</php_minimum>
+              </update>
+              <update>
+                  <name>J2Commerce Product Compare</name>
+                  <description>Product comparison for J2Commerce</description>
+                  <element>productcompare</element>
+                  <type>plugin</type>
+                  <folder>j2store</folder>
                   <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/advansit/Joomla/tree/main/j2commerce/plg_j2commerce_productcompare</infourl>
