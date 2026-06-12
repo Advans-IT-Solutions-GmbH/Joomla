@@ -9,7 +9,7 @@
     <license>Proprietary</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.5.3</version>
+    <version>1.5.4</version>
     <description>PLG_TASK_J2COMMERCEPRIVACY_XML_DESCRIPTION</description>
 
     <namespace path="src">Advans\Plugin\Task\J2CommercePrivacy</namespace>

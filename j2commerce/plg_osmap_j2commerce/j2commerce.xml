@@ -3,12 +3,12 @@
     <name>PLG_OSMAP_J2COMMERCE</name>
     <element>j2commerce</element>
     <author>Advans IT Solutions GmbH</author>
-    <creationDate>2026-04</creationDate>
+    <creationDate>2026-06</creationDate>
     <copyright>Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.</copyright>
     <license>GNU GPL v3</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.3.9</version>
+    <version>1.3.10</version>
     <description>PLG_OSMAP_J2COMMERCE_XML_DESCRIPTION</description>
 
     <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />

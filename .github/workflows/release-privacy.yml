@@ -154,8 +154,27 @@ jobs:
           git add j2commerce/plg_privacy_j2commerce/
           git diff --staged --quiet || {
             git commit -m "release: privacy v${VERSION} [skip ci]"
+            pushed_main=0
+            for i in 1 2 3; do
+              git pull --rebase origin main
+              if git push origin HEAD:main; then
+                pushed_main=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$pushed_main" != "1" ]; then
+              echo "::error::Failed to push release commit to main; aborting before tag/release"
+              exit 1
+            fi
+            remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+            local_head=$(git rev-parse HEAD)
+            if [ "$remote_main" != "$local_head" ]; then
+              echo "::error::Remote main does not contain the release commit; aborting before tag/release"
+              exit 1
+            fi
             git tag -fa "privacy-v${VERSION}" -m "Release privacy v${VERSION}"
-            for i in 1 2 3; do git pull --rebase origin main && git push origin HEAD:main --follow-tags && break; sleep 5; done
+            git push origin "privacy-v${VERSION}"
           }
 
       - name: Generate changelog
