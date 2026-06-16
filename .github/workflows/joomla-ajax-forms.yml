@@ -177,8 +177,8 @@ jobs:
           - name: '09 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/tests/
@@ -210,7 +210,7 @@ jobs:
           cd plg_ajax_joomlaajaxforms/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: j6-${{ matrix.script }}-logs
@@ -318,10 +318,10 @@ jobs:
           - name: '09 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/tests-j2c4/
@@ -363,7 +363,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: j2c4-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests-j2c4/test-results/
@@ -411,10 +411,10 @@ jobs:
           - name: '09 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/tests-j2c6/
@@ -471,7 +471,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: j2c6-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests-j2c6/test-results/
