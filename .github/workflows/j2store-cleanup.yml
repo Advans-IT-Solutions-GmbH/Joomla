@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
         with:
           php-version: '8.2'
       - name: Check PHP syntax
@@ -233,7 +233,7 @@ jobs:
           name: extension-package
           path: j2commerce/com_j2store_cleanup/tests/
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
         with:
           php-version: '8.3'
           extensions: zip

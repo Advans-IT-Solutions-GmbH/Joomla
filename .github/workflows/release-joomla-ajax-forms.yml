@@ -192,12 +192,10 @@ jobs:
 
       - name: Create Release
         if: steps.version.outputs.bump != 'none'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ajaxforms-v${{ steps.version.outputs.new }}
-          make_latest: true
-          name: Joomla Ajax Forms v${{ steps.version.outputs.new }}
-          body: |
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ajaxforms-v${{ steps.version.outputs.new }}
+          NOTES: |
             ## Joomla Ajax Forms Plugin v${{ steps.version.outputs.new }}
 
             Ajax form handling for Joomla (login, registration, password reset, profile, cart).
@@ -213,12 +211,15 @@ jobs:
             ### Requirements
             - Joomla 5.x or 6.x
             - PHP 8.1 or higher
-          files: |
-            plg_ajax_joomlaajaxforms/${{ steps.package.outputs.file }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          FILES=(plg_ajax_joomlaajaxforms/${{ steps.package.outputs.file }})
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "Joomla Ajax Forms v${{ steps.version.outputs.new }}" \
+            --notes "$NOTES" \
+            --latest \
+            "${FILES[@]}"
 
       - name: Delete previous releases
         if: steps.version.outputs.bump != 'none'

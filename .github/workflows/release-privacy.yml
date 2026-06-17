@@ -196,12 +196,10 @@ jobs:
 
       - name: Create Release
         if: steps.version.outputs.bump != 'none'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: privacy-v${{ steps.version.outputs.new }}
-          make_latest: true
-          name: J2Commerce Privacy v${{ steps.version.outputs.new }}
-          body: |
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: privacy-v${{ steps.version.outputs.new }}
+          NOTES: |
             ## J2Commerce Privacy Plugin v${{ steps.version.outputs.new }}
 
             Privacy plugin for J2Commerce GDPR compliance.
@@ -218,12 +216,15 @@ jobs:
             - Joomla 5.x or 6.x
             - PHP 8.1 or higher
             - J2Commerce 4.x or higher
-          files: |
-            j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          FILES=(j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }})
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "J2Commerce Privacy v${{ steps.version.outputs.new }}" \
+            --notes "$NOTES" \
+            --latest \
+            "${FILES[@]}"
 
       - name: Delete previous releases
         if: steps.version.outputs.bump != 'none'

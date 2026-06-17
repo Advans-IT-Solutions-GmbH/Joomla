@@ -423,7 +423,7 @@ jobs:
         run: mv plg_ajax_joomlaajaxforms/tests-j2c6/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests-j2c6/extension.zip
 
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
         with:
           php-version: '8.3'
           extensions: zip
