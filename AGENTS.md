@@ -33,7 +33,8 @@ Generische Extensions in diesem Repository:
 - `plg_osmap_j2commerce`
 - J2Commerce-Extensions
 
-Release-CI leitet die Version aus Conventional-Commit-Präfixen ab. Erkannt werden nur `fix(...)` und `feat(...)`.
+Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
+Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) müssen als `fix(...)` oder `feat(...)` mit passendem Scope formuliert werden.
 
 Skills liegen in:
 - `.claude/skills/joomla-extensions`
