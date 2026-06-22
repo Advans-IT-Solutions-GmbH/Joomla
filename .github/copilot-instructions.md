@@ -7,6 +7,6 @@ Repo-spezifische Skills liegen unter `.claude/skills/` und gelten auch für Copi
 Commit-Identität:
 - `Advans IT Solutions GmbH <89843389+advansit@users.noreply.github.com>`
 
-Dieses öffentliche Repository verlangt verifizierte (GPG-signierte) Commits; im Devcontainer ist Signing automatisch aktiviert. Allgemeiner Grundsatz: Signing aktivieren, wenn der Key verfügbar ist; ein Commit-Workflow darf nie nur am fehlenden Key scheitern.
+Dieses öffentliche Repository verlangt verifizierte (GPG-signierte) Commits; Signing ist hier Pflicht und im Devcontainer automatisch aktiviert. Der allgemeine AGENTS-Grundsatz für Umgebungen ohne harte Enforcement-Regeln bleibt: Signing aktivieren, wenn der Key verfügbar ist; ein Commit-Workflow darf nie nur am fehlenden Key scheitern.
 
 PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.
