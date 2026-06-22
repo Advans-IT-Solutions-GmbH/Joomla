@@ -49,7 +49,7 @@ No dependency on `plg_ajax_joomlaajaxforms` — uses Joomla Core `com_ajax` only
 
 ## Language Loading
 
-The `privacy` plugin group is not auto-imported in the Joomla frontend. The plugin has `$autoloadLanguage = true` which loads the language when the plugin is triggered. For template overrides that need language strings before the plugin fires, load manually:
+The `privacy` plugin group is not auto-imported in the Joomla frontend. The plugin has `$autoloadLanguage = true` which loads the language when the plugin is triggered. For template overrides that need the language earlier:
 
 ```php
 Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');

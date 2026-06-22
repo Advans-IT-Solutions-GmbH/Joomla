@@ -50,4 +50,4 @@ Default: 10 years (Swiss standard).
 
 ## Scheduled Cleanup
 
-`AutoCleanupTask` runs via Joomla Scheduler. It processes all users with expired retention periods automatically, without requiring a manual deletion request. Configure under `System → Scheduled Tasks → J2Commerce - Automatic Data Cleanup`.
+`AutoCleanupTask` runs via Joomla Scheduler. It processes all users with expired retention periods automatically, without requiring a manual deletion request. Configure under `System → Scheduled Tasks`.

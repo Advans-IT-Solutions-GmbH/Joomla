@@ -1,6 +1,6 @@
 ---
 name: joomla-extensions
-description: Development workflow for the advansit/Joomla repository. Use when working on Joomla/J2Commerce extensions, running tests, creating releases, or managing CI/CD workflows. Triggers on "release", "workflow", "plugin", "extension", "version bump", "test", "build", "ZIP", "branch", "PR", "conventional commits".
+description: Development workflow for the advansit/Joomla repository. Use when working on Joomla/J2Commerce extensions, running tests, creating releases, or managing CI/CD workflows.
 triggers:
   - release
   - workflow

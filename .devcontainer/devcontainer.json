@@ -18,7 +18,9 @@
 	//
 	// Browse more options at: https://hub.docker.com/r/microsoft/devcontainers
 	// or build your own using the Dockerfile option below.
-	"image": "mcr.microsoft.com/devcontainers/universal:4.0.1-noble"
+	"image": "mcr.microsoft.com/devcontainers/universal:4.0.1-noble",
+	// Automatisches GPG-Signing- und Git/gh-Auth-Setup beim Start des Containers.
+	"postCreateCommand": "bash .devcontainer/setup-git-signing.sh"
 	// Use "build":
 	// instead of the image to use a Dockerfile to build an image.
 	// "build": {

@@ -1,6 +1,6 @@
 ---
 name: privacy-plugin
-description: Deep knowledge of the plg_privacy_j2commerce plugin. Use when working on GDPR/DSGVO compliance, retention logic, lifetime license detection, template integration, checkout consent, or the MyProfile privacy tab. Triggers on "privacy", "GDPR", "DSGVO", "retention", "anonymize", "consent", "lifetime license", "onPrivacy", "com_privacy", "MyProfile", "privacy tab".
+description: Deep knowledge of the plg_privacy_j2commerce plugin. Use when working on GDPR/DSGVO compliance, retention logic, lifetime license detection, template integration, checkout consent, or data export/deletion.
 triggers:
   - privacy
   - GDPR

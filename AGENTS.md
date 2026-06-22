@@ -15,16 +15,27 @@
   andernfalls unsigniert committen — kein Commit darf am fehlenden Key scheitern.
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
-- Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein "Ona", "Copilot" o. ä.).
+- Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 
 ## Repo-spezifisch (Joomla)
+Dieses öffentliche Repo erzwingt verifizierte GPG-Signaturen — Signing ist hier verpflichtend (nicht optional).
+Eine E-Mail, die nicht zum verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
 
-**Dieses öffentliche Repo erzwingt verifizierte GPG-Signaturen** (Branch Protection). Signing ist hier verpflichtend — nicht optional. Die UID des Signing-Keys muss exakt der Commit-E-Mail entsprechen, sonst lehnt GitHub den Merge ab.
+Immer verwenden:
+- `git config user.email "89843389+advansit@users.noreply.github.com"`
+- `git config user.name "Advans IT Solutions GmbH"`
 
-- Signing-Key ist an `89843389+advansit@users.noreply.github.com` gebunden. Eine andere E-Mail erzeugt eine Signatur, die GitHub nicht verifizieren kann.
-- Inhalt: generische Joomla-Extensions (`plg_ajax_joomlaajaxforms`, `plg_osmap_j2commerce`, J2Commerce-Extensions).
-- Release-CI leitet die Version aus dem Conventional-Commit-Prefix ab — nur `fix(...)` und `feat(...)` werden erkannt; andere Prefixe überspringen den Release.
-- Skills `joomla-extensions` und `privacy-plugin` liegen in `.claude/skills/`.
+Generische Extensions in diesem Repository:
+- `plg_ajax_joomlaajaxforms`
+- `plg_osmap_j2commerce`
+- J2Commerce-Extensions
+
+Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
+Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) müssen als `fix(...)` oder `feat(...)` mit passendem Scope formuliert werden.
+
+Skills liegen in:
+- `.claude/skills/joomla-extensions`
+- `.claude/skills/privacy-plugin`

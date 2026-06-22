@@ -56,7 +56,7 @@ Every plugin `update.xml` **must** include `<client>site</client>`:
 </update>
 ```
 
-**Why:** Joomla defaults to `client_id=1` (Administrator) when `<client>` is absent. All our plugins are installed with `client_id=0` (Site). The mismatch prevents Joomla from matching the update record to the installed extension — updates are never shown in `System → Update → Extensions`.
+**Why:** Joomla defaults to `client_id=1` (Administrator) when `<client>` is absent. All our plugins are installed with `client_id=0` (Site). The mismatch prevents Joomla from matching the update record to the installed extension.
 
 Components do not need this — they have no `client_id` conflict.
 
