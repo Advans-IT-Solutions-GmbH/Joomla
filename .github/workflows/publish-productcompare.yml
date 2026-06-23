@@ -1,0 +1,123 @@
+name: Publish - J2Commerce Product Compare
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'j2commerce/plg_j2commerce_productcompare/**'
+
+jobs:
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.event.head_commit.message, 'release: productcompare v')"
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          XML_FILE="j2commerce/plg_j2commerce_productcompare/plg_j2commerce_productcompare.xml"
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
+          echo "new=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Build extension
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Find package file
+        id: package
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare
+          PACKAGE=$(ls -1 plg_j2commerce_productcompare_*.zip | head -1)
+          echo "file=$PACKAGE" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -fa "productcompare-v${VERSION}" -m "Release productcompare v${VERSION}"
+          git push origin "productcompare-v${VERSION}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag -l "productcompare-v*" --sort=-v:refname | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- j2commerce/plg_j2commerce_productcompare/ | grep -v '\[skip ci\]' | head -20)
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="- Bug fixes and improvements"
+            fi
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: productcompare-v${{ steps.version.outputs.new }}
+          NOTES: |
+            ## J2Commerce Product Compare Plugin v${{ steps.version.outputs.new }}
+
+            Product comparison for J2Commerce.
+
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Installation
+            1. Download `${{ steps.package.outputs.file }}`
+            2. Install via Joomla Extension Manager
+            3. Enable plugin in System → Plugins
+
+            ### Requirements
+            - Joomla 5.x or 6.x
+            - PHP 8.1 or higher
+            - J2Commerce 4.x or higher
+        run: |
+          shopt -s nullglob
+          FILES=(j2commerce/plg_j2commerce_productcompare/${{ steps.package.outputs.file }})
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "J2Commerce Product Compare v${{ steps.version.outputs.new }}" \
+            --notes "$NOTES" \
+            --latest \
+            "${FILES[@]}"
+
+      - name: Delete previous releases
+        run: |
+          TAG_PREFIX="productcompare-v"
+          CURRENT_TAG="productcompare-v${{ steps.version.outputs.new }}"
+          for tag in $(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${CURRENT_TAG}$"); do
+            release_id=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+            if [ -n "$release_id" ] && [ "$release_id" != "None" ]; then
+              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
+              echo "Deleted release $tag (id: $release_id)"
+            fi
+            git push origin --delete "$tag" 2>/dev/null || true
+            echo "Deleted tag $tag"
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: j2commerce/plg_j2commerce_productcompare/${{ steps.package.outputs.file }}

@@ -15,13 +15,12 @@ on:
 
 jobs:
   release:
-    name: Create Release
+    name: Prepare Release PR
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     permissions:
       contents: write
-      id-token: write
-      attestations: write
+      pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout code
@@ -139,106 +138,31 @@ jobs:
           </updates>
           EOF
 
-      - name: Commit, tag and push
-        if: steps.version.outputs.bump != 'none'
-        run: |
-          VERSION="${{ steps.version.outputs.new }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add j2commerce/com_j2commerce_importexport/
-          git diff --staged --quiet || {
-            git commit -m "release: importexport v${VERSION} [skip ci]"
-            pushed_main=0
-            for i in 1 2 3; do
-              git pull --rebase origin main
-              if git push origin HEAD:main; then
-                pushed_main=1
-                break
-              fi
-              sleep 5
-            done
-            if [ "$pushed_main" != "1" ]; then
-              echo "::error::Failed to push release commit to main; aborting before tag/release"
-              exit 1
-            fi
-            remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
-            local_head=$(git rev-parse HEAD)
-            if [ "$remote_main" != "$local_head" ]; then
-              echo "::error::Remote main does not contain the release commit; aborting before tag/release"
-              exit 1
-            fi
-            git tag -fa "importexport-v${VERSION}" -m "Release importexport v${VERSION}"
-            git push origin "importexport-v${VERSION}"
-          }
 
-      - name: Generate changelog
-        if: steps.version.outputs.bump != 'none'
-        id: changelog
-        run: |
-          PREV_TAG=$(git tag -l "importexport-v*" --sort=-v:refname | sed -n '2p')
-          if [ -z "$PREV_TAG" ]; then
-            echo "changelog=Initial release" >> $GITHUB_OUTPUT
-          else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- j2commerce/com_j2commerce_importexport/ | grep -v '\[skip ci\]' | head -20)
-            if [ -z "$CHANGELOG" ]; then
-              CHANGELOG="- Bug fixes and improvements"
-            fi
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            echo "$CHANGELOG" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
+      - name: Create release PR
         if: steps.version.outputs.bump != 'none'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: importexport-v${{ steps.version.outputs.new }}
-          NOTES: |
-            ## J2Commerce Import/Export Component v${{ steps.version.outputs.new }}
-
-            Import and export J2Commerce products with all related Joomla data.
-
-            ### Changes
-            ${{ steps.changelog.outputs.changelog }}
-
-            ### Installation
-            1. Download `${{ steps.package.outputs.file }}`
-            2. Install via Joomla Extension Manager
-            3. Access via Components → J2Commerce Import/Export
-
-            ### Requirements
-            - Joomla 5.x or 6.x
-            - PHP 8.1 or higher
-            - J2Commerce 4.x or higher
         run: |
-          shopt -s nullglob
-          FILES=(j2commerce/com_j2commerce_importexport/${{ steps.package.outputs.file }})
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" \
-            --title "J2Commerce Import/Export v${{ steps.version.outputs.new }}" \
-            --notes "$NOTES" \
-            --latest \
-            "${FILES[@]}"
+          VERSION="${{ steps.version.outputs.new }}"
+          BRANCH="release/importexport-v${VERSION}"
+          TITLE="release: importexport v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add j2commerce/com_j2commerce_importexport/
+          if git diff --staged --quiet; then
+            echo "::notice::No version file changes detected; no release PR was opened."
+            exit 0
+          fi
+          git commit -m "$TITLE"
+          git push origin "$BRANCH"
+          PR_BODY=$'Automated release version bump for `importexport`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
+          PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")
+          gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
+          gh pr edit "$PR_URL" --add-label release || true
+          echo "::notice::Opened release PR: $PR_URL"
 
-      - name: Delete previous releases
-        if: steps.version.outputs.bump != 'none'
-        run: |
-          TAG_PREFIX="importexport-v"
-          CURRENT_TAG="importexport-v${{ steps.version.outputs.new }}"
-          for tag in $(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${CURRENT_TAG}$"); do
-            release_id=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
-            if [ -n "$release_id" ] && [ "$release_id" != "None" ]; then
-              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
-              echo "Deleted release $tag (id: $release_id)"
-            fi
-            git push origin --delete "$tag" 2>/dev/null || true
-            echo "Deleted tag $tag"
-          done
-
-      - name: Attest build provenance
-        if: steps.version.outputs.bump != 'none'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
-        with:
-          subject-path: j2commerce/com_j2commerce_importexport/${{ steps.package.outputs.file }}
+      - name: No release needed
+        if: steps.version.outputs.bump == 'none'
+        run: echo "::notice::No version bump warranted; no release PR was opened."
