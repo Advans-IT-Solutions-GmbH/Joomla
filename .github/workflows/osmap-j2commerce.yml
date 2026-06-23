@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Build
         run: |
           cd j2commerce/plg_osmap_j2commerce
@@ -27,7 +27,7 @@ jobs:
           ./build.sh
           mkdir -p tests
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/extension.zip
@@ -39,7 +39,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
@@ -74,8 +74,8 @@ jobs:
           - name: '05 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
@@ -108,7 +108,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: j5-${{ matrix.script }}-logs
@@ -145,8 +145,8 @@ jobs:
           - name: '05 - Uninstall'
             script: 'uninstall'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
@@ -193,7 +193,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh ${{ matrix.script }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: j6-${{ matrix.script }}-logs
@@ -239,7 +239,7 @@ jobs:
     if: always()
     permissions: {}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: test-artifacts/
       - name: Collect and display logs
@@ -253,7 +253,7 @@ jobs:
             fi
           done
       - name: Upload combined logs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: all-test-logs
           path: test-artifacts/
