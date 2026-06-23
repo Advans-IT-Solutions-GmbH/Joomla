@@ -16,7 +16,12 @@ git config --global user.email "89843389+advansit@users.noreply.github.com"
 # 2. GPG-Import und Signing-Konfiguration
 # ---------------------------------------------------------------------------
 if [ -n "${GPG_PRIVATE_KEY}" ]; then
-    echo "${GPG_PRIVATE_KEY}" | gpg --batch --import 2>/dev/null || true
+    # Robust: akzeptiert ASCII-armored ODER base64-kodierte Keys
+    if printf '%s' "${GPG_PRIVATE_KEY}" | grep -q 'BEGIN PGP'; then
+        printf '%s' "${GPG_PRIVATE_KEY}" | gpg --batch --import 2>/dev/null || true
+    else
+        printf '%s' "${GPG_PRIVATE_KEY}" | base64 -d 2>/dev/null | gpg --batch --import 2>/dev/null || true
+    fi
 
     # Key-ID dynamisch aus dem importierten Schlüssel ermitteln (erste sec-Zeile)
     KEY_ID=$(gpg --list-secret-keys --with-colons 2>/dev/null \
@@ -34,6 +39,10 @@ if [ -n "${GPG_PRIVATE_KEY}" ]; then
         grep -qxF 'pinentry-mode loopback' ~/.gnupg/gpg.conf 2>/dev/null \
             || echo 'pinentry-mode loopback' >> ~/.gnupg/gpg.conf
         chmod 600 ~/.gnupg/gpg.conf
+
+        # Eigenen Key auf 'ultimate' trusten -> saubere lokale Verifikation ohne Warnung
+        FPR=$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+        [ -n "${FPR}" ] && echo "${FPR}:6:" | gpg --import-ownertrust 2>/dev/null || true
 
         _TTY=$(tty 2>/dev/null) && export GPG_TTY="$_TTY" || true
 
