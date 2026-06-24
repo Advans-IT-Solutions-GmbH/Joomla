@@ -169,6 +169,7 @@ jobs:
           TITLE="release: productcompare v${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$BRANCH" 2>/dev/null || true
           git switch -C "$BRANCH"
           git add j2commerce/plg_j2commerce_productcompare/
           if git diff --staged --quiet; then
@@ -176,7 +177,7 @@ jobs:
             exit 0
           fi
           git commit -m "$TITLE"
-          git push --force origin "$BRANCH"
+          git push --force-with-lease origin "$BRANCH"
           PR_BODY=$'Automated release version bump for `productcompare`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
           gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')

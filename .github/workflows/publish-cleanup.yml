@@ -52,7 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -fa "cleanup-v${VERSION}" -m "Release cleanup v${VERSION}"
-          git push origin "cleanup-v${VERSION}"
+          git push --force origin "cleanup-v${VERSION}"
 
       - name: Generate changelog
         id: changelog

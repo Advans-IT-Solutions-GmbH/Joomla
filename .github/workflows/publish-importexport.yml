@@ -52,7 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -fa "importexport-v${VERSION}" -m "Release importexport v${VERSION}"
-          git push origin "importexport-v${VERSION}"
+          git push --force origin "importexport-v${VERSION}"
 
       - name: Generate changelog
         id: changelog

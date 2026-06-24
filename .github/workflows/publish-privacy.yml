@@ -52,7 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -fa "privacy-v${VERSION}" -m "Release privacy v${VERSION}"
-          git push origin "privacy-v${VERSION}"
+          git push --force origin "privacy-v${VERSION}"
 
       - name: Generate changelog
         id: changelog
