@@ -20,6 +20,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/bootstrap-app.php';
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Document\FactoryInterface as DocumentFactoryInterface;
@@ -129,7 +130,7 @@ class RenderInjectionTest
         echo "--- Frontend HTML body: bar + modal injected ---\n";
 
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
             $this->test('Site application available for render proof', false, $e->getMessage());
             return;

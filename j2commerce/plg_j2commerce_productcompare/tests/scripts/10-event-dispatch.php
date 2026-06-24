@@ -33,6 +33,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/bootstrap-app.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
@@ -151,7 +152,7 @@ class EventDispatchTest
         // renderCompareButton() -> renderLayout() needs the application for the
         // template override include path.
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
             if (method_exists($plugin, 'setApplication')) {
                 $plugin->setApplication($app);
             }
@@ -342,7 +343,7 @@ class EventDispatchTest
         );
         $plugin->setDatabase($this->db);
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
             if (method_exists($plugin, 'setApplication')) {
                 $plugin->setApplication($app);
             }
@@ -418,17 +419,91 @@ class EventDispatchTest
         }
 
         foreach ($this->seededContentIds as $contentId) {
-            $product = (object) [
-                'product_source_id' => $contentId,
-                'product_source'    => 'com_content',
-                'product_type'      => 'simple',
-                'visibility'        => 1,
-                'enabled'           => 1,
-                'params'            => '{}',
-            ];
+            $product = $this->buildProductRow($contentId);
             $this->db->insertObject($this->productsTable, $product, $this->productsPk);
             $this->seededProductIds[] = (int) $this->db->insertid();
         }
+    }
+
+    /**
+     * Build a complete product row for the REAL products table.
+     *
+     * On the live stacks the products table (#__j2store_products on J2Store 4,
+     * #__j2commerce_products on J2Commerce 6) carries many NOT NULL columns with
+     * no default (e.g. up_sells, addtocart_text). A fixed column list therefore
+     * fails with "Field '…' doesn't have a default value". We introspect the real
+     * table and supply a safe value for every required column, then override the
+     * fields the plugin and the reload actually care about.
+     */
+    private function buildProductRow(int $contentId): object
+    {
+        $columns = $this->db->getTableColumns($this->productsTable, false);
+
+        $row = [];
+
+        foreach ($columns as $name => $info) {
+            $extra   = strtolower((string) ($info->Extra ?? ''));
+            $null    = strtoupper((string) ($info->Null ?? 'YES'));
+            $default = $info->Default ?? null;
+
+            // Skip the auto-increment PK, nullable columns and columns that already
+            // carry a default — MySQL will fill those in for us.
+            if (strpos($extra, 'auto_increment') !== false || $null === 'YES' || $default !== null) {
+                continue;
+            }
+
+            $row[$name] = $this->defaultForColumnType((string) ($info->Type ?? 'varchar'));
+        }
+
+        // Meaningful overrides (only when the column exists on this stack).
+        $overrides = [
+            'product_source_id' => $contentId,
+            'product_source'    => 'com_content',
+            'product_type'      => 'simple',
+            'visibility'        => 1,
+            'enabled'           => 1,
+            'params'            => '{}',
+        ];
+
+        foreach ($overrides as $col => $value) {
+            if (isset($columns[$col])) {
+                $row[$col] = $value;
+            }
+        }
+
+        return (object) $row;
+    }
+
+    /**
+     * Pick a safe, strict-mode-compatible default for a MySQL column type.
+     */
+    private function defaultForColumnType(string $type)
+    {
+        $t = strtolower($type);
+
+        if (preg_match('/^(tinyint|smallint|mediumint|int|bigint|decimal|numeric|float|double|real|bit|year)/', $t)) {
+            return 0;
+        }
+
+        if (strpos($t, 'datetime') === 0 || strpos($t, 'timestamp') === 0) {
+            return '2000-01-01 00:00:00';
+        }
+
+        if (strpos($t, 'date') === 0) {
+            return '2000-01-01';
+        }
+
+        if (strpos($t, 'time') === 0) {
+            return '00:00:00';
+        }
+
+        // enum('a','b',…) — use the first allowed value.
+        if (strpos($t, 'enum') === 0 && preg_match("/^enum\\('([^']*)'/i", $type, $m)) {
+            return $m[1];
+        }
+
+        // varchar / char / text / blob / json / set / …
+        return '';
     }
 
     private function cleanupFixtures(): void

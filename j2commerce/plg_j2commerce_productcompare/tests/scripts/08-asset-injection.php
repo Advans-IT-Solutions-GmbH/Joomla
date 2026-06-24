@@ -11,6 +11,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/bootstrap-app.php';
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Document\FactoryInterface as DocumentFactoryInterface;
@@ -109,7 +110,7 @@ class AssetInjectionTest
         echo "\n--- Frontend context: assets registered ---\n";
 
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
             $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
             return;
@@ -157,7 +158,7 @@ class AssetInjectionTest
         echo "\n--- onAfterRender(): HTML injection ---\n";
 
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
             $this->test('onAfterRender() runs without error', false, $e->getMessage());
             return;
