@@ -61,6 +61,9 @@ class RenderHarnessMenu
 }
 class RenderHarnessApp
 {
+    /** @var Registry|null Lazily-loaded real Joomla configuration. */
+    private $config = null;
+
     public function getDocument()
     {
         return new class {
@@ -77,6 +80,46 @@ class RenderHarnessApp
     public function getIdentity()
     {
         return null;
+    }
+
+    /**
+     * Return the REAL site configuration.
+     *
+     * Factory::getConfig() (and any Joomla internal that routes through the
+     * active application — Uri::root(), language locale resolution, etc.)
+     * calls $app->getConfig() when an application is registered. Because this
+     * render harness injects itself as Factory::$application via reflection, it
+     * must answer getConfig() with the live configuration.php — otherwise those
+     * internals fatal with "undefined method getConfig()".
+     */
+    public function getConfig()
+    {
+        if ($this->config === null) {
+            $file = JPATH_BASE . '/configuration.php';
+            if (is_file($file)) {
+                require_once $file;
+                $this->config = new Registry(new \JConfig());
+            } else {
+                $this->config = new Registry();
+            }
+        }
+        return $this->config;
+    }
+
+    public function get($key, $default = null)
+    {
+        return $this->getConfig()->get($key, $default);
+    }
+
+    public function set($key, $value)
+    {
+        return $this->getConfig()->set($key, $value);
+    }
+
+    /** Real language object, so Text::_() translates against the installed plugin INI files. */
+    public function getLanguage()
+    {
+        return Factory::getLanguage();
     }
 }
 
