@@ -32,6 +32,8 @@ jobs:
 
       - name: Determine version bump
         id: version
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="productcompare-v"
           XML_FILE="j2commerce/plg_j2commerce_productcompare/plg_j2commerce_productcompare.xml"
@@ -42,7 +44,7 @@ jobs:
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
-          BUMP="${{ inputs.bump }}"
+          BUMP="$VERSION_BUMP"
 
           if [ -z "$BUMP" ]; then
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
