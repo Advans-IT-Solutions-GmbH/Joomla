@@ -69,7 +69,11 @@ jobs:
             script: 'getproductsdata'
           - name: '07 - Asset Injection'
             script: 'asset-injection'
-          - name: '08 - Uninstall'
+          - name: '08 - Render Injection'
+            script: 'render-injection'
+          - name: '09 - Event Dispatch'
+            script: 'event-dispatch'
+          - name: '10 - Uninstall'
             script: 'uninstall'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -130,7 +134,11 @@ jobs:
             script: 'getproductsdata'
           - name: '07 - Asset Injection'
             script: 'asset-injection'
-          - name: '08 - Uninstall'
+          - name: '08 - Render Injection'
+            script: 'render-injection'
+          - name: '09 - Event Dispatch'
+            script: 'event-dispatch'
+          - name: '10 - Uninstall'
             script: 'uninstall'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

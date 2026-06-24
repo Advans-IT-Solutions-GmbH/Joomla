@@ -11,8 +11,11 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/bootstrap-app.php';
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Document\FactoryInterface as DocumentFactoryInterface;
+use Joomla\CMS\Document\HtmlDocument;
 use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
@@ -46,7 +49,11 @@ class AssetInjectionTest
     {
         echo "=== Asset Injection Tests ===\n\n";
 
-        $this->testAdminContextSkipped();
+        // Note: tests use the frontend site application. We deliberately do not
+        // create an administrator application in this process because Joomla's
+        // Factory::getApplication() is a singleton — the first application created
+        // is cached and returned for every subsequent call regardless of the id.
+        // The administrator guard (isClient('administrator')) is covered by 04.
         $this->testFrontendAssets();
         $this->testOnAfterRenderInjectsHtml();
 
@@ -60,39 +67,42 @@ class AssetInjectionTest
     {
         $dispatcher = new Dispatcher();
         $params     = new Registry(array_merge(['max_products' => 4], $paramValues));
+        $group      = getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store';
+
         return new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
             $dispatcher,
-            ['params' => $params]
+            ['params' => $params, 'type' => $group, 'name' => 'productcompare']
         );
     }
 
-    private function testAdminContextSkipped(): void
+    private function makeHtmlDocument(): HtmlDocument
     {
-        echo "--- Admin context: no asset injection ---\n";
-
         try {
-            $app = Factory::getApplication('administrator');
+            $doc = Factory::getContainer()->get(DocumentFactoryInterface::class)->createDocument('html');
+            if ($doc instanceof HtmlDocument) {
+                return $doc;
+            }
         } catch (\Throwable $e) {
-            $this->test('onAfterDispatch() does not throw in admin context', true, '(skipped — no app in CLI)');
-            return;
-        }
-        $plugin = $this->makePlugin();
-
-        // Inject admin app via reflection
-        $rc = new ReflectionClass($plugin);
-        if ($rc->hasMethod('setApplication')) {
-            $plugin->setApplication($app);
+            // fall through
         }
 
-        try {
-            ob_start();
-            $plugin->onAfterDispatch();
-            ob_end_clean();
-            $this->test('onAfterDispatch() does not throw in admin context', true);
-        } catch (\Throwable $e) {
-            ob_end_clean();
-            $this->test('onAfterDispatch() does not throw in admin context', false, $e->getMessage());
-        }
+        return new HtmlDocument();
+    }
+
+    /**
+     * Force a real HTML document onto the application so the asset/render paths
+     * (which require $doc->getType() === 'html') are actually exercised instead
+     * of skipped. The CMS sets its document through the protected loadDocument()
+     * path; in a CLI test we set the protected `document` property by reflection.
+     */
+    private function attachHtmlDocument(object $app): HtmlDocument
+    {
+        $doc = $this->makeHtmlDocument();
+        $rp  = new ReflectionProperty($app, 'document');
+        $rp->setAccessible(true);
+        $rp->setValue($app, $doc);
+
+        return $doc;
     }
 
     private function testFrontendAssets(): void
@@ -100,18 +110,16 @@ class AssetInjectionTest
         echo "\n--- Frontend context: assets registered ---\n";
 
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
-            $this->test('onAfterDispatch() runs without error in frontend', true, '(skipped — no app in CLI)');
+            $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
             return;
         }
-        $doc = $app->getDocument();
 
-        if ($doc->getType() !== 'html') {
-            echo "Note: Document type is not html in test context — skipping asset tests\n";
-            $this->test('Asset test skipped (non-html document)', true);
-            return;
-        }
+        // Drive a real HTML document so the WebAssetManager + script-options path
+        // actually runs (the legacy version skipped here on a non-HTML CLI doc).
+        $doc = $this->attachHtmlDocument($app);
+        $this->test('Frontend document type is html', $doc->getType() === 'html');
 
         $plugin = $this->makePlugin(['max_products' => 3]);
 
@@ -150,17 +158,16 @@ class AssetInjectionTest
         echo "\n--- onAfterRender(): HTML injection ---\n";
 
         try {
-            $app = Factory::getApplication('site');
+            $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
-            $this->test('onAfterRender test skipped (non-html document)', true, '(skipped — no app in CLI)');
+            $this->test('onAfterRender() runs without error', false, $e->getMessage());
             return;
         }
-        $doc = $app->getDocument();
 
-        if ($doc->getType() !== 'html') {
-            $this->test('onAfterRender test skipped (non-html document)', true);
-            return;
-        }
+        // Drive a real HTML document so the injection path runs (see 09 for the
+        // dedicated end-to-end render-injection proof).
+        $doc = $this->attachHtmlDocument($app);
+        $this->test('Render document type is html', $doc->getType() === 'html');
 
         $plugin = $this->makePlugin();
         $rc     = new ReflectionClass($plugin);
@@ -169,7 +176,8 @@ class AssetInjectionTest
         }
 
         // Set a body with </body> marker
-        $app->setBody('<html><body><p>Content</p></body></html>');
+        $original = '<html><body><p>Content</p></body></html>';
+        $app->setBody($original);
 
         try {
             ob_start();
@@ -183,9 +191,11 @@ class AssetInjectionTest
         }
 
         $body = $app->getBody();
-        // The plugin injects HTML before </body>
+        // The plugin injects the compare bar + modal HTML before </body>.
         $this->test('Body still contains </body>', strpos($body, '</body>') !== false);
-        $this->test('Body length increased after injection', strlen($body) > strlen('<html><body><p>Content</p></body></html>'));
+        $this->test('Compare bar markup injected', strpos($body, 'j2store-compare-bar') !== false);
+        $this->test('Compare modal markup injected', strpos($body, 'j2store-compare-modal') !== false);
+        $this->test('Body length increased after injection', strlen($body) > strlen($original));
     }
 }
 

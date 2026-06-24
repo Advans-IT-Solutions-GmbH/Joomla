@@ -75,15 +75,101 @@ class ConfigurationTest
             return file_exists(JPATH_PLUGINS . '/j2commerce/productcompare/tmpl/table.php');
         });
 
+        // --- Real manifest parameter validation (not just file existence) ---
+        $manifest = $this->loadManifest();
+
+        $this->test('XML manifest parses as valid XML', function () use ($manifest) {
+            return $manifest instanceof \SimpleXMLElement;
+        });
+
+        $this->test('Manifest declares plugin group="j2commerce"', function () use ($manifest) {
+            return $manifest instanceof \SimpleXMLElement
+                && (string) $manifest['group'] === 'j2commerce';
+        });
+
+        $this->test('Manifest element is "productcompare"', function () use ($manifest) {
+            return $manifest instanceof \SimpleXMLElement
+                && (string) $manifest->element === 'productcompare';
+        });
+
+        $fields = $this->manifestParamFields($manifest);
+
+        $this->test('Param field show_in_list default=1', function () use ($fields) {
+            return isset($fields['show_in_list']) && (string) $fields['show_in_list']['default'] === '1';
+        });
+
+        $this->test('Param field show_in_detail default=1', function () use ($fields) {
+            return isset($fields['show_in_detail']) && (string) $fields['show_in_detail']['default'] === '1';
+        });
+
+        $this->test('Param field max_products is number with default=4, min=2, max=10', function () use ($fields) {
+            return isset($fields['max_products'])
+                && (string) $fields['max_products']['type'] === 'number'
+                && (string) $fields['max_products']['default'] === '4'
+                && (string) $fields['max_products']['min'] === '2'
+                && (string) $fields['max_products']['max'] === '10';
+        });
+
+        $this->test('Param field button_text default is the language key', function () use ($fields) {
+            return isset($fields['button_text'])
+                && (string) $fields['button_text']['default'] === 'PLG_J2COMMERCE_PRODUCTCOMPARE_DEFAULT_BUTTON_TEXT';
+        });
+
+        $this->test('Param field button_class default="btn btn-secondary"', function () use ($fields) {
+            return isset($fields['button_class']) && (string) $fields['button_class']['default'] === 'btn btn-secondary';
+        });
+
+        // Defaults in the manifest must match the defaults the plugin code falls
+        // back to (params->get('max_products', 4) etc.) so the documented behaviour
+        // is real.
+        $this->test('Installed plugin params resolve max_products to a valid value', function () use ($params, $fields) {
+            $val = (int) $params->get('max_products', (int) ($fields['max_products']['default'] ?? 4));
+            return $val >= 2 && $val <= 10;
+        });
+
         echo "\n=== Configuration Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
     }
 
+    private function loadManifest(): ?\SimpleXMLElement
+    {
+        $path = JPATH_PLUGINS . '/j2commerce/productcompare/plg_j2commerce_productcompare.xml';
+        if (!file_exists($path)) {
+            return null;
+        }
+        $xml = @simplexml_load_file($path);
+        return $xml === false ? null : $xml;
+    }
+
+    /**
+     * Extract params fieldset fields keyed by name, with their attributes as an array.
+     *
+     * @return array<string, array<string, string>>
+     */
+    private function manifestParamFields(?\SimpleXMLElement $manifest): array
+    {
+        $fields = [];
+        if (!$manifest instanceof \SimpleXMLElement) {
+            return $fields;
+        }
+        foreach ($manifest->xpath('//config/fields[@name="params"]//field') as $field) {
+            $name = (string) $field['name'];
+            if ($name === '') {
+                continue;
+            }
+            $attrs = [];
+            foreach ($field->attributes() as $k => $v) {
+                $attrs[(string) $k] = (string) $v;
+            }
+            $fields[$name] = $attrs;
+        }
+        return $fields;
+    }
+
     private function getPluginParams(): Registry
     {
-        $q = $this->dbq();
-        $query = $q
+        $query = $this->dbq()
             ->select($this->db->quoteName('params'))
             ->from($this->db->quoteName('#__extensions'))
             ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))

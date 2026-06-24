@@ -11,6 +11,12 @@
  *   templates/{your-template}/html/plg_j2commerce_productcompare/button.php
  */
 defined('_JEXEC') or die;
+
+// FileLayout::render() exposes the passed data as $displayData and does not
+// extract it into local scope, so make the documented variables available.
+if (isset($displayData) && \is_array($displayData)) {
+    extract($displayData);
+}
 ?>
 <button type="button"
         class="j2store-compare-btn <?php echo $this->escape($buttonClass); ?>"

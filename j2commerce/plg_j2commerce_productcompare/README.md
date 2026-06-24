@@ -48,7 +48,7 @@ No configuration required — table names and event handlers are selected automa
 
 ### Compatibility Test Scope
 
-The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is skipped when the test document is not HTML, so the automated run should not be described as a complete browser-rendering proof for J2Commerce 6 product list/detail pages.
+The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
 
 ## Installation
 1. Download `plg_j2commerce_productcompare.zip`
@@ -104,13 +104,15 @@ This plugin has automated tests that run on every push via GitHub Actions.
 ### Test Suites
 
 1. **Installation** — plugin registration in DB, file deployment
-2. **Configuration** — plugin params, language files, XML manifest
-3. **Media Files** — CSS/JS deployment and content validation
+2. **Configuration** — plugin params, language files, and real XML manifest parameter parsing (defaults for `show_in_list`, `show_in_detail`, `max_products`, `button_text`, `button_class`)
+3. **Media Files** — CSS/JS deployment and structural validation (asset.json registers the expected script/style assets; JS consumes the `plg_j2commerce_productcompare` script options and binds the compare selectors)
 4. **Plugin Class** — method existence, `SubscriberInterface`, `isJ2Commerce6()` detection
 5. **AJAX Endpoint** — HTTP tests against com_ajax (J2Commerce 4 and 6 group)
 6. **getProductsData** — DB query compatibility for J2Commerce 4 and 6 table schemas
-7. **Asset Injection** — AJAX URL group selection based on detected version
-8. **Uninstall** — clean removal from database and filesystem
+7. **Asset Injection** — WebAssetManager + script-options registration driven against a real `HtmlDocument`
+8. **Render Injection** — `onAfterRender()` injects the compare bar + modal markup into a real HTML `<body>` before `</body>` (both stacks)
+9. **Event Dispatch** — real product rows are seeded and the storefront events are driven, asserting the compare button is emitted: J2Commerce 6 (`onJ2CommerceAfterProductListItemDisplay`, `onJ2CommerceAfterProductDisplay`) through a real dispatcher, and J2Store 4 (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`) via the legacy listener path; also asserts the legacy events are correctly suppressed on J2Commerce 6
+10. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
