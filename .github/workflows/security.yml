@@ -13,6 +13,6 @@ permissions:
 jobs:
   security:
     name: Security
-    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@f7ecea52f37160773a230b6ef190cbe1466416f9 # v1
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@1e93d64c815e3aec4a4d5a06ddbaab81e9e29751 # v1
     with:
       fail_on_findings: false
