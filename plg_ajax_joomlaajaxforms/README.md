@@ -174,7 +174,7 @@ That misleading step has been removed; see issue #98.)
 5. **Registration** — AJAX user registration
 6. **Password Reset** — reset email request
 7. **Username Reminder** — reminder email request
-8. **Security** — CSRF rejection (no-token GET, fake-token POST), IDOR protection (unauthenticated removeCartItem rejected, victim row not deleted)
+8. **Security** — CSRF rejection only: a no-token `GET` and a fake-token `POST` to the AJAX endpoint (`getCartCount`) must both be rejected. On the standard matrix this is the **only** part of the Security suite that runs — the IDOR/cart portion of `08-security.php` auto-skips because no J2Commerce cart tables exist (`SKIP: J2Commerce not installed — cart tables absent`). Real IDOR/cart coverage (seeding a victim cart row and verifying it is not deleted) runs **only** in the J2Commerce 4 and 6 full-install suites described below.
 9. **Uninstall** — clean removal from database and filesystem
 10. **Profile** — AJAX profile save (name, email, password)
 11. **htaccess Check** — `.htaccess` rule validation
