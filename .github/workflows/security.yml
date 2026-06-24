@@ -2,8 +2,9 @@ name: Security Scan
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +13,4 @@ permissions:
 jobs:
   security:
     name: Security
-    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@main
-    permissions:
-      contents: read
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@fc69b71eb98d2dbebac733e3c87b84106e30d275

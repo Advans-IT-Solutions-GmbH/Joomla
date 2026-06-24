@@ -1,6 +1,0 @@
-rules:
-  unpinned-uses:
-    config:
-      policies:
-        Advans-IT-Solutions-GmbH/*: any
-        "*": ref-pin
