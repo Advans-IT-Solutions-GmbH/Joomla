@@ -24,6 +24,8 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Application\SiteApplication;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Input\Input as CMSInput;
+use Joomla\Event\DispatcherInterface;
 use Joomla\Registry\Registry;
 
 if (!function_exists('bootstrapSiteApplication')) {
@@ -38,8 +40,18 @@ if (!function_exists('bootstrapSiteApplication')) {
 
         $container = Factory::getContainer();
 
-        /** @var SiteApplication $app */
-        $app = $container->get(SiteApplication::class);
+        // Construct directly (input + config + dispatcher) rather than via the
+        // container's "JApplicationSite" factory: that factory also wires the HTTP
+        // session service (SessionInterface), which is not registered in a CLI
+        // process. The render / asset / event paths exercised here never touch the
+        // session, so a session is not required.
+        $app = new SiteApplication(
+            $container->get(CMSInput::class),
+            $container->get('config'),
+            null,
+            $container
+        );
+        $app->setDispatcher($container->get(DispatcherInterface::class));
 
         // cassiopeia ships with every Joomla 5/6 install, so the is_file() guard
         // inside getTemplate() passes and it returns the name without touching the
