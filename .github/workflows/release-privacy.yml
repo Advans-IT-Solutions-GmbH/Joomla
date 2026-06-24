@@ -50,9 +50,9 @@ jobs:
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
 
             if [ -n "$LAST_TAG" ]; then
-              COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
+              COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%B" --no-merges -- "$EXT_PATH")
             else
-              COMMITS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
+              COMMITS=$(git log --pretty=format:"%B" --no-merges -20 -- "$EXT_PATH")
             fi
 
             if [ -z "$COMMITS" ]; then
@@ -61,7 +61,7 @@ jobs:
               exit 0
             fi
 
-            if echo "$COMMITS" | grep -qiE '^[a-z]+(\(.+\))?!:|BREAKING CHANGE:'; then
+            if echo "$COMMITS" | grep -qiE '^[a-z]+(\(.+\))?!:|^BREAKING[ -]CHANGE:'; then
               BUMP="major"
             elif echo "$COMMITS" | grep -qiE '^feat(\(.+\))?:'; then
               BUMP="minor"
