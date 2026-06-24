@@ -17,19 +17,19 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+require_once __DIR__ . '/_osmap_bootstrap.php';
+
 use Joomla\CMS\Factory;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
-// OSMap stubs
-if (!class_exists(\Alledia\OSMap\Sitemap\Item::class)) {
-    eval('namespace Alledia\OSMap\Sitemap; class Item { public $path = ""; public $browserNav = 0; }');
-}
-if (!class_exists(\Alledia\OSMap\Sitemap\Collector::class)) {
-    eval('namespace Alledia\OSMap\Sitemap; class Collector { public function printNode(object $node): void {} }');
-}
+// Load the REAL OSMap library (Collector, Item) installed in the test image so
+// the emit path runs against real OSMap classes, not stubs. Stubs are only used
+// if OSMap could not be loaded at all.
+$REAL_OSMAP = osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . ($REAL_OSMAP ? 'yes' : 'NO (stubs)') . "\n";
 
 // Register plugin PSR-4 namespace
 spl_autoload_register(function (string $class): void {
@@ -47,13 +47,20 @@ if (file_exists(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php')) {
     require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
 }
 
-/** Collector that records all nodes passed to printNode(). */
+/**
+ * Collector that records all nodes passed to printNode(). Extends the real
+ * OSMap Collector (or the fallback stub) with a signature-compatible override.
+ * The empty constructor bypasses the real Collector's SitemapInterface
+ * requirement — only printNode() is exercised here.
+ */
 class RecordingCollector extends \Alledia\OSMap\Sitemap\Collector
 {
     public array $nodes = [];
-    public function printNode(object $node): void
+    public function __construct() {}
+    public function printNode($node): bool
     {
-        $this->nodes[] = $node;
+        $this->nodes[] = (object) $node;
+        return true;
     }
 }
 
@@ -120,7 +127,7 @@ class PluginEmitTest
         echo "\n--- emitProductsForCategory() ---\n";
 
         $plugin    = $this->makePlugin();
-        $parent    = new \Alledia\OSMap\Sitemap\Item();
+        $parent    = osmap_make_item([]);
         $parent->path = 'shop';
 
         $rc     = new ReflectionClass($plugin);
@@ -190,7 +197,7 @@ class PluginEmitTest
 
         $plugin    = $this->makePlugin();
         $collector = new RecordingCollector();
-        $parent    = new \Alledia\OSMap\Sitemap\Item();
+        $parent    = osmap_make_item([]);
         $parent->path = 'shop';
 
         $rc     = new ReflectionClass($plugin);
@@ -238,7 +245,7 @@ class PluginEmitTest
         // Case 1: normal alias, parent path "shop"
         $this->test('Normal alias: shop/my-product', function () use ($plugin, $method, $root) {
             $collector = new RecordingCollector();
-            $parent    = new \Alledia\OSMap\Sitemap\Item();
+            $parent    = osmap_make_item([]);
             $parent->path = 'shop';
             $product = (object)['id' => 1, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
             $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
@@ -249,7 +256,7 @@ class PluginEmitTest
         // Case 2: alias with leading slash (must be stripped)
         $this->test('Alias with leading slash stripped', function () use ($plugin, $method, $root) {
             $collector = new RecordingCollector();
-            $parent    = new \Alledia\OSMap\Sitemap\Item();
+            $parent    = osmap_make_item([]);
             $parent->path = 'shop';
             $product = (object)['id' => 2, 'title' => 'Test', 'alias' => '/my-product', 'modified' => null];
             $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
@@ -260,7 +267,7 @@ class PluginEmitTest
         // Case 3: empty parent path (root-level shop)
         $this->test('Empty parent path: /my-product', function () use ($plugin, $method, $root) {
             $collector = new RecordingCollector();
-            $parent    = new \Alledia\OSMap\Sitemap\Item();
+            $parent    = osmap_make_item([]);
             $parent->path = '';
             $product = (object)['id' => 3, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
             $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
@@ -271,7 +278,7 @@ class PluginEmitTest
         // Case 4: parent path with trailing slash (must not double-slash)
         $this->test('Parent path with trailing slash: no double slash', function () use ($plugin, $method, $root) {
             $collector = new RecordingCollector();
-            $parent    = new \Alledia\OSMap\Sitemap\Item();
+            $parent    = osmap_make_item([]);
             $parent->path = 'shop/';
             $product = (object)['id' => 4, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
             $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
@@ -282,7 +289,7 @@ class PluginEmitTest
         // Case 5: alias must NOT be percent-encoded (rawurlencode removed)
         $this->test('Alias not percent-encoded (no rawurlencode)', function () use ($plugin, $method, $root) {
             $collector = new RecordingCollector();
-            $parent    = new \Alledia\OSMap\Sitemap\Item();
+            $parent    = osmap_make_item([]);
             $parent->path = 'shop';
             $product = (object)['id' => 5, 'title' => 'Test', 'alias' => 'my-great-product', 'modified' => null];
             $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
@@ -303,7 +310,7 @@ class PluginEmitTest
 
         $plugin    = $this->makePlugin($newClass);
         $collector = new RecordingCollector();
-        $parent    = new \Alledia\OSMap\Sitemap\Item();
+        $parent    = osmap_make_item([]);
         $parent->path = 'shop';
 
         $rc     = new ReflectionClass($plugin);

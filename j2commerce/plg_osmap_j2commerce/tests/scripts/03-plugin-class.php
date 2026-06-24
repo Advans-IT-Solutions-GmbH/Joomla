@@ -9,25 +9,36 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+require_once __DIR__ . '/_osmap_bootstrap.php';
+
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 
 // Use DI container instead of deprecated Factory::getDbo()
 Factory::getContainer()->get(DatabaseInterface::class);
 
-// Stubs for OSMap classes that are not installed in the test container.
-// emitSingleProduct() type-hints Item and Collector but only uses $parent
-// when a product is found — with a non-existent article ID (999999999) the
-// stubs are never accessed beyond satisfying the type check.
-// class_alias() cannot alias internal classes (stdClass), so we define
-// minimal user-defined stubs instead.
-if (!class_exists(\Alledia\OSMap\Sitemap\Item::class)) {
-    // @phpstan-ignore-next-line
-    eval('namespace Alledia\OSMap\Sitemap; class Item { public $path = ""; public $browserNav = 0; }');
-}
-if (!class_exists(\Alledia\OSMap\Sitemap\Collector::class)) {
-    // @phpstan-ignore-next-line
-    eval('namespace Alledia\OSMap\Sitemap; class Collector { public function printNode(object $node): void {} }');
+// Load the REAL OSMap library (Collector, Item) installed in the test image so
+// the collection/emit path runs against real OSMap classes. Stubs are only
+// defined if OSMap could not be loaded at all.
+$REAL_OSMAP = osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . ($REAL_OSMAP ? 'yes' : 'NO (stubs)') . "\n";
+
+/**
+ * Collector that records nodes. Extends the real OSMap Collector (or the
+ * fallback stub) and overrides printNode() with a signature-compatible method.
+ * The empty constructor bypasses the real Collector's SitemapInterface
+ * requirement — only printNode() is needed here.
+ */
+class ClassTestRecordingCollector extends \Alledia\OSMap\Sitemap\Collector
+{
+    /** @var object[] */
+    public array $nodes = [];
+    public function __construct() {}
+    public function printNode($node): bool
+    {
+        $this->nodes[] = (object) $node;
+        return true;
+    }
 }
 
 // Register plugin's PSR-4 namespace
@@ -139,14 +150,10 @@ class PluginClassTest
             $plugin = new $j2cClass($dispatcher, ['params' => $params]);
             $plugin->setDatabase($db);
 
-            // Use a mock Collector that records added nodes.
-            // Must extend the stub Collector so the type hint is satisfied.
-            $collector = new class extends \Alledia\OSMap\Sitemap\Collector {
-                public array $nodes = [];
-                public function printNode(object $node): void { $this->nodes[] = $node; }
-            };
+            // Recording collector — real OSMap Collector subtype.
+            $collector = new ClassTestRecordingCollector();
 
-            $parent = new \Alledia\OSMap\Sitemap\Item();
+            $parent = osmap_make_item([]);
 
             $rc     = new ReflectionClass($plugin);
             $method = $rc->getMethod('emitSingleProduct');
@@ -167,13 +174,10 @@ class PluginClassTest
             $plugin = new $newClass($dispatcher, ['params' => $params]);
             $plugin->setDatabase($db);
 
-            // Must extend the stub Collector so the type hint is satisfied.
-            $collector = new class extends \Alledia\OSMap\Sitemap\Collector {
-                public array $nodes = [];
-                public function printNode(object $node): void { $this->nodes[] = $node; }
-            };
+            // Recording collector — real OSMap Collector subtype.
+            $collector = new ClassTestRecordingCollector();
 
-            $parent = new \Alledia\OSMap\Sitemap\Item();
+            $parent = osmap_make_item([]);
             $rc     = new ReflectionClass($plugin);
             $method = $rc->getMethod('emitSingleProduct');
             $method->setAccessible(true);
@@ -182,6 +186,36 @@ class PluginClassTest
             $method->invoke($plugin, $collector, $parent, new \Joomla\Registry\Registry(), 999999999);
 
             return count($collector->nodes) === 0;
+        });
+
+        // --- emitSingleProduct() against a REAL seeded product (issue #99) ---
+        // Article 9001 (Test Product Alpha) has an enabled product row in the
+        // stack's products table. Use the stack-appropriate class so the table
+        // exists, and assert a real node with the correct SEF URL is emitted.
+        $isJ6           = (getenv('J2COMMERCE_STACK') === 'j6');
+        $stackClass     = $isJ6 ? $newClass : $j2cClass;
+        $this->test('emitSingleProduct() emits a real node for seeded product 9001', function () use ($stackClass) {
+            $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $params     = new \Joomla\Registry\Registry([]);
+
+            $plugin = new $stackClass($dispatcher, ['params' => $params]);
+            $plugin->setDatabase($db);
+
+            $collector = new ClassTestRecordingCollector();
+            // Parent menu item with SEF path 'shop' — product URL is built from
+            // parent->path + product alias.
+            $parent = osmap_make_item(['path' => 'shop', 'browserNav' => 0]);
+
+            $rc     = new ReflectionClass($plugin);
+            $method = $rc->getMethod('emitSingleProduct');
+            $method->setAccessible(true);
+            $method->invoke($plugin, $collector, $parent, new \Joomla\Registry\Registry(), 9001);
+
+            $root = rtrim(\Joomla\CMS\Uri\Uri::root(), '/');
+            return count($collector->nodes) === 1
+                && $collector->nodes[0]->link === $root . '/shop/test-product-alpha'
+                && $collector->nodes[0]->uid  === 'j2commerce.product.9001';
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";

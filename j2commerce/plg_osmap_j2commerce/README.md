@@ -10,7 +10,30 @@ Adds all enabled J2Store / J2Commerce products to the OSMap sitemap automaticall
 
 ### Compatibility Test Scope
 
-The HTTP sitemap CI installs Joomla full packages, OSMap, and real J2Commerce/J2Store runtimes before checking generated XML product URLs. The class-level test scripts still use lightweight OSMap helper stubs for isolated method coverage, so they are not a standalone full OSMap runtime proof. Issue #99 remains partially addressed until the remaining getTree dispatch cases and single-product, disabled-product, and unpublished-product coverage are exercised against the real runtime.
+The CI installs full Joomla packages, the real OSMap 5.1.6 runtime, and real
+J2Commerce/J2Store components, then exercises the plugin against them on both
+stacks (Joomla 5 + J2Store/J2Commerce 4 and Joomla 6 + J2Commerce 6):
+
+- **Real OSMap loader/dispatch** (`07-osmap-loader.php`): the plugin is matched
+  and dispatched through OSMap's actual loader — `getPluginsForComponent()` →
+  `getComponentElement()` (com_j2store vs com_j2commerce) → `getTree()` — against
+  the real OSMap classes installed in the image, asserting the correct product
+  URLs for both the `#__j2store_products` and `#__j2commerce_products` tables.
+- **Real single-product emit** (`07-osmap-loader.php`, `03-plugin-class.php`):
+  `emitSingleProduct()` is exercised against a real seeded product and asserts
+  the emitted node/URL (no longer only the no-crash, non-existent-id case).
+- **Real collection/emit path** (`03-plugin-class.php`, `03b-plugin-emit.php`):
+  these run against the real OSMap `Collector`/`Item` classes (not stubs). Stubs
+  are only used as a last-resort fallback if OSMap is not installed at all.
+- **Full-stack HTTP sitemap** (`06-sitemap-http.php`): a real HTTP request to the
+  live OSMap XML endpoint asserting product URLs.
+- **J6 SEF URLs** (`08-sitemap-http-sef.php`): a dedicated SEF-enabled J6 job
+  (`docker-compose.joomla6-sef.yml`, `J2COMMERCE_SEF=1`) asserts the live sitemap
+  contains correctly-formed SEF product URLs on Joomla 6 + J2Commerce 6.
+
+This closes the issue #99 caveats: getTree dispatch and single-product coverage
+are now exercised against the real OSMap runtime on both stacks, and J6 SEF URL
+output is verified with SEF enabled.
 
 ## Description
 
@@ -174,10 +197,15 @@ This plugin has automated tests that run on every push via GitHub Actions.
 
 1. **Installation** — plugin registration in DB, file deployment
 2. **Configuration** — plugin params, language files, XML manifest
-3. **Plugin Class** — OSMap interface, `getTree()` method, class loading
+3. **Plugin Class** — OSMap interface, `getTree()`/emit methods against the real
+   OSMap `Collector`/`Item` classes, plus real single-product emit
 4. **Sitemap Output** — direct DB query test for `getTree()` result
 5. **Sitemap HTTP** — full-stack HTTP request against the live sitemap endpoint
-6. **Uninstall** — clean removal from database and filesystem
+6. **OSMap Loader** — dispatch through OSMap's real `getPluginsForComponent()` →
+   `getComponentElement()` → `getTree()` loader on both stacks
+7. **Sitemap HTTP (SEF)** — J6-only SEF-enabled job asserting SEF-formed product
+   URLs in the live sitemap
+8. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 

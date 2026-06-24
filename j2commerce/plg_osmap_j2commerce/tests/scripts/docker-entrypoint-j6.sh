@@ -61,19 +61,43 @@ echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null
 
-# Disable SEF URLs so OSMap generates plain index.php?... URLs.
-# NOTE: This means the J6 sitemap test does not verify correct SEF URL output
-# in a production environment with SEF enabled. The test validates plugin
-# dispatch and node emission only, not SEF URL formatting.
-mysql -h mysql -u joomla -pjoomla_pass joomla_db \
-    -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '$.sef', 0) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
-php -r "
+# SEF URL handling.
+#
+# Default (J2COMMERCE_SEF unset/0): disable SEF so OSMap generates plain
+# index.php?... URLs (simpler for the standard J6 assertions).
+#
+# SEF-on mode (J2COMMERCE_SEF=1, used by docker-compose.joomla6-sef.yml):
+# enable SEF + URL rewriting and Apache mod_rewrite/.htaccess so the J6 SEF
+# HTTP test (08-sitemap-http-sef.php) can verify correctly-formed SEF product
+# URLs on the J6 + J2Commerce 6 stack.
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Enabling SEF URLs (J2COMMERCE_SEF=1)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+        -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '\$.sef', 1) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
+    php -r "
+\$f = '/var/www/html/configuration.php';
+\$c = file_get_contents(\$f);
+\$c = preg_replace('/public \\\$sef = [^;]+;/', 'public \$sef = true;', \$c);
+\$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = true;', \$c);
+file_put_contents(\$f, \$c);
+" 2>/dev/null || true
+    # Enable Apache rewrite + Joomla .htaccess so SEF rewrite URLs resolve.
+    a2enmod rewrite >/dev/null 2>&1 || true
+    if [ -f /var/www/html/htaccess.txt ] && [ ! -f /var/www/html/.htaccess ]; then
+        cp /var/www/html/htaccess.txt /var/www/html/.htaccess
+    fi
+else
+    echo "Disabling SEF URLs (default J6 mode)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+        -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '\$.sef', 0) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
+    php -r "
 \$f = '/var/www/html/configuration.php';
 \$c = file_get_contents(\$f);
 \$c = preg_replace('/public \\\$sef = [^;]+;/', 'public \$sef = false;', \$c);
 \$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = false;', \$c);
 file_put_contents(\$f, \$c);
 " 2>/dev/null || true
+fi
 
 COM_CONTENT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT extension_id FROM ${DB_PREFIX}extensions WHERE element='com_content' AND type='component' LIMIT 1;" 2>/dev/null || echo "0")

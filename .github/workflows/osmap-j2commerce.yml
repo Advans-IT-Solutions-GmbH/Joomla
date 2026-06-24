@@ -69,6 +69,8 @@ jobs:
             script: 'plugin-emit'
           - name: '04 - Sitemap Output'
             script: 'sitemap'
+          - name: '07 - OSMap Loader'
+            script: 'osmap-loader'
           - name: '06 - Sitemap HTTP'
             script: 'sitemap-http'
           - name: '05 - Uninstall'
@@ -140,6 +142,8 @@ jobs:
             script: 'plugin-emit'
           - name: '04 - Sitemap Output'
             script: 'sitemap'
+          - name: '07 - OSMap Loader'
+            script: 'osmap-loader'
           - name: '06 - Sitemap HTTP'
             script: 'sitemap-http'
           - name: '05 - Uninstall'
@@ -204,6 +208,72 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose -f docker-compose.joomla6.yml down -v
 
+  test-j6-sef:
+    name: 08 - Sitemap HTTP SEF (J6 SEF)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: extension-package
+          path: j2commerce/plg_osmap_j2commerce/tests/
+      - name: Setup PHP for J2Commerce build
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.3'
+          extensions: zip
+      - name: Build J2Commerce 6 from source
+        run: |
+          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
+          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          cd /tmp/j2commerce6-src && php build/build_package.php
+          ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
+          sha256sum "$ZIP"
+          cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/plg_osmap_j2commerce/tests/j2commerce6.zip"
+      - name: Start environment (J6 SEF)
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6-sef.yml up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose -f docker-compose.joomla6-sef.yml down -v || true
+            sleep 20
+          done
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          echo "=== Joomla Container Logs ==="
+          docker compose -f docker-compose.joomla6-sef.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run SEF test
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: j6-sef-sitemap-http-sef-logs
+          path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          docker compose -f docker-compose.joomla6-sef.yml down -v
+
   official-j5-j2c4:
     name: OSMap / official-j5-j2c4
     runs-on: ubuntu-latest
@@ -221,7 +291,7 @@ jobs:
   official-j6-j2c6:
     name: OSMap / official-j6-j2c6
     runs-on: ubuntu-latest
-    needs: test-j6
+    needs: [test-j6, test-j6-sef]
     if: always()
     permissions: {}
     steps:
@@ -231,11 +301,15 @@ jobs:
             echo "Official J6/J2C6 matrix did not pass: ${{ needs.test-j6.result }}"
             exit 1
           fi
+          if [ "${{ needs.test-j6-sef.result }}" != "success" ]; then
+            echo "Official J6/J2C6 SEF job did not pass: ${{ needs.test-j6-sef.result }}"
+            exit 1
+          fi
 
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    needs: [test-j5, test-j6]
+    needs: [test-j5, test-j6, test-j6-sef]
     if: always()
     permissions: {}
     steps:
