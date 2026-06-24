@@ -156,13 +156,23 @@ if (!class_exists('J2Store', false)) {
 }
 
 // Namespaced J2Commerce 6 helper used by the com_j2commerce overrides.
+// Declared as a normal global-namespace class and aliased to the expected
+// namespaced name (avoids eval(), which security hardening often blocks in CI).
+class RenderHarnessJ2CommerceHelper
+{
+    public static function currency()
+    {
+        return new RenderHarnessCurrency();
+    }
+    public static function plugin()
+    {
+        return new RenderHarnessPlugin();
+    }
+}
 if (!class_exists('J2Commerce\\Component\\J2commerce\\Administrator\\Helper\\J2CommerceHelper', false)) {
-    eval(
-        'namespace J2Commerce\\Component\\J2commerce\\Administrator\\Helper; '
-        . 'class J2CommerceHelper { '
-        . 'public static function currency() { return new \\RenderHarnessCurrency(); } '
-        . 'public static function plugin() { return new \\RenderHarnessPlugin(); } '
-        . '}'
+    class_alias(
+        'RenderHarnessJ2CommerceHelper',
+        'J2Commerce\\Component\\J2commerce\\Administrator\\Helper\\J2CommerceHelper'
     );
 }
 
@@ -227,10 +237,19 @@ class ConsentUiRenderTest
     private function primeJoomlaState(): void
     {
         // Provide an application with a working WebAssetManager for the consent_required path.
-        $appProp = (new \ReflectionClass(Factory::class))->getProperty('application');
-        $appProp->setAccessible(true);
-        if (!$appProp->getValue()) {
-            $appProp->setValue(null, new RenderHarnessApp());
+        try {
+            $appProp = (new \ReflectionClass(Factory::class))->getProperty('application');
+            $appProp->setAccessible(true);
+            if (!$appProp->getValue()) {
+                $appProp->setValue(null, new RenderHarnessApp());
+            }
+            $this->test('Factory application primed via reflection', true);
+        } catch (\ReflectionException $e) {
+            $this->test('Factory application primed via reflection', false,
+                'Reflection on Factory::application failed: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            $this->test('Factory application primed via reflection', false,
+                'Unexpected error priming Factory::application: ' . $e->getMessage());
         }
 
         // Seed PluginHelper's cache with the REAL installed privacy plugin row so the
@@ -252,13 +271,21 @@ class ConsentUiRenderTest
         $pluginObj->name   = 'j2commerce';
         $pluginObj->params = $params ?? '{}';
 
-        $pluginsProp = (new \ReflectionClass(PluginHelper::class))->getProperty('plugins');
-        $pluginsProp->setAccessible(true);
-        $pluginsProp->setValue(null, [$pluginObj]);
+        try {
+            $pluginsProp = (new \ReflectionClass(PluginHelper::class))->getProperty('plugins');
+            $pluginsProp->setAccessible(true);
+            $pluginsProp->setValue(null, [$pluginObj]);
 
-        $resolved = PluginHelper::getPlugin('privacy', 'j2commerce');
-        $this->test('PluginHelper resolves the privacy plugin for rendering',
-            !empty($resolved) && isset($resolved->name) && $resolved->name === 'j2commerce');
+            $resolved = PluginHelper::getPlugin('privacy', 'j2commerce');
+            $this->test('PluginHelper resolves the privacy plugin for rendering',
+                !empty($resolved) && isset($resolved->name) && $resolved->name === 'j2commerce');
+        } catch (\ReflectionException $e) {
+            $this->test('PluginHelper resolves the privacy plugin for rendering', false,
+                'Reflection on PluginHelper::plugins failed: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            $this->test('PluginHelper resolves the privacy plugin for rendering', false,
+                'Unexpected error seeding PluginHelper cache: ' . $e->getMessage());
+        }
     }
 
     /** Render an override file in the scope of a view double and return its HTML. */
@@ -298,12 +325,17 @@ class ConsentUiRenderTest
         $view->params = new Registry(['bootstrap_version' => 5, 'download_area' => 1]);
 
         $checkoutHtml = '';
-        try {
-            $checkoutHtml = $this->renderOverride($checkoutFile, $view);
-            $this->test('Checkout override rendered without error', true);
-        } catch (\Throwable $e) {
+        if (!file_exists($checkoutFile)) {
             $this->test('Checkout override rendered without error', false,
-                $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+                'Checkout override file missing, render skipped: ' . $checkoutFile);
+        } else {
+            try {
+                $checkoutHtml = $this->renderOverride($checkoutFile, $view);
+                $this->test('Checkout override rendered without error', true);
+            } catch (\Throwable $e) {
+                $this->test('Checkout override rendered without error', false,
+                    $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            }
         }
 
         $this->test('Rendered HTML is non-empty', strlen(trim($checkoutHtml)) > 0,
@@ -326,12 +358,17 @@ class ConsentUiRenderTest
         $view2->params  = new Registry(['bootstrap_version' => 5, 'download_area' => 1]);
 
         $profileHtml = '';
-        try {
-            $profileHtml = $this->renderOverride($myprofileFile, $view2);
-            $this->test('MyProfile override rendered without error', true);
-        } catch (\Throwable $e) {
+        if (!file_exists($myprofileFile)) {
             $this->test('MyProfile override rendered without error', false,
-                $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+                'MyProfile override file missing, render skipped: ' . $myprofileFile);
+        } else {
+            try {
+                $profileHtml = $this->renderOverride($myprofileFile, $view2);
+                $this->test('MyProfile override rendered without error', true);
+            } catch (\Throwable $e) {
+                $this->test('MyProfile override rendered without error', false,
+                    $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            }
         }
 
         $this->test('Rendered MyProfile HTML is non-empty', strlen(trim($profileHtml)) > 0);
