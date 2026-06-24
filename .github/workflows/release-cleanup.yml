@@ -50,22 +50,24 @@ jobs:
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
 
             if [ -n "$LAST_TAG" ]; then
-              COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%B" --no-merges -- "$EXT_PATH")
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
             else
-              COMMITS=$(git log --pretty=format:"%B" --no-merges -20 -- "$EXT_PATH")
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
             fi
 
-            if [ -z "$COMMITS" ]; then
+            if [ -z "$SUBJECTS" ]; then
               echo "No commits for this extension since last tag — skipping"
               echo "bump=none" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
-            if echo "$COMMITS" | grep -qiE '^[a-z]+(\(.+\))?!:|^BREAKING[ -]CHANGE:'; then
+            if echo "$SUBJECTS" | grep -qiE '^[a-z]+(\(.+\))?!:' || echo "$BODIES" | grep -qiE '^BREAKING[ -]CHANGE:'; then
               BUMP="major"
-            elif echo "$COMMITS" | grep -qiE '^feat(\(.+\))?:'; then
+            elif echo "$SUBJECTS" | grep -qiE '^feat(\(.+\))?:'; then
               BUMP="minor"
-            elif echo "$COMMITS" | grep -qiE '^fix(\(.+\))?:'; then
+            elif echo "$SUBJECTS" | grep -qiE '^fix(\(.+\))?:'; then
               BUMP="patch"
             else
               echo "No conventional commit found — skipping"
