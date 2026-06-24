@@ -117,7 +117,17 @@ class ImportHttpTest
 
     private function extractToken(string $html): ?string
     {
+        // Hidden form-token input rendered by HTMLHelper::_('form.token').
         if (preg_match('/name="([a-f0-9]{32})" value="1"/', $html, $m)) {
+            return $m[1];
+        }
+        // Joomla injects the session token into its script options on every
+        // admin page: <script class="joomla-script-options new">{"csrf.token":"<hex>",...}</script>
+        if (preg_match('/"csrf\.token":"([a-f0-9]{32})"/', $html, $m)) {
+            return $m[1];
+        }
+        // Fallback: any task URL carrying the token (e.g. the admin logout link).
+        if (preg_match('/[?&;]([a-f0-9]{32})=1/', $html, $m)) {
             return $m[1];
         }
         return null;
@@ -154,12 +164,23 @@ class ImportHttpTest
 
     private function freshToken(): ?string
     {
-        $r = $this->request(
+        // The form token is the same session-wide; try the component dashboard
+        // first, then fall back to the admin home page (which always injects the
+        // csrf.token script option). Emit diagnostics if neither yields a token.
+        $urls = [
             $this->baseUrl . '/administrator/index.php?option=com_j2commerce_importexport',
-            [],
-            true
-        );
-        return $this->extractToken($r['body']);
+            $this->baseUrl . '/administrator/index.php',
+        ];
+        foreach ($urls as $url) {
+            $r     = $this->request($url, [], true);
+            $token = $this->extractToken($r['body']);
+            if ($token) {
+                return $token;
+            }
+            echo '  token lookup: HTTP ' . $r['code'] . ' from ' . $url
+                . ' (' . strlen($r['body']) . " bytes, no token)\n";
+        }
+        return null;
     }
 
     private function writeImportFile(string $sku, string $title, string $alias): string
