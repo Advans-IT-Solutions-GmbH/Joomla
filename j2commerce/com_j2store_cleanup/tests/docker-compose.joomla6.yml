@@ -11,12 +11,12 @@ services:
       JOOMLA_DB_USER: joomla
       JOOMLA_DB_PASSWORD: joomla_pass
       JOOMLA_DB_NAME: joomla_db
-      JOOMLA_SITE_NAME: "Test Site J6"
+      JOOMLA_SITE_NAME: "Test Site J6 (J2Commerce 6)"
       JOOMLA_ADMIN_USER: admin
       JOOMLA_ADMIN_USERNAME: admin
       JOOMLA_ADMIN_PASSWORD: Admin123456789!@#
       JOOMLA_ADMIN_EMAIL: admin@test.local
-      EXPECTED_CORE_COMPONENT: ${EXPECTED_CORE_COMPONENT:-}
+      EXPECTED_CORE_COMPONENT: ${EXPECTED_CORE_COMPONENT:-com_j2commerce}
     volumes:
       - joomla_j6_data:/var/www/html
     depends_on:

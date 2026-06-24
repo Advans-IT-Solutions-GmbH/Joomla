@@ -157,6 +157,16 @@ This plugin has automated tests that run on every push and on pull requests via 
 
 ### Test Suites
 
+The standard matrix (`test-j5`, `test-j6`) runs the Joomla 5 and Joomla 6 core
+suites **without J2Commerce installed**. Because no cart backend exists in that
+environment, a real functional cart test cannot run there — so the standard
+matrix intentionally contains **no cart test**. Cart functionality is proven by
+the full-install jobs described below, which are part of the same required CI
+gate. (Previously the standard matrix shipped a `11 - J2Store Cart` step that was
+a *pseudo* test — reflection checks and empty-database counts with no HTTP, IDOR
+or authenticated-delete assertions — so it could pass even with a broken cart.
+That misleading step has been removed; see issue #98.)
+
 1. **Installation** — plugin registration in DB, file deployment
 2. **Configuration** — plugin params, language files, XML manifest
 3. **AJAX Endpoint** — unauthenticated access rejection
@@ -164,23 +174,27 @@ This plugin has automated tests that run on every push and on pull requests via 
 5. **Registration** — AJAX user registration
 6. **Password Reset** — reset email request
 7. **Username Reminder** — reminder email request
-8. **Security** — CSRF rejection (no-token GET, fake-token POST), IDOR protection (unauthenticated removeCartItem rejected, victim row not deleted)
+8. **Security** — CSRF rejection only: a no-token `GET` and a fake-token `POST` to the AJAX endpoint (`getCartCount`) must both be rejected. On the standard matrix this is the **only** part of the Security suite that runs — the IDOR/cart portion of `08-security.php` auto-skips because no J2Commerce cart tables exist (`SKIP: J2Commerce not installed — cart tables absent`). Real IDOR/cart coverage (seeding a victim cart row and verifying it is not deleted) runs **only** in the J2Commerce 4 and 6 full-install suites described below.
 9. **Uninstall** — clean removal from database and filesystem
 10. **Profile** — AJAX profile save (name, email, password)
-11. **J2Store Cart** — cart count, remove item, J2Commerce 4/6 detection
-12. **htaccess Check** — `.htaccess` rule validation
+11. **htaccess Check** — `.htaccess` rule validation
 
-### Full-Install Tests (J2Commerce)
+### Full-Install Tests (J2Commerce) — authoritative cart coverage
 
-Two additional CI jobs exercise the plugin against real J2Commerce installations:
+Cart functionality is covered **only** by real, functional tests that run against
+genuine J2Commerce installations with seeded cart data. These two CI jobs are the
+authoritative cart gate: both are required (the `collect-results` job fails if
+either fails, and the `official-j5-j2c4` / `official-j6-j2c6` checks verify each
+matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 
-**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds cart data for a test user, then verifies:
+**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds a cart for test user `999` (3 items), then verifies — via real HTTP requests with CSRF tokens plus direct DB-state assertions:
 - `isJ2CommerceInstalled()` returns `true`, `isJ2Commerce4()` returns `true`
 - `getCartCountForUser(999)` returns 3 (matching seeded rows)
-- IDOR: unauthenticated `removeCartItem` rejected, row not deleted
-- Authenticated `removeCartItem` deletes the row and returns updated `cartCount`
+- `getCartCount` HTTP endpoint returns `cartCount = 0` for a guest (guest guard)
+- IDOR: unauthenticated `removeCartItem` rejected, victim row still present in `#__j2store_cartitems`
+- Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
-**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source (`git clone j2commerce/j2commerce && php build/build_package.php`) since no public release ZIP exists. Tests mirror the J2C4 suite against `#__j2commerce_*` tables.
+**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source (`git clone j2commerce/j2commerce && php build/build_package.php`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
 
 ### Running Tests Locally
 
