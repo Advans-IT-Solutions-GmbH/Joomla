@@ -201,10 +201,10 @@ Only users with write access (collaborators) can approve or request changes on p
 
 ### Security Policy
 
-**File:** `SECURITY.md`  
+**Source:** org-wide policy in [`Advans-IT-Solutions-GmbH/.github`](https://github.com/Advans-IT-Solutions-GmbH/.github/blob/main/SECURITY.md)  
 **Documentation:** https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
 
-Defines how security vulnerabilities should be reported. Directs users to GitHub's private vulnerability reporting system and provides contact information for urgent issues.
+This repository inherits the organization-wide security policy (no repo-level `SECURITY.md`). It defines how security vulnerabilities should be reported, directs users to GitHub's private vulnerability reporting system, and provides contact information for urgent issues.
 
 ---
 
