@@ -13,4 +13,4 @@ permissions:
 jobs:
   security:
     name: Security
-    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@089562e23b51a97acbdb3f64e359298614001ab6 # v1
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@d733bec5999d07919d74a317ed8b098ea17d6c20 # v1
