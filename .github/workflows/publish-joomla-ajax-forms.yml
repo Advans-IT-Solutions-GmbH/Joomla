@@ -51,8 +51,13 @@ jobs:
           VERSION="${{ steps.version.outputs.new }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -fa "ajaxforms-v${VERSION}" -m "Release ajaxforms v${VERSION}"
-          git push --force origin "ajaxforms-v${VERSION}"
+          TAG="ajaxforms-v${VERSION}"
+          if [ -n "$(git ls-remote --tags origin "refs/tags/${TAG}")" ]; then
+            echo "::notice::Tag ${TAG} already exists on origin; treating as already published and skipping retag."
+            exit 0
+          fi
+          git tag -a "${TAG}" -m "Release ajaxforms v${VERSION}"
+          git push origin "${TAG}"
 
       - name: Generate changelog
         id: changelog

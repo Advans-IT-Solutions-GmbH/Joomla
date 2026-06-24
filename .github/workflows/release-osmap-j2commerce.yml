@@ -151,8 +151,8 @@ jobs:
           TITLE="release: osmap-j2commerce v${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$BRANCH" 2>/dev/null || true
-          git switch -C "$BRANCH"
+          git fetch origin main 2>/dev/null || true
+          git switch -C "$BRANCH" origin/main
           git add j2commerce/plg_osmap_j2commerce/
           if git diff --staged --quiet; then
             echo "::notice::No version file changes detected; no release PR was opened."
