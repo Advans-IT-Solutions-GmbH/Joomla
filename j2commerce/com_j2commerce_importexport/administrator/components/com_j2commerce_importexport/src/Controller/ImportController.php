@@ -135,8 +135,11 @@ class ImportController extends BaseController
             // Clean up
             @unlink($filePath);
             $session->clear('import_file', 'j2commerce_import');
-            
-            echo new JsonResponse([
+
+            // Flat JSON payload: the dashboard JS and the HTTP test both read
+            // success/imported/failed at the top level. JsonResponse would nest
+            // them under a "data" key, so emit the response directly.
+            echo json_encode([
                 'success' => true,
                 'imported' => $result['imported'],
                 'failed' => $result['failed'],
