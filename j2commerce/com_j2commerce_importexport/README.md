@@ -246,16 +246,18 @@ This component has automated tests that run on every push via GitHub Actions.
 
 The compatibility jobs install the extension ZIP into official Joomla Full Package images with real J2Commerce runtimes: Joomla 5.4.6 with J2Store/J2Commerce 4.1.4 and Joomla 6.1.1 with a J2Commerce 6 package built from the official `j2commerce/j2commerce` repository. Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
 
-The export controller test currently verifies controller structure, supported formats, field documentation, and access/header code paths by source inspection. It is not a full HTTP export test and does not yet cover CSRF failure handling, rollback behavior, or response content type end to end.
+The export controller is now covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs a multipart upload to `task=import.upload`, runs `task=import.process`, asserts the product is actually created in the live `#__j2store_*` / `#__j2commerce_*` tables, and verifies the upload is rejected without a CSRF token. Both HTTP tests run on both stacks.
 
 ### Test Suites
 
 1. **Installation** — component registration in DB, file deployment
-2. **Component Structure** — directory layout, manifest, language files
+2. **Component Structure** — `php -l` lint of every shipped PHP file + reflection-based class/type checks
 3. **Export Model** — JSON, CSV, XML export output validation (J2Commerce 4 and 6)
 4. **Import Model** — full product import, duplicate detection, quantity modes (J2Commerce 4 and 6)
-5. **Export Controller** — `core.manage` access check
-6. **Uninstall** — clean removal from database and filesystem
+5. **Export Controller** — `core.manage` access check and structure (reflection)
+6. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
+7. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
+8. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 

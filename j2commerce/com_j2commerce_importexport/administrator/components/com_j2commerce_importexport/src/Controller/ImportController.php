@@ -124,19 +124,18 @@ class ImportController extends BaseController
         $type = $input->get('type', 'products', 'string');
 
         if (!file_exists($filePath)) {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')], '', true);
-            $app->close();
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
         }
 
         try {
             $model = $this->getModel('Import', 'Administrator');
             $result = $model->importData($filePath, $type, $mapping);
-            
+
             // Clean up
             @unlink($filePath);
             $session->clear('import_file', 'j2commerce_import');
-            
-            echo new JsonResponse([
+
+            $this->sendJson([
                 'success' => true,
                 'imported' => $result['imported'],
                 'failed' => $result['failed'],
@@ -144,9 +143,28 @@ class ImportController extends BaseController
             ]);
         } catch (\Exception $e) {
             \Joomla\CMS\Log\Log::add('Import process error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')], '', true);
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')]);
         }
+    }
 
+    /**
+     * Emit a flat JSON response and terminate the request.
+     *
+     * The dashboard JS and the HTTP tests read success/imported/failed/message
+     * at the top level. JsonResponse would nest the payload under a "data" key,
+     * so we encode a flat structure and set the JSON content type explicitly for
+     * both success and error cases to keep the shape and headers consistent.
+     *
+     * @param   array  $payload  The flat response payload.
+     *
+     * @return  void
+     */
+    private function sendJson(array $payload): void
+    {
+        $app = Factory::getApplication();
+        $app->setHeader('Content-Type', 'application/json; charset=utf-8', true);
+        $app->sendHeaders();
+        echo json_encode($payload);
         $app->close();
     }
 }

@@ -71,6 +71,10 @@ jobs:
             script: 'roundtrip'
           - name: '05 - Export Controller'
             script: 'export-controller'
+          - name: '07 - Export HTTP (CSRF)'
+            script: 'export-http'
+          - name: '08 - Import HTTP (CSRF)'
+            script: 'import-http'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
@@ -131,6 +135,10 @@ jobs:
             script: 'roundtrip'
           - name: '05 - Export Controller'
             script: 'export-controller'
+          - name: '07 - Export HTTP (CSRF)'
+            script: 'export-http'
+          - name: '08 - Import HTTP (CSRF)'
+            script: 'import-http'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:

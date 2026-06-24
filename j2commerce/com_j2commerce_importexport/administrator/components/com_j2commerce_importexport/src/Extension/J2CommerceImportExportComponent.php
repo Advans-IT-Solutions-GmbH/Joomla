@@ -12,6 +12,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Extension\BootableExtensionInterface;
 use Joomla\CMS\Extension\MVCComponent;
+use Joomla\CMS\HTML\HTMLRegistryAwareTrait;
 use Psr\Container\ContainerInterface;
 
 /**
@@ -21,6 +22,8 @@ use Psr\Container\ContainerInterface;
  */
 class J2CommerceImportExportComponent extends MVCComponent implements BootableExtensionInterface
 {
+    use HTMLRegistryAwareTrait;
+
     /**
      * Booting the extension. This is the function to set up the environment of the extension like
      * registering new class loaders, etc.

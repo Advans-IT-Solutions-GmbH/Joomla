@@ -11,6 +11,7 @@ namespace Advans\Component\J2CommerceImportExport\Administrator\Controller;
 defined('_JEXEC') or die;
 
 use Joomla\CMS\MVC\Controller\BaseController;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Response\JsonResponse;
@@ -135,9 +136,8 @@ class ExportController extends BaseController
 
     protected function exportCSV($data, $filename, $includeHelp = true)
     {
-        $app = Factory::getApplication();
-        $params = $app->getParams();
-        
+        $params = ComponentHelper::getParams('com_j2commerce_importexport');
+
         $delimiter = $params->get('csv_delimiter', ',');
         $enclosure = $params->get('csv_enclosure', '"');
 
