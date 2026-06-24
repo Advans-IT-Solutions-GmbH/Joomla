@@ -61,7 +61,7 @@ jobs:
           if [ -z "$PREV_TAG" ]; then
             echo "changelog=Initial release" >> $GITHUB_OUTPUT
           else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- j2commerce/com_j2commerce_importexport/ | grep -v '\[skip ci\]' | head -20)
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- j2commerce/com_j2commerce_importexport/ | grep -v '\[skip ci\]' | grep -v '^- release:' | head -20)
             if [ -z "$CHANGELOG" ]; then
               CHANGELOG="- Bug fixes and improvements"
             fi
