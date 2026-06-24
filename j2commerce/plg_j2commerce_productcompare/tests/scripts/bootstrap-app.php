@@ -9,10 +9,12 @@
  * (true on both Joomla 5.4 and Joomla 6.1 — the method takes no arguments and
  * only returns the already-created singleton).
  *
- * This helper builds a REAL SiteApplication from the CMS DI container — exactly
- * the wiring Joomla itself uses (libraries/src/Service/Provider/Application.php)
- * — and registers it as the global application so the plugin's
- * $this->getApplication() resolves to a genuine site application.
+ * This helper builds a REAL SiteApplication directly (input + config +
+ * dispatcher, using the CMS DI container for the services) and registers it as
+ * the global application so the plugin's $this->getApplication() resolves to a
+ * genuine site application. It deliberately avoids the container's
+ * "JApplicationSite" factory, which also requires the HTTP session service that
+ * is not registered in a CLI process.
  *
  * It also seeds a lightweight template descriptor so SiteApplication::getTemplate()
  * (called from the plugin's renderLayout() to build the override include path)
@@ -24,7 +26,6 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Application\SiteApplication;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Input\Input as CMSInput;
 use Joomla\Event\DispatcherInterface;
 use Joomla\Registry\Registry;
 
@@ -45,12 +46,24 @@ if (!function_exists('bootstrapSiteApplication')) {
         // session service (SessionInterface), which is not registered in a CLI
         // process. The render / asset / event paths exercised here never touch the
         // session, so a session is not required.
-        $app = new SiteApplication(
-            $container->get(CMSInput::class),
-            $container->get('config'),
-            null,
-            $container
-        );
+        //
+        // The input service is registered under different class names across
+        // versions (Joomla\CMS\Input\Input on J5, Joomla\Input\Input on J6), so
+        // resolve whichever the container actually provides; fall back to the
+        // application's own default when neither is registered.
+        $input = null;
+        foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+            try {
+                if ($container->has($inputClass)) {
+                    $input = $container->get($inputClass);
+                    break;
+                }
+            } catch (\Throwable $e) {
+                // try the next candidate
+            }
+        }
+
+        $app = new SiteApplication($input, $container->get('config'), null, $container);
         $app->setDispatcher($container->get(DispatcherInterface::class));
 
         // cassiopeia ships with every Joomla 5/6 install, so the is_file() guard

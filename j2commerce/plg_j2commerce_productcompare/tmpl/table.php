@@ -19,6 +19,12 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\HTML\HTMLHelper;
 
+// FileLayout::render() exposes the passed data as $displayData and does not
+// extract it into local scope, so make the documented variables available.
+if (isset($displayData) && \is_array($displayData)) {
+    extract($displayData);
+}
+
 if (empty($products)) : ?>
     <p><?php echo Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_NO_PRODUCTS'); ?></p>
 <?php return;
