@@ -12,7 +12,7 @@ GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrate
 
 ### Compatibility Test Scope
 
-The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
+The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. The bundled checkout and MyProfile template overrides are now also **rendered** for both stacks (`com_j2store` on J5/J2Store 4 and `com_j2commerce` on J6/J2Commerce 6) and asserted to actually emit the consent checkbox and Privacy tab markup, reading the real installed-and-enabled plugin params. Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
 
 ## Features
 
@@ -1168,9 +1168,10 @@ This plugin has automated tests that run on every push and on pull requests via 
 6. **Data Anonymization** — `onPrivacyRemoveData` retention logic
 7. **GDPR Compliance** — all DSGVO-relevant methods and hooks
 8. **Template Overrides** — override source files and deployment verification
-9. **AutoCleanup Task** — scheduled task registration and execution
-10. **AcyMailing Integration** — newsletter consent sync
-11. **Uninstall** — clean removal from database and filesystem
+9. **Consent UI Render** — renders the deployed checkout and MyProfile overrides for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon) actually appear in the produced HTML
+10. **AutoCleanup Task** — scheduled task registration and execution
+11. **AcyMailing Integration** — newsletter consent sync
+12. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
