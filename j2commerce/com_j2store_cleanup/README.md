@@ -97,16 +97,35 @@ When you remove an extension, the component uses **Joomla's Installer API** for 
 
 This component has automated tests that run on every push via GitHub Actions.
 
+The full suite runs against **two real stacks**, so the cleanup/classification
+logic is exercised with the actual core component present in each:
+
+- **Joomla 5 + J2Store/J2Commerce 4** (`test-j5`) — J2Store 4 is installed into
+  the image; `com_j2store` is the protected core component.
+- **Joomla 6 + J2Commerce 6** (`test-j6`) — J2Commerce 6 is built from official
+  source (`github.com/j2commerce/j2commerce`) and installed into the Joomla 6
+  container; `com_j2commerce` is the protected core component
+  (`EXPECTED_CORE_COMPONENT=com_j2commerce`).
+
+Both stacks run the **same full 6-script suite** (installation, scanning,
+cleanup, component functions, safety checks, uninstall). The `official-j5-j2c4`
+and `official-j6-j2c6` gates assert that their respective full matrices passed.
+
 ### Test Suites
 
 1. **Installation** - Component registration, file deployment
 2. **Scanning** - Version detection, authorUrl/authorEmail checks, protected extensions
-3. **Cleanup** - Extension removal, batch removal, isolation tests (Joomla 5 and 6)
+3. **Cleanup** - Extension removal, batch removal, isolation tests, and a real
+   register-extension → cleanup → verify round trip that confirms the installed
+   core component (`com_j2store` on J5, `com_j2commerce` on J6) is protected
 4. **Component Functions** - Main file function validation (`createDbQuery`, `cleanupExtensions`)
-5. **Safety Checks** - Protected extensions list, edge cases
+5. **Safety Checks** - Protected extensions list, edge cases, DB verification that
+   the expected core component is installed
 6. **Uninstall** - Component removal, verification
 
 ### Running Tests Locally
+
+Joomla 5 + J2Store/J2Commerce 4:
 
 ```bash
 cd j2commerce/com_j2store_cleanup/tests
@@ -115,6 +134,17 @@ docker compose up -d
 timeout 300 bash -c 'until docker exec com_j2store_cleanup_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
+```
+
+Joomla 6 + J2Commerce 6 (requires a `j2commerce6.zip` built from source placed
+in `tests/`, mirroring the CI `Build J2Commerce 6 from source` step):
+
+```bash
+cd j2commerce/com_j2store_cleanup/tests
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec com_j2store_cleanup_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 Test results are saved in `tests/test-results/`.
