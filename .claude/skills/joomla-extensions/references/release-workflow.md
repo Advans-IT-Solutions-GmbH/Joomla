@@ -16,10 +16,12 @@ prepare version + PR       review          squash         tag + GitHub release
 - **Never set `VERSION`, plugin XML or `update.xml` manually** — the release
   workflow owns version bumps.
 - **Run one release workflow at a time.**
-- Auto-detect scans the full commit messages — subject **and** body/footer —
-  since the last `{prefix}-v*` tag:
-  `fix:` → patch, `feat:` → minor, `feat!:` (a `!` before the colon) **or a
-  `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer** → major. **Anything else
+- Auto-detect only looks at commits that **touch that extension's path**, since
+  the last `{prefix}-v*` tag (or the last 20 such commits if no tag exists yet).
+  Conventional-commit **type** is read from the subject, a `BREAKING CHANGE:` /
+  `BREAKING-CHANGE:` footer from the body:
+  `fix:` → patch, `feat:` → minor, **any type with a `!` before the colon**
+  (`feat!:`, `fix!:`, …) **or a breaking-change footer** → major. **Anything else
   (`docs:`, `chore:`, `refactor:`, `test:`, no prefix) → `none`, and no release
   PR is opened.**
 - Each extension has a paired `release-*.yml` / `publish-*.yml` with its own
