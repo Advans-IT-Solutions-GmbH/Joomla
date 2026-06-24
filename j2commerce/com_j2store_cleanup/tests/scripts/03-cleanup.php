@@ -141,24 +141,31 @@ class CleanupTest
         }
 
         echo "\n--- Safety Guard ---\n";
+        // The protected core component differs per stack: com_j2store on
+        // J5+J2Store/J2Commerce 4, com_j2commerce on J6+J2Commerce 6. Use the
+        // environment hint when present so the round-trip is exercised against
+        // whichever core component is actually installed.
+        $expectedCore = (string) getenv('EXPECTED_CORE_COMPONENT');
+        $coreElement  = $expectedCore !== '' ? $expectedCore : 'com_j2store';
+
         $query = $this->createQuery()
             ->select('extension_id')
             ->from('#__extensions')
-            ->where('element = ' . $this->db->quote('com_j2store'))
+            ->where('element = ' . $this->db->quote($coreElement))
             ->where('type = ' . $this->db->quote('component'));
         $this->db->setQuery($query);
         $coreId = (int) $this->db->loadResult();
 
         if ($coreId > 0) {
-            $this->test('com_j2store is flagged as core-protected',
-                $this->isCoreProtected('com_j2store'));
+            $this->test("$coreElement is flagged as core-protected",
+                $this->isCoreProtected($coreElement));
 
             $idsToClean = array_filter([$coreId], fn($id) => !$this->isCoreProtectedById($id));
-            $this->test('com_j2store excluded from cleanup list',
+            $this->test("$coreElement excluded from cleanup list",
                 !in_array($coreId, $idsToClean));
         } else {
-            echo "Note: com_j2store not installed — safety guard test skipped\n";
-            $this->test('Safety guard skipped (com_j2store not installed)', true);
+            echo "Note: $coreElement not installed — safety guard test skipped\n";
+            $this->test("Safety guard skipped ($coreElement not installed)", true);
         }
     }
 
@@ -221,7 +228,7 @@ class CleanupTest
 
     private function isCoreProtected(string $element): bool
     {
-        return in_array($element, ['com_j2store', 'com_joomla', 'com_content', 'com_users']);
+        return in_array($element, ['com_j2store', 'com_j2commerce', 'com_joomla', 'com_content', 'com_users']);
     }
 
     private function isCoreProtectedById(int $extensionId): bool

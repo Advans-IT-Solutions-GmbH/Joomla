@@ -52,15 +52,17 @@ View test results: https://github.com/advansit/Joomla/actions
 
 ## Releases
 
-Releases are created **manually** via the GitHub Actions UI (`workflow_dispatch`). Each extension has its own release workflow, tag prefix and independent version.
+Releases use a **two-stage, PR-based flow** so that no commit reaches `main` without review (the `main` branch is protected by organization rulesets — see [Branch Protection](#branch-protection)). Each extension has its own release and publish workflow, tag prefix and independent version.
 
 ### How to create a release
 
-1. Go to **Actions** → select the release workflow for the extension
-2. Click **Run workflow**
-3. Choose a bump level or leave empty for auto-detect from commits
+1. Go to **Actions** → select the **Release - …** workflow for the extension
+2. Click **Run workflow** and choose a bump level (or leave empty for auto-detect from commits)
+3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`
+4. **Review and merge** that pull request into `main` (squash)
+5. On merge, the matching **Publish - …** workflow triggers automatically: it builds the package, creates and pushes the tag, generates the changelog and creates the GitHub release
 
-Run release workflows one at a time because each workflow commits version files back to `main`. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
+Run release workflows one at a time. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
 
 Auto-detect uses [Conventional Commits](https://www.conventionalcommits.org/) since the last tag:
 
@@ -163,27 +165,24 @@ Only users with write access (collaborators) can approve or request changes on p
 
 #### Branch Protection
 **Branch:** `main`  
-**Location:** Settings → Branches  
-**Documentation:** https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
+**Enforced via:** Organization **rulesets** (Settings → Rules → Rulesets at the organization level), not classic branch protection. Two rulesets apply to this repository: the org-wide *Protect default branch* baseline plus the public-repo *Public repos - signed, PR-reviewed, checks* ruleset.  
+**Documentation:** https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
 
 **Enabled rules:**
 - ✅ Require a pull request before merging
+- ✅ Require **1** approving review
 - ✅ Dismiss stale pull request approvals when new commits are pushed
-- ✅ Require status checks to pass before merging — required check: `Collect Results`
-- ✅ Require branches to be up to date before merging
+- ✅ Require approval of the most recent reviewable push
 - ✅ Require conversation resolution before merging
+- ✅ Require status checks to pass before merging — required check: `Collect Results`
+- ✅ Require branches to be up to date before merging (strict)
 - ✅ Require signed commits
-- ✅ Require linear history
+- ✅ Block force pushes (non-fast-forward)
+- ✅ Block branch deletion
+- ✅ Allowed merge method: **squash only**
 
-**Disabled rules:**
-- ☐ Require approvals
-- ☐ Require review from Code Owners
-- ☐ Require approval of the most recent reviewable push
-- ☐ Require deployments to succeed before merging
-- ☐ Lock branch
-- ☐ Allow force pushes
-- ☐ Allow deletions
-- ☐ Do not allow bypassing the above settings — disabled so that `github-actions[bot]` can push release commits directly to `main`
+**Bypass:**
+- Only **organization administrators** may bypass these rules. `github-actions[bot]` has **no** bypass and can no longer push directly to `main` — releases now go through the two-stage PR flow described in [Releases](#releases).
 
 
 
@@ -218,3 +217,4 @@ CHE-316.407.165
 https://advans.ch
 
 Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+
