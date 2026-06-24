@@ -32,6 +32,8 @@ jobs:
 
       - name: Determine version bump
         id: version
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="ajaxforms-v"
           XML_FILE="plg_ajax_joomlaajaxforms/joomlaajaxforms.xml"
@@ -42,7 +44,7 @@ jobs:
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
-          BUMP="${{ inputs.bump }}"
+          BUMP="$VERSION_BUMP"
 
           if [ -z "$BUMP" ]; then
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
