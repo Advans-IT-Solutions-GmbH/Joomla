@@ -1,6 +1,0 @@
-=== Language Support Tests ===
-
-Test: Basic check... PASS
-
-=== Language Support Test Summary ===
-All tests completed.

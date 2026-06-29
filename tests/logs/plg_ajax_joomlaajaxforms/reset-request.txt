@@ -1,9 +1,0 @@
-=== Password Reset Request Tests ===
-
-Test: Reset feature config exists... PASS
-Test: Plugin class file exists... PASS
-Test: handleReset method exists in plugin... PASS
-Test: Email validation logic present... PASS
-
-=== Password Reset Request Test Summary ===
-All tests completed.

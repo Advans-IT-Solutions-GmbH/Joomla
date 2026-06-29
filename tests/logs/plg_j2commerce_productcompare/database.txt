@@ -1,6 +1,0 @@
-=== Database Structure Tests ===
-
-Test: Basic check... PASS
-
-=== Database Structure Test Summary ===
-All tests completed.
