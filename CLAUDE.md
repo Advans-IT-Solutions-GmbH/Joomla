@@ -67,10 +67,11 @@ cd j2commerce/plg_privacy_j2commerce
 ```bash
 cd j2commerce/plg_privacy_j2commerce/tests
 docker compose up -d
-sleep 120                 # auf Joomla-/J2Commerce-Installation warten
-./run-tests.sh all        # alle Suites aus TEST_SCRIPTS in test.env
+./run-tests.sh all        # wartet selbst auf Joomla-Readiness, dann alle Suites aus TEST_SCRIPTS in test.env
 docker compose down -v
 ```
+
+`run-tests.sh` pollt bis zu 180 s auf die Joomla-Readiness (`health.txt`), bevor es die Suites startet — ein zusätzliches manuelles `sleep` ist nicht nötig.
 
 **Einen einzelnen Integrations-Test** ausführen — `run-tests.sh` nimmt einen Suite-Namen (klein, wie der `name:` aus `test.env`):
 
@@ -104,4 +105,4 @@ Zwei-stufig und PR-basiert; pro Extension getrennt. Maßgebliche Beschreibung: `
 2. Der Workflow bumpt `VERSION`/Manifest/`update.xml` auf einem `release/…`-Branch und öffnet einen `release: …`-PR — **er pusht nicht auf `main`**.
 3. Ein Mensch reviewt und mergt (Squash). Beim Merge baut der `Publish - …`-Workflow das Paket, setzt den Tag (`{prefix}-v*`) und erstellt das GitHub-Release.
 
-Wichtig für Agents: **nie den `release:`-PR selbst mergen**, **nie `VERSION`/Manifest/`update.xml` manuell ändern**, immer nur einen Release-Workflow gleichzeitig. Auto-Detect liest Conventional Commits seit dem letzten `{prefix}-v*`-Tag, die nur den Pfad dieser Extension berühren: `fix:` → Patch, `feat:` → Minor, `!`/`BREAKING CHANGE` → Major; alles andere (`docs:`, `chore:`, …) → kein Release.
+Wichtig für Agents: **nie den `release:`-PR selbst mergen**, **nie `VERSION`/Manifest/`update.xml` manuell ändern**, immer nur einen Release-Workflow gleichzeitig. Auto-Detect liest Conventional Commits seit dem letzten `{prefix}-v*`-Tag, die nur den Pfad dieser Extension berühren. Nur erkannte Typen öffnen einen Release-PR: `fix:` → Patch, `feat:` → Minor, `!`/`BREAKING CHANGE` → Major. Alles andere (`docs:`, `chore:`, …) wird ignoriert und löst keinen Release aus. Wenn ein Bump gewollt ist, muss die Änderung gemäß `AGENTS.md` als erkannter Typ (`fix(...)`/`feat(...)` mit passendem Scope) formuliert werden — nicht als `docs:`/`chore:`.
