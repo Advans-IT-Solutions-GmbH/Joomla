@@ -1,7 +1,0 @@
-=== Profile Tests ===
-
-Test: Profile feature config exists... PASS
-Test: handleSaveProfile method exists... PASS
-Test: Profile language strings loaded... PASS
-
-=== Profile Test Summary ===

@@ -1,8 +1,0 @@
-=== AJAX Endpoint Tests ===
-
-✓ AJAX endpoint responds (com_ajax)
-✓ AJAX endpoint returns JSON
-✓ AJAX with action=compare returns response
-
-=== AJAX Endpoint Test Summary ===
-Passed: 3, Failed: 0

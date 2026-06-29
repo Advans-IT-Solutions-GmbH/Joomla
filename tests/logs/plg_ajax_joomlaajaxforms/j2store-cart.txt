@@ -1,8 +1,0 @@
-=== J2Store Cart Tests ===
-
-Test: J2Store cart feature config exists... PASS
-Test: handleRemoveCartItem method exists... PASS
-Test: handleGetCartCount method exists... PASS
-Test: Cart language strings loaded... PASS
-
-=== J2Store Cart Test Summary ===

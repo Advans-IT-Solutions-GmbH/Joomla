@@ -1,9 +1,0 @@
-=== Uninstall Tests ===
-
-Test: Plugin can be disabled... PASS
-Test: Plugin can be removed from database... PASS (ID: 249 removed)
-Test: Plugin files can be removed... PASS
-
-=== Uninstall Test Summary ===
-All tests completed.
-Note: Plugin has been uninstalled during testing.
