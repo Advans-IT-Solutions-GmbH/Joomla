@@ -7,8 +7,7 @@ packages/
 
 # Test results
 test-results/
-**/tests/logs/*.txt
-**/tests/logs/*.log
+**/tests/logs/
 
 # IDE
 .vscode/

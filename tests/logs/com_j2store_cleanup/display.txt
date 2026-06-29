@@ -1,6 +1,0 @@
-=== Display Functionality Tests ===
-
-Test: Basic check... PASS
-
-=== Display Functionality Test Summary ===
-All tests completed.

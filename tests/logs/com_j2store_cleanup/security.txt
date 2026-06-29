@@ -1,6 +1,0 @@
-=== Security Tests ===
-
-Test: Basic check... PASS
-
-=== Security Test Summary ===
-All tests completed.

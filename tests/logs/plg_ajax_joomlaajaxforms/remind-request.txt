@@ -1,9 +1,0 @@
-=== Username Reminder Request Tests ===
-
-Test: Remind feature config exists... PASS
-Test: handleRemind method exists in plugin... PASS
-Test: sendRemindEmail method exists... PASS
-Test: Remind language strings exist... PASS
-
-=== Username Reminder Request Test Summary ===
-All tests completed.
