@@ -46,6 +46,35 @@ advansit/Joomla
 3. **Auto-delete branches** is enabled — branches are deleted automatically after merge
 4. **One PR per plugin** — do not mix changes across plugins in a single PR
 
+## Lokale Dev-Umgebung (Docker-Tests pro Extension)
+
+Es gibt keine gemeinsame Dev-Umgebung — jede Extension bringt ihr eigenes Docker-Setup mit,
+das eine echte Joomla-(+J2Commerce-)Installation hochfährt. Unter Windows in WSL oder Git Bash
+mit laufendem Docker ausführen. Pfade relativ zum Extension-Verzeichnis.
+
+**Integrationstests einer Extension** (das, was die CI ausführt):
+```bash
+cd j2commerce/plg_privacy_j2commerce/tests
+docker compose up -d
+./run-tests.sh all            # pollt bis 180 s auf Joomla-Readiness (health.txt), dann alle Suites
+docker compose down -v
+```
+`run-tests.sh` wartet selbst auf die Readiness — kein zusätzliches `sleep` nötig. Eine einzelne
+Suite über den `name:` aus `test.env`: `./run-tests.sh installation` bzw. `./run-tests.sh gdpr`.
+
+**PHPUnit** (nur wo `composer.json`/`phpunit.xml` vorliegen, z. B. `plg_privacy_j2commerce`):
+```bash
+composer install
+composer test                          # alle Suites
+vendor/bin/phpunit --testsuite=Unit    # eine Suite
+vendor/bin/phpunit --filter testName   # ein einzelner Test
+```
+
+**Joomla-6-Variante** (wo vorhanden): `docker compose -f docker-compose.joomla6.yml up -d`
+bzw. der eigene Ordner `tests-j2c6/` mit eigenem `run-tests.sh`.
+
+**Eine Extension paketieren** (ZIP via `shared/build/build.sh`): `cd <extension> && ./build.sh`.
+
 ## Workflows
 
 See `references/release-workflow.md` for the full release process.
