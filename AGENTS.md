@@ -16,12 +16,12 @@
     addresses private“). Beide Formate sind gültig:
     `<username>@users.noreply.github.com` oder `<ID>+<username>@users.noreply.github.com`.
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
-  im Commit kann bei aktivierter „Block command line pushes that expose my email" den Push
+  im Commit kann bei aktivierter „Block command line pushes that expose my email“ den Push
   ablehnen; die No-Reply-Adresse vermeidet das.)
 - **Signing:** Verwende deinen **eigenen** verifizierten **GPG-Key**
   (`git config commit.gpgsign true`). Die Commit-E-Mail muss zu diesem Key passen, sonst ist
   die Signatur nicht verifizierbar. Für dieses öffentliche Repo ist Signing **verpflichtend**
-  (siehe „Repo-spezifisch (Joomla)").
+  (siehe „Repo-spezifisch (Joomla)“).
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
