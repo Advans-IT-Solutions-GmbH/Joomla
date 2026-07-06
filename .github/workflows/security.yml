@@ -13,6 +13,7 @@ permissions:
 jobs:
   security:
     name: Security
-    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@2ec3b1d7514ba314302f8fa6c51966f050948776 # v1
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-security.yml@ac21d95e9429698a4510d4e14d3c3f448a4cf826 # v1
     with:
-      fail_on_findings: false
+      fail_on_findings: false   # Semgrep/zizmor: report-only
+      gitleaks_fail: true       # Gitleaks: blockierendes Gate für neue Secrets
