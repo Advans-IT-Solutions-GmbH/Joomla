@@ -1,6 +1,10 @@
 {
 	// Minimaler Dev-Container (öffentliches Repo → kein claude-code / Anthropic-Key).
-	// Commit-Identität und Signing regeln AGENTS.md bzw. die org-Konventionen.
+	// Commit-Identität und Signing regelt AGENTS.md (Repo-Root): committe unter deinem
+	// EIGENEN GitHub-Account (echter Name + persönliche No-Reply) und mit deinem EIGENEN
+	// verifizierten GPG-/SSH-Key. Der Container setzt bewusst keine Identität und keinen
+	// Key — beides bringst du selbst mit. Für dieses öffentliche Repo ist verifiziertes
+	// Signing verpflichtend; unsignierte Commits sind hier kein Default.
 	"name": "Joomla dev",
 	"image": "mcr.microsoft.com/devcontainers/universal:4.0.1-noble"
 }
