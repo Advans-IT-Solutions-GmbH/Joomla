@@ -10,7 +10,7 @@
 - **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
   echten Namen und deiner persönlichen GitHub-No-Reply-Adresse. Es gibt **keine** feste
   gemeinsame Firmen-Identität, unter der committet wird.
-  - `git config user.name  "<Dein echter Name>"`
+  - `git config user.name "<Dein echter Name>"`
   - `git config user.email "<deine persönliche GitHub-No-Reply>"`
   - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails („Keep my email
     addresses private"). Beide Formate sind gültig:
@@ -39,7 +39,7 @@ Dieses öffentliche Repo erzwingt per Organization-Ruleset **verifizierte GPG-Si
 Signing ist hier verpflichtend (nicht optional). Eine Commit-E-Mail, die nicht zu deinem
 verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
 Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen" beschriebene
-**eigene verifizierte GPG-Key** (Modell B) ist Pflicht — nicht optional.
+**eigener verifizierter GPG-Key** (Modell B) ist Pflicht — nicht optional.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen" sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
