@@ -12,8 +12,8 @@
   gemeinsame Firmen-Identität, unter der committet wird.
   - `git config user.name "<Dein echter Name>"`
   - `git config user.email "<deine persönliche GitHub-No-Reply>"`
-  - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails („Keep my email
-    addresses private"). Beide Formate sind gültig:
+  - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails (Option „Keep my email
+    addresses private“). Beide Formate sind gültig:
     `<username>@users.noreply.github.com` oder `<ID>+<username>@users.noreply.github.com`.
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
   im Commit kann bei aktivierter „Block command line pushes that expose my email" den Push
@@ -26,10 +26,11 @@
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
 
-> **Im Codespace/Devcontainer:** GitHub konfiguriert Git-Identität und `gh`-Auth automatisch aus
-> **deinem eigenen** Account — du committest also ohnehin als du selbst. Der Container setzt keine
-> feste Identität und kein Signing-Skript (das frühere `setup-git-signing.sh` mit fester
-> `advansit`-Identität ist entfernt).
+> **Im Codespace (Cloud):** GitHub konfiguriert Git-Identität und `gh`-Auth automatisch aus
+> **deinem eigenen** Account — du committest ohnehin als du selbst. Beim lokal gestarteten
+> Devcontainer (Reopen in Container) richtest du deine Identität selbst ein (wie oben). Der
+> Container setzt in keinem Fall eine feste Identität oder ein Signing-Skript — das frühere
+> `setup-git-signing.sh` mit fester `advansit`-Identität ist entfernt.
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
@@ -38,11 +39,11 @@ Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den pass
 Dieses öffentliche Repo erzwingt per Organization-Ruleset **verifizierte GPG-Signaturen** —
 Signing ist hier verpflichtend (nicht optional). Eine Commit-E-Mail, die nicht zu deinem
 verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
-Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen" beschriebene
+Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen“ beschriebene
 **eigener verifizierter GPG-Key** (Modell B) ist Pflicht — nicht optional.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
-„Commit-Konventionen" sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
+„Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
 finden die ausführliche Fassung (SSOT) im **separaten, privaten** Org-Repo
 `Advans-IT-Solutions-GmbH/org`, Datei `conventions/git-and-commits.md` (nur für Org-Mitglieder
 zugänglich — kein Bestandteil dieses Repos).
