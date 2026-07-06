@@ -28,8 +28,8 @@
 
 > **Im Codespace/Devcontainer:** GitHub konfiguriert Git-Identität und `gh`-Auth automatisch aus
 > **deinem eigenen** Account — du committest also ohnehin als du selbst. Der Container setzt keine
-> feste Identität; das frühere `setup-git-signing.sh` (mit fester `advansit`-Identität) wird mit der
-> Devcontainer-Umstellung entfernt.
+> feste Identität und kein Signing-Skript (das frühere `setup-git-signing.sh` mit fester
+> `advansit`-Identität ist entfernt).
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
