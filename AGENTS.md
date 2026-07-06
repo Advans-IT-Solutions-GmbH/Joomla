@@ -15,14 +15,21 @@
   - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails („Keep my email
     addresses private"). Beide Formate sind gültig:
     `<username>@users.noreply.github.com` oder `<ID>+<username>@users.noreply.github.com`.
-- Niemals `@advans.ch`-Adressen verwenden (GitHub blockiert den Push wegen E-Mail-Privacy).
-- **Signing:** Verwende deinen **eigenen** verifizierten GPG-/SSH-Key
+- Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
+  im Commit kann bei aktivierter „Block command line pushes that expose my email" den Push
+  ablehnen; die No-Reply-Adresse vermeidet das.)
+- **Signing:** Verwende deinen **eigenen** verifizierten **GPG-Key**
   (`git config commit.gpgsign true`). Die Commit-E-Mail muss zu diesem Key passen, sonst ist
   die Signatur nicht verifizierbar. Für dieses öffentliche Repo ist Signing **verpflichtend**
   (siehe „Repo-spezifisch (Joomla)").
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
+
+> **Im Codespace/Devcontainer:** GitHub konfiguriert Git-Identität und `gh`-Auth automatisch aus
+> **deinem eigenen** Account — du committest also ohnehin als du selbst. Der Container setzt keine
+> feste Identität; das frühere `setup-git-signing.sh` (mit fester `advansit`-Identität) wird mit der
+> Devcontainer-Umstellung entfernt.
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
@@ -32,7 +39,7 @@ Dieses öffentliche Repo erzwingt per Organization-Ruleset **verifizierte GPG-Si
 Signing ist hier verpflichtend (nicht optional). Eine Commit-E-Mail, die nicht zu deinem
 verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
 Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen" beschriebene
-**eigene verifizierte GPG-/SSH-Key** (Modell B) ist Pflicht — nicht optional.
+**eigene verifizierte GPG-Key** (Modell B) ist Pflicht — nicht optional.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen" sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
