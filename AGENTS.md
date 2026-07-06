@@ -7,12 +7,19 @@
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
 
 ## Commit-Konventionen
-- Commit-Email immer: `89843389+advansit@users.noreply.github.com`
-- Commit-Name immer:  `Advans IT Solutions GmbH`
-- Niemals `@advans.ch`-Adressen verwenden (GitHub blockiert den Push).
-- Diese Adresse ist an den verifizierten GPG-Signing-Key gebunden. Signing aktivieren,
-  WENN der Key in der Umgebung vorhanden ist (`git config commit.gpgsign true`);
-  andernfalls unsigniert committen — kein Commit darf am fehlenden Key scheitern.
+- **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
+  echten Namen und deiner persönlichen GitHub-No-Reply-Adresse. Es gibt **keine** feste
+  gemeinsame Firmen-Identität, unter der committet wird.
+  - `git config user.name  "<Dein echter Name>"`
+  - `git config user.email "<deine persönliche GitHub-No-Reply>"`
+  - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails („Keep my email
+    addresses private"). Beide Formate sind gültig:
+    `<username>@users.noreply.github.com` oder `<ID>+<username>@users.noreply.github.com`.
+- Niemals `@advans.ch`-Adressen verwenden (GitHub blockiert den Push wegen E-Mail-Privacy).
+- **Signing:** Verwende deinen **eigenen** verifizierten GPG-/SSH-Key
+  (`git config commit.gpgsign true`). Die Commit-E-Mail muss zu diesem Key passen, sonst ist
+  die Signatur nicht verifizierbar. Für dieses öffentliche Repo ist Signing **verpflichtend**
+  (siehe „Repo-spezifisch (Joomla)").
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
@@ -21,14 +28,17 @@
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 
 ## Repo-spezifisch (Joomla)
-Dieses öffentliche Repo erzwingt verifizierte GPG-Signaturen — Signing ist hier verpflichtend (nicht optional).
-Eine E-Mail, die nicht zum verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
+Dieses öffentliche Repo erzwingt per Organization-Ruleset **verifizierte GPG-Signaturen** —
+Signing ist hier verpflichtend (nicht optional). Eine Commit-E-Mail, die nicht zu deinem
+verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
+Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen" beschriebene
+**eigene verifizierte GPG-/SSH-Key** (Modell B) ist Pflicht — nicht optional.
 
-Verwende deine **eigene** Identität (Modell B) — maßgeblich, nicht hier duplizieren:
-das private Org-Repo `Advans-IT-Solutions-GmbH/org`, Datei [`conventions/git-and-commits.md`](https://github.com/Advans-IT-Solutions-GmbH/org/blob/main/conventions/git-and-commits.md):
-- `git config user.email "<ID>+<username>@users.noreply.github.com"`  (deine persönliche GitHub-No-Reply)
-- `git config user.name  "<Dein Name>"`
-- **eigener verifizierter GPG/SSH-Key** — in diesem öffentlichen Repo Pflicht, sonst wird der Merge abgelehnt.
+Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
+„Commit-Konventionen" sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
+finden die ausführliche Fassung (SSOT) im **separaten, privaten** Org-Repo
+`Advans-IT-Solutions-GmbH/org`, Datei `conventions/git-and-commits.md` (nur für Org-Mitglieder
+zugänglich — kein Bestandteil dieses Repos).
 
 Generische Extensions in diesem Repository:
 - `plg_ajax_joomlaajaxforms`
