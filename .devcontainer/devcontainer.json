@@ -1,8 +1,6 @@
 {
-	// Minimaler Dev-Container (Modell B): Codespaces übernimmt Git-Identität + gh-Auth aus dem
-	// Account des Entwicklers (eigener Alias). Öffentliches Repo → kein claude-code / Anthropic-Key
-	// im Container. Signing im Codespace unsigniert (Squash-Merge wird web-flow-signiert).
-	// Details: org-Repo → onboarding/client-setup.md.
+	// Minimaler Dev-Container (öffentliches Repo → kein claude-code / Anthropic-Key).
+	// Commit-Identität und Signing regeln AGENTS.md bzw. die org-Konventionen.
 	"name": "Joomla dev",
 	"image": "mcr.microsoft.com/devcontainers/universal:4.0.1-noble"
 }
