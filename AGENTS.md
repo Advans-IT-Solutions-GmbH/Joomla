@@ -25,7 +25,7 @@ Dieses öffentliche Repo erzwingt verifizierte GPG-Signaturen — Signing ist hi
 Eine E-Mail, die nicht zum verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
 
 Verwende deine **eigene** Identität (Modell B) — maßgeblich, nicht hier duplizieren:
-`org` → `conventions/git-and-commits.md`:
+das private Org-Repo `Advans-IT-Solutions-GmbH/org`, Datei [`conventions/git-and-commits.md`](https://github.com/Advans-IT-Solutions-GmbH/org/blob/main/conventions/git-and-commits.md):
 - `git config user.email "<ID>+<username>@users.noreply.github.com"`  (deine persönliche GitHub-No-Reply)
 - `git config user.name  "<Dein Name>"`
 - **eigener verifizierter GPG/SSH-Key** — in diesem öffentlichen Repo Pflicht, sonst wird der Merge abgelehnt.
