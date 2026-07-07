@@ -15,6 +15,11 @@
   schließen; Copilot per
   `gh api --method POST repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
   erneut anfordern; wiederholen, bis nichts mehr kommt.
+- **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die Org-SSOT
+  (`Advans-IT-Solutions-GmbH/org` → `README.md`) müssen konsistent bleiben und nur das Minimum
+  tragen (kurze Konventionen + Verweise, niemals duplizierte Regeln). Sie driftfrei zu halten
+  liegt in der Verantwortung von Entwickler/Agent, und jedes Copilot-Review muss zusätzlich
+  prüfen, dass der PR keinen Drift zwischen diesen Instruktionsdateien einführt.
 
 ## Commit-Konventionen
 - **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
