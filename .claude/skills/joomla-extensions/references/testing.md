@@ -9,8 +9,7 @@ Tests run via Docker against a real Joomla + J2Commerce installation. The shared
 ```bash
 cd j2commerce/plg_privacy_j2commerce/tests
 docker compose up -d
-sleep 120   # wait for Joomla + J2Commerce to install
-./run-tests.sh all
+./run-tests.sh all   # polls up to 180s for Joomla readiness itself — no manual sleep needed
 docker compose down -v
 ```
 

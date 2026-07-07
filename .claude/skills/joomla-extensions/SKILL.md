@@ -29,11 +29,14 @@ references:
 ```
 advansit/Joomla
 ├── j2commerce/
-│   ├── plg_privacy_j2commerce/     # Privacy plugin (main)
-│   ├── plg_import_export/          # Import/Export plugin
-│   └── plg_product_compare/        # Product Compare plugin
+│   ├── plg_privacy_j2commerce/         # Privacy plugin (main)
+│   ├── com_j2commerce_importexport/    # Import/Export component
+│   ├── plg_j2commerce_productcompare/  # Product Compare plugin
+│   ├── plg_osmap_j2commerce/           # OSMap sitemap plugin
+│   └── com_j2store_cleanup/            # J2Store cleanup component
 ├── plg_ajax_joomlaajaxforms/       # Joomla AJAX Forms plugin
 ├── shared/
+│   ├── build/build.sh              # Shared packager (per-extension build.sh delegates here)
 │   └── tests/                      # Shared test infrastructure
 ├── tests/                          # Top-level test runner
 └── .github/workflows/              # CI/CD workflows per plugin
