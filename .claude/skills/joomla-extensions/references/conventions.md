@@ -13,7 +13,8 @@ test(privacy): add retention period integration tests
 refactor(privacy): extract anonymization into separate method
 ```
 
-Scope is the plugin name: `privacy`, `import-export`, `product-compare`, `osmap`, `cleanup`, `ajax-forms`.
+Scope is the extension identifier as used by the release/publish workflows: `privacy`,
+`importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`.
 
 ## PHP
 
