@@ -46,7 +46,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | File | Purpose |
 |------|---------|
 | `src/Extension/J2Commerce.php` | Main plugin class — all event handlers |
-| `src/Task/AutoCleanupTask.php` | Scheduled cleanup task |
+| `plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Scheduled cleanup task (separate task plugin) |
 | `script.php` | Install/update/uninstall, post-install message |
 | `language/en-GB/plg_privacy_j2commerce.ini` | All translatable strings |
 

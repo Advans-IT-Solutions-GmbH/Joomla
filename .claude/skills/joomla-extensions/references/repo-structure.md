@@ -62,17 +62,25 @@ Components do not need this — they have no `client_id` conflict.
 
 ## GitHub Workflows
 
+The release process is **two-stage** (see `release-workflow.md`): a `release-*.yml` workflow bumps the version on a `release/…` branch and opens a release PR — it never pushes to `main`. On merge of that PR, the matching `publish-*.yml` workflow builds the package, creates the tag, and publishes the GitHub Release.
+
 | Workflow file | Trigger | Purpose |
 |---|---|---|
 | `j2commerce-privacy.yml` | push to `main` (privacy paths) | Build & Test |
-| `release-privacy.yml` | `workflow_dispatch` | Release: bump version, build ZIP, create GitHub Release |
+| `release-privacy.yml` | `workflow_dispatch` | Stage 1: bump VERSION/manifest/update.xml on `release/…` branch, open release PR (no push to `main`) |
+| `publish-privacy.yml` | release PR merged to `main` | Stage 2: build ZIP, create tag, publish GitHub Release |
 | `j2commerce-import-export.yml` | push to `main` (importexport + shared paths) | Build & Test |
-| `release-importexport.yml` | `workflow_dispatch` | Release |
+| `release-importexport.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-importexport.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `j2commerce-product-compare.yml` | push to `main` (productcompare paths) | Build & Test |
-| `release-productcompare.yml` | `workflow_dispatch` | Release |
+| `release-productcompare.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-productcompare.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `osmap-j2commerce.yml` | push to `main` (osmap + shared paths) | Build & Test |
-| `release-osmap-j2commerce.yml` | `workflow_dispatch` | Release |
+| `release-osmap-j2commerce.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-osmap-j2commerce.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `j2store-cleanup.yml` | push to `main` (cleanup paths) | Build & Test |
-| `release-cleanup.yml` | `workflow_dispatch` | Release |
+| `release-cleanup.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-cleanup.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `joomla-ajax-forms.yml` | push to `main` (ajaxforms paths) | Build & Test |
-| `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Release |
+| `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-joomla-ajax-forms.yml` | release PR merged | Stage 2: package, tag, GitHub Release |

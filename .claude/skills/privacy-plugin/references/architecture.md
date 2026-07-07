@@ -31,7 +31,8 @@ J2Commerce extends CMSPlugin (via PrivacyPlugin)
 │   └── injectPrivacySection()
 └── onAjaxJ2commercePrivacy()     — AJAX address deletion
 
-AutoCleanupTask extends CMSPlugin
+J2CommercePrivacy extends CMSPlugin   — separate task plugin:
+│                    plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php
 └── autoCleanup()                 — scheduled task
     ├── hasLifetimeLicense()
     ├── partialAnonymizeUserData()
