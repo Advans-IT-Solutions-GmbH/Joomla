@@ -15,12 +15,12 @@
   schließen; Copilot per
   `gh api --method POST repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
   erneut anfordern; wiederholen, bis nichts mehr kommt.
-- **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die org-SSOT
+- **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die SSOT im Org-Repo
   (`Advans-IT-Solutions-GmbH/org` → `README.md`) müssen konsistent bleiben und nur das Minimum
-  tragen (kurze Zusammenfassungen plus Verweise, kein duplizierter voller Regelsatz). Jede
-  AI/jeder Agent und jeder Entwickler hält diese Dateien schon während der Arbeit driftfrei —
+  tragen (kurze Zusammenfassungen plus Verweise, kein duplizierter voller Regelsatz). Jede AI,
+  jeder Agent und jeder Entwickler hält diese Dateien schon während der Arbeit driftfrei —
   proaktiv, damit Drift gar nicht erst ins Review gelangt. Das Code-Review (inkl. Copilot) prüft
-  zusätzlich als Absicherung auf Drift.
+  die Instruktionsdateien im PR zusätzlich als Absicherung auf Drift.
 
 ## Commit-Konventionen
 - **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
