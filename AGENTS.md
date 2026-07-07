@@ -45,8 +45,8 @@ Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen“ beschriebe
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
 finden die ausführliche Fassung (SSOT) im **separaten, privaten** Org-Repo
-`Advans-IT-Solutions-GmbH/org`, Datei `conventions/git-and-commits.md` (nur für Org-Mitglieder
-zugänglich — kein Bestandteil dieses Repos).
+`Advans-IT-Solutions-GmbH/org`, `README.md` Abschnitt „Git and Commit Conventions“ (nur für
+Org-Mitglieder zugänglich — kein Bestandteil dieses Repos).
 
 Generische Extensions in diesem Repository:
 - `plg_ajax_joomlaajaxforms`
