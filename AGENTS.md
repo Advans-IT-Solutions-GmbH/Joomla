@@ -18,7 +18,7 @@
 - **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die Org-SSOT
   (`Advans-IT-Solutions-GmbH/org` → `README.md`) müssen konsistent bleiben und nur das Minimum
   tragen (kurze Konventionen + Verweise, niemals duplizierte Regeln). Sie driftfrei zu halten
-  liegt in der Verantwortung von Entwickler/Agent, und jedes Copilot-Review muss zusätzlich
+  liegt in der Verantwortung von Entwicklern und Agenten, und jedes Copilot-Review muss zusätzlich
   prüfen, dass der PR keinen Drift zwischen diesen Instruktionsdateien einführt.
 
 ## Commit-Konventionen
