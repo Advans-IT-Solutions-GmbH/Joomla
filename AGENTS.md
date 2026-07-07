@@ -40,7 +40,7 @@
 > **deinem eigenen** Account — du committest ohnehin als du selbst. Beim lokal gestarteten
 > Devcontainer (Reopen in Container) richtest du deine Identität selbst ein (wie oben). Der
 > Container setzt in keinem Fall eine feste Identität oder ein Signing-Skript — das frühere
-> `setup-git-signing.sh` mit fester `advansit`-Identität ist entfernt.
+> `setup-git-signing.sh`, das eine feste Commit-Identität im Container erzwang, ist entfernt.
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
