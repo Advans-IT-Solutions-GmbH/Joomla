@@ -17,10 +17,10 @@
   erneut anfordern; wiederholen, bis nichts mehr kommt.
 - **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die SSOT im Org-Repo
   (`Advans-IT-Solutions-GmbH/org` → `README.md`) müssen konsistent bleiben und nur das Minimum
-  tragen (kurze Konventionen + Verweise, niemals duplizierte Regeln). Sie driftfrei zu halten
-  liegt in der Verantwortung von Entwicklern und Agenten: jedes Copilot-Code-Review prüft zusätzlich
-  die Konsistenz zwischen `AGENTS.md` und `CLAUDE.md` im PR; die (private) SSOT im Org-Repo wird
-  bei Regeländerungen manuell gegengeprüft.
+  tragen (kurze, nicht-widersprüchliche Konventionen + Verweise, keine detailliert duplizierten
+  Regeln). Sie driftfrei zu halten liegt in der Verantwortung von Entwicklern und Agenten: jedes
+  Copilot-Code-Review prüft zusätzlich die Konsistenz zwischen `AGENTS.md` und `CLAUDE.md` im PR;
+  die (private) SSOT im Org-Repo wird bei Regeländerungen manuell gegengeprüft.
 
 ## Commit-Konventionen
 - **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
