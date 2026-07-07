@@ -5,6 +5,16 @@
 - Branch-Namen kurz & beschreibend: `fix/...`, `feat/...`, `docs/...`, `chore/...`.
 - Den PR niemals selbst mergen — das macht der Maintainer.
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
+- **Definition of Done für Copilot-Code-Reviews:** Ein PR mit Copilot-Code-Review ist erst
+  **fertig**, wenn jeder Review-Kommentar behandelt ist (Fix committen/pushen **oder** mit
+  begründetem Reply ablehnen, falls der Vorschlag nicht sinnvoll ist), **alle** Review-Threads
+  geschlossen (resolved) sind und eine erneut angeforderte Copilot-Runde keine neuen Punkte mehr
+  findet. Nach jedem Fix-Push Copilot erneut anfordern. Gilt für Entwickler und Agenten. Ablauf:
+  Review + Threads via `gh api repos/{owner}/{repo}/pulls/{pull_number}/reviews` und die GraphQL-Query `reviewThreads` holen; jeden offenen
+  Thread behandeln; Fixes pushen; Threads mit der GraphQL-Mutation `resolveReviewThread`
+  schließen; Copilot per
+  `gh api --method POST repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
+  erneut anfordern; wiederholen, bis nichts mehr kommt.
 
 ## Commit-Konventionen
 - **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
