@@ -5,7 +5,7 @@
 
 set -e
 
-REPO="advansit/SwissQRCode"
+REPO="Advans-IT-Solutions-GmbH/Joomla"
 OUTPUT_DIR="./downloaded-logs"
 
 echo "=== Downloading Latest Test Logs ==="
@@ -13,7 +13,7 @@ echo ""
 
 # Get latest workflow run
 echo "Fetching latest workflow run..."
-RUN_ID=$(gh run list --repo "$REPO" --workflow "test-joomla-component.yml" --limit 1 --json databaseId --jq '.[0].databaseId')
+RUN_ID=$(gh run list --repo "$REPO" --workflow "j2commerce-import-export.yml" --limit 1 --json databaseId --jq '.[0].databaseId')
 
 if [ -z "$RUN_ID" ]; then
     echo "❌ No workflow runs found"
