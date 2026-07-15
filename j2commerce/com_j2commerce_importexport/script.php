@@ -38,7 +38,7 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
     private function ensureUpdateSite(): void
     {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $updateUrl = 'https://raw.githubusercontent.com/advansit/Joomla/main/j2commerce/com_j2commerce_importexport/updates/update.xml';
+        $updateUrl = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/com_j2commerce_importexport/updates/update.xml';
         $element = 'com_j2commerce_importexport';
 
         $query = $this->createDbQuery($db)

@@ -1,7 +1,7 @@
 # OSMap J2Commerce Plugin
 
-[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/osmap-j2commerce.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/osmap-j2commerce.yml)
-[![Release](https://github.com/advansit/Joomla/actions/workflows/release-osmap-j2commerce.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-osmap-j2commerce.yml)
+[![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml)
+[![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
@@ -76,7 +76,7 @@ products are picked up on the next sitemap request.
 
 ## Installation
 
-1. Download `plg_osmap_j2commerce.zip` from the [latest release](https://github.com/advansit/Joomla/releases)
+1. Download `plg_osmap_j2commerce.zip` from the [latest release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases)
 2. **System → Extensions → Install**
 3. Upload and install
 4. Enable via **System → Plugins → OSMap J2Commerce**

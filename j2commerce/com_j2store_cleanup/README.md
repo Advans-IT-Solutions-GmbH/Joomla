@@ -1,7 +1,7 @@
 # J2Store Extension Cleanup Component
 
-[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/j2store-cleanup.yml)
-[![Release](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-cleanup.yml)
+[![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml)
+[![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml)
 [![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)

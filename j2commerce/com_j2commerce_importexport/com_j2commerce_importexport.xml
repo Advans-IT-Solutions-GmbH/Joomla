@@ -95,7 +95,7 @@
 
     <updateservers>
         <server type="extension" priority="1" name="J2Commerce Import/Export Updates">
-            https://raw.githubusercontent.com/advansit/Joomla/main/j2commerce/com_j2commerce_importexport/updates/update.xml
+            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/com_j2commerce_importexport/updates/update.xml
         </server>
     </updateservers>
 </extension>

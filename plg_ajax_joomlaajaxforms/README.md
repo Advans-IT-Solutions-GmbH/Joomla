@@ -1,7 +1,7 @@
 # Joomla! AJAX Forms
 
-[![Build & Test](https://github.com/advansit/Joomla/actions/workflows/joomla-ajax-forms.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/joomla-ajax-forms.yml)
-[![Release](https://github.com/advansit/Joomla/actions/workflows/release-joomla-ajax-forms.yml/badge.svg)](https://github.com/advansit/Joomla/actions/workflows/release-joomla-ajax-forms.yml)
+[![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml)
+[![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml)
 [![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
@@ -33,7 +33,7 @@ All features can be individually enabled/disabled via plugin parameters.
 
 ## Installation
 
-1. Download `plg_ajax_joomlaajaxforms.zip` from the [latest release](https://github.com/advansit/Joomla/releases?q=ajaxforms)
+1. Download `plg_ajax_joomlaajaxforms.zip` from the [latest release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases?q=ajaxforms)
 2. Install via Joomla Extension Manager
 3. Enable under System > Plugins > "Joomla! AJAX Forms"
 
