@@ -99,7 +99,7 @@
     </config>
     <updateservers>
         <server type="extension" priority="1" name="Joomla Ajax Forms">
-            https://raw.githubusercontent.com/advansit/Joomla/main/plg_ajax_joomlaajaxforms/updates/update.xml
+            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_ajax_joomlaajaxforms/updates/update.xml
         </server>
     </updateservers>
     <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />

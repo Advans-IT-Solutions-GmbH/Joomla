@@ -48,7 +48,7 @@ Each extension has automated tests that run via GitHub Actions when files in the
 | `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**` |
 | `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**` |
 
-View test results: https://github.com/advansit/Joomla/actions
+View test results: https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions
 
 ## Releases
 
@@ -87,7 +87,7 @@ Commits without a conventional prefix are ignored — no release is created.
 
 Release workflows replace older releases and tags for the same extension prefix after the new release is created.
 
-View all releases: https://github.com/advansit/Joomla/releases
+View all releases: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases
 
 ## Repository Configuration
 

@@ -354,7 +354,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     private function ensureUpdateSite(): void
     {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $updateUrl = 'https://raw.githubusercontent.com/advansit/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml';
+        $updateUrl = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml';
 
         $element = 'j2commerce';
         $folder = 'privacy';

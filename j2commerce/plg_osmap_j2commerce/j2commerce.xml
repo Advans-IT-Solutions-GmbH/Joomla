@@ -67,7 +67,7 @@
 
     <updateservers>
         <server type="extension" priority="1" name="OSMap J2Commerce">
-            https://raw.githubusercontent.com/advansit/Joomla/main/j2commerce/plg_osmap_j2commerce/updates/update.xml
+            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_osmap_j2commerce/updates/update.xml
         </server>
     </updateservers>
 </extension>
