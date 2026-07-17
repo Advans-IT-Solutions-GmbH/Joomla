@@ -1,6 +1,6 @@
 ---
 name: joomla-extensions
-description: Development workflow for the advansit/Joomla repository. Use when working on Joomla/J2Commerce extensions, running tests, creating releases, or managing CI/CD workflows.
+description: Development workflow for the Advans-IT-Solutions-GmbH/Joomla repository. Use when working on Joomla/J2Commerce extensions, running tests, creating releases, or managing CI/CD workflows.
 triggers:
   - release
   - workflow
@@ -27,7 +27,7 @@ references:
 ## Repository Structure
 
 ```
-advansit/Joomla
+Advans-IT-Solutions-GmbH/Joomla
 ├── j2commerce/
 │   ├── plg_privacy_j2commerce/         # Privacy plugin (main)
 │   ├── com_j2commerce_importexport/    # Import/Export component

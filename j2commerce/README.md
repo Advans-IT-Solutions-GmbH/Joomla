@@ -36,7 +36,7 @@ Database cleanup and maintenance tools for J2Store.
 
 All extensions have automated test suites that run via GitHub Actions.
 
-View test results: https://github.com/advansit/Joomla/actions
+View test results: https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions
 
 ---
 
