@@ -267,8 +267,8 @@ The Newsletter tab in J2Commerce MyProfile (`default_newsletter.php`) lets logge
 **To enable the Newsletter tab:**
 
 1. Install AcyMailing (any version, any license tier) on the Joomla site.
-2. Ensure the template override `templates/{template}/html/com_j2store/myprofile/default_newsletter.php` exists. This file is maintained in the `advansit/advans.ch` repository under `src/template/html/com_j2store/myprofile/default_newsletter.php`.
-3. Ensure `default.php` includes the Newsletter tab block (already present in the advans.ch template override).
+2. Ensure the template override `templates/{template}/html/com_j2store/myprofile/default_newsletter.php` exists (provided by your site template).
+3. Ensure `default.php` includes the Newsletter tab block (present in your site template override).
 4. In AcyMailing, set the lists you want to expose to users: **AcyMailing → Lists → Edit → Visible: Yes**.
 
 The tab is hidden automatically when AcyMailing is not installed — no configuration needed.

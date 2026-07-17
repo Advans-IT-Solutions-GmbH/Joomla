@@ -11,7 +11,7 @@ Use the template override. The `onAfterRender` fallback is fragile — it search
 
 ## Files to Copy
 
-From `advansit/advans.ch` repo, `src/template/html/com_j2store/`:
+Template overrides under the site template's `html/com_j2store/` directory:
 
 **MyProfile privacy tab:**
 ```

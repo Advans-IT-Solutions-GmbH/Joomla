@@ -5,6 +5,7 @@
 - Branch-Namen kurz & beschreibend: `fix/...`, `feat/...`, `docs/...`, `chore/...`.
 - Den PR niemals selbst mergen — das macht der Maintainer.
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
+- Write PRs, commit messages, and documentation in **English** (this is a public repository).
 - **Definition of Done für Copilot-Code-Reviews:** Ein PR mit Copilot-Code-Review ist erst
   **fertig**, wenn jeder Review-Kommentar behandelt ist (Fix committen/pushen **oder** mit
   begründetem Reply ablehnen, falls der Vorschlag nicht sinnvoll ist), **alle** Review-Threads
@@ -15,8 +16,8 @@
   schließen; Copilot per
   `gh api --method POST repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
   erneut anfordern; wiederholen, bis nichts mehr kommt.
-- **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die SSOT im Org-Repo
-  (`Advans-IT-Solutions-GmbH/org` → `README.md`) müssen konsistent bleiben und nur das Minimum
+- **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die intern gepflegte
+  SSOT (Single Source of Truth) müssen konsistent bleiben und nur das Minimum
   tragen (kurze Zusammenfassungen plus Verweise, kein duplizierter voller Regelsatz). Jede AI,
   jeder Agent und jeder Entwickler hält diese Dateien schon während der Arbeit driftfrei —
   proaktiv, damit Drift gar nicht erst ins Review gelangt. Das Code-Review (inkl. Copilot) prüft
@@ -59,10 +60,9 @@ Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen“ beschriebe
 **eigener verifizierter GPG-Key** (Modell B) ist Pflicht — nicht optional.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
-„Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend. Org-Mitglieder
-finden die ausführliche Fassung (SSOT) im **separaten, privaten** Org-Repo
-`Advans-IT-Solutions-GmbH/org`, `README.md` Abschnitt „Git and Commit Conventions“ (nur für
-Org-Mitglieder zugänglich — kein Bestandteil dieses Repos).
+„Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend.
+
+Organization members: the authoritative conventions are maintained internally (single source of truth); consult your internal onboarding.
 
 Generische Extensions in diesem Repository:
 - `plg_ajax_joomlaajaxforms`
