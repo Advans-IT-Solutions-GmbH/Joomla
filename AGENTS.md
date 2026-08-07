@@ -9,8 +9,8 @@
 - **Definition of Done für Copilot-Code-Reviews:** Ein PR mit Copilot-Code-Review ist erst
   **fertig**, wenn jeder Review-Kommentar behandelt ist (Fix committen/pushen **oder** mit
   begründetem Reply ablehnen, falls der Vorschlag nicht sinnvoll ist) — **inklusive** des
-  eingeklappten **„Suppressed comments"**-Blocks im Review-**Body** (erscheint **nicht** in
-  `reviewThreads`) —, **alle** Review-Threads
+  eingeklappten **`Suppressed comments`**-Blocks im Review-**Body** (erscheint **nicht** in
+  `reviewThreads`) — **alle** Review-Threads
   geschlossen (resolved) sind und eine erneut angeforderte Copilot-Runde keine neuen Punkte mehr
   findet. Nach jedem Fix-Push Copilot erneut anfordern. Gilt für Entwickler und Agenten. Ablauf:
   Review + Threads via `gh api repos/{owner}/{repo}/pulls/{pull_number}/reviews` und die GraphQL-Query `reviewThreads` holen; jeden offenen
