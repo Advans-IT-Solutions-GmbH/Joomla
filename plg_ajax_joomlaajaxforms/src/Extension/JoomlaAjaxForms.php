@@ -18,6 +18,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
+use Joomla\CMS\Mail\MailTemplate;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
@@ -904,9 +905,39 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendResetEmail(object $user, string $token): void
     {
+        $app      = $this->getApplication();
+        $siteName = $app->get('sitename');
+        $query    = 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+
+        // Joomla's own mail template, so the site's branding applies. The plugin used to
+        // compose subject and body itself and send them as plain text, which bypassed both
+        // the template in #__mail_templates and the site's mail layout — the reset mail was
+        // then the only account mail that did not look like the others.
         try {
-            $siteName = $this->getApplication()->get('sitename');
-            $resetLink = Uri::root() . 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+            $data              = (array) $user;
+            $data['sitename']  = $siteName;
+            $data['token']     = $token;
+            $data['link_text'] = Route::link('site', $query, false, Route::TLS_IGNORE, true);
+            $data['link_html'] = Route::link('site', $query, true, Route::TLS_IGNORE, true);
+
+            $mailer = new MailTemplate('com_users.password_reset', $app->getLanguage()->getTag());
+            $mailer->addTemplateData($data);
+            $mailer->addRecipient($user->email, $user->name);
+            $mailer->send();
+
+            return;
+        } catch (\Exception $e) {
+            Log::add(
+                'Reset email via mail template failed, falling back to plain text: ' . $e->getMessage(),
+                Log::WARNING,
+                'plg_ajax_joomlaajaxforms'
+            );
+        }
+
+        // Fallback for an installation without that mail template: the previous plain-text
+        // mail. Better an unstyled mail than none.
+        try {
+            $resetLink = Uri::root() . $query;
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
             $body = Text::sprintf(
@@ -937,8 +968,31 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendRemindEmail(object $user): void
     {
+        $app      = $this->getApplication();
+        $siteName = $app->get('sitename');
+
+        // Same reasoning as sendResetEmail(): use the site's mail template first.
         try {
-            $siteName = $this->getApplication()->get('sitename');
+            $data              = (array) $user;
+            $data['sitename']  = $siteName;
+            $data['link_text'] = Route::link('site', 'index.php?option=com_users&view=login', false, Route::TLS_IGNORE, true);
+            $data['link_html'] = Route::link('site', 'index.php?option=com_users&view=login', true, Route::TLS_IGNORE, true);
+
+            $mailer = new MailTemplate('com_users.reminder', $app->getLanguage()->getTag());
+            $mailer->addTemplateData($data);
+            $mailer->addRecipient($user->email, $user->name);
+            $mailer->send();
+
+            return;
+        } catch (\Exception $e) {
+            Log::add(
+                'Remind email via mail template failed, falling back to plain text: ' . $e->getMessage(),
+                Log::WARNING,
+                'plg_ajax_joomlaajaxforms'
+            );
+        }
+
+        try {
             $loginLink = Uri::root() . 'index.php?option=com_users&view=login';
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
