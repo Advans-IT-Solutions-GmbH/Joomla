@@ -291,8 +291,8 @@ class OsmapLoaderTest
             });
 
             $this->test('getTree(products) emits each product once (de-duplicated)', function () use ($collector) {
-                $links = array_map(static fn($n) => $n->link, $collector->nodes);
-                return count($links) === count(array_unique($links));
+                $uids = array_map(static fn($n) => $n->uid, $collector->nodes);
+                return count($uids) === count(array_unique($uids));
             });
         }
 
@@ -606,12 +606,12 @@ class OsmapLoaderTest
     private function cleanupGateRows(array $ids): void
     {
         $db  = $this->db;
-        $csv = implode(',', array_map('intval', $ids));
+        $ids = array_values(array_map('intval', $ids));
         foreach (['#__content' => 'id', '#__j2store_products' => 'product_source_id'] as $table => $col) {
             try {
                 $q = $this->qb()
                     ->delete($db->quoteName($table))
-                    ->where($db->quoteName($col) . ' IN (' . $csv . ')');
+                    ->whereIn($db->quoteName($col), $ids);
                 $db->setQuery($q)->execute();
             } catch (\Throwable $e) {
                 // best-effort cleanup
