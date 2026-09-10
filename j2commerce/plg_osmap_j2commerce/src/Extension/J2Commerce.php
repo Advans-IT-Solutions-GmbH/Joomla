@@ -165,7 +165,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         } catch (\Throwable $e) {
             $this->logQueryError($e);
 
-            return '';
+            // Cache the empty result so a persistent query failure logs once and
+            // is not retried for every emitted product on a large sitemap.
+            return $this->languageSefCache[$language] = '';
         }
 
         return $this->languageSefCache[$language] = ($sef ? $sef . '/' : '');
