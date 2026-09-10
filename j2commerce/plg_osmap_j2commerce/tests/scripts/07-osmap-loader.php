@@ -537,25 +537,38 @@ class OsmapLoaderTest
                     'state'      => $state,
                     'catid'      => 2,
                     'created'    => Factory::getDate()->toSql(),
+                    'created_by' => 42,
                     'modified'   => Factory::getDate()->toSql(),
                     'publish_up' => Factory::getDate()->toSql(),
                     'language'   => '*',
                     'access'     => $access,
+                    'metadata'   => '{}',
+                    'attribs'    => '{}',
+                    'images'     => '{}',
+                    'urls'       => '{}',
+                    'metadesc'   => '',
+                    'metakey'    => '',
+                    'note'       => '',
+                    'featured'   => 0,
+                    'version'    => 1,
+                    'ordering'   => 0,
+                    'hits'       => 0,
                 ];
                 $db->insertObject('#__content', $article);
             }
 
             foreach ($products as [$sourceId, $visibility, $enabled]) {
                 $product = (object) [
-                    'product_source_id' => $sourceId,
-                    'product_source'    => 'com_content',
-                    'product_type'      => 'simple',
-                    'visibility'        => $visibility,
-                    'enabled'           => $enabled,
-                    'addtocart_text'    => '',
-                    'up_sells'          => '',
-                    'cross_sells'       => '',
-                    'params'            => '{}',
+                    'j2store_product_id' => $sourceId,
+                    'product_source_id'  => $sourceId,
+                    'product_source'     => 'com_content',
+                    'product_type'       => 'simple',
+                    'visibility'         => $visibility,
+                    'enabled'            => $enabled,
+                    'addtocart_text'     => '',
+                    'up_sells'           => '',
+                    'cross_sells'        => '',
+                    'params'             => '{}',
                 ];
                 $db->insertObject('#__j2store_products', $product);
             }
