@@ -101,6 +101,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private array $emittedProductIds = [];
 
+    /**
+     * Memoised language SEF prefixes, keyed by lang_code, so a large product
+     * run does not issue one #__languages query per emitted node.
+     *
+     * @var array<string, string>
+     */
+    private array $languageSefCache = [];
+
     public static function getSubscribedEvents(): array
     {
         return [];
@@ -139,6 +147,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return '';
         }
 
+        if (isset($this->languageSefCache[$language])) {
+            return $this->languageSefCache[$language];
+        }
+
         $db    = $this->getDb();
         $query = $this->createDbQuery()
             ->select($db->quoteName('sef'))
@@ -156,7 +168,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return '';
         }
 
-        return $sef ? $sef . '/' : '';
+        return $this->languageSefCache[$language] = ($sef ? $sef . '/' : '');
     }
 
     /**
@@ -167,7 +179,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private function guestViewLevels(): array
     {
-        $levels = array_map('intval', Access::getAuthorisedViewLevels(0));
+        try {
+            $levels = array_map('intval', Access::getAuthorisedViewLevels(0));
+        } catch (\Throwable $e) {
+            // Access needs a booted application/session; when that is unavailable
+            // fall back to the Public view level (1). This is the conservative
+            // default — it never leaks access-restricted products into the sitemap.
+            return [1];
+        }
 
         return $levels ?: [1];
     }
@@ -239,16 +258,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 //   1. published=-2 hidden children (site-specific SEF resolvers)
                 //   2. direct product query (every enabled product)
                 // A single leftover hidden child must not suppress the full run.
-                if ($parentId > 0) {
-                    $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId);
-                }
-
+                //
                 // view=categories carries the chosen root category in `id`;
                 // view=products/categoryalias carry it in `catid`. Both restrict
-                // to that category's subtree; null means every category.
+                // to that category's subtree; null means every category. The root
+                // category is resolved first so BOTH mechanisms honour the filter.
                 $rootCat = ($view === 'categories') ? $id : $catid;
+                $rootCat = ($rootCat !== null && $rootCat > 0) ? $rootCat : null;
 
-                if ($rootCat !== null && $rootCat > 0) {
+                if ($parentId > 0) {
+                    $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId, $rootCat);
+                }
+
+                if ($rootCat !== null) {
                     $this->emitProductsForCategory($collector, $parent, $params, $rootCat);
                 } else {
                     $this->emitAllProducts($collector, $parent, $params);
@@ -281,7 +303,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         Collector $collector,
         Item $parent,
         Registry $params,
-        int $parentId
+        int $parentId,
+        ?int $rootCat = null
     ): bool {
         $db    = $this->getDb();
         $query = $this->createDbQuery()
@@ -317,6 +340,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':parentId', $parentId, ParameterType::INTEGER)
             ->order($db->quoteName('a.title') . ' ASC');
+
+        // For a category-filtered menu item keep only hidden children whose
+        // article lives in that category subtree, so products from sibling
+        // categories are not pulled in via this mechanism.
+        $this->applyCategorySubtreeFilter($query, $rootCat);
 
         $items = $this->safeLoadObjectList($query);
 
@@ -363,15 +391,40 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         try {
             $product = $db->setQuery($query)->loadObject();
         } catch (\Throwable $e) {
-            // Products table does not exist (component not installed) — skip silently.
-            // This is the normal state on the other stack (e.g. a J2Store site has
-            // no #__j2commerce_products), so it must not be logged as an error.
+            // A missing products table is the normal state on the other stack
+            // (e.g. a J2Store site has no #__j2commerce_products), so skip it
+            // silently. Every other failure (malformed query, DB outage) is a
+            // real problem and must be logged (#177), not swallowed.
+            if (!$this->isMissingTableError($e)) {
+                $this->logQueryError($e);
+            }
+
             return;
         }
 
         if ($product) {
             $this->printProductNode($collector, $parent, $params, $product);
         }
+    }
+
+    /**
+     * Detects the "products table does not exist" case (component not installed
+     * on this stack) so it can be skipped silently, while genuine query errors
+     * are still logged.
+     */
+    private function isMissingTableError(\Throwable $e): bool
+    {
+        // MySQL error 1146 (SQLSTATE 42S02) = base table or view not found.
+        $needles = ['1146', '42S02', "doesn't exist", 'does not exist', 'Base table or view not found'];
+        $message = $e->getMessage();
+
+        foreach ($needles as $needle) {
+            if (stripos($message, $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function emitProductsForCategory(
@@ -431,25 +484,40 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->order($db->quoteName('a.title') . ' ASC');
 
-        if ($catid !== null) {
-            // Resolve the whole subtree of $catid, not just direct children.
-            $sub = $this->createDbQuery()
-                ->select($db->quoteName('c2.id'))
-                ->from($db->quoteName('#__categories', 'c1'))
-                ->join(
-                    'INNER',
-                    $db->quoteName('#__categories', 'c2')
-                    . ' ON ' . $db->quoteName('c2.lft') . ' >= ' . $db->quoteName('c1.lft')
-                    . ' AND ' . $db->quoteName('c2.rgt') . ' <= ' . $db->quoteName('c1.rgt')
-                    . ' AND ' . $db->quoteName('c2.extension') . ' = ' . $db->quote('com_content')
-                )
-                ->where($db->quoteName('c1.id') . ' = :catid');
-
-            $query->where($db->quoteName('a.catid') . ' IN (' . (string) $sub . ')')
-                  ->bind(':catid', $catid, ParameterType::INTEGER);
-        }
+        $this->applyCategorySubtreeFilter($query, $catid);
 
         return $this->safeLoadObjectList($query);
+    }
+
+    /**
+     * Restricts a query (whose #__content alias is `a`) to products living in
+     * $catid or any of its descendants, using the #__categories nested-set
+     * lft/rgt bounds. A null $catid leaves the query unrestricted (whole shop).
+     *
+     * The :catid placeholder is bound on the outer query on purpose: casting the
+     * subquery to string drops any parameters bound on the subquery object.
+     */
+    private function applyCategorySubtreeFilter(\Joomla\Database\QueryInterface $query, ?int $catid): void
+    {
+        if ($catid === null) {
+            return;
+        }
+
+        $db  = $this->getDb();
+        $sub = $this->createDbQuery()
+            ->select($db->quoteName('c2.id'))
+            ->from($db->quoteName('#__categories', 'c1'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__categories', 'c2')
+                . ' ON ' . $db->quoteName('c2.lft') . ' >= ' . $db->quoteName('c1.lft')
+                . ' AND ' . $db->quoteName('c2.rgt') . ' <= ' . $db->quoteName('c1.rgt')
+                . ' AND ' . $db->quoteName('c2.extension') . ' = ' . $db->quote('com_content')
+            )
+            ->where($db->quoteName('c1.id') . ' = :catid');
+
+        $query->where($db->quoteName('a.catid') . ' IN (' . (string) $sub . ')')
+              ->bind(':catid', $catid, ParameterType::INTEGER);
     }
 
     // -------------------------------------------------------------------------

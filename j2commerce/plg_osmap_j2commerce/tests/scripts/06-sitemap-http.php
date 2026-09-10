@@ -92,15 +92,25 @@ class SitemapHttpTest
             return true;
         });
 
-        // #180: both mechanisms now run and de-duplicate. Product 9004 has no
-        // published=-2 hidden menu item but is enabled and visible, so the direct
-        // product query (mechanism 2) emits it. It must appear in the sitemap.
-        $this->test('Product without menu item IS in sitemap (mechanism 2)', function () use ($urls) {
-            foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-nomenu')) return true;
-            }
-            return false;
-        });
+        // #180: both mechanisms now run and de-duplicate. On the J5 fixture,
+        // product 9004 has no published=-2 hidden menu item but is enabled and
+        // visible, so the direct product query (mechanism 2) emits it. The J6
+        // fixture defines no such product, so it must simply be absent there.
+        if ($this->isJ6) {
+            $this->test('Menu-less product absent on J6 (no such fixture)', function () use ($urls) {
+                foreach ($urls as $u) {
+                    if (str_contains($u, 'test-product-nomenu')) return false;
+                }
+                return true;
+            });
+        } else {
+            $this->test('Product without menu item IS in sitemap (mechanism 2)', function () use ($urls) {
+                foreach ($urls as $u) {
+                    if (str_contains($u, 'test-product-nomenu')) return true;
+                }
+                return false;
+            });
+        }
 
         $this->test('At least 2 product URLs in sitemap', function () use ($urls) {
             $count = 0;
