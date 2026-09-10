@@ -517,7 +517,7 @@ class OsmapLoaderTest
             $this->cleanupGateRows($ids);
 
             foreach ($articles as [$id, $alias, $state, $access]) {
-                $db->insertObject('#__content', (object) [
+                $article = (object) [
                     'id'         => $id,
                     'title'      => 'ZZ ' . $alias,
                     'alias'      => $alias,
@@ -530,11 +530,12 @@ class OsmapLoaderTest
                     'publish_up' => Factory::getDate()->toSql(),
                     'language'   => '*',
                     'access'     => $access,
-                ]);
+                ];
+                $db->insertObject('#__content', $article);
             }
 
             foreach ($products as [$sourceId, $visibility, $enabled]) {
-                $db->insertObject('#__j2store_products', (object) [
+                $product = (object) [
                     'product_source_id' => $sourceId,
                     'product_source'    => 'com_content',
                     'product_type'      => 'simple',
@@ -544,7 +545,8 @@ class OsmapLoaderTest
                     'up_sells'          => '',
                     'cross_sells'       => '',
                     'params'            => '{}',
-                ]);
+                ];
+                $db->insertObject('#__j2store_products', $product);
             }
         } catch (\Throwable $e) {
             $this->cleanupGateRows($ids);
