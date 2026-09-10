@@ -167,9 +167,14 @@ class SitemapHttpSefTest
             'ignore_errors'   => true,
         ]]);
 
+        // Reset so a request that fails before receiving any response cannot
+        // report the previous request's status (the wrapper only repopulates
+        // $http_response_header on a completed response).
+        $http_response_header = [];
+
         $body = @file_get_contents($url, false, $ctx);
 
-        if ($body === false && !isset($http_response_header)) {
+        if ($body === false && empty($http_response_header)) {
             return 0;
         }
 
