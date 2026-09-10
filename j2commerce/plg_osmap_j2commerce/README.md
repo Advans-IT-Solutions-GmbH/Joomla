@@ -150,8 +150,9 @@ The plugin inspects the menu item's `view` parameter:
 
 Only publicly visible products are listed: the underlying `com_content` article
 must be published (`state = 1`), currently within its publication window
-(`publish_up` has started and `publish_down` has not passed, treating `NULL` as
-no limit) and readable by the guest view levels (`access`), and the product row
+(`publish_up` has started and `publish_down` has not passed, treating both
+`NULL` and the J4/J5 null-date sentinel `0000-00-00 00:00:00` as no limit) and
+readable by the guest view levels (`access`), and the product row
 must be enabled and visible (`enabled = 1`, `visibility = 1`). On a multilingual
 site every URL carries the menu item's language SEF prefix (e.g.
 `/de/shop/product-alias`) so it resolves directly without a 301 redirect.
