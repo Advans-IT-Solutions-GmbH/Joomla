@@ -149,11 +149,12 @@ The plugin inspects the menu item's `view` parameter:
 - `view=categoryalias` — J2Commerce single-category alias; at runtime this redirects to `view=products` with the category's `id`. The plugin treats it identically: products of that category (and its sub-categories) are emitted.
 
 Only publicly visible products are listed: the underlying `com_content` article
-must be published (`state = 1`) and readable by the guest view levels
-(`access`), and the product row must be enabled and visible (`enabled = 1`,
-`visibility = 1`). On a multilingual site every URL carries the menu item's
-language SEF prefix (e.g. `/de/shop/product-alias`) so it resolves directly
-without a 301 redirect.
+must be published (`state = 1`), currently within its publication window
+(`publish_up` has started and `publish_down` has not passed, treating `NULL` as
+no limit) and readable by the guest view levels (`access`), and the product row
+must be enabled and visible (`enabled = 1`, `visibility = 1`). On a multilingual
+site every URL carries the menu item's language SEF prefix (e.g.
+`/de/shop/product-alias`) so it resolves directly without a 301 redirect.
 
 For list views (`products`, `categories`, `categoryalias`) **both** mechanisms
 run: the published=-2 hidden children (Mechanism 2) and the direct product

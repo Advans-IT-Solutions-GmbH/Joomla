@@ -509,50 +509,59 @@ class OsmapLoaderTest
     private function testGateExclusions($ourPlugin, string $root): void
     {
         $db  = $this->db;
-        $ids = [9111, 9112, 9113];
+        $ids = [9111, 9112, 9113, 9114, 9115];
+
+        $nowSql    = Factory::getDate()->toSql();
+        $futureSql = Factory::getDate('+10 days')->toSql();
+        $pastSql   = Factory::getDate('-10 days')->toSql();
 
         $articles = [
-            // id,   alias,             state, access  (catid 2)
-            [9111, 'zz-unpublished', 0, 1],
-            [9112, 'zz-invisible',   1, 1],
-            [9113, 'zz-restricted',  1, 2], // access 2 = Registered (not a guest level)
+            // id,   alias,             state, access, publish_up, publish_down  (catid 2)
+            [9111, 'zz-unpublished', 0, 1, $nowSql,    null],
+            [9112, 'zz-invisible',   1, 1, $nowSql,    null],
+            [9113, 'zz-restricted',  1, 2, $nowSql,    null], // access 2 = Registered (not a guest level)
+            [9114, 'zz-scheduled',   1, 1, $futureSql, null],     // publish_up in the future
+            [9115, 'zz-expired',     1, 1, $pastSql,   $pastSql], // publish_down already passed
         ];
         $products = [
             // product_source_id, visibility, enabled
             [9111, 1, 1],
             [9112, 0, 1], // invisible
             [9113, 1, 1],
+            [9114, 1, 1], // visible+enabled: only the future publish_up excludes it
+            [9115, 1, 1], // visible+enabled: only the past publish_down excludes it
         ];
 
         try {
             $this->cleanupGateRows($ids);
 
-            foreach ($articles as [$id, $alias, $state, $access]) {
+            foreach ($articles as [$id, $alias, $state, $access, $publishUp, $publishDown]) {
                 $article = (object) [
-                    'id'         => $id,
-                    'title'      => 'ZZ ' . $alias,
-                    'alias'      => $alias,
-                    'introtext'  => '',
-                    'fulltext'   => '',
-                    'state'      => $state,
-                    'catid'      => 2,
-                    'created'    => Factory::getDate()->toSql(),
-                    'created_by' => 42,
-                    'modified'   => Factory::getDate()->toSql(),
-                    'publish_up' => Factory::getDate()->toSql(),
-                    'language'   => '*',
-                    'access'     => $access,
-                    'metadata'   => '{}',
-                    'attribs'    => '{}',
-                    'images'     => '{}',
-                    'urls'       => '{}',
-                    'metadesc'   => '',
-                    'metakey'    => '',
-                    'note'       => '',
-                    'featured'   => 0,
-                    'version'    => 1,
-                    'ordering'   => 0,
-                    'hits'       => 0,
+                    'id'           => $id,
+                    'title'        => 'ZZ ' . $alias,
+                    'alias'        => $alias,
+                    'introtext'    => '',
+                    'fulltext'     => '',
+                    'state'        => $state,
+                    'catid'        => 2,
+                    'created'      => $nowSql,
+                    'created_by'   => 42,
+                    'modified'     => $nowSql,
+                    'publish_up'   => $publishUp,
+                    'publish_down' => $publishDown,
+                    'language'     => '*',
+                    'access'       => $access,
+                    'metadata'     => '{}',
+                    'attribs'      => '{}',
+                    'images'       => '{}',
+                    'urls'         => '{}',
+                    'metadesc'     => '',
+                    'metakey'      => '',
+                    'note'         => '',
+                    'featured'     => 0,
+                    'version'      => 1,
+                    'ordering'     => 0,
+                    'hits'         => 0,
                 ];
                 $db->insertObject('#__content', $article);
             }
@@ -594,7 +603,9 @@ class OsmapLoaderTest
 
         foreach (['zz-unpublished' => 'unpublished article (a.state=0)',
                   'zz-invisible'   => 'invisible product (p.visibility=0)',
-                  'zz-restricted'  => 'guest-inaccessible article (a.access)'] as $alias => $why) {
+                  'zz-restricted'  => 'guest-inaccessible article (a.access)',
+                  'zz-scheduled'   => 'future-dated article (publish_up in the future)',
+                  'zz-expired'     => 'expired article (publish_down in the past)'] as $alias => $why) {
             $this->test("Gate exclusions (#178): excludes {$why}", function () use ($links, $root, $alias) {
                 return !in_array($root . '/shop/' . $alias, $links, true);
             });

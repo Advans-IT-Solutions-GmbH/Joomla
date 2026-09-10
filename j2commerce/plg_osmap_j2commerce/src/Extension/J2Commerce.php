@@ -194,6 +194,29 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Restricts an article query to items whose publication window currently
+     * includes "now": publish_up has already started (or is unset) and
+     * publish_down has not yet passed (or is unset). A state = 1 article can
+     * still be scheduled for the future or already expired, in which case its
+     * front-end route is not publicly available and it must stay out of the
+     * sitemap. Mirrors Joomla's own com_content date bounds, treating NULL as
+     * "no limit".
+     */
+    private function applyPublicationWindow(\Joomla\Database\QueryInterface $query): void
+    {
+        $db  = $this->getDb();
+        $now = $db->quote(Factory::getDate()->toSql());
+
+        $query->where(
+            '(' . $db->quoteName('a.publish_up') . ' IS NULL'
+            . ' OR ' . $db->quoteName('a.publish_up') . ' <= ' . $now . ')'
+        )->where(
+            '(' . $db->quoteName('a.publish_down') . ' IS NULL'
+            . ' OR ' . $db->quoteName('a.publish_down') . ' >= ' . $now . ')'
+        );
+    }
+
+    /**
      * Logs a real query failure. OSMap swallows every exception thrown by a
      * plugin (General.php catch (\Exception) — ignored), so without this a
      * failing query produces a silent, shop-less sitemap with no trace.
@@ -342,6 +365,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':parentId', $parentId, ParameterType::INTEGER)
             ->order($db->quoteName('a.title') . ' ASC');
+        $this->applyPublicationWindow($query);
 
         // For a category-filtered menu item keep only hidden children whose
         // article lives in that category subtree, so products from sibling
@@ -389,6 +413,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->where($db->quoteName('a.state') . ' = 1')
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':id', $articleId, ParameterType::INTEGER);
+        $this->applyPublicationWindow($query);
 
         try {
             $product = $db->setQuery($query)->loadObject();
@@ -498,6 +523,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->where($db->quoteName('a.state') . ' = 1')
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->order($db->quoteName('a.title') . ' ASC');
+        $this->applyPublicationWindow($query);
 
         $this->applyCategorySubtreeFilter($query, $catid);
 
