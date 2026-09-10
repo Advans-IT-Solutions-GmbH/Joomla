@@ -139,7 +139,7 @@ OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
 or `com_j2commerce`. For list views the plugin runs two URL mechanisms and
 de-duplicates their output by product id.
 
-#### Mechanism 1 — Standard menu items (primary)
+#### Standard menu items (primary)
 
 The plugin inspects the menu item's `view` parameter:
 
@@ -157,12 +157,12 @@ site every URL carries the menu item's language SEF prefix (e.g.
 `/de/shop/product-alias`) so it resolves directly without a 301 redirect.
 
 For list views (`products`, `categories`, `categoryalias`) **both** mechanisms
-run: the published=-2 hidden children (Mechanism 2) and the direct product
+run: the published=-2 hidden children and the direct product
 query. Their results are merged and de-duplicated by product id, so a leftover
 hidden menu item never suppresses the rest of the catalogue. This works on any
 standard J2Store or J2Commerce installation.
 
-#### Mechanism 2 — Hidden menu items (additional, site-specific)
+#### Hidden menu items (additional, site-specific)
 
 Some installations manually create hidden `com_content` menu items
 (`published=-2`) as children of the shop menu item, one per product. These
