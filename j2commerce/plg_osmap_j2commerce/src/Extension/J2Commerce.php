@@ -199,7 +199,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * publish_down has not yet passed (or is unset). A state = 1 article can
      * still be scheduled for the future or already expired, in which case its
      * front-end route is not publicly available and it must stay out of the
-     * sitemap. Mirrors Joomla's own com_content date bounds, treating NULL as
+     * sitemap. Mirrors Joomla's own com_content date bounds, treating both NULL
+     * and the driver's null-date sentinel ('0000-00-00 00:00:00' on J4/J5) as
      * "no limit".
      */
     private function applyPublicationWindow(\Joomla\Database\QueryInterface $query): void
@@ -207,11 +208,24 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $db  = $this->getDb();
         $now = $db->quote(Factory::getDate()->toSql());
 
+        $nullDateClause = static function (string $column) use ($db): string {
+            $clause = $db->quoteName($column) . ' IS NULL';
+
+            // J4/J5 store an open-ended window as the null-date sentinel rather
+            // than SQL NULL; treat it as "no limit" too. getNullDate() is gone
+            // on some newer stacks, so guard it.
+            if (method_exists($db, 'getNullDate')) {
+                $clause .= ' OR ' . $db->quoteName($column) . ' = ' . $db->quote($db->getNullDate());
+            }
+
+            return $clause;
+        };
+
         $query->where(
-            '(' . $db->quoteName('a.publish_up') . ' IS NULL'
+            '(' . $nullDateClause('a.publish_up')
             . ' OR ' . $db->quoteName('a.publish_up') . ' <= ' . $now . ')'
         )->where(
-            '(' . $db->quoteName('a.publish_down') . ' IS NULL'
+            '(' . $nullDateClause('a.publish_down')
             . ' OR ' . $db->quoteName('a.publish_down') . ' >= ' . $now . ')'
         );
     }
