@@ -414,9 +414,22 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private function isMissingTableError(\Throwable $e): bool
     {
+        $message = $e->getMessage();
+
+        // Only a missing *products* table is the expected "component not
+        // installed on this stack" case. Any other missing relation (e.g.
+        // #__content, #__categories) is a genuine fault and must fall through
+        // to logging (#177), so require the message to name the products table.
+        // The driver reports the real, prefixed name (e.g. `jos_j2store_products`),
+        // so match on the unprefixed token.
+        $token = str_replace('#__', '', $this->productsTable);
+
+        if ($token === '' || stripos($message, $token) === false) {
+            return false;
+        }
+
         // MySQL error 1146 (SQLSTATE 42S02) = base table or view not found.
         $needles = ['1146', '42S02', "doesn't exist", 'does not exist', 'Base table or view not found'];
-        $message = $e->getMessage();
 
         foreach ($needles as $needle) {
             if (stripos($message, $needle) !== false) {

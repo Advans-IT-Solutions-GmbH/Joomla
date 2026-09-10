@@ -111,6 +111,17 @@ class OsmapLoaderTest
     }
 
     /**
+     * Returns a fresh query builder using the portable J4/J5/J6 fallback:
+     * createQuery() where available, getQuery(true) otherwise. Used by every
+     * query in this script so the suite runs on the J5 matrix too.
+     */
+    private function qb()
+    {
+        $db = $this->db;
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
      * Faithful replication of General::checkPluginCompatibilityWithOption()
      * for the osmap/j2commerce plugin, using the real installed entry file.
      *
@@ -119,7 +130,7 @@ class OsmapLoaderTest
     private function replicatePluginMatching(string $option): array
     {
         $db = $this->db;
-        $q  = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        $q  = $this->qb()
             ->select(['folder', 'element', 'params'])
             ->from('#__extensions')
             ->where('type = ' . $db->quote('plugin'))
@@ -405,7 +416,7 @@ class OsmapLoaderTest
             // Clean any leftover row, then insert through the database API so the
             // test follows the project's portable query conventions (no manually
             // concatenated SQL / unquoted identifiers).
-            $del = $db->createQuery()
+            $del = $this->qb()
                 ->delete($db->quoteName('#__languages'))
                 ->where($db->quoteName('lang_code') . ' = ' . $db->quote($langCode));
             $db->setQuery($del)->execute();
@@ -449,7 +460,7 @@ class OsmapLoaderTest
         });
 
         try {
-            $cleanup = $db->createQuery()
+            $cleanup = $this->qb()
                 ->delete($db->quoteName('#__languages'))
                 ->where($db->quoteName('lang_code') . ' = ' . $db->quote($langCode));
             $db->setQuery($cleanup)->execute();
@@ -585,7 +596,7 @@ class OsmapLoaderTest
         $csv = implode(',', array_map('intval', $ids));
         foreach (['#__content' => 'id', '#__j2store_products' => 'product_source_id'] as $table => $col) {
             try {
-                $q = $db->createQuery()
+                $q = $this->qb()
                     ->delete($db->quoteName($table))
                     ->where($db->quoteName($col) . ' IN (' . $csv . ')');
                 $db->setQuery($q)->execute();
