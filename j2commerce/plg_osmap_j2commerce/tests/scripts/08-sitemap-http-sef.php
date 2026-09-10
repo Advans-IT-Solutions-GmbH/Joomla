@@ -5,11 +5,13 @@
  * Runs only in the dedicated SEF-enabled J6 environment (J2COMMERCE_SEF=1,
  * see docker-entrypoint-j6.sh + docker-compose.joomla6-sef.yml). It makes a
  * real HTTP request to the live OSMap XML sitemap and asserts that, with SEF
- * URLs enabled, the J2Commerce 6 product URLs appear correctly formed as SEF
- * paths (no index.php, no option=com_... query string).
+ * URLs enabled and the product menu items on a real content language (de-DE),
+ * the J2Commerce 6 product URLs appear as correctly-formed SEF paths that carry
+ * the /de/ language prefix (no index.php, no option=com_... query string).
  *
- * Closes the gap where the J6 harness previously disabled SEF and therefore
- * never verified SEF product URL output (issue #99).
+ * The multilingual fixture is what makes the language-prefix assertion
+ * meaningful: a single-language fixture has no prefix that could go missing,
+ * which is how the #176 regression slipped through (issue #99/#183).
  */
 define('_JEXEC', 1);
 
@@ -93,12 +95,18 @@ class SitemapHttpSefTest
             return $beta !== null;
         });
 
-        $this->test('Product Alpha URL is correctly-formed SEF (/shop/test-product-alpha)', function () use ($alpha, $root) {
-            return $alpha === $root . '/shop/test-product-alpha';
+        // #176/#183: on a multilingual site every product URL must carry the
+        // menu language's SEF prefix (here /de/) so it resolves directly instead
+        // of 301-redirecting from a prefixless path. The SEF fixture gives the
+        // hidden product menu items language=de-DE + a #__languages row with
+        // sef=de, so a regressed prefixless URL fails here. (A single-language
+        // fixture could not catch this — there would be no prefix to lose.)
+        $this->test('Product Alpha URL carries the /de/ language SEF prefix (#176/#183)', function () use ($alpha, $root) {
+            return $alpha === $root . '/de/shop/test-product-alpha';
         });
 
-        $this->test('Product Beta URL is correctly-formed SEF (/shop/test-product-beta)', function () use ($beta, $root) {
-            return $beta === $root . '/shop/test-product-beta';
+        $this->test('Product Beta URL carries the /de/ language SEF prefix (#176/#183)', function () use ($beta, $root) {
+            return $beta === $root . '/de/shop/test-product-beta';
         });
 
         $this->test('Product URLs contain no index.php and no option=com_ query', function () use ($alpha, $beta) {
@@ -112,6 +120,23 @@ class SitemapHttpSefTest
             }
             return true;
         });
+
+        // Live routability (HTTP 200 for the product-detail page) is reported for
+        // diagnostics only, NOT asserted here: a live 200 additionally requires an
+        // installed language pack, the language-filter plugin, and published product
+        // routes, which the throwaway harness does not set up (the product's only
+        // menu route is the trashed published=-2 item OSMap builds the path from).
+        // That end-to-end assertion is tracked as a follow-up (issue #185). This
+        // suite's deterministic guarantee is the /de/ SEF-prefix assertion above
+        // (plus the language-prefix unit test in 07-osmap-loader.php): it verifies
+        // correct URL *generation*, not live HTTP-200 *resolution*.
+        foreach (['Alpha' => $alpha, 'Beta' => $beta] as $label => $u) {
+            if ($u === null) {
+                continue;
+            }
+            $status = $this->httpStatus($u);
+            echo "  (info) Product {$label} live HTTP status: {$status} for {$u}\n";
+        }
 
         $this->test('Disabled and menu-less products are not in sitemap', function () use ($urls) {
             foreach ($urls as $u) {
@@ -135,6 +160,44 @@ class SitemapHttpSefTest
             }
         }
         return null;
+    }
+
+    /**
+     * Returns the final HTTP status code for $url, following redirects, so a
+     * valid SEF path that the site 301-canonicalises still reports the real
+     * page's status. Returns 0 when the host is unreachable.
+     */
+    private function httpStatus(string $url): int
+    {
+        $ctx = stream_context_create(['http' => [
+            'method'          => 'GET',
+            'timeout'         => 30,
+            'follow_location' => 1,
+            'max_redirects'   => 5,
+            'ignore_errors'   => true,
+        ]]);
+
+        // Reset so a request that fails before receiving any response cannot
+        // report the previous request's status (the wrapper only repopulates
+        // $http_response_header on a completed response).
+        $http_response_header = [];
+
+        $body = @file_get_contents($url, false, $ctx);
+
+        if ($body === false && empty($http_response_header)) {
+            return 0;
+        }
+
+        // $http_response_header accumulates the status line of every hop; the
+        // LAST "HTTP/x 999" line is the final response after redirects.
+        $status = 0;
+        foreach (($http_response_header ?? []) as $header) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m)) {
+                $status = (int) $m[1];
+            }
+        }
+
+        return $status;
     }
 
     private function baseFromUrls(array $urls): ?string

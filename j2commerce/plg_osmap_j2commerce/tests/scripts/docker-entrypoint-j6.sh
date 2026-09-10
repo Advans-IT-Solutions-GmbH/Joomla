@@ -162,6 +162,30 @@ WHERE lft = 0;
 EOSQL
 echo "Fixtures inserted"
 
+# Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
+# runs 08-sitemap-http-sef.php). Give the hidden product child menu items a real
+# content language (de-DE) and add the matching #__languages row (sef=de,
+# published=1). OSMap builds each product URL from #__languages.sef + the menu
+# path (it deliberately bypasses the Joomla router for published=-2 items), so
+# this alone makes the generated URLs carry the /de/ prefix — no language pack
+# or language-filter plugin required. It makes 08's prefix assertion meaningful:
+# a single-language fixture has no prefix that could go missing, which is exactly
+# how the #176 regression slipped through. The parent Shop menu stays language='*'
+# so OSMap still traverses it, and the non-SEF stacks keep '*' (07 asserts the
+# unprefixed /shop/... form there).
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+INSERT IGNORE INTO ${DB_PREFIX}languages
+    (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)
+VALUES
+    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
+
+UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+EOSQL
+    echo "Multilingual SEF fixture applied"
+fi
+
 # OSMap sitemap — tables must come from the official OSMap installation.
 MAINMENU_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT id FROM ${DB_PREFIX}menu_types WHERE menutype='mainmenu' LIMIT 1;" 2>/dev/null || echo "0")

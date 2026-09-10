@@ -111,6 +111,17 @@ class OsmapLoaderTest
     }
 
     /**
+     * Returns a fresh query builder using the portable J4/J5/J6 fallback:
+     * createQuery() where available, getQuery(true) otherwise. Used by every
+     * query in this script so the suite runs on the J5 matrix too.
+     */
+    private function qb()
+    {
+        $db = $this->db;
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
      * Faithful replication of General::checkPluginCompatibilityWithOption()
      * for the osmap/j2commerce plugin, using the real installed entry file.
      *
@@ -119,7 +130,7 @@ class OsmapLoaderTest
     private function replicatePluginMatching(string $option): array
     {
         $db = $this->db;
-        $q  = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        $q  = $this->qb()
             ->select(['folder', 'element', 'params'])
             ->from('#__extensions')
             ->where('type = ' . $db->quote('plugin'))
@@ -260,14 +271,30 @@ class OsmapLoaderTest
                 && in_array($root . '/shop/test-product-beta', $links, true);
         });
 
-        $this->test('getTree(products) excludes disabled and menu-less products', function () use ($collector) {
+        $this->test('getTree(products) excludes disabled products', function () use ($collector) {
             foreach ($collector->nodes as $n) {
-                if (str_contains($n->link, 'test-product-disabled') || str_contains($n->link, 'test-product-nomenu')) {
+                if (str_contains($n->link, 'test-product-disabled')) {
                     return false;
                 }
             }
             return true;
         });
+
+        // Mechanism 2 completeness (#180): a product that is enabled but has no
+        // published=-2 hidden menu child must still appear. Both mechanisms run
+        // now, so a leftover hidden child no longer suppresses the direct query.
+        // Only the J2Store fixture defines such a product (article 9004).
+        if ($this->option === 'com_j2store') {
+            $this->test('getTree(products) includes enabled products without a hidden menu item', function () use ($collector, $root) {
+                $links = array_map(static fn($n) => $n->link, $collector->nodes);
+                return in_array($root . '/shop/test-product-nomenu', $links, true);
+            });
+
+            $this->test('getTree(products) emits each product once (de-duplicated)', function () use ($collector) {
+                $uids = array_map(static fn($n) => $n->uid, $collector->nodes);
+                return count($uids) === count(array_unique($uids));
+            });
+        }
 
         $this->test('getTree(products) nodes carry j2commerce.product. uid prefix', function () use ($collector) {
             foreach ($collector->nodes as $n) {
@@ -320,9 +347,326 @@ class OsmapLoaderTest
             return count($disabledCollector->nodes) === 0;
         });
 
+        // --- 5. getTree() dispatch: category list views (#181, #99) ---
+        // view=categories carries the root category in `id`; view=categoryalias
+        // carries it too. Both must emit the products of that category subtree.
+        foreach (['categories' => 'id', 'categoryalias' => 'id'] as $catView => $param) {
+            $catParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=' . $catView . '&' . $param . '=2',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $catCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $catCollector, $catParent, new Registry([]));
+
+            echo "  {$catView}-view emitted " . count($catCollector->nodes) . " node(s)\n";
+
+            $this->test("getTree({$catView},id=2) emits the category's products", function () use ($catCollector, $root) {
+                $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
+                return in_array($root . '/shop/test-product-alpha', $links, true)
+                    && in_array($root . '/shop/test-product-beta', $links, true);
+            });
+
+            $this->test("getTree({$catView},id=2) emits each product once", function () use ($catCollector) {
+                $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
+                return count($links) === count(array_unique($links));
+            });
+        }
+
+        // --- 6. Gate coverage (#178): unpublished / invisible / access-restricted
+        // products must never reach the sitemap. Uses throwaway rows so the
+        // shared fixtures (and their node counts) stay untouched. J5 only —
+        // the insert uses the #__j2store_products schema.
+        if ($this->option === 'com_j2store') {
+            $this->testGateExclusions($ourPlugin, $root);
+        }
+
+        // --- 7. Descendant subtree (#181): a product in a descendant category
+        // with no hidden menu item must still be emitted for a parent-category
+        // menu item. Dispatching view=categories&id=1 (root) and asserting the
+        // catid=2 menu-less product appears proves real subtree traversal — a
+        // non-subtree `a.catid = :catid` implementation would emit nothing.
+        $this->testDescendantSubtree($ourPlugin, $root);
+
+        // --- 8. Language SEF prefix (#176 regression guard) ---
+        // A product emitted for a menu item with a specific (non-'*') language
+        // must carry that language's SEF prefix, so the sitemap URL resolves
+        // directly instead of via a 301 to the prefixed path.
+        $this->testLanguagePrefix($ourPlugin, $root);
+
         echo "\n=== Real OSMap Loader Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * Inserts a throwaway published language (sef 'zz'), dispatches a
+     * single-product menu item whose language points at it, and asserts the
+     * emitted URL is prefixed with '/zz/'. Cleans the row up afterwards.
+     */
+    private function testLanguagePrefix($ourPlugin, string $root): void
+    {
+        $db = $this->db;
+
+        $langCode = 'zz-ZZ';
+
+        try {
+            // Clean any leftover row, then insert through the database API so the
+            // test follows the project's portable query conventions (no manually
+            // concatenated SQL / unquoted identifiers).
+            $del = $this->qb()
+                ->delete($db->quoteName('#__languages'))
+                ->where($db->quoteName('lang_code') . ' = ' . $db->quote($langCode));
+            $db->setQuery($del)->execute();
+
+            $row = (object) [
+                'lang_code'    => $langCode,
+                'title'        => 'Test ZZ',
+                'title_native' => 'Test ZZ',
+                'sef'          => 'zz',
+                'image'        => '',
+                'description'  => '',
+                'metakey'      => '',
+                'metadesc'     => '',
+                'sitename'     => '',
+                'published'    => 1,
+                'access'       => 1,
+                'ordering'     => 99,
+            ];
+            $db->insertObject('#__languages', $row);
+        } catch (\Throwable $e) {
+            $this->test('Language SEF prefix (#176): fixture language row inserted', function () {
+                return false;
+            });
+            return;
+        }
+
+        $langParent = osmap_make_item([
+            'id'         => 9001,
+            'link'       => 'index.php?option=' . $this->option . '&view=product&id=9001',
+            'component'  => $this->option,
+            'path'       => 'shop',
+            'language'   => 'zz-ZZ',
+            'browserNav' => 0,
+        ]);
+        $langCollector = $this->newCollector();
+        $this->dispatchGetTree($ourPlugin, $langCollector, $langParent, new Registry([]));
+
+        $this->test('getTree(product) prefixes the menu language SEF (#176 → /zz/shop/...)', function () use ($langCollector, $root) {
+            return isset($langCollector->nodes[0])
+                && $langCollector->nodes[0]->link === $root . '/zz/shop/test-product-alpha';
+        });
+
+        // Wildcard-parent case: a list menu item carrying language '*' has no SEF
+        // prefix of its own, so printProductNode must fall back to the product
+        // article's own concrete language. Temporarily set article 9001 to zz-ZZ,
+        // dispatch through the direct (menu-less) product path, and assert the URL
+        // still carries the /zz/ prefix. Restore the article language afterwards.
+        try {
+            $setLang = $this->qb()
+                ->update($db->quoteName('#__content'))
+                ->set($db->quoteName('language') . ' = ' . $db->quote($langCode))
+                ->where($db->quoteName('id') . ' = 9001');
+            $db->setQuery($setLang)->execute();
+
+            $wildParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=product&id=9001',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'language'   => '*',
+                'browserNav' => 0,
+            ]);
+            $wildCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $wildCollector, $wildParent, new Registry([]));
+
+            $this->test('getTree(product) falls back to the article language for a wildcard parent (#176 → /zz/shop/...)', function () use ($wildCollector, $root) {
+                return isset($wildCollector->nodes[0])
+                    && $wildCollector->nodes[0]->link === $root . '/zz/shop/test-product-alpha';
+            });
+        } finally {
+            try {
+                $restore = $this->qb()
+                    ->update($db->quoteName('#__content'))
+                    ->set($db->quoteName('language') . ' = ' . $db->quote('*'))
+                    ->where($db->quoteName('id') . ' = 9001');
+                $db->setQuery($restore)->execute();
+            } catch (\Throwable $e) {
+                // best-effort restore
+            }
+        }
+
+        try {
+            $cleanup = $this->qb()
+                ->delete($db->quoteName('#__languages'))
+                ->where($db->quoteName('lang_code') . ' = ' . $db->quote($langCode));
+            $db->setQuery($cleanup)->execute();
+        } catch (\Throwable $e) {
+            // best-effort cleanup
+        }
+    }
+
+    /**
+     * Dispatches a root-category (id=1) list view and asserts a product living
+     * in a descendant category (catid=2) is emitted — proving the loader walks
+     * the category subtree rather than matching the id directly.
+     */
+    private function testDescendantSubtree($ourPlugin, string $root): void
+    {
+        $catParent = osmap_make_item([
+            'id'         => 9001,
+            'link'       => 'index.php?option=' . $this->option . '&view=categories&id=1',
+            'component'  => $this->option,
+            'path'       => 'shop',
+            'browserNav' => 0,
+        ]);
+        $collector = $this->newCollector();
+        $this->dispatchGetTree($ourPlugin, $collector, $catParent, new Registry([]));
+        $links = array_map(static fn($n) => $n->link, $collector->nodes);
+
+        if ($this->option === 'com_j2store') {
+            // nomenu (catid=2) has no hidden menu item, so only mechanism 2's
+            // subtree query can surface it under the root category.
+            $this->test('getTree(categories,id=1) emits a menu-less product from a descendant category (#181 subtree)', function () use ($links, $root) {
+                return in_array($root . '/shop/test-product-nomenu', $links, true);
+            });
+        } else {
+            $this->test('getTree(categories,id=1) emits descendant-category products (#181 subtree)', function () use ($links, $root) {
+                return in_array($root . '/shop/test-product-alpha', $links, true)
+                    && in_array($root . '/shop/test-product-beta', $links, true);
+            });
+        }
+    }
+
+    /**
+     * Seeds three throwaway products in category 2, each violating exactly one
+     * visibility gate, dispatches the full product run and asserts none reach
+     * the sitemap. Cleans the rows up afterwards. J5 (#__j2store_products) only.
+     */
+    private function testGateExclusions($ourPlugin, string $root): void
+    {
+        $db  = $this->db;
+        $ids = [9111, 9112, 9113, 9114, 9115];
+
+        $nowSql    = Factory::getDate()->toSql();
+        $futureSql = Factory::getDate('+10 days')->toSql();
+        $pastSql   = Factory::getDate('-10 days')->toSql();
+
+        $articles = [
+            // id,   alias,             state, access, publish_up, publish_down  (catid 2)
+            [9111, 'zz-unpublished', 0, 1, $nowSql,    null],
+            [9112, 'zz-invisible',   1, 1, $nowSql,    null],
+            [9113, 'zz-restricted',  1, 2, $nowSql,    null], // access 2 = Registered (not a guest level)
+            [9114, 'zz-scheduled',   1, 1, $futureSql, null],     // publish_up in the future
+            [9115, 'zz-expired',     1, 1, $pastSql,   $pastSql], // publish_down already passed
+        ];
+        $products = [
+            // product_source_id, visibility, enabled
+            [9111, 1, 1],
+            [9112, 0, 1], // invisible
+            [9113, 1, 1],
+            [9114, 1, 1], // visible+enabled: only the future publish_up excludes it
+            [9115, 1, 1], // visible+enabled: only the past publish_down excludes it
+        ];
+
+        try {
+            $this->cleanupGateRows($ids);
+
+            foreach ($articles as [$id, $alias, $state, $access, $publishUp, $publishDown]) {
+                $article = (object) [
+                    'id'           => $id,
+                    'title'        => 'ZZ ' . $alias,
+                    'alias'        => $alias,
+                    'introtext'    => '',
+                    'fulltext'     => '',
+                    'state'        => $state,
+                    'catid'        => 2,
+                    'created'      => $nowSql,
+                    'created_by'   => 42,
+                    'modified'     => $nowSql,
+                    'publish_up'   => $publishUp,
+                    'publish_down' => $publishDown,
+                    'language'     => '*',
+                    'access'       => $access,
+                    'metadata'     => '{}',
+                    'attribs'      => '{}',
+                    'images'       => '{}',
+                    'urls'         => '{}',
+                    'metadesc'     => '',
+                    'metakey'      => '',
+                    'note'         => '',
+                    'featured'     => 0,
+                    'version'      => 1,
+                    'ordering'     => 0,
+                    'hits'         => 0,
+                ];
+                $db->insertObject('#__content', $article);
+            }
+
+            foreach ($products as [$sourceId, $visibility, $enabled]) {
+                $product = (object) [
+                    'j2store_product_id' => $sourceId,
+                    'product_source_id'  => $sourceId,
+                    'product_source'     => 'com_content',
+                    'product_type'       => 'simple',
+                    'visibility'         => $visibility,
+                    'enabled'            => $enabled,
+                    'addtocart_text'     => '',
+                    'up_sells'           => '',
+                    'cross_sells'        => '',
+                    'params'             => '{}',
+                ];
+                $db->insertObject('#__j2store_products', $product);
+            }
+        } catch (\Throwable $e) {
+            $this->cleanupGateRows($ids);
+            $this->test('Gate exclusions (#178): fixture rows seeded', function () use ($e) {
+                echo '  Error: ' . $e->getMessage() . "\n";
+                return false;
+            });
+            return;
+        }
+
+        $parent = osmap_make_item([
+            'id'         => 9001,
+            'link'       => 'index.php?option=' . $this->option . '&view=products',
+            'component'  => $this->option,
+            'path'       => 'shop',
+            'browserNav' => 0,
+        ]);
+        $collector = $this->newCollector();
+        $this->dispatchGetTree($ourPlugin, $collector, $parent, new Registry([]));
+        $links = array_map(static fn($n) => $n->link, $collector->nodes);
+
+        foreach (['zz-unpublished' => 'unpublished article (a.state=0)',
+                  'zz-invisible'   => 'invisible product (p.visibility=0)',
+                  'zz-restricted'  => 'guest-inaccessible article (a.access)',
+                  'zz-scheduled'   => 'future-dated article (publish_up in the future)',
+                  'zz-expired'     => 'expired article (publish_down in the past)'] as $alias => $why) {
+            $this->test("Gate exclusions (#178): excludes {$why}", function () use ($links, $root, $alias) {
+                return !in_array($root . '/shop/' . $alias, $links, true);
+            });
+        }
+
+        $this->cleanupGateRows($ids);
+    }
+
+    private function cleanupGateRows(array $ids): void
+    {
+        $db  = $this->db;
+        $ids = array_values(array_map('intval', $ids));
+        foreach (['#__content' => 'id', '#__j2store_products' => 'product_source_id'] as $table => $col) {
+            try {
+                $q = $this->qb()
+                    ->delete($db->quoteName($table))
+                    ->whereIn($db->quoteName($col), $ids);
+                $db->setQuery($q)->execute();
+            } catch (\Throwable $e) {
+                // best-effort cleanup
+            }
+        }
     }
 
     private function test(string $name, callable $fn): void
