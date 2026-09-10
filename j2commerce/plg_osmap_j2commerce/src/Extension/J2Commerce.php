@@ -413,6 +413,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 $db->quoteName('a.alias'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.catid'),
+                $db->quoteName('a.language'),
             ])
             ->from($db->quoteName('#__content', 'a'))
             ->join(
@@ -524,6 +525,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 $db->quoteName('a.alias'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.catid'),
+                $db->quoteName('a.language'),
             ])
             ->from($db->quoteName('#__content', 'a'))
             ->join(
@@ -655,13 +657,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Derive the product URL from the parent menu item's SEF path + alias.
         // e.g. parent path "shop" + alias "my-product" → "https://example.com/de/shop/my-product"
-        // The language SEF prefix comes from the parent menu item's language, so
-        // products on a multilingual site resolve directly (HTTP 200) instead of
-        // via a 301 redirect from the prefixless path.
+        // The language SEF prefix normally comes from the parent menu item, but a
+        // wildcard list menu ('*') carries no language: in that case fall back to
+        // the product article's own concrete language so a menu-less product on a
+        // multilingual site still gets the right '/de/' prefix (matching the
+        // hidden-child path) instead of an unprefixed URL that only 301-redirects.
+        // A language-neutral article ('*') legitimately resolves without a prefix.
         // Joomla aliases are guaranteed URL-safe by JFilterOutput::stringURLSafe() — no
         // percent-encoding needed. rawurlencode() would produce %XX sequences that Joomla's
         // SEF router does not expect and cannot resolve.
-        $prefix   = $this->getLanguageSef($parent->language ?? '');
+        $language = $parent->language ?? '';
+        if ($language === '' || $language === '*') {
+            $language = $product->language ?? '';
+        }
+        $prefix   = $this->getLanguageSef($language);
         $basePath = rtrim($parent->path ?? '', '/');
         $link     = rtrim(Uri::root(), '/') . '/' . $prefix
                   . ($basePath ? $basePath . '/' : '') . ltrim($product->alias, '/');

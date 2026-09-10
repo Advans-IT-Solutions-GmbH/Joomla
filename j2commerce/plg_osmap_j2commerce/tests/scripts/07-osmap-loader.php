@@ -459,6 +459,45 @@ class OsmapLoaderTest
                 && $langCollector->nodes[0]->link === $root . '/zz/shop/test-product-alpha';
         });
 
+        // Wildcard-parent case: a list menu item carrying language '*' has no SEF
+        // prefix of its own, so printProductNode must fall back to the product
+        // article's own concrete language. Temporarily set article 9001 to zz-ZZ,
+        // dispatch through the direct (menu-less) product path, and assert the URL
+        // still carries the /zz/ prefix. Restore the article language afterwards.
+        try {
+            $setLang = $this->qb()
+                ->update($db->quoteName('#__content'))
+                ->set($db->quoteName('language') . ' = ' . $db->quote($langCode))
+                ->where($db->quoteName('id') . ' = 9001');
+            $db->setQuery($setLang)->execute();
+
+            $wildParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=product&id=9001',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'language'   => '*',
+                'browserNav' => 0,
+            ]);
+            $wildCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $wildCollector, $wildParent, new Registry([]));
+
+            $this->test('getTree(product) falls back to the article language for a wildcard parent (#176 → /zz/shop/...)', function () use ($wildCollector, $root) {
+                return isset($wildCollector->nodes[0])
+                    && $wildCollector->nodes[0]->link === $root . '/zz/shop/test-product-alpha';
+            });
+        } finally {
+            try {
+                $restore = $this->qb()
+                    ->update($db->quoteName('#__content'))
+                    ->set($db->quoteName('language') . ' = ' . $db->quote('*'))
+                    ->where($db->quoteName('id') . ' = 9001');
+                $db->setQuery($restore)->execute();
+            } catch (\Throwable $e) {
+                // best-effort restore
+            }
+        }
+
         try {
             $cleanup = $this->qb()
                 ->delete($db->quoteName('#__languages'))

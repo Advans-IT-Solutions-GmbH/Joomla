@@ -126,9 +126,10 @@ class SitemapHttpSefTest
         // installed language pack, the language-filter plugin, and published product
         // routes, which the throwaway harness does not set up (the product's only
         // menu route is the trashed published=-2 item OSMap builds the path from).
-        // That end-to-end assertion is tracked as a follow-up. This suite's
-        // deterministic guarantee is the /de/ SEF-prefix assertion above (plus the
-        // language-prefix unit test in 07-osmap-loader.php).
+        // That end-to-end assertion is tracked as a follow-up (issue #185). This
+        // suite's deterministic guarantee is the /de/ SEF-prefix assertion above
+        // (plus the language-prefix unit test in 07-osmap-loader.php): it verifies
+        // correct URL *generation*, not live HTTP-200 *resolution*.
         foreach (['Alpha' => $alpha, 'Beta' => $beta] as $label => $u) {
             if ($u === null) {
                 continue;
