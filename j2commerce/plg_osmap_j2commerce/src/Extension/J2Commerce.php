@@ -11,7 +11,9 @@ defined('_JEXEC') or die;
 
 use Alledia\OSMap\Sitemap\Collector;
 use Alledia\OSMap\Sitemap\Item;
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseAwareTrait;
@@ -29,22 +31,28 @@ use Joomla\Registry\Registry;
  * Two sitemap mechanisms are supported:
  *
  * Supported menu item views:
- *   - view=products      product list (optional catid filter)
+ *   - view=products      product list (optional catid filter, incl. subtree)
  *   - view=product       single product by id
- *   - view=categories    all products across all categories
+ *   - view=categories    products in the selected root category (id) and its
+ *                        subtree; all products if the menu item has no category
  *   - view=categoryalias J2Commerce single-category alias (redirects to
  *                        view=products at runtime; treated identically here)
  *
- * Two URL mechanisms are tried in order for list views:
+ * Two URL mechanisms are combined for list views (both run, results are
+ * de-duplicated by product id so a product covered by both appears once):
  *
  * 1. published=-2 hidden children: installations that manually create hidden
  *    com_content menu items (published=-2) per product carry the correct SEF
  *    path in the menu item's path field. These are used directly as sitemap
  *    URLs when present.
  *
- * 2. Direct product queries: if no hidden children exist, products are loaded
- *    from #__content joined with the products table. Works on any standard
- *    J2Store or J2Commerce installation without hidden menu items.
+ * 2. Direct product queries: products are loaded from #__content joined with
+ *    the products table. Works on any standard J2Store or J2Commerce
+ *    installation, and catches products that have no hidden menu child.
+ *
+ * Both mechanisms now build identical URL formats (Uri::root() + menu path +
+ * language SEF prefix), so running both only adds completeness — a single
+ * leftover published=-2 item no longer suppresses the full product run.
  *
  * Supported components: com_j2store (J2Store) and com_j2commerce (J2Commerce).
  * The plugin registers itself for com_j2store by default. A second subclass
@@ -84,6 +92,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected string $productsTable = '#__j2store_products';
 
+    /**
+     * Product ids already emitted during the current getTree() call. Both URL
+     * mechanisms run for list views; this prevents a product that is covered by
+     * a published=-2 hidden child AND the direct query from appearing twice.
+     *
+     * @var array<int, true>
+     */
+    private array $emittedProductIds = [];
+
     public static function getSubscribedEvents(): array
     {
         return [];
@@ -108,14 +125,93 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Resolves the language SEF prefix (e.g. 'de/') for a menu item language.
+     *
+     * Returns '' for the "all languages" wildcard ('*'), an empty/absent
+     * language, or when no published #__languages row matches — so single
+     * language sites (menu items carry language '*') get no prefix, while a
+     * multilingual site (menu items carry 'de-DE' etc.) gets the '/de/' prefix
+     * its SEF URLs actually resolve under.
+     */
+    private function getLanguageSef(?string $language): string
+    {
+        if ($language === null || $language === '' || $language === '*') {
+            return '';
+        }
+
+        $db    = $this->getDb();
+        $query = $this->createDbQuery()
+            ->select($db->quoteName('sef'))
+            ->from($db->quoteName('#__languages'))
+            ->where($db->quoteName('lang_code') . ' = :lang')
+            ->where($db->quoteName('published') . ' = 1')
+            ->bind(':lang', $language)
+            ->setLimit(1);
+
+        try {
+            $sef = $db->setQuery($query)->loadResult();
+        } catch (\Throwable $e) {
+            $this->logQueryError($e);
+
+            return '';
+        }
+
+        return $sef ? $sef . '/' : '';
+    }
+
+    /**
+     * View access levels a guest (user id 0) is authorised to see. Used to keep
+     * access-restricted products out of the public sitemap.
+     *
+     * @return int[]
+     */
+    private function guestViewLevels(): array
+    {
+        $levels = array_map('intval', Access::getAuthorisedViewLevels(0));
+
+        return $levels ?: [1];
+    }
+
+    /**
+     * Logs a real query failure. OSMap swallows every exception thrown by a
+     * plugin (General.php catch (\Exception) — ignored), so without this a
+     * failing query produces a silent, shop-less sitemap with no trace.
+     */
+    private function logQueryError(\Throwable $e): void
+    {
+        Log::add('plg_osmap_j2commerce: ' . $e->getMessage(), Log::ERROR, 'plg_osmap_j2commerce');
+    }
+
+    /**
+     * Runs a query and returns its object list, logging genuine failures instead
+     * of letting OSMap swallow them silently.
+     *
+     * @return object[]
+     */
+    private function safeLoadObjectList(\Joomla\Database\QueryInterface $query): array
+    {
+        $db = $this->getDb();
+
+        try {
+            return $db->setQuery($query)->loadObjectList() ?: [];
+        } catch (\Throwable $e) {
+            $this->logQueryError($e);
+
+            return [];
+        }
+    }
+
+    /**
      * Called by OSMap for each menu item whose option matches getComponentElement().
      *
-     * For view=products and view=categories: prefer published=-2 hidden children
-     * as URL source (correct SEF paths), fall back to direct product queries if
-     * none exist. For view=product: emit the single product directly.
+     * For list views (products, categories, categoryalias) both URL mechanisms
+     * run and their output is de-duplicated by product id. For view=product the
+     * single product is emitted directly.
      */
     public function getTree(Collector $collector, Item $parent, Registry $params): void
     {
+        $this->emittedProductIds = [];
+
         parse_str(parse_url($parent->link ?? '', PHP_URL_QUERY) ?? '', $query);
 
         $view     = $query['view'] ?? '';
@@ -133,21 +229,29 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             case 'categoryalias':
                 // J2Commerce: menu item pointing to a single category by alias.
                 // Redirects to view=products with catid=id at runtime; treat the
-                // same way here — emit products for that category.
+                // same way here — emit products for that category (subtree).
                 $catid = $id;
                 // fall through
 
             case 'products':
             case 'categories':
-                // Prefer published=-2 hidden children: they carry correct SEF paths.
-                // Fall back to direct product queries if no hidden children exist.
-                if ($parentId > 0 && $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId)) {
-                    return;
+                // Run BOTH mechanisms and de-duplicate by product id:
+                //   1. published=-2 hidden children (site-specific SEF resolvers)
+                //   2. direct product query (every enabled product)
+                // A single leftover hidden child must not suppress the full run.
+                if ($parentId > 0) {
+                    $this->emitHiddenMenuChildren($collector, $parent, $params, $parentId);
                 }
-                if ($view === 'categories') {
-                    $this->emitAllProducts($collector, $parent, $params);
+
+                // view=categories carries the chosen root category in `id`;
+                // view=products/categoryalias carry it in `catid`. Both restrict
+                // to that category's subtree; null means every category.
+                $rootCat = ($view === 'categories') ? $id : $catid;
+
+                if ($rootCat !== null && $rootCat > 0) {
+                    $this->emitProductsForCategory($collector, $parent, $params, $rootCat);
                 } else {
-                    $this->emitProductsForCategory($collector, $parent, $params, $catid);
+                    $this->emitAllProducts($collector, $parent, $params);
                 }
                 return;
 
@@ -167,10 +271,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /**
      * Queries #__menu for published=-2 children of $parentId, joins #__content
-     * and the products table to verify each product is enabled, then emits one
-     * sitemap node per product using the menu item's SEF path as the URL.
+     * and the products table, filters to publicly visible/published/enabled
+     * products, then emits one sitemap node per product using the menu item's
+     * SEF path as the URL.
      *
-     * Returns true if at least one node was emitted, false if no children found.
+     * Returns true if at least one node was emitted, false otherwise.
      */
     protected function emitHiddenMenuChildren(
         Collector $collector,
@@ -181,8 +286,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $db    = $this->getDb();
         $query = $this->createDbQuery()
             ->select([
+                $db->quoteName('a.id', 'article_id'),
                 $db->quoteName('m.id'),
                 $db->quoteName('m.path'),
+                $db->quoteName('m.language'),
                 $db->quoteName('m.browserNav'),
                 $db->quoteName('a.modified'),
                 $db->quoteName('a.title'),
@@ -201,14 +308,17 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 . ' ON ' . $db->quoteName('p.product_source_id') . ' = ' . $db->quoteName('a.id')
                 . ' AND ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
                 . ' AND ' . $db->quoteName('p.enabled') . ' = 1'
+                . ' AND ' . $db->quoteName('p.visibility') . ' = 1'
             )
             ->where($db->quoteName('m.published') . ' = -2')
             ->where($db->quoteName('m.parent_id') . ' = :parentId')
             ->where($db->quoteName('m.client_id') . ' = 0')
+            ->where($db->quoteName('a.state') . ' = 1')
+            ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':parentId', $parentId, ParameterType::INTEGER)
             ->order($db->quoteName('a.title') . ' ASC');
 
-        $items = $db->setQuery($query)->loadObjectList() ?: [];
+        $items = $this->safeLoadObjectList($query);
 
         foreach ($items as $item) {
             $this->printMenuPathNode($collector, $parent, $params, $item);
@@ -243,15 +353,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 . ' ON ' . $db->quoteName('p.product_source_id') . ' = ' . $db->quoteName('a.id')
                 . ' AND ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
                 . ' AND ' . $db->quoteName('p.enabled') . ' = 1'
+                . ' AND ' . $db->quoteName('p.visibility') . ' = 1'
             )
             ->where($db->quoteName('a.id') . ' = :id')
             ->where($db->quoteName('a.state') . ' = 1')
+            ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':id', $articleId, ParameterType::INTEGER);
 
         try {
             $product = $db->setQuery($query)->loadObject();
         } catch (\Throwable $e) {
             // Products table does not exist (component not installed) — skip silently.
+            // This is the normal state on the other stack (e.g. a J2Store site has
+            // no #__j2commerce_products), so it must not be logged as an error.
             return;
         }
 
@@ -286,6 +400,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     // -------------------------------------------------------------------------
 
     /**
+     * Loads publicly visible, published, enabled products. When $catid is given
+     * the result covers that category AND its descendants (via the #__categories
+     * nested-set lft/rgt bounds), so a menu item pointing at a parent category
+     * still lists products that live in its sub-categories.
+     *
      * @return object[]
      */
     protected function loadProducts(?int $catid): array
@@ -306,16 +425,31 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 . ' ON ' . $db->quoteName('p.product_source_id') . ' = ' . $db->quoteName('a.id')
                 . ' AND ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
                 . ' AND ' . $db->quoteName('p.enabled') . ' = 1'
+                . ' AND ' . $db->quoteName('p.visibility') . ' = 1'
             )
             ->where($db->quoteName('a.state') . ' = 1')
+            ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->order($db->quoteName('a.title') . ' ASC');
 
         if ($catid !== null) {
-            $query->where($db->quoteName('a.catid') . ' = :catid')
+            // Resolve the whole subtree of $catid, not just direct children.
+            $sub = $this->createDbQuery()
+                ->select($db->quoteName('c2.id'))
+                ->from($db->quoteName('#__categories', 'c1'))
+                ->join(
+                    'INNER',
+                    $db->quoteName('#__categories', 'c2')
+                    . ' ON ' . $db->quoteName('c2.lft') . ' >= ' . $db->quoteName('c1.lft')
+                    . ' AND ' . $db->quoteName('c2.rgt') . ' <= ' . $db->quoteName('c1.rgt')
+                    . ' AND ' . $db->quoteName('c2.extension') . ' = ' . $db->quote('com_content')
+                )
+                ->where($db->quoteName('c1.id') . ' = :catid');
+
+            $query->where($db->quoteName('a.catid') . ' IN (' . (string) $sub . ')')
                   ->bind(':catid', $catid, ParameterType::INTEGER);
         }
 
-        return $db->setQuery($query)->loadObjectList() ?: [];
+        return $this->safeLoadObjectList($query);
     }
 
     // -------------------------------------------------------------------------
@@ -331,6 +465,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * already contains the correct SEF-relative path (e.g. 'shop/my-product')
      * and is always present for published=-2 items created by J2Store.
      * This is the same approach used by printProductNode().
+     *
+     * The language SEF prefix comes from the child menu item's own language, so
+     * a multilingual site produces '/de/shop/my-product' rather than a bare
+     * '/shop/my-product' that only resolves via a 301 redirect.
      */
     protected function printMenuPathNode(
         Collector $collector,
@@ -342,14 +480,25 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // De-duplicate against the direct product query (both mechanisms run).
+        $articleId = (int) ($item->article_id ?? 0);
+        if ($articleId > 0) {
+            if (isset($this->emittedProductIds[$articleId])) {
+                return;
+            }
+            $this->emittedProductIds[$articleId] = true;
+        }
+
         // Build absolute URL from the menu item's SEF path, bypassing OSMap's
-        // router (which skips published=-2 items).
-        $link = rtrim(Uri::root(), '/') . '/' . ltrim($item->path, '/');
+        // router (which skips published=-2 items). The prefix is taken from the
+        // hidden child's own language (its SEF path carries no language segment).
+        $prefix = $this->getLanguageSef($item->language ?? '');
+        $link   = rtrim(Uri::root(), '/') . '/' . $prefix . ltrim($item->path, '/');
 
         $node = (object) [
             'id'         => $item->id,
             'name'       => $item->title,
-            'uid'        => 'j2commerce.product.' . $item->id,
+            'uid'        => 'j2commerce.product.' . ($articleId > 0 ? $articleId : $item->id),
             'modified'   => $item->modified,
             'browserNav' => $item->browserNav ?? $parent->browserNav,
             'priority'   => $params->get('priority', '0.8'),
@@ -372,13 +521,27 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         Registry $params,
         object $product
     ): void {
+        // De-duplicate against the hidden-children mechanism (both run).
+        $articleId = (int) ($product->id ?? 0);
+        if ($articleId > 0) {
+            if (isset($this->emittedProductIds[$articleId])) {
+                return;
+            }
+            $this->emittedProductIds[$articleId] = true;
+        }
+
         // Derive the product URL from the parent menu item's SEF path + alias.
-        // e.g. parent path "shop" + alias "my-product" → "https://example.com/shop/my-product"
+        // e.g. parent path "shop" + alias "my-product" → "https://example.com/de/shop/my-product"
+        // The language SEF prefix comes from the parent menu item's language, so
+        // products on a multilingual site resolve directly (HTTP 200) instead of
+        // via a 301 redirect from the prefixless path.
         // Joomla aliases are guaranteed URL-safe by JFilterOutput::stringURLSafe() — no
         // percent-encoding needed. rawurlencode() would produce %XX sequences that Joomla's
         // SEF router does not expect and cannot resolve.
+        $prefix   = $this->getLanguageSef($parent->language ?? '');
         $basePath = rtrim($parent->path ?? '', '/');
-        $link     = rtrim(Uri::root(), '/') . '/' . ($basePath ? $basePath . '/' : '') . ltrim($product->alias, '/');
+        $link     = rtrim(Uri::root(), '/') . '/' . $prefix
+                  . ($basePath ? $basePath . '/' : '') . ltrim($product->alias, '/');
 
         $node = (object) [
             'id'         => $product->id,

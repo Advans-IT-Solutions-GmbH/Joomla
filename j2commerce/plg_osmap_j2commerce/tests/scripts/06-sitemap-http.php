@@ -92,11 +92,14 @@ class SitemapHttpTest
             return true;
         });
 
-        $this->test('Product without menu item not in sitemap', function () use ($urls) {
+        // #180: both mechanisms now run and de-duplicate. Product 9004 has no
+        // published=-2 hidden menu item but is enabled and visible, so the direct
+        // product query (mechanism 2) emits it. It must appear in the sitemap.
+        $this->test('Product without menu item IS in sitemap (mechanism 2)', function () use ($urls) {
             foreach ($urls as $u) {
-                if (str_contains($u, 'test-product-nomenu')) return false;
+                if (str_contains($u, 'test-product-nomenu')) return true;
             }
-            return true;
+            return false;
         });
 
         $this->test('At least 2 product URLs in sitemap', function () use ($urls) {

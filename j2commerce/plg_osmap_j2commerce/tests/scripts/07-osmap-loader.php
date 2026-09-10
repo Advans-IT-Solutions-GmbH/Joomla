@@ -260,14 +260,30 @@ class OsmapLoaderTest
                 && in_array($root . '/shop/test-product-beta', $links, true);
         });
 
-        $this->test('getTree(products) excludes disabled and menu-less products', function () use ($collector) {
+        $this->test('getTree(products) excludes disabled products', function () use ($collector) {
             foreach ($collector->nodes as $n) {
-                if (str_contains($n->link, 'test-product-disabled') || str_contains($n->link, 'test-product-nomenu')) {
+                if (str_contains($n->link, 'test-product-disabled')) {
                     return false;
                 }
             }
             return true;
         });
+
+        // Mechanism 2 completeness (#180): a product that is enabled but has no
+        // published=-2 hidden menu child must still appear. Both mechanisms run
+        // now, so a leftover hidden child no longer suppresses the direct query.
+        // Only the J2Store fixture defines such a product (article 9004).
+        if ($this->option === 'com_j2store') {
+            $this->test('getTree(products) includes enabled products without a hidden menu item', function () use ($collector, $root) {
+                $links = array_map(static fn($n) => $n->link, $collector->nodes);
+                return in_array($root . '/shop/test-product-nomenu', $links, true);
+            });
+
+            $this->test('getTree(products) emits each product once (de-duplicated)', function () use ($collector) {
+                $links = array_map(static fn($n) => $n->link, $collector->nodes);
+                return count($links) === count(array_unique($links));
+            });
+        }
 
         $this->test('getTree(products) nodes carry j2commerce.product. uid prefix', function () use ($collector) {
             foreach ($collector->nodes as $n) {
@@ -320,9 +336,91 @@ class OsmapLoaderTest
             return count($disabledCollector->nodes) === 0;
         });
 
+        // --- 5. getTree() dispatch: category list views (#181, #99) ---
+        // view=categories carries the root category in `id`; view=categoryalias
+        // carries it too. Both must emit the products of that category subtree.
+        foreach (['categories' => 'id', 'categoryalias' => 'id'] as $catView => $param) {
+            $catParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=' . $catView . '&' . $param . '=2',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $catCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $catCollector, $catParent, new Registry([]));
+
+            echo "  {$catView}-view emitted " . count($catCollector->nodes) . " node(s)\n";
+
+            $this->test("getTree({$catView},id=2) emits the category's products", function () use ($catCollector, $root) {
+                $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
+                return in_array($root . '/shop/test-product-alpha', $links, true)
+                    && in_array($root . '/shop/test-product-beta', $links, true);
+            });
+
+            $this->test("getTree({$catView},id=2) emits each product once", function () use ($catCollector) {
+                $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
+                return count($links) === count(array_unique($links));
+            });
+        }
+
+        // --- 6. Language SEF prefix (#176 regression guard) ---
+        // A product emitted for a menu item with a specific (non-'*') language
+        // must carry that language's SEF prefix, so the sitemap URL resolves
+        // directly instead of via a 301 to the prefixed path.
+        $this->testLanguagePrefix($ourPlugin, $root);
+
         echo "\n=== Real OSMap Loader Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * Inserts a throwaway published language (sef 'zz'), dispatches a
+     * single-product menu item whose language points at it, and asserts the
+     * emitted URL is prefixed with '/zz/'. Cleans the row up afterwards.
+     */
+    private function testLanguagePrefix($ourPlugin, string $root): void
+    {
+        $db = $this->db;
+
+        try {
+            $db->setQuery("DELETE FROM " . $db->quoteName('#__languages') . " WHERE " . $db->quoteName('lang_code') . " = " . $db->quote('zz-ZZ'))->execute();
+            $db->setQuery(
+                "INSERT INTO " . $db->quoteName('#__languages')
+                . " (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)"
+                . " VALUES (" . $db->quote('zz-ZZ') . ", " . $db->quote('Test ZZ') . ", " . $db->quote('Test ZZ') . ", "
+                . $db->quote('zz') . ", " . $db->quote('') . ", " . $db->quote('') . ", " . $db->quote('') . ", "
+                . $db->quote('') . ", " . $db->quote('') . ", 1, 1, 99)"
+            )->execute();
+        } catch (\Throwable $e) {
+            $this->test('Language SEF prefix (#176): fixture language row inserted', function () {
+                return false;
+            });
+            return;
+        }
+
+        $langParent = osmap_make_item([
+            'id'         => 9001,
+            'link'       => 'index.php?option=' . $this->option . '&view=product&id=9001',
+            'component'  => $this->option,
+            'path'       => 'shop',
+            'language'   => 'zz-ZZ',
+            'browserNav' => 0,
+        ]);
+        $langCollector = $this->newCollector();
+        $this->dispatchGetTree($ourPlugin, $langCollector, $langParent, new Registry([]));
+
+        $this->test('getTree(product) prefixes the menu language SEF (#176 → /zz/shop/...)', function () use ($langCollector, $root) {
+            return isset($langCollector->nodes[0])
+                && $langCollector->nodes[0]->link === $root . '/zz/shop/test-product-alpha';
+        });
+
+        try {
+            $db->setQuery("DELETE FROM " . $db->quoteName('#__languages') . " WHERE " . $db->quoteName('lang_code') . " = " . $db->quote('zz-ZZ'))->execute();
+        } catch (\Throwable $e) {
+            // best-effort cleanup
+        }
     }
 
     private function test(string $name, callable $fn): void

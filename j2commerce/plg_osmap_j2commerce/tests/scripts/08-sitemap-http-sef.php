@@ -113,6 +113,18 @@ class SitemapHttpSefTest
             return true;
         });
 
+        // The single assertion that would have caught the #176 language-prefix
+        // regression: every product URL in the sitemap must resolve directly
+        // (HTTP 200), not via a 301/302 redirect. A sitemap whose entries all
+        // redirect defeats its purpose.
+        $this->test('Product Alpha URL resolves with HTTP 200 (no redirect)', function () use ($alpha) {
+            return $alpha !== null && $this->httpStatus($alpha) === 200;
+        });
+
+        $this->test('Product Beta URL resolves with HTTP 200 (no redirect)', function () use ($beta) {
+            return $beta !== null && $this->httpStatus($beta) === 200;
+        });
+
         $this->test('Disabled and menu-less products are not in sitemap', function () use ($urls) {
             foreach ($urls as $u) {
                 if (str_contains($u, 'test-product-disabled') || str_contains($u, 'test-product-nomenu')) {
@@ -135,6 +147,36 @@ class SitemapHttpSefTest
             }
         }
         return null;
+    }
+
+    /**
+     * Returns the first HTTP status code for $url WITHOUT following redirects,
+     * so a 301 to the language-prefixed path is reported as 301, not 200.
+     */
+    private function httpStatus(string $url): int
+    {
+        $ctx = stream_context_create(['http' => [
+            'method'          => 'GET',
+            'timeout'         => 30,
+            'follow_location' => 0,
+            'ignore_errors'   => true,
+        ]]);
+
+        $body = @file_get_contents($url, false, $ctx);
+
+        if ($body === false && !isset($http_response_header)) {
+            return 0;
+        }
+
+        // $http_response_header is populated by the stream wrapper. Its first
+        // line looks like "HTTP/1.1 200 OK".
+        foreach (($http_response_header ?? []) as $header) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m)) {
+                return (int) $m[1];
+            }
+        }
+
+        return 0;
     }
 
     private function baseFromUrls(array $urls): ?string

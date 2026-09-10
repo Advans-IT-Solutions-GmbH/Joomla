@@ -136,32 +136,41 @@ the plugin defaults.
 ### How It Works
 
 OSMap calls `getTree()` for every menu item whose `option` matches `com_j2store`
-or `com_j2commerce`. The plugin tries two mechanisms in order:
+or `com_j2commerce`. For list views the plugin runs two URL mechanisms and
+de-duplicates their output by product id.
 
 #### Mechanism 1 — Standard menu items (primary)
 
 The plugin inspects the menu item's `view` parameter:
 
-- `view=products` — all enabled products in the given category (`catid`), or all products if no `catid`
+- `view=products` — all enabled products in the given category (`catid`) **and its sub-categories**, or all products if no `catid`
 - `view=product` — the single product referenced by `id`
-- `view=categories` — all enabled products across all categories
-- `view=categoryalias` — J2Commerce single-category alias; at runtime this redirects to `view=products` with the category's `id`. The plugin treats it identically: products of that category are emitted.
+- `view=categories` — all enabled products in the menu item's selected root category (`id`) **and its sub-categories**, or all products if the menu item has no category
+- `view=categoryalias` — J2Commerce single-category alias; at runtime this redirects to `view=products` with the category's `id`. The plugin treats it identically: products of that category (and its sub-categories) are emitted.
 
-For list views (`products`, `categories`, `categoryalias`), published=-2 hidden
-children are preferred as URL source if present (see Mechanism 2). Only if none
-exist does the plugin build URLs directly. This works on any standard J2Store or
-J2Commerce installation.
+Only publicly visible products are listed: the underlying `com_content` article
+must be published (`state = 1`) and readable by the guest view levels
+(`access`), and the product row must be enabled and visible (`enabled = 1`,
+`visibility = 1`). On a multilingual site every URL carries the menu item's
+language SEF prefix (e.g. `/de/shop/product-alias`) so it resolves directly
+without a 301 redirect.
 
-#### Mechanism 2 — Hidden menu items (fallback, site-specific)
+For list views (`products`, `categories`, `categoryalias`) **both** mechanisms
+run: the published=-2 hidden children (Mechanism 2) and the direct product
+query. Their results are merged and de-duplicated by product id, so a leftover
+hidden menu item never suppresses the rest of the catalogue. This works on any
+standard J2Store or J2Commerce installation.
+
+#### Mechanism 2 — Hidden menu items (additional, site-specific)
 
 Some installations manually create hidden `com_content` menu items
 (`published=-2`) as children of the shop menu item, one per product. These
 items carry the SEF path directly (e.g. `shop/product-alias`).
 
-If the shop menu item has no `view` parameter, the plugin falls back to
-querying `#__menu` for `published=-2` children, joins `#__content` and the
-products table to verify each product is enabled, and emits the menu item's
-`path` directly as the sitemap URL.
+When present, the plugin queries `#__menu` for `published=-2` children, joins
+`#__content` and the products table to verify each product is publicly visible,
+and emits the menu item's `path` (with the language SEF prefix) directly as the
+sitemap URL. This also runs for a shop menu item that has no `view` parameter.
 
 ## Development
 
@@ -318,6 +327,27 @@ The J2Store mechanism uses the `path` field of the `published=-2` menu item
 directly as the sitemap URL. If product aliases were renamed or the menu tree
 was modified without rebuilding, the stored paths may be stale. Run
 **System → Maintenance → Rebuild** to regenerate all menu item paths.
+
+## Migrating from J2Store to J2Commerce
+
+During a migration there is a short window in which **both** `com_j2store` and
+`com_j2commerce` are installed and enabled at the same time. OSMap matches a
+single plugin element to exactly one component per request, so while both
+components are active the plugin resolves to only one of them (`com_j2store`
+takes precedence) and the shop URLs for the other component are omitted from the
+sitemap. **An empty shop sitemap during this window is expected — it is not a
+defect.**
+
+To avoid it, follow this order when migrating:
+
+1. Import/verify products in J2Commerce.
+2. **Disable J2Store** (**System → Manage → Extensions**) *before* publishing the
+   new J2Commerce shop menu items.
+3. Publish the J2Commerce menu items and rebuild the sitemap.
+4. Verify the sitemap now lists the J2Commerce product URLs.
+
+Keeping both components permanently enabled side by side is not supported by a
+single plugin element; contact us if you need that.
 
 ## Multi-Language Support
 
