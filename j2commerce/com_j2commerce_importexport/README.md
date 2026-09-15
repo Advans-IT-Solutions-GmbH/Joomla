@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-import-export.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-import-export.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-importexport.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-importexport.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -50,7 +50,7 @@ Products are matched and updated (instead of duplicated) using three methods:
 
 ## Requirements
 
-- Joomla 5.x or 6.x
+- Joomla 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
 
@@ -252,7 +252,7 @@ This component has automated tests that run via GitHub Actions (`j2commerce-impo
 
 ### Test Scope Note
 
-The compatibility jobs install the extension ZIP into official Joomla Full Package images with real J2Commerce runtimes: Joomla 5.4.6 with J2Store/J2Commerce 4.1.4 and Joomla 6.1.1 with a J2Commerce 6 package built from the official `j2commerce/j2commerce` repository. Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
+The compatibility jobs install the extension ZIP into official Joomla Docker images with real J2Commerce runtimes: the newest Joomla 5.4.x (PHP 8.3) with J2Store/J2Commerce 4.1.4 and the newest Joomla 6.x (PHP 8.4) with a J2Commerce 6 package built from a pinned commit of the official `j2commerce/j2commerce` repository. No Joomla patch version is pinned, so incompatibilities with a new Joomla release show up immediately; each job log prints the tested versions (`Tested versions: Joomla X.Y.Z, PHP A.B.C`). Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
 
 The export controller is now covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs a multipart upload to `task=import.upload`, runs `task=import.process`, asserts the product is actually created in the live `#__j2store_*` / `#__j2commerce_*` tables, and verifies the upload is rejected without a CSRF token. Both HTTP tests run on both stacks.
 
