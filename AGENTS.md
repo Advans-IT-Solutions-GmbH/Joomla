@@ -39,9 +39,10 @@
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
   im Commit kann bei aktivierter „Block command line pushes that expose my email“ den Push
   ablehnen; die No-Reply-Adresse vermeidet das.)
-- **Signing:** Verwende deinen **eigenen** verifizierten **GPG-Key**
-  (`git config commit.gpgsign true`). Die Commit-E-Mail muss zu diesem Key passen, sonst ist
-  die Signatur nicht verifizierbar. Für dieses öffentliche Repo ist Signing **verpflichtend**
+- **Signing:** Ist ein verifizierter **GPG-Key** vorhanden, signiere damit
+  (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
+  die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
+  einem fehlenden Key scheitern
   (siehe „Repo-spezifisch (Joomla)“).
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
@@ -58,10 +59,9 @@ Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den pass
 
 ## Repo-spezifisch (Joomla)
 Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz dieses Repos verifizierte
-Signaturen (der Squash-Merge durch GitHub ist signiert). Zusätzlich gilt als Konvention dieses
-öffentlichen Repos: Jeder Commit, auch im Feature-Branch, wird mit einem verifizierten Schlüssel
-signiert, dessen E-Mail zur Commit-E-Mail passt; unsignierte oder nicht verifizierbare Commits
-werden hier nicht akzeptiert.
+Signaturen. Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch
+signierst du, wenn ein verifizierter Schlüssel vorhanden ist; ohne Schlüssel dürfen sie
+unsigniert sein.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend.

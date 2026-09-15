@@ -12,6 +12,6 @@ Commit-Identität:
 
 Signing-Regeln:
 - Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz verifizierte Signaturen.
-- Konvention dieses öffentlichen Repos: jeder Commit, auch im Feature-Branch, ist mit einem verifizierten Schlüssel signiert, dessen E-Mail zur Commit-E-Mail passt. Details in `/AGENTS.md`.
+- Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch signierst du, wenn ein verifizierter Schlüssel vorhanden ist (E-Mail passend zur Commit-E-Mail); ohne Schlüssel dürfen sie unsigniert sein. Details in `/AGENTS.md`.
 
 PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.

@@ -11,7 +11,7 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 `AGENTS.md` ist die maßgebliche Quelle für Git-, Branch- und Commit-Konventionen — dort lesen, nicht hier duplizieren. Kernpunkte, die das Arbeiten in diesem Repo prägen:
 
 - Nie direkt auf `main`; jede Änderung über Feature-Branch + PR, der vom Maintainer gemergt wird (Squash).
-- Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte GPG-Signaturen**. Commits im Feature-Branch signierst du nach Repo-Regel trotzdem immer — Signing ist hier verpflichtend, und die Commit-E-Mail muss zum verifizierten Key passen, sonst ist die Signatur nicht verifizierbar (Details: `AGENTS.md`).
+- Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte GPG-Signaturen**. Das erfüllt der von GitHub signierte Squash-Merge. Feature-Branch-Commits signierst du, wenn ein Key vorhanden ist (Commit-E-Mail passend zum Key); ohne Key dürfen sie unsigniert sein (Details: `AGENTS.md`).
 - Conventional Commits steuern den automatischen Version-Bump (siehe Release).
 
 ## Tiefenwissen (Skills)
