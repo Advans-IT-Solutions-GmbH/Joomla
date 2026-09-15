@@ -4,26 +4,25 @@
 
 **Issue:** Language overrides created via Joomla's Language Manager do not apply to email tags like `[ORDERSTATUS]`, `[BILLING_COUNTRY]`, `[SHIPPING_METHOD]`.
 
-**Root cause (confirmed, GitHub Issue #273):**
+**Root cause (analysis, not re-verified against J2Commerce 6):**
 1. `helpers/email.php` loads overrides into `$jlang = JFactory::getLanguage()` (global instance, `Factory::$language`)
 2. Tag resolution uses `$language = JLanguage::getInstance($order->customer_language)` (separate instance, `Language::$languages[]`)
 3. These are two distinct static caches — overrides loaded into one are not visible to the other
 4. Additionally, `loadLanguageOverrides()` only loads from `JPATH_ADMINISTRATOR`, but Joomla Language Manager writes overrides to `JPATH_SITE/language/overrides/`
 
-**Status:** Reported upstream to j2commerce/j2cart#273. Fix pending from j2commerce team.
+**Status:** No upstream issue is tracked for this. (j2commerce/j2cart#273 is a different, closed issue about hard-coded UI texts.)
 
 **Workaround:** None currently — JavaScript-based workarounds are fragile.
 
-## `onAfterRender` and Privacy Plugin Group
+## `onAfterRender` Removed
 
-The `privacy` plugin group IS able to hook into `onAfterRender`. The plugin explicitly registers this event. The README previously stated otherwise — this was corrected in v1.5.0.
+`onAfterRender` was removed; checkout consent and the Privacy tab are rendered only via the bundled template overrides.
 
-## Custom Field vs License Keys Table
+## Lifetime License Detection
 
-Two separate tables are involved in lifetime license detection:
+Lifetime detection: J2Commerce 4 `#__j2store_product_customfields.field_value`, J2Commerce 6 `#__j2commerce_metafields.metavalue` (`metakey = is_lifetime_license`, case-insensitive `yes`). `#__license_keys` is not used by this plugin.
 
-- `#__j2store_product_customfields` — marks products as lifetime licenses (populated via J2Commerce Custom Fields UI)
-- `#__license_keys` — stores issued license keys per user (separate table, not visible in J2Commerce UI, created via SQL in post-install message)
+Both tables are populated via SQL (see the post-installation message); there is no product-edit UI for the flag. `#__j2store_product_customfields` is optional and must be created manually on J2Commerce 4.
 
 ## Updates Not Shown in Joomla Backend
 

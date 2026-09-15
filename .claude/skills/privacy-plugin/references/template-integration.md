@@ -1,31 +1,29 @@
 # Template Integration
 
-## Two Rendering Mechanisms
+## Rendering Mechanism
 
-| Mechanism | Recommended | How |
-|-----------|-------------|-----|
-| Template override | Yes | `default.php` checks for plugin via `PluginHelper`, renders `default_privacy.php` |
-| `onAfterRender` fallback | No | Plugin injects HTML by searching rendered output for CSS selectors |
+Checkout consent, the MyProfile Privacy tab and the address delete buttons are rendered only via the bundled template overrides. `onAfterRender` was removed; there is no HTML-injection fallback.
 
-Use the template override. The `onAfterRender` fallback is fragile — it searches for patterns like `j2store-myprofile` in the rendered HTML and silently fails if the markup differs.
+## Bundled Override Files
 
-## Files to Copy
+Shipped under `overrides/com_j2store/` (J2Commerce 4) **and** `overrides/com_j2commerce/` (J2Commerce 6):
 
-Template overrides under the site template's `html/com_j2store/` directory:
-
-**MyProfile privacy tab:**
-```
-myprofile/default.php
-myprofile/default_privacy.php
-myprofile/orderitems.php
-```
-
-**Checkout consent checkbox:**
 ```
 checkout/default_shipping_payment.php
+myprofile/default.php
+myprofile/default_addresses.php
 ```
 
-Target: `templates/{your-template}/html/com_j2store/`
+`script.php` (`copyTemplateOverrides()`) copies them on **first install only** into every frontend template, for both components:
+
+```
+templates/{template}/html/com_j2store/...
+templates/{template}/html/com_j2commerce/...
+```
+
+Existing files are never overwritten (listed as skipped in the post-installation message). On updates nothing is copied.
+
+`myprofile/default.php` calls `$this->loadTemplate('privacy')` for the Privacy tab; no `default_privacy.php` is shipped with the plugin.
 
 ## Requirements
 
@@ -35,28 +33,28 @@ Target: `templates/{your-template}/html/com_j2store/`
 ## How `default.php` Activates the Tab
 
 ```php
-$privacyPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
-if ($privacyPlugin) {
-    $privacyParams = new \Joomla\Registry\Registry($privacyPlugin->params);
-    $showPrivacyTab = (bool) $privacyParams->get('show_privacy_section', 1);
-    Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
-}
+$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
+$_privacyEnabled = !empty($_privacyPlugin);
+$_privacyTabId   = 'j2commerce-privacy-tab';
 ```
 
-If the plugin is disabled or not installed, `$showPrivacyTab` is `false` — no errors, tab simply hidden.
+The tab is rendered when the plugin is enabled. If the plugin is disabled or not installed, the tab is hidden without errors.
 
 ## Checkout Consent
 
-`default_shipping_payment.php` reads plugin params directly from `#__extensions` (not via `PluginHelper`) because the privacy plugin group is not imported during checkout AJAX requests:
+`default_shipping_payment.php` reads plugin params via `PluginHelper::getPlugin('privacy','j2commerce')`:
 
 ```php
-$_privacyPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
-if ($_privacyPlugin) {
-    $_pp = new Registry($_privacyPlugin->params);
-    if ($_pp->get('show_consent_checkbox', 1)) {
-        // render checkbox
-    }
-}
+$_privacyPlugin   = PluginHelper::getPlugin('privacy', 'j2commerce');
+$_privacyEnabled  = !empty($_privacyPlugin);
+$_privacyParams   = $_privacyEnabled ? new \Joomla\Registry\Registry($_privacyPlugin->params) : null;
+$_showConsent     = $_privacyEnabled && $_privacyParams->get('show_consent_checkbox', 1);
+$_consentRequired = $_privacyEnabled && $_privacyParams->get('consent_required', 1);
 ```
 
-Consent is recorded in `#__privacy_consents` when the user reaches the confirm step.
+When `consent_required` is set, the checkbox gets the HTML `required` attribute and `media/plg_privacy_j2commerce/js/consent-validator.js` is loaded. The script listens to `submit` events of `form[action*="j2store"]` / `form.j2store-checkout-form` and blocks submission with an alert if the checkbox is unchecked. There is no server-side consent check.
+
+- **J2Commerce 4 (`com_j2store`):** the step uses a `type="submit"` button, so an unchecked required checkbox blocks submission.
+- **J2Commerce 6 (`com_j2commerce`):** the checkbox is displayed, but the "Continue" button (`#button-payment-method`) is a `type="button"` handled by J2Commerce's own JavaScript (no native form submit). Neither `consent-validator.js` nor `required` blocks the step: consent is displayed only and not enforced.
+
+This plugin does not record consent in `#__privacy_consents`.

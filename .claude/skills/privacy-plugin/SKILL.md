@@ -33,7 +33,7 @@ references:
 
 Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 
-- Exports J2Commerce orders, addresses, cart data on privacy export requests
+- Exports J2Commerce orders and addresses, optional Joomla user/profile/action-log data, and AcyMailing subscriber data on privacy export requests
 - Enforces configurable retention periods before allowing data deletion
 - Anonymizes orders outside the retention period instead of deleting them
 - Detects lifetime licenses to preserve email after retention expires
@@ -57,7 +57,6 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `onPrivacyExportRequest` | Collect J2Commerce data for export |
 | `onPrivacyCanRemoveData` | Check if retention blocks deletion |
 | `onPrivacyRemoveData` | Anonymize/delete data |
-| `onAfterRender` | Inject consent checkbox + privacy section (fallback) |
 | `onAjaxJ2commercePrivacy` | Handle address deletion AJAX requests |
 
 See `references/architecture.md` for full details.
