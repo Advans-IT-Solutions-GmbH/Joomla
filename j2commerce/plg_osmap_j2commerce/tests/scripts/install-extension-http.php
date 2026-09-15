@@ -134,6 +134,10 @@ function collect_messages(string $html): array
 {
     $messages = [];
 
+    // The backend always renders a <noscript> alert (JavaScript required); it is
+    // not an installer message.
+    $html = preg_replace('/<noscript\b.*?<\/noscript>/is', '', $html);
+
     if (preg_match_all('/<joomla-alert[^>]*type="([a-z]+)"[^>]*>(.*?)<\/joomla-alert>/is', $html, $m, PREG_SET_ORDER)) {
         foreach ($m as $match) {
             $messages[] = ['type' => strtolower($match[1]), 'text' => $match[2]];

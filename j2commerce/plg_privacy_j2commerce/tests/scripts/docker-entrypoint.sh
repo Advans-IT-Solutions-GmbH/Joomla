@@ -122,7 +122,14 @@ TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"
 ADMIN_HASH=$(TEST_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" php -r 'echo password_hash(getenv("TEST_ADMIN_PASSWORD"), PASSWORD_BCRYPT);')
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}users SET password='${ADMIN_HASH}', block=0, requireReset=0 WHERE username='admin';"
-if PACKAGE_PATH=/tmp/extension.zip JOOMLA_ADMIN_USERNAME=admin JOOMLA_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" \
+if [ "${PRIVACY_INSTALL_METHOD:-web}" = "cli" ]; then
+    # Used by the update-from-previous job: older releases install the bundled task
+    # plugin through the Installer singleton and fail in the web installer.
+    cp /tmp/extension.zip /var/www/html/tmp/extension.zip
+    HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip || { echo "ERROR: Extension installation FAILED"; exit 1; }
+    echo "cli" > /tmp/test-state/privacy-install-method
+    echo "Extension installed via Joomla CLI"
+elif PACKAGE_PATH=/tmp/extension.zip JOOMLA_ADMIN_USERNAME=admin JOOMLA_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" \
     EXTENSION_NAME="Privacy - J2Commerce" STRICT_MESSAGES="${STRICT_INSTALL_MESSAGES:-1}" php /usr/local/bin/install-extension-http.php; then
     echo "web" > /tmp/test-state/privacy-install-method
     echo "✅ Extension installed via Joomla web installer"

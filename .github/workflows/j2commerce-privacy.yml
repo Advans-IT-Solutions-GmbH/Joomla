@@ -370,6 +370,7 @@ jobs:
       - name: Start environment with the previous release
         env:
           STRICT_INSTALL_MESSAGES: '0'
+          PRIVACY_INSTALL_METHOD: 'cli'
         run: |
           cd j2commerce/plg_privacy_j2commerce/tests
           docker compose -f docker-compose.joomla6.yml up -d

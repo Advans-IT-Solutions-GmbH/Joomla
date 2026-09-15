@@ -18,6 +18,8 @@ services:
       JOOMLA_ADMIN_EMAIL: admin@test.local
       # 0 only for the update-from-previous job (the previous release is set up first)
       STRICT_INSTALL_MESSAGES: ${STRICT_INSTALL_MESSAGES:-1}
+      # cli only for the update-from-previous job
+      PRIVACY_INSTALL_METHOD: ${PRIVACY_INSTALL_METHOD:-web}
     volumes:
       - joomla_data:/var/www/html
     depends_on:
