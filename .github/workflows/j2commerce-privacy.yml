@@ -49,6 +49,7 @@ jobs:
         run: |
           find j2commerce/plg_privacy_j2commerce/src -name "*.php" -exec php -l {} \;
           find j2commerce/plg_privacy_j2commerce/overrides -name "*.php" -exec php -l {} \;
+          find j2commerce/plg_privacy_j2commerce/layouts -name "*.php" -exec php -l {} \;
           find j2commerce/plg_privacy_j2commerce/plugins -name "*.php" -exec php -l {} \;
           php -l j2commerce/plg_privacy_j2commerce/script.php
 
@@ -83,6 +84,8 @@ jobs:
             script: 'template_overrides'
           - name: '08b - Consent UI Render'
             script: 'consent_render'
+          - name: '08c - Consent Logging'
+            script: 'consent_logging'
           - name: '09 - AutoCleanup Task'
             script: 'autocleanup_task'
           - name: '10 - AcyMailing Integration'
@@ -154,6 +157,8 @@ jobs:
             script: 'template_overrides'
           - name: '08b - Consent UI Render'
             script: 'consent_render'
+          - name: '08c - Consent Logging'
+            script: 'consent_logging'
           - name: '09 - AutoCleanup Task'
             script: 'autocleanup_task'
           - name: '10 - AcyMailing Integration'

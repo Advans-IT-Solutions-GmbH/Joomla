@@ -72,7 +72,30 @@ class InstallationTest
 
         $this->test('Task plugin class exists',
             file_exists(JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php'));
-        
+
+        $query = $this->db->getQuery(true)
+            ->select('extension_id, enabled')
+            ->from('#__extensions')
+            ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerceprivacy'))
+            ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('system'));
+        $this->db->setQuery($query);
+        $systemPlugin = $this->db->loadObject();
+
+        $this->test('Bundled consent system plugin is installed', $systemPlugin !== null, 'System plugin not found in database');
+
+        if ($systemPlugin) {
+            $this->test('Bundled consent system plugin is enabled', $systemPlugin->enabled == 1, 'System plugin is disabled');
+        }
+
+        $this->test('Consent system plugin class exists',
+            file_exists(JPATH_BASE . '/plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php'));
+
+        $this->test('Consent repository class exists',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/src/Consent/ConsentRepository.php'));
+
+        $this->test('Privacy tab layout exists',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/layouts/privacy_tab.php'));
+
         // Test 3: Language files exist
         $this->test('German language file exists', 
             file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/language/de-DE/plg_privacy_j2commerce.ini'));

@@ -90,7 +90,7 @@ Joomla's `com_privacy` component requires a frontend menu item to generate valid
 6. Under **Link Type**, set **Display in Menu** to **No** (hidden menu item)
 7. Save
 
-This menu item is required for the "Data Export" and "Data Deletion" buttons in the J2Commerce profile privacy tab to work for logged-in users. Guest users see mailto links instead (see below).
+This menu item is required for the privacy request link in the J2Commerce profile privacy tab to work for logged-in users (the request form lets the user choose export or deletion). Guest users see a mailto link instead (see below).
 
 ---
 
@@ -124,40 +124,54 @@ For a full overview of how Joomla's Privacy Suite works, see the [Joomla Privacy
 
 The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: Shipping & Payment) via the template override `default_shipping_payment.php`. See [Template Integration](#template-integration) for deployment details.
 
-**Validation:** Client-side JavaScript validates both the AGB/TOS checkbox (J2Store built-in) and the privacy consent checkbox together. If either is unchecked, both error messages are shown simultaneously. The validation uses capturing-phase event listeners that run before J2Store's jQuery handler.
+**Validation (J2Commerce 6):** J2Commerce 6 loads the checkout steps via AJAX and removes `<script>` tags from the step HTML, so the consent is validated on the server. The bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed and enabled together with this plugin) inspects the shipping & payment step (`task=checkout.shippingPaymentMethodValidate`) before J2Commerce handles it:
 
-**Error containers** use class `j2-validation-error` (not `j2error`) so that J2Store's global `$('.j2error').remove()` in the AJAX success handler does not destroy them.
+- Checkbox ticked: the consent is remembered in the session for this checkout.
+- Checkbox not ticked and **Consent Required** = Yes: J2Commerce receives a field error for `j2commerce_privacy_consent` and the checkout does not advance.
+- The override posts a hidden marker (`j2commerce_privacy_consent_rendered`). Without it (template without the override) no checkout is blocked.
+
+**Validation (J2Commerce 4 / J2Store):** the `com_j2store` checkout override keeps the client-side script `media/js/consent-validator.js`, which blocks the checkout form submit while the required checkbox is unticked.
 
 ### Consent Recording
 
-| User Type | When | Where | Identifier |
-|-----------|------|-------|------------|
-| Logged-in | Checkout confirm step | `#__privacy_consents` | `user_id` |
-| Guest | First profile view after checkout | `#__privacy_consents` | `user_id=0`, email in `body` field |
+Consent is stored in Joomla's core table `#__privacy_consents`. No table of its own is created.
 
-**Logged-in users:** Consent is written to `#__privacy_consents` when the user reaches the checkout confirm step (step 5). The plugin params are read directly from `#__extensions` because the privacy plugin group is not imported during checkout AJAX requests.
+| Column | Value |
+|--------|-------|
+| `user_id` | `user_id` of the order (`0` for guest orders) |
+| `state` | `1` (valid). Core semantics apply: `0` obsolete, `-1` invalidated in **Users → Privacy → Consents** |
+| `created` | Time the order was saved |
+| `subject` | `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT` (translated in the backend) |
+| `body` | Order number, IP address and user agent (the same evidence Joomla's registration consent stores), plus the marker `<!-- j2commerce-order:ORDER_ID -->` |
+| `remind`, `token` | Core defaults (`0`, empty) |
 
-**Guest users:** At checkout, `Factory::getApplication()->getIdentity()` returns `user_id=0`. The consent entry is created retroactively when the guest views the profile privacy tab (accessed via order token). The guest email is read from the J2Store session (`guest_order_email`), and orders are matched by email address.
+**When:** on J2Commerce 6, when J2Commerce saves the order in the confirm step (`onJ2CommerceAfterSaveOrder`) and the shopper ticked the checkbox in the shipping & payment step of the same session. Exactly one record is written per order: a second save of the same order finds the existing valid record and writes nothing.
+
+**Guests:** the record gets `user_id = 0`. The e-mail address is **not** copied into the consent; the guest is traced through the order (`user_email` of the order and the order number in `body`).
+
+**Not recorded:** consents are never created retroactively from the mere existence of an order, because an order is no evidence that the checkbox was ticked. Orders placed before this version, and checkouts on J2Commerce 4 / J2Store, have no checkout consent record.
+
+**Uninstall:** consent records are Joomla core data and remain in `#__privacy_consents`.
 
 ### Profile Privacy Tab
 
-The privacy tab in J2Commerce's "My Profile" shows consent status and privacy request buttons.
+The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy request link. Its content is the override `myprofile/default_privacy.php`, which renders the plugin layout `layouts/privacy_tab.php` (overridable as `templates/{template}/html/layouts/privacy_tab.php`).
 
-> **Template override required.** The privacy tab is only rendered when the MyProfile template override (`default.php`) is in place. The override is deployed automatically on first install. See [Template Integration](#template-integration) for details.
+> **Template override required.** The privacy tab is only rendered when the MyProfile template overrides (`default.php`, `default_privacy.php`) are in place. See [Template Integration](#template-integration) for details.
 
-**Consent status lookup** checks three sources in order:
-1. `#__privacy_consents` table (by `user_id` for logged-in, not available for guests)
-2. `#__j2store_orders` / `#__j2commerce_orders` by `user_id` (logged-in users)
-3. `#__j2store_orders` / `#__j2commerce_orders` by `user_email` (guest users)
+**Consent status lookup** (valid records only, `state = 1`):
 
-If an order is found but no `#__privacy_consents` entry exists, one is auto-created.
+| User Type | Lookup |
+|-----------|--------|
+| Logged-in | All records with the user's `user_id`: checkout consents of the user's orders and Joomla's registration/profile consent |
+| Guest (order token + `guest_order_email` in the J2Commerce session) | Checkout consents (`user_id = 0`) of guest orders placed with that e-mail address |
 
-**Privacy request buttons** (Data Export, Data Deletion):
+**Privacy request link** (shown when **Show Export Data** or **Show Delete All Data** is enabled):
 
-| User Type | Button Behavior |
-|-----------|----------------|
-| Logged-in | Links to `com_privacy` request form (requires menu item, see above) |
-| Guest | `mailto:` link to site admin email (guests cannot use `com_privacy` — Joomla's Dispatcher redirects them to login) |
+| User Type | Link |
+|-----------|------|
+| Logged-in | `com_privacy` request form (`index.php?option=com_privacy&view=request`; requires the menu item, see above) |
+| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login) |
 
 ---
 
@@ -178,6 +192,7 @@ On first install, `script.php` copies the bundled overrides into every active fr
 templates/{template}/html/com_j2store/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2store/myprofile/default.php
 templates/{template}/html/com_j2store/myprofile/default_addresses.php
+templates/{template}/html/com_j2store/myprofile/default_privacy.php
 ```
 
 **J2Commerce 6.x** (`com_j2commerce`):
@@ -185,11 +200,12 @@ templates/{template}/html/com_j2store/myprofile/default_addresses.php
 templates/{template}/html/com_j2commerce/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2commerce/myprofile/default.php
 templates/{template}/html/com_j2commerce/myprofile/default_addresses.php
+templates/{template}/html/com_j2commerce/myprofile/default_privacy.php
 ```
 
 Rules:
 - Files are **only copied if they do not already exist** — existing customisations are never overwritten.
-- On **updates**, no files are copied. Manage overrides manually after updating.
+- On **updates**, only `myprofile/default_privacy.php` is copied, and only where it is still missing (the deployed `default.php` loads it for the Privacy tab). All other overrides are not touched; manage them manually after updating. An already deployed J2Commerce 6 checkout override does not post the `j2commerce_privacy_consent_rendered` marker, so a missing tick is not rejected there until the override is updated; ticked consents are recorded either way.
 - The postflight message lists which files were copied and which were skipped.
 
 ### Manual deployment
@@ -317,10 +333,6 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 2. Merge any changes relevant to your customisation.
 3. The postflight message on update will remind you of this.
 
-### Licenses tab (optional)
-
-`default.php` also conditionally renders a **Licenses** tab if the `#__license_keys` table exists and contains rows for the current user. This tab is unrelated to the privacy plugin — it is part of the Advans IT Solutions licensing system. If you do not use that system, the tab simply does not appear (the query is wrapped in a `try/catch`).
-
 ---
 
 ## Implementation Guide
@@ -331,17 +343,14 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 
 This step is only required if your shop sells products with perpetual (lifetime) licenses. The plugin functions fully without it — lifetime license detection is simply skipped.
 
-**Two separate tables are involved:**
+**Version-specific tables:**
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
 | `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | Insert product metafields with `owner_resource = product`, `metakey = is_lifetime_license`, `metavalue = yes` |
 | `#__j2store_product_customfields` (J2Commerce 4.x) | Marks which products are lifetime licenses | Optional custom field table used by this plugin |
-| `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
 For J2Commerce 6, insert the metafield row shown in the post-installation message for every perpetual-license product. For J2Commerce 4 / J2Store, create and populate `#__j2store_product_customfields` as shown in the post-installation message.
-
-> **Note:** The `#__license_keys` table, if present, belongs to the Advans licensing system and is not used by the cleanup task for lifetime-license detection.
 
 ---
 
@@ -1169,9 +1178,10 @@ This plugin has automated tests that run on every push and on pull requests via 
 7. **GDPR Compliance** — all DSGVO-relevant methods and hooks
 8. **Template Overrides** — override source files and deployment verification
 9. **Consent UI Render** — renders the deployed checkout and MyProfile overrides for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon) actually appear in the produced HTML
-10. **AutoCleanup Task** — scheduled task registration and execution
-11. **AcyMailing Integration** — newsletter consent sync
-12. **Uninstall** — clean removal from database and filesystem
+10. **Consent Logging** — writes checkout consent to `#__privacy_consents` for a logged-in and a guest order, verifies no duplicates, status lookup by `user_id` and by guest order e-mail (only `state = 1`), no e-mail copied into the consent, the consent system plugin's step decision and `onJ2CommerceAfterSaveOrder` handling, and the Privacy tab links (`com_privacy` form vs. `mailto:`)
+11. **AutoCleanup Task** — scheduled task registration and execution
+12. **AcyMailing Integration** — newsletter consent sync
+13. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 

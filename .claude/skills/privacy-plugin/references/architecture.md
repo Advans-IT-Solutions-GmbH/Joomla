@@ -68,4 +68,4 @@ Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy
 | `#__j2store_cartitems` | Cart line items |
 | `#__j2store_product_customfields` | Lifetime license flag per product |
 | `#__license_keys` | Issued license keys per user (separate from J2Commerce UI) |
-| `#__privacy_consents` | Joomla core consent records |
+| `#__privacy_consents` | Joomla core consent records. Checkout consent (J2Commerce 6): one row per order, `user_id` of the order (0 = guest), `subject` `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT`, `body` = order number + IP + user agent + marker `<!-- j2commerce-order:ID -->`; no e-mail copied. Written by the bundled system plugin, read by `src/Consent/ConsentRepository.php` |

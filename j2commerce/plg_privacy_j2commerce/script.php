@@ -48,12 +48,17 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->ensureUpdateSite();
             $this->removeLegacyAutoCleanupTaskFile();
 
-            // Deploy template overrides on first install only (never overwrite)
+            // Deploy template overrides on first install (never overwrite). Updates only add
+            // override files that older versions did not ship and that are still missing, so an
+            // already deployed MyProfile override finds its privacy tab (never overwrite).
             if ($type === 'install') {
                 $this->copyTemplateOverrides($packageSource);
+            } else {
+                $this->copyTemplateOverrides($packageSource, ['myprofile/default_privacy.php']);
             }
 
             $this->installTaskPlugin($packageSource);
+            $this->installConsentSystemPlugin($packageSource);
             $this->migrateLegacySchedulerTasks();
 
             $app = Factory::getApplication();
@@ -242,6 +247,93 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     public function uninstall($parent): void
     {
         $this->uninstallTaskPlugin();
+        $this->uninstallConsentSystemPlugin();
+    }
+
+    /**
+     * Install or update the bundled consent system plugin.
+     *
+     * The privacy plugin group is not imported during the J2Commerce checkout, so checkout
+     * consent is validated and recorded by this system plugin. It is enabled on first
+     * installation only; an administrator's later choice to disable it survives updates.
+     */
+    private function installConsentSystemPlugin(string $packageSource): void
+    {
+        $source = $packageSource . '/plugins/system/j2commerceprivacy';
+
+        if (!is_dir($source) || !is_file($source . '/j2commerceprivacy.xml')) {
+            Factory::getApplication()->enqueueMessage(
+                'J2Commerce Privacy consent system plugin was not found in the installation package.',
+                'warning'
+            );
+
+            return;
+        }
+
+        $isNew = $this->getConsentSystemPluginExtensionId() === 0;
+
+        if (!Installer::getInstance()->install($source)) {
+            Factory::getApplication()->enqueueMessage(
+                'J2Commerce Privacy consent system plugin could not be installed automatically.',
+                'warning'
+            );
+
+            return;
+        }
+
+        $extensionId = $this->getConsentSystemPluginExtensionId();
+
+        if ($isNew && $extensionId) {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->dbQuery($db)
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('enabled') . ' = 1')
+                ->where($db->quoteName('extension_id') . ' = :extensionId')
+                ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query);
+            $db->execute();
+        }
+    }
+
+    /**
+     * Remove the bundled consent system plugin when the privacy plugin is uninstalled.
+     * Recorded consents in #__privacy_consents are Joomla core data and are kept.
+     */
+    private function uninstallConsentSystemPlugin(): void
+    {
+        $db          = Factory::getContainer()->get(DatabaseInterface::class);
+        $extensionId = $this->getConsentSystemPluginExtensionId();
+
+        if ($extensionId) {
+            foreach (['#__schemas', '#__update_sites_extensions', '#__extensions'] as $table) {
+                $query = $this->dbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('extension_id') . ' = :extensionId')
+                    ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
+                $db->setQuery($query);
+                $db->execute();
+            }
+        }
+
+        $this->deleteDirectory(JPATH_PLUGINS . '/system/j2commerceprivacy');
+    }
+
+    /**
+     * Return the bundled consent system plugin extension ID (0 if not installed).
+     */
+    private function getConsentSystemPluginExtensionId(): int
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        $query = $this->dbQuery($db)
+            ->select($db->quoteName('extension_id'))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote('j2commerceprivacy'));
+        $db->setQuery($query);
+
+        return (int) $db->loadResult();
     }
 
     /**
@@ -258,17 +350,18 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * plugin inside J2Commerce's checkout or MyProfile views. Template overrides
      * are the only way to integrate without patching rendered HTML.
      */
-    private function copyTemplateOverrides(string $packageSource): void
+    private function copyTemplateOverrides(string $packageSource, ?array $onlyFiles = null): void
     {
         $sourceBase = $packageSource . '/overrides';
 
         $db        = Factory::getContainer()->get(DatabaseInterface::class);
         $templates = $this->getFrontendTemplates($db);
 
-        $overrideFiles = [
+        $overrideFiles = $onlyFiles ?? [
             'checkout/default_shipping_payment.php',
             'myprofile/default.php',
             'myprofile/default_addresses.php',
+            'myprofile/default_privacy.php',
         ];
 
         // Deploy overrides for both J2Commerce 4.x (com_j2store) and 6.x (com_j2commerce)

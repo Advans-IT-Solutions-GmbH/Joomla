@@ -20,6 +20,7 @@
         <folder>src</folder>
         <folder>language</folder>
         <folder>overrides</folder>
+        <folder>layouts</folder>
         <folder>media</folder>
     </files>
 

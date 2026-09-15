@@ -27,6 +27,7 @@ class TemplateOverridesTest
         'checkout/default_shipping_payment.php',
         'myprofile/default.php',
         'myprofile/default_addresses.php',
+        'myprofile/default_privacy.php',
     ];
 
     public function __construct()

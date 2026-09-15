@@ -31,11 +31,9 @@ if (!class_exists('J2Commerce\Component\J2commerce\Administrator\Helper\J2Commer
 }
 
 use J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper;
-use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Router\Route;
-use Joomla\CMS\Uri\Uri;
 
 /** @var \J2Commerce\Component\J2commerce\Site\View\Checkout\HtmlView $this */
 
@@ -164,21 +162,14 @@ if ($_showConsent && $_privacyArticleId) {
                 <?php endif; ?>
             </label>
         </div>
-    </div>
-    <?php if ($_consentRequired) : ?>
-        <div id="j2commerce-consent-validator"
-             data-error="<?php echo $this->escape(Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_REQUIRED_ERROR')); ?>"
-             style="display:none;"></div>
         <?php
-        Factory::getApplication()->getDocument()->getWebAssetManager()
-            ->registerAndUseScript(
-                'plg_privacy_j2commerce.consent-validator',
-                Uri::root(true) . '/media/plg_privacy_j2commerce/js/consent-validator.js',
-                [],
-                ['defer' => true]
-            );
+        // Marker for the bundled system plugin: the checkbox was rendered, so a missing tick
+        // is rejected server-side (when consent is required) and a tick is recorded per order.
+        // J2Commerce 6 loads this step via AJAX and strips <script> tags, so the consent is
+        // validated on the server instead of by a script.
         ?>
-    <?php endif; ?>
+        <input type="hidden" name="j2commerce_privacy_consent_rendered" value="1">
+    </div>
     <?php endif; ?>
 
     <div class="mt-3">
