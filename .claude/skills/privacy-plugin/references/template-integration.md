@@ -45,14 +45,16 @@ The tab is rendered when the plugin is enabled. If the plugin is disabled or not
 
 `default_shipping_payment.php` renders the checkbox (`id`/`name` `j2commerce_privacy_consent`) when `PluginHelper::getPlugin('privacy', 'j2commerce')` returns the plugin and `show_consent_checkbox` is on.
 
-**J2Commerce 6 (verified against J2Commerce 6.6.1, `7edb6e11`):** steps are loaded via AJAX and `J2CommerceDom.adopt()` strips `<script>` tags; the privacy group is not imported during the checkout. The bundled **system** plugin `plg_system_j2commerceprivacy` handles consent. Session keys `plg_system_j2commerceprivacy_rendered` and `plg_system_j2commerceprivacy_consent`, both bound to the cart ID (`CartHelper::getInstance()->getCart(0, false)`):
+**J2Commerce 6 (verified against J2Commerce 6.6.1, `7edb6e11`):** steps are loaded via AJAX and `J2CommerceDom.adopt()` strips `<script>` tags; the privacy group is not imported during the checkout. The bundled **system** plugin `plg_system_j2commerceprivacy` handles consent.
 
-1. The override calls `J2CommercePrivacy::markCheckboxRendered($required)` while rendering the checkbox (server side, no posted marker).
+Enforced = `show_consent_checkbox` and `consent_required` on **and** the active site template (or its parent) has `html/com_j2commerce/checkout/default_shipping_payment.php` containing `markCheckboxRendered` (`templateReportsCheckbox()`, cached per request). Never decided from request or session. The only session key is `plg_system_j2commerceprivacy_consent` = `['cart' => cart ID]` (`CartHelper::getInstance()->getCart(0, false)`).
+
+1. The override calls `J2CommercePrivacy::markCheckboxRendered($required)` on every render of step 4; it removes the stored consent (fresh tick required).
 2. `onAfterRoute` calls `handleCheckoutRequest()`; the task is resolved like `ComponentDispatcher` (`controller` + `task` without dot).
-   - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the cart; unticked, rendered for this cart and `consent_required`, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
-   - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused when rendered and required but no consent exists for the cart. GET gateway returns pass.
+   - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the current cart; unticked while enforced, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
+   - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused while enforced and no consent exists for the current cart (skipped step 4, cart change). GET gateway returns pass.
 3. `onJ2CommerceAfterSaveOrder` (dispatched by `CartOrder::saveOrder()`, argument 0 = saved order): consent cart equals `order->cart_id`, then `ConsentRepository::ensureOrderConsent()`.
-4. `onJ2CommerceCheckoutCleanup` clears both session keys.
+4. `onJ2CommerceCheckoutCleanup` removes the consent.
 
 Consent is never created retroactively from an existing order. IP address and user agent are kept (not anonymized); guest rows (`user_id = 0`) are outside com_privacy export and deletion.
 

@@ -173,6 +173,12 @@ function collect_messages(string $html): array
 
 $messages = collect_messages($installResult);
 
+// Keep the messages for the installation test (it checks that the privacy plugin's own
+// message is shown, not the one of a bundled plugin installed from postflight()).
+if (is_dir('/tmp/test-state')) {
+    @file_put_contents('/tmp/test-state/install-messages.json', json_encode($messages, JSON_UNESCAPED_UNICODE));
+}
+
 if ($messages) {
     echo "Installation messages:\n";
     foreach ($messages as $message) {

@@ -309,7 +309,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $isNew = $this->getConsentSystemPluginExtensionId() === 0;
 
-        if (!Installer::getInstance()->install($source)) {
+        // Dedicated Installer instance, as for the task plugin: the singleton still holds the
+        // manifest and state of the privacy plugin installation that is running postflight().
+        $installer = new Installer();
+
+        if (method_exists($installer, 'setDatabase')) {
+            $installer->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
+        }
+
+        if (!$installer->install($source)) {
             Factory::getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_CONSENT_PLUGIN_INSTALL_FAILED'), 'warning');
 
             return;

@@ -32,14 +32,21 @@ use Joomla\Registry\Registry;
  * System plugins are imported on every request, and J2Commerce 6 dispatches its
  * onJ2Commerce* events on the application dispatcher, so this plugin receives them.
  *
- * FLOW (state lives in the Joomla session and is bound to the J2Commerce cart ID)
- * 1. The checkout override calls markCheckboxRendered() while it renders the checkbox.
- * 2. checkout.shippingPaymentMethodValidate: ticked -> consent stored for the cart;
- *    not ticked, rendered for this cart and required -> JSON field error.
- * 3. checkout.confirm and checkout.confirmPayment (browser POST): rendered and required but no
- *    consent for this cart -> refused. Covers zero-total orders and requests that skip step 2.
+ * WHEN CONSENT IS ENFORCED
+ * Determined from the site configuration, never from the request or the session: the privacy
+ * plugin shows and requires the checkbox, and the active site template (or its parent) has the
+ * J2Commerce 6 checkout override that renders it (it calls markCheckboxRendered()).
+ *
+ * FLOW
+ * 1. Every render of the shipping & payment step calls markCheckboxRendered(), which discards a
+ *    previous consent: each render needs a fresh tick.
+ * 2. checkout.shippingPaymentMethodValidate: ticked -> consent stored in the session for the
+ *    current cart; not ticked while enforced -> JSON field error.
+ * 3. checkout.confirm and checkout.confirmPayment (POST): enforced but no consent for the current
+ *    cart -> refused. Covers requests that skip step 4, zero-total orders and cart changes (for
+ *    example a login in another tab): the shopper has to tick the checkbox again.
  * 4. onJ2CommerceAfterSaveOrder: consent for the order's cart -> one #__privacy_consents record.
- * 5. onJ2CommerceCheckoutCleanup: session state is cleared.
+ * 5. onJ2CommerceCheckoutCleanup: the consent is removed from the session.
  */
 class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 {
@@ -58,14 +65,21 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     public const RESPONSE_PAYMENT_ERROR = 'payment_error';
     public const RESPONSE_REDIRECT      = 'redirect';
 
-    public const SESSION_RENDERED = 'plg_system_j2commerceprivacy_rendered';
-    public const SESSION_CONSENT  = 'plg_system_j2commerceprivacy_consent';
+    public const SESSION_CONSENT = 'plg_system_j2commerceprivacy_consent';
 
     public const TASK_VALIDATE        = 'checkout.shippingpaymentmethodvalidate';
     public const TASK_CONFIRM         = 'checkout.confirm';
     public const TASK_CONFIRM_PAYMENT = 'checkout.confirmpayment';
 
+    /** Text the bundled checkout override contains; identifies an override that reports the checkbox. */
+    public const OVERRIDE_MARKER = 'markCheckboxRendered';
+
+    private const CHECKOUT_OVERRIDE = '/html/com_j2commerce/checkout/default_shipping_payment.php';
+
     private const CART_HELPER = 'J2Commerce\\Component\\J2commerce\\Administrator\\Helper\\CartHelper';
+
+    /** @var array<string, bool> Per-request cache of the template override check */
+    private static array $templateChecks = [];
 
     public static function getSubscribedEvents(): array
     {
@@ -79,11 +93,11 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     /**
      * Decide what to do with a submitted shipping & payment step.
      *
-     * @param   Registry  $privacyParams     Params of the privacy plugin (plg_privacy_j2commerce).
-     * @param   bool      $consentTicked     The consent checkbox was posted with value 1.
-     * @param   bool      $checkboxRendered  The override rendered the checkbox for the current cart (session).
+     * @param   Registry  $privacyParams   Params of the privacy plugin (plg_privacy_j2commerce).
+     * @param   bool      $consentTicked   The consent checkbox was posted with value 1.
+     * @param   bool      $overrideActive  The active site template renders the checkbox (template check).
      */
-    public static function decide(Registry $privacyParams, bool $consentTicked, bool $checkboxRendered): string
+    public static function decide(Registry $privacyParams, bool $consentTicked, bool $overrideActive): string
     {
         if (!(int) $privacyParams->get('show_consent_checkbox', 1)) {
             return self::DECISION_IGNORE;
@@ -93,9 +107,8 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             return self::DECISION_RECORD;
         }
 
-        // Only enforce when the checkbox was actually shown; a template without the override
-        // must not block every checkout.
-        if ($checkboxRendered && (int) $privacyParams->get('consent_required', 1)) {
+        // A template without the override shows no checkbox; it must not block every checkout.
+        if ($overrideActive && (int) $privacyParams->get('consent_required', 1)) {
             return self::DECISION_REJECT;
         }
 
@@ -121,18 +134,40 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Called by the J2Commerce 6 checkout override while it renders the consent checkbox.
-     * Records server-side (session, bound to the current cart) that the checkbox was shown.
+     * Whether one of the template directories contains the J2Commerce 6 checkout override that
+     * renders the consent checkbox and reports it to this plugin.
+     *
+     * @param   string[]  $templateDirs  Absolute template directories, e.g. JPATH_THEMES . '/cassiopeia'
+     */
+    public static function templateReportsCheckbox(array $templateDirs): bool
+    {
+        foreach ($templateDirs as $dir) {
+            $file = rtrim($dir, '/\\') . self::CHECKOUT_OVERRIDE;
+
+            if (!isset(self::$templateChecks[$file])) {
+                self::$templateChecks[$file] = is_file($file)
+                    && str_contains((string) @file_get_contents($file), self::OVERRIDE_MARKER);
+            }
+
+            if (self::$templateChecks[$file]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Called by the J2Commerce 6 checkout override on every render of the consent checkbox.
+     * Discards a consent from an earlier render, another tab or another cart: the rendered,
+     * unticked checkbox has to be ticked again.
      */
     public static function markCheckboxRendered(bool $required): void
     {
         try {
-            Factory::getApplication()->getSession()->set(
-                self::SESSION_RENDERED,
-                ['cart' => self::currentCartId(), 'required' => $required]
-            );
+            Factory::getApplication()->getSession()->remove(self::SESSION_CONSENT);
         } catch (\Throwable $e) {
-            Log::add('Consent checkbox state could not be stored: ' . $e->getMessage(), Log::WARNING, 'plg_system_j2commerceprivacy');
+            Log::add('Consent checkbox state could not be reset: ' . $e->getMessage(), Log::WARNING, 'plg_system_j2commerceprivacy');
         }
     }
 
@@ -159,21 +194,29 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     /**
      * Evaluate a J2Commerce checkout request.
      *
-     * @param   Input     $input          Request input
-     * @param   object    $session        Session with get($name, $default), set($name, $value), remove($name)
-     * @param   Registry  $privacyParams  Params of the privacy plugin
-     * @param   int       $cartId         Current J2Commerce cart ID
-     * @param   string    $formToken      Expected form token name
+     * @param   Input     $input           Request input
+     * @param   object    $session         Session with get($name, $default), set($name, $value), remove($name)
+     * @param   Registry  $privacyParams   Params of the privacy plugin
+     * @param   int       $cartId          Current J2Commerce cart ID
+     * @param   string    $formToken       Expected form token name
+     * @param   bool      $overrideActive  The active site template renders the checkbox
      *
      * @return  array{type: string, message: string}|null  Null lets J2Commerce handle the request.
      */
-    public function handleCheckoutRequest(Input $input, object $session, Registry $privacyParams, int $cartId, string $formToken): ?array
-    {
+    public function handleCheckoutRequest(
+        Input $input,
+        object $session,
+        Registry $privacyParams,
+        int $cartId,
+        string $formToken,
+        bool $overrideActive
+    ): ?array {
         if ($input->getCmd('option', '') !== 'com_j2commerce' || !(int) $privacyParams->get('show_consent_checkbox', 1)) {
             return null;
         }
 
-        $task = self::resolveTask($input);
+        $task     = self::resolveTask($input);
+        $enforced = $overrideActive && (int) $privacyParams->get('consent_required', 1);
 
         if ($task === self::TASK_VALIDATE) {
             // Same token rule as J2Commerce's CheckoutController::validateAjaxToken(); without a
@@ -182,11 +225,7 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 return null;
             }
 
-            $decision = self::decide(
-                $privacyParams,
-                $input->post->getString(self::CONSENT_FIELD, '') === '1',
-                self::isRenderedForCart($session, $cartId)
-            );
+            $decision = self::decide($privacyParams, $input->post->getString(self::CONSENT_FIELD, '') === '1', $overrideActive);
 
             if ($decision === self::DECISION_RECORD) {
                 $session->set(self::SESSION_CONSENT, ['cart' => $cartId, 'at' => time()]);
@@ -201,12 +240,8 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 : null;
         }
 
-        if ($task !== self::TASK_CONFIRM && $task !== self::TASK_CONFIRM_PAYMENT) {
-            return null;
-        }
-
-        if (!self::isRenderedForCart($session, $cartId)
-            || !(int) $privacyParams->get('consent_required', 1)
+        if (($task !== self::TASK_CONFIRM && $task !== self::TASK_CONFIRM_PAYMENT)
+            || !$enforced
             || self::hasConsentForCart($session, $cartId)
         ) {
             return null;
@@ -252,7 +287,14 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $response = $this->handleCheckoutRequest($input, $app->getSession(), $privacyParams, self::currentCartId(), Session::getFormToken());
+        $response = $this->handleCheckoutRequest(
+            $input,
+            $app->getSession(),
+            $privacyParams,
+            self::currentCartId(),
+            Session::getFormToken(),
+            self::activeTemplateReportsCheckbox($app)
+        );
 
         if ($response === null) {
             return;
@@ -304,9 +346,7 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $app = $this->getApplication();
 
         if ($app && $app->isClient('site')) {
-            $session = $app->getSession();
-            $session->remove(self::SESSION_CONSENT);
-            $session->remove(self::SESSION_RENDERED);
+            $app->getSession()->remove(self::SESSION_CONSENT);
         }
     }
 
@@ -381,11 +421,24 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         return empty($plugin) ? null : new Registry($plugin->params ?? '{}');
     }
 
-    private static function isRenderedForCart(object $session, int $cartId): bool
+    /**
+     * Template check for the site template of the current request and its parent.
+     */
+    private static function activeTemplateReportsCheckbox($app): bool
     {
-        $rendered = $session->get(self::SESSION_RENDERED);
+        try {
+            $template = $app->getTemplate(true);
+        } catch (\Throwable $e) {
+            return false;
+        }
 
-        return \is_array($rendered) && isset($rendered['cart']) && (int) $rendered['cart'] === $cartId;
+        $dirs = [JPATH_THEMES . '/' . $template->template];
+
+        if (!empty($template->parent)) {
+            $dirs[] = JPATH_THEMES . '/' . $template->parent;
+        }
+
+        return self::templateReportsCheckbox($dirs);
     }
 
     private static function hasConsentForCart(object $session, int $cartId): bool

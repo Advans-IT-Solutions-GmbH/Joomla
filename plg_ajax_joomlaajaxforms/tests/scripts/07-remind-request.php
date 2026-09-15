@@ -44,7 +44,7 @@ class RemindRequestTest
         }
     }
 
-    private function http(string $url, array $fields, array $cookies = [], bool $follow = true): array
+    private function http(string $url, array $fields, ?string $cookieJar = null, bool $follow = true): array
     {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -53,10 +53,9 @@ class RemindRequestTest
         curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($fields));
-        if ($cookies) {
-            curl_setopt($ch, CURLOPT_COOKIE, implode('; ', array_map(
-                fn($k, $v) => "$k=$v", array_keys($cookies), array_values($cookies)
-            )));
+        if ($cookieJar !== null) {
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
         }
         $body = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -65,14 +64,19 @@ class RemindRequestTest
     }
 
     /**
-     * @return array{0: array<string,string>, 1: string}
+     * Starts a guest session in a cookie jar and reads a CSRF token for it.
+     *
+     * Redirects are followed and cookies kept across them. The token is read
+     * from a form field or from Joomla's script options ("csrf.token"). The
+     * username reminder view of com_users renders a form for guests; the home
+     * page is the fallback.
+     *
+     * @return array{0: string, 1: string} cookie jar path, token ('' if none)
      */
     private function sessionAndToken(): array
     {
-        // The username reminder view of com_users always renders a form with a
-        // CSRF token for guests; the home page only has one when a form module
-        // is published (not the case on a plain Joomla site).
-        $pages = [
+        $cookieJar = tempnam(sys_get_temp_dir(), 'remind-cookies-');
+        $pages     = [
             '/index.php?option=com_users&view=remind',
             '/',
         ];
@@ -81,22 +85,26 @@ class RemindRequestTest
             $ch = curl_init($this->baseUrl . $page);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
             $response = (string) curl_exec($ch);
+            $code     = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $finalUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
             curl_close($ch);
-
-            $cookies = [];
-            if (preg_match('/Set-Cookie:\s*([^=;\s]+)=([^;\r\n]+)/i', $response, $m)) {
-                $cookies[$m[1]] = $m[2];
-            }
 
             if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)
                 || preg_match('/"csrf\.token"\s*:\s*"([a-f0-9]{32})"/i', $response, $m)) {
-                return [$cookies, $m[1]];
+                return [$cookieJar, $m[1]];
             }
+
+            echo "  DIAG no token on $page: HTTP $code, final URL $finalUrl, " . strlen($response) . " bytes"
+                . (preg_match('/<title>(.*?)<\/title>/is', $response, $t) ? ', title "' . trim(strip_tags($t[1])) . '"' : '')
+                . "\n";
         }
 
-        return [[], ''];
+        return [$cookieJar, ''];
     }
 
     /**
@@ -145,7 +153,7 @@ class RemindRequestTest
         [$code, $body] = $this->http(
             $this->baseUrl . $this->ajaxPath . '&task=remind',
             ['task' => 'remind', 'email' => 'nobody@example.com'],
-            [],
+            null,
             false
         );
         $data     = $this->decode($body);

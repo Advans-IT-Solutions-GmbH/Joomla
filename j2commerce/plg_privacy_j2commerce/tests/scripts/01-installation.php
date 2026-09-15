@@ -115,6 +115,30 @@ class InstallationTest
         $this->test('Plugin was installed through the Joomla web installer', $method === 'web',
             'recorded install method: ' . ($method === '' ? 'none' : $method));
 
+        // The bundled plugins are installed from postflight(); they must not replace the state
+        // of the running privacy plugin installation (message, manifest, extension row).
+        if ($method === 'web') {
+            $messagesFile = '/tmp/test-state/install-messages.json';
+            $messages     = is_file($messagesFile) ? json_decode((string) file_get_contents($messagesFile), true) : null;
+            $this->test('Web installer messages were recorded', is_array($messages), $messagesFile . ' missing or invalid');
+
+            $texts   = implode(' | ', array_map(static fn ($m) => (string) ($m['text'] ?? ''), (array) $messages));
+            $strings = static function (string $file): array {
+                return is_file($file) ? (parse_ini_file($file, false, INI_SCANNER_RAW) ?: []) : [];
+            };
+            $privacy = $strings(JPATH_BASE . '/plugins/privacy/j2commerce/language/en-GB/plg_privacy_j2commerce.ini');
+            $system  = $strings(JPATH_BASE . '/plugins/system/j2commerceprivacy/language/en-GB/plg_system_j2commerceprivacy.sys.ini');
+            $plain   = static fn (string $value): string => trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($value))));
+
+            $guideTitle = $plain((string) ($privacy['PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TITLE'] ?? ''));
+            $systemDesc = $plain((string) ($system['PLG_SYSTEM_J2COMMERCEPRIVACY_XML_DESCRIPTION'] ?? ''));
+
+            $this->test('Installer shows the privacy plugin post-installation guide',
+                $guideTitle !== '' && str_contains($texts, $guideTitle), 'messages: ' . mb_substr($texts, 0, 300));
+            $this->test('Installer message is not the description of the bundled consent system plugin',
+                $systemDesc !== '' && !str_contains($texts, $systemDesc), 'messages: ' . mb_substr($texts, 0, 300));
+        }
+
         // Test 2: Plugin files exist
         $this->test('Main plugin file exists',
             file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/services/provider.php'));
