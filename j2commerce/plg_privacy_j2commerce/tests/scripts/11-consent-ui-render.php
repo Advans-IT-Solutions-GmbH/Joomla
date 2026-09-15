@@ -22,6 +22,16 @@
  *
  * Stack-aware: J2Store 4/5 renders com_j2store overrides; J2Commerce 6 renders
  * com_j2commerce overrides.
+ *
+ * LIMITATION (known and intended): to render in CLI this test injects a harness
+ * application into Factory::$application and seeds PluginHelper's plugin cache
+ * via reflection with the installed plugin row. It therefore does NOT prove
+ * that Joomla loads or enables the plugin, nor that J2Commerce routes a real
+ * checkout request to these layouts. Plugin registration/enabling is covered by
+ * 01-installation.php (state recorded before the test setup activates plugins).
+ * On J2Commerce 6 the rendered checkbox is not enforced by the checkout step
+ * (the "Continue" button is handled by J2Commerce JavaScript without a form
+ * submit); browser interaction is not covered by the automated tests.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');

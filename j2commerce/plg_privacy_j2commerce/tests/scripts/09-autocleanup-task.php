@@ -160,68 +160,134 @@ class AutoCleanupTaskTest
 
     private function testBundledInstaller(): void
     {
-        echo "\n--- Bundled Task Plugin Installer ---\n";
+        echo "\n--- Bundled Task Plugin (result of the privacy installer) ---\n";
 
-        $scriptFile = JPATH_BASE . '/plugins/privacy/j2commerce/script.php';
+        $query = $this->db->getQuery(true)
+            ->select($this->db->quoteName('extension_id'))
+            ->from($this->db->quoteName('#__extensions'))
+            ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+            ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('task'))
+            ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerceprivacy'));
+        $taskPluginId = (int) $this->db->setQuery($query)->loadResult();
 
-        if (!file_exists($scriptFile)) {
-            $this->test('Privacy installer script exists', false);
-            return;
+        $this->test('task plugin is registered in #__extensions', $taskPluginId > 0);
+
+        // The test environment enables every plugin after installation; the
+        // state recorded before that step shows what the installer did.
+        $stateFile = '/tmp/test-state/plugins-before-activation.tsv';
+
+        if (!is_file($stateFile)) {
+            $this->test('plugin state before test setup was recorded', false, $stateFile . ' missing');
+        } else {
+            $enabledByInstaller = null;
+
+            foreach (file($stateFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                $parts = explode("\t", $line);
+
+                if (count($parts) === 3 && $parts[0] === 'task' && $parts[1] === 'j2commerceprivacy') {
+                    $enabledByInstaller = (int) $parts[2];
+                }
+            }
+
+            $this->test('installer enabled the task plugin (before test setup)', $enabledByInstaller === 1,
+                'state before activation: ' . var_export($enabledByInstaller, true));
         }
 
-        $src = file_get_contents($scriptFile);
-
-        $this->test(
-            'installer installs bundled task plugin',
-            str_contains($src, '/plugins/task/j2commerceprivacy')
-        );
-
-        $this->test(
-            'installer enables bundled task plugin',
-            str_contains($src, 'setTaskPluginEnabled(true)')
-        );
-
-        $this->test(
-            'installer migrates legacy routine ID only',
-            str_contains($src, 'plg_privacy_j2commerce.autocleanup')
-                && str_contains($src, 'plg_task_j2commerceprivacy.autocleanup')
-                && !str_contains($src, "privacy.consent'")
-        );
+        $query = $this->db->getQuery(true)
+            ->select('COUNT(*)')
+            ->from($this->db->quoteName('#__scheduler_tasks'))
+            ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plg_privacy_j2commerce.autocleanup'));
+        $this->test('no scheduled task uses the legacy routine ID', (int) $this->db->setQuery($query)->loadResult() === 0);
     }
 
+    /**
+     * Runs the cleanup routine through Joomla's real scheduler (CLI
+     * `scheduler:run --id`). The scheduler ignores tasks whose routine is not
+     * advertised by an enabled task plugin, so a successful run proves that the
+     * plugin is discoverable, executes and anonymizes expired data.
+     */
     private function testSchedulerEventAdvertisement(): void
     {
-        echo "\n--- Scheduler Event Advertisement ---\n";
+        echo "\n--- Scheduler executes the cleanup routine (scheduler:run) ---\n";
 
-        // com_scheduler is not installed in the test container — TaskPluginTrait
-        // causes a PHP fatal at class-load time. Verify event subscriptions via
-        // static source analysis instead of runtime reflection.
-        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
+        $userId   = 9905;
+        $orderId  = 'CLEANUP-SCHED-' . time();
+        $oldDate  = date('Y-m-d H:i:s', strtotime('-11 years'));
+        $table    = $this->isJ6Stack() ? '#__j2commerce_orders' : '#__j2store_orders';
 
-        if (!file_exists($taskFile)) {
-            $this->test('Event subscriptions (skipped — file not found)', true);
+        $this->seedTestUser($userId, 'scheduler-cleanup-test@example.com');
+        $seeded = $this->seedTestOrder($userId, $orderId, $oldDate);
+        $this->test('expired test order seeded', $seeded !== null);
+
+        if ($seeded === null) {
+            $this->cleanupTestData([$userId]);
             return;
         }
 
-        $src = file_get_contents($taskFile);
+        $now  = date('Y-m-d H:i:s');
+        $task = (object) [
+            'title'           => 'J2Commerce privacy cleanup (test)',
+            'type'            => 'plg_task_j2commerceprivacy.autocleanup',
+            'execution_rules' => '{"rule-type":"manual"}',
+            'cron_rules'      => '{"type":"manual","exp":""}',
+            'state'           => 1,
+            'last_exit_code'  => 0,
+            'times_executed'  => 0,
+            'times_failed'    => 0,
+            'priority'        => 0,
+            'ordering'        => 0,
+            'params'          => '{"retention_years":10,"anonymize_orders":1,"delete_addresses":1}',
+            'note'            => '',
+            'created'         => $now,
+            'created_by'      => 0,
+        ];
 
-        $this->test(
-            'Subscribes to onTaskOptionsList',
-            str_contains($src, 'onTaskOptionsList'),
-            'Required for Joomla scheduler to discover the task'
-        );
+        try {
+            $this->db->insertObject('#__scheduler_tasks', $task, 'id');
+        } catch (\Throwable $e) {
+            $this->test('scheduled task created', false, $e->getMessage());
+            $this->cleanupTestData([$userId]);
+            return;
+        }
 
-        $this->test(
-            'Subscribes to onExecuteTask',
-            str_contains($src, 'onExecuteTask'),
-            'Required for Joomla scheduler to execute the task'
-        );
+        $taskId = (int) $task->id;
+        $this->test('scheduled task created', $taskId > 0);
 
-        $this->test(
-            'Subscribes to onContentPrepareForm',
-            str_contains($src, 'onContentPrepareForm'),
-            'Required for task parameter form in scheduler UI'
-        );
+        $output = [];
+        $exit   = 0;
+        exec('cd ' . escapeshellarg(JPATH_BASE) . ' && php cli/joomla.php scheduler:run --id=' . $taskId . ' 2>&1', $output, $exit);
+        echo '  ' . implode("\n  ", $output) . "\n";
+
+        $this->test('scheduler:run exits with 0', $exit === 0, "exit code $exit");
+
+        $row = $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select([$this->db->quoteName('last_exit_code'), $this->db->quoteName('times_executed')])
+                ->from($this->db->quoteName('#__scheduler_tasks'))
+                ->where($this->db->quoteName('id') . ' = ' . $taskId)
+        )->loadObject();
+
+        $this->test('task was executed by the scheduler', $row !== null && (int) $row->times_executed >= 1,
+            'times_executed=' . ($row->times_executed ?? 'n/a'));
+        $this->test('task finished with exit code 0 (Status::OK)', $row !== null && (int) $row->last_exit_code === 0,
+            'last_exit_code=' . ($row->last_exit_code ?? 'n/a'));
+
+        $email = $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select($this->db->quoteName('user_email'))
+                ->from($this->db->quoteName($table))
+                ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId))
+        )->loadResult();
+
+        $this->test('expired order e-mail anonymized by the task', $email === 'anonymized@deleted.invalid',
+            'user_email=' . var_export($email, true));
+
+        $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->delete($this->db->quoteName('#__scheduler_tasks'))
+                ->where($this->db->quoteName('id') . ' = ' . $taskId)
+        )->execute();
+        $this->cleanupTestData([$userId]);
     }
 
     private function testRetentionLogic(): void
@@ -487,7 +553,7 @@ class AutoCleanupTaskTest
                 $this->test('J6 metafields lifetime query', false, $e->getMessage());
             }
         } else {
-            $this->test('J6 metafields lifetime query (skipped — seed failed)', true);
+            $this->test('J6 metafields lifetime test data seeded', false, 'order item or metafield could not be inserted');
         }
 
         // Verify fail-closed behaviour is in the task plugin source

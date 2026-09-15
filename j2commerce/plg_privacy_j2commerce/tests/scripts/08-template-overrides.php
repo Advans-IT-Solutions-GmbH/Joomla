@@ -104,7 +104,11 @@ class TemplateOverridesTest
         $templates = $this->db->loadColumn() ?: [];
 
         if (empty($templates)) {
-            echo "  (no active frontend templates found — skipping deployment checks)\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('Active frontend template available for deployment checks', false, 'no enabled site template found');
+            } else {
+                echo "  (no active frontend templates found — skipping deployment checks)\n";
+            }
         }
 
         foreach ($templates as $tpl) {

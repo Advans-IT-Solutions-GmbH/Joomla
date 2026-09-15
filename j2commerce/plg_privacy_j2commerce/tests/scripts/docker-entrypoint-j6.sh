@@ -135,15 +135,28 @@ else
     exit 1
 fi
 
-# Install privacy plugin extension
-echo "Installing privacy plugin extension..."
-cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
-    echo "Extension installed via Joomla CLI"
+# Install the privacy plugin through the Joomla web installer (Installer
+# singleton, as in the backend). The administrator password is set to a known
+# value first because the site may come from the CLI/manual fallback above.
+echo "Installing privacy plugin extension via the Joomla web installer..."
+mkdir -p /tmp/test-state
+TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"
+ADMIN_HASH=$(TEST_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" php -r 'echo password_hash(getenv("TEST_ADMIN_PASSWORD"), PASSWORD_BCRYPT);')
+mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db \
+    -e "UPDATE ${DB_PREFIX}users SET password='${ADMIN_HASH}', block=0, requireReset=0 WHERE username='admin';"
+if PACKAGE_PATH=/tmp/extension.zip JOOMLA_ADMIN_USERNAME=admin JOOMLA_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" \
+    EXTENSION_NAME="Privacy - J2Commerce" STRICT_MESSAGES="${STRICT_INSTALL_MESSAGES:-1}" php /usr/local/bin/install-extension-http.php; then
+    echo "web" > /tmp/test-state/privacy-install-method
+    echo "Extension installed via Joomla web installer"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
 fi
+
+# Record plugin states before the test setup enables everything.
+mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db -N \
+    -e "SELECT folder, element, enabled FROM ${DB_PREFIX}extensions WHERE type = 'plugin';" \
+    > /tmp/test-state/plugins-before-activation.tsv
 
 echo "Enabling installed plugins..."
 mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db \
