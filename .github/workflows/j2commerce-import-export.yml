@@ -4,13 +4,24 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: 
+    paths:
       - 'j2commerce/com_j2commerce_importexport/**'
+      - 'shared/**'
+      - '.github/workflows/j2commerce-import-export.yml'
   pull_request:
     branches: [main]
     paths:
       - 'j2commerce/com_j2commerce_importexport/**'
       - 'shared/**'
+      - '.github/workflows/j2commerce-import-export.yml'
+
+permissions: {}
+
+env:
+  # J2Commerce 6 publishes no release tags. The source is pinned to the commit
+  # used in production (default branch as of 2026-08-28) so every run tests the
+  # same J2Commerce 6 code instead of the moving default branch.
+  J2C6_REF: '7edb6e11ae9148bf996b06c47a0d8266865af7b2'
 
 jobs:
   build:
@@ -20,6 +31,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Build
         run: |
           cd j2commerce/com_j2commerce_importexport
@@ -40,13 +53,32 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.2'
       - name: Check PHP syntax
         run: |
-          find j2commerce/com_j2commerce_importexport -name "*.php" -exec php -l {} \;
+          # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
+          find j2commerce/com_j2commerce_importexport -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+
+  language-lint:
+    name: Language Files
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.3'
+      - name: Lint language files
+        run: php shared/tests/lang-lint.php j2commerce/com_j2commerce_importexport
 
   test-j5:
     name: ${{ matrix.name }} (J5)
@@ -75,10 +107,14 @@ jobs:
             script: 'export-http'
           - name: '08 - Import HTTP (CSRF)'
             script: 'import-http'
+          - name: 'Installer Messages'
+            script: 'install-messages'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: extension-package
@@ -97,10 +133,13 @@ jobs:
           echo "=== Joomla Container Logs ==="
           docker compose logs joomla 2>&1 | tail -100 || true
       - name: Run tests
+        env:
+          TEST_STRICT_SKIP: '1'
+          SUITE: ${{ matrix.script }}
         run: |
           cd j2commerce/com_j2commerce_importexport/tests
           chmod +x run-tests.sh
-          ./run-tests.sh ${{ matrix.script }}
+          ./run-tests.sh "$SUITE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
@@ -139,10 +178,14 @@ jobs:
             script: 'export-http'
           - name: '08 - Import HTTP (CSRF)'
             script: 'import-http'
+          - name: 'Installer Messages'
+            script: 'install-messages'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: extension-package
@@ -152,10 +195,13 @@ jobs:
         with:
           php-version: '8.3'
           extensions: zip
-      - name: Build J2Commerce 6 from source
+      - name: Build J2Commerce 6 from source (pinned)
         run: |
-          git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2commerce6-src
-          echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          git init /tmp/j2commerce6-src
+          git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
+          git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
+          git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
+          echo "J2Commerce 6 source commit (pinned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
           cd /tmp/j2commerce6-src && php build/build_package.php
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
@@ -184,10 +230,13 @@ jobs:
           echo "=== Joomla Container Logs ==="
           docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
       - name: Run tests
+        env:
+          TEST_STRICT_SKIP: '1'
+          SUITE: ${{ matrix.script }}
         run: |
           cd j2commerce/com_j2commerce_importexport/tests
           chmod +x run-tests.sh
-          CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh ${{ matrix.script }}
+          CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh "$SUITE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
@@ -207,9 +256,11 @@ jobs:
     permissions: {}
     steps:
       - name: Verify official J5/J2C4 matrix
+        env:
+          RESULT: ${{ needs.test-j5.result }}
         run: |
-          if [ "${{ needs.test-j5.result }}" != "success" ]; then
-            echo "Official J5/J2C4 matrix did not pass: ${{ needs.test-j5.result }}"
+          if [ "$RESULT" != "success" ]; then
+            echo "Official J5/J2C4 matrix did not pass: $RESULT"
             exit 1
           fi
 
@@ -221,18 +272,30 @@ jobs:
     permissions: {}
     steps:
       - name: Verify official J6/J2C6 matrix
+        env:
+          RESULT: ${{ needs.test-j6.result }}
         run: |
-          if [ "${{ needs.test-j6.result }}" != "success" ]; then
-            echo "Official J6/J2C6 matrix did not pass: ${{ needs.test-j6.result }}"
+          if [ "$RESULT" != "success" ]; then
+            echo "Official J6/J2C6 matrix did not pass: $RESULT"
             exit 1
           fi
 
-  collect-results:
-    name: Collect Results
+  # Result of this workflow. Deliberately not named "Collect Results": that
+  # required check is produced only by collect-results.yml.
+  all-jobs:
+    name: Import/Export / all jobs
     runs-on: ubuntu-latest
-    needs: [test-j5, test-j6]
+    needs:
+      - build
+      - syntax-check
+      - language-lint
+      - test-j5
+      - test-j6
+      - official-j5-j2c4
+      - official-j6-j2c6
     if: always()
-    permissions: {}
+    permissions:
+      actions: read
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -252,3 +315,11 @@ jobs:
           name: all-test-logs
           path: test-artifacts/
           retention-days: 30
+      - name: Fail unless every job succeeded
+        if: always()
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          # failure, cancelled and skipped all count as not passed
+          echo "$NEEDS_JSON" | jq -e 'all(.[]; .result == "success")' > /dev/null

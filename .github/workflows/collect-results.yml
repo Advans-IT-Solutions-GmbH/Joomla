@@ -1,18 +1,50 @@
 name: Collect Results
 
-# Runs on every PR to main, even when no extension tests are triggered.
-# Required as a branch protection status check so that PRs touching only
-# non-extension files (docs, CI config, etc.) are not blocked indefinitely.
+# Sole producer of the required "Collect Results" status check.
+#
+# Runs on every pull request to main. It determines which extension build &
+# test workflows are triggered by the changed files (from their own
+# pull_request.paths filters), waits for those runs on the pull request head
+# commit and fails unless every one of them succeeded. A pull request that
+# triggers no extension workflow passes immediately, so documentation-only
+# changes are never blocked by a missing required check.
+#
+# The extension workflows deliberately do not use the job name
+# "Collect Results", so a failing extension run can never be hidden behind a
+# green check with the same name.
+#
+# After re-running a failed extension workflow, re-run this workflow as well.
 
 on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
+concurrency:
+  group: collect-results-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   collect-results:
     name: Collect Results
     runs-on: ubuntu-latest
-    permissions: {}
+    timeout-minutes: 345
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     steps:
-      - name: No extension tests triggered
-        run: echo "No extension tests required for this change."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+
+      - name: Wait for and evaluate triggered extension workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/collect-results.sh
