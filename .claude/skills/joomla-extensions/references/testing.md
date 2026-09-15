@@ -10,8 +10,29 @@ Tests run via Docker against a real Joomla (+ J2Commerce) installation. The shar
 - waits up to 180 s for `/var/www/html/health.txt` in the container,
 - copies `tests/scripts/*.php` and the shared suites `shared/tests/scripts/shared-*.php` into the
   container (`test.env` decides which of them run),
-- passes `TEST_STRICT_SKIP`, `J2COMMERCE_STACK` and `PREVIOUS_PACKAGE` into the container when they
-  are set on the host.
+- passes `TEST_STRICT_SKIP`, `J2COMMERCE_STACK`, `PREVIOUS_PACKAGE` and `INSTALLED_PLUGIN_FOLDERS` into
+  the container when they are set on the host or in `test.env` (`INSTALLED_PLUGIN_FOLDERS` lists every
+  plugin group the extension may be registered in; Product Compare uses `j2commerce,j2store` because
+  its installer registers `folder=j2store` on Joomla 5),
+- prints `Tested versions: Joomla X.Y.Z, PHP A.B.C` (read from the container) and, in GitHub Actions,
+  appends it to the job summary. `shared-update-from-previous.php` prints the same line.
+
+## Joomla Versions Under Test
+
+No Joomla patch version is pinned. The test images use moving official Docker tags:
+
+| Stack | Base image | Resolves to |
+|---|---|---|
+| Joomla 5 (`Dockerfile`, `tests-j2c4/`, integration compose files, `shared/tests/Dockerfile.template`) | `joomla:5.4-php8.3-apache` | newest Joomla 5.4.x; PHP 8.3 is the newest PHP offered for 5.4 |
+| Joomla 6 (`Dockerfile.joomla6`, `tests-j2c6/`, production-like lane) | `joomla:6-php8.4-apache` | newest Joomla 6.x; PHP 8.4 is the newest PHP offered for 6.x |
+
+Incompatibilities with a new Joomla release therefore show up immediately. A red CI run can be caused
+by a new Joomla release rather than by the change under test: check the `Tested versions` line in the
+job log or summary and compare it with the last green run. Locally, Docker reuses a cached base image;
+pull it (`docker pull joomla:6-php8.4-apache`) or build with `--pull` to test the same version as CI.
+
+Pinned on purpose: J2Commerce 4 stays on release 4.1.4; J2Commerce 6 is built from the commits listed
+under "J2Commerce 6 package" below.
 
 CI sets `TEST_STRICT_SKIP=1`, so a test that would SKIP fails instead. Set it locally to reproduce CI.
 
@@ -165,7 +186,10 @@ Notable test details:
   extension; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
   keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
-  fr-FR without missing accents); the Joomla 5 and Joomla 6 suite matrices; the
+  fr-FR without missing accents) followed by `php shared/tests/requirements-check.php <extension dir>`
+  (`minimumJoomla '5.4'`/`minimumPhp '8.1'` in `script.php`, `preflight()` calls the parent, every
+  manifest and `update.xml` `targetplatform`/`php_minimum`, the release workflow `targetplatform`, and
+  that the expression accepts 5.4.x/6.x and rejects 4.x and 5.0 to 5.3); the Joomla 5 and Joomla 6 suite matrices; the
   `official-j5-j2c4` / `official-j6-j2c6` gates; and a final job `<Extension> / all jobs` that fails
   unless every job succeeded (`failure`, `cancelled` and `skipped` count as failed).
 - **Privacy, OSMap, AJAX Forms** additionally run:
@@ -173,9 +197,9 @@ Notable test details:
     `release: <prefix> v` commit on `main` (older release tags are deleted by the publish workflow,
     see `release-workflow.md`), installs it, and updates to the package under test
     (`shared-update-from-previous.php`).
-  - `Production-like (J6.1, PHP 8.4, MariaDB 10.6, J2C6 production pin)`: Privacy/OSMap via
+  - `Production-like (newest J6, PHP 8.4, MariaDB 10.6, J2C6 production pin)`: Privacy/OSMap via
     `tests/docker-compose.production.yml`; AJAX Forms via `tests-j2c6/Dockerfile` built with
-    `--build-arg JOOMLA_BASE_IMAGE=joomla:6.1-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
+    `--build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
     Runs all suites (`./run-tests.sh all`; OSMap runs each suite by name without the SEF-only `sitemap-http-sef`), then `shared-deprecations.php`.
 - **J2Commerce 6 pins:** Privacy, AJAX Forms, Import/Export and Product Compare build J2Commerce 6
   from `7edb6e11ae9148bf996b06c47a0d8266865af7b2`; OSMap standard lanes and Cleanup stay on
@@ -192,7 +216,7 @@ Notable test details:
 ## Known Limitations
 
 - **No PHP 8.5 lane:** there is no official Joomla Docker image with PHP 8.5; the production-like
-  lane uses the newest available one (`joomla:6.1-php8.4-apache`). PHP 8.5 is not tested.
+  lane uses the newest available one (`joomla:6-php8.4-apache`). PHP 8.5 is not tested.
 - Privacy: the checkout consent checkbox and the Privacy tab markup are render-tested
   (`11-consent-ui-render.php`); real browser interaction is not. To render in CLI the test injects
   the application and the plugin cache via reflection, so it does not prove that Joomla loads the

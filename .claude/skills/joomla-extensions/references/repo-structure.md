@@ -6,7 +6,7 @@
 |-----------|------|------|-------------|
 | Privacy | `j2commerce/plg_privacy_j2commerce/` | plugin (privacy) | GDPR/DSGVO for J2Commerce |
 | Import/Export | `j2commerce/com_j2commerce_importexport/` | component | Product import/export |
-| Product Compare | `j2commerce/plg_j2commerce_productcompare/` | plugin (j2commerce; mirrored to j2store on J4/J5) | Product comparison |
+| Product Compare | `j2commerce/plg_j2commerce_productcompare/` | plugin (j2commerce; mirrored to j2store on Joomla 5) | Product comparison |
 | OSMap | `j2commerce/plg_osmap_j2commerce/` | plugin (osmap) | J2Commerce sitemap for OSMap |
 | Cleanup | `j2commerce/com_j2store_cleanup/` | component | Remove legacy J2Store extensions |
 | AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
