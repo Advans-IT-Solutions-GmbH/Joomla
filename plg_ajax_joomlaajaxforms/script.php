@@ -17,7 +17,7 @@ use Joomla\Database\ParameterType;
 
 class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
 {
-    protected $minimumJoomla = '5.0';
+    protected $minimumJoomla = '5.4';
     protected $minimumPhp    = '8.1';
 
     public function postflight(string $type, object $parent): void

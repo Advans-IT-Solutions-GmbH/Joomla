@@ -102,6 +102,6 @@
             https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_ajax_joomlaajaxforms/updates/update.xml
         </server>
     </updateservers>
-    <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
 </extension>
