@@ -7,11 +7,11 @@ Repo-spezifische Skills liegen unter `.claude/skills/` und gelten auch für Copi
 - `.claude/skills/privacy-plugin/` — plg_privacy_j2commerce Domain-Wissen
 
 Commit-Identität:
-- Committe unter deiner **eigenen** Identität (Modell B): dein echter Name und deine persönliche
-  GitHub-No-Reply-Adresse. Keine feste gemeinsame Firmen-Identität. Details in `/AGENTS.md`.
+- Entwickler committen unter ihrer **eigenen** Identität (eigener Account, eigene GitHub-No-Reply-Adresse, eigener Signierschlüssel).
+- Der Maintainer und KI-Agenten in seinen Sitzungen committen als `Advans IT Solutions GmbH <89843389+advansit@users.noreply.github.com>`. Details in `/AGENTS.md`.
 
 Signing-Regeln:
-- Repo-Regel: Dieses öffentliche Repository verlangt verifizierte (GPG-signierte) Commits. Signing ist hier Pflicht — mit deinem **eigenen** verifizierten Key, dessen E-Mail zur Commit-E-Mail passt.
-- Details und das allgemeine Signing-Verhalten stehen in `/AGENTS.md`.
+- Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz verifizierte Signaturen.
+- Konvention dieses öffentlichen Repos: jeder Commit, auch im Feature-Branch, ist mit einem verifizierten Schlüssel signiert, dessen E-Mail zur Commit-E-Mail passt. Details in `/AGENTS.md`.
 
 PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.
