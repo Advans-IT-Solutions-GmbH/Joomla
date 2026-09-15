@@ -123,7 +123,22 @@ function sh_find_extension_id(array $manifest, ?string $folder = null, ?string $
         . " WHERE type = '$type' AND element = '$element'";
 
     if ($type === 'plugin') {
-        $sql .= " AND folder = '$folder'";
+        // An installer script may move a plugin to another group on some stacks
+        // (product compare registers folder=j2store on Joomla 5 with J2Store 4).
+        // INSTALLED_PLUGIN_FOLDERS lists every group the extension may use.
+        $folders = [$folder];
+
+        if (func_num_args() < 2 && getenv('INSTALLED_PLUGIN_FOLDERS')) {
+            foreach (explode(',', (string) getenv('INSTALLED_PLUGIN_FOLDERS')) as $alias) {
+                $alias = trim($alias);
+
+                if ($alias !== '') {
+                    $folders[] = $db->real_escape_string($alias);
+                }
+            }
+        }
+
+        $sql .= " AND folder IN ('" . implode("','", array_unique($folders)) . "')";
     }
 
     $result = $db->query($sql);
