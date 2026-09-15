@@ -90,7 +90,7 @@ jobs:
             ### Installation
             1. Download `${{ steps.package.outputs.file }}`
             2. Install via Joomla Extension Manager
-            3. Enable plugin: Extensions → Plugins → OSMap J2Commerce
+            3. Enable plugin: System → Manage → Plugins → OSMap - J2Commerce
             4. In OSMap, ensure the menu containing your shop item is selected
 
             ### Requirements

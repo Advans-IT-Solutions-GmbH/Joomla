@@ -106,7 +106,11 @@ class AcyMailingIntegrationTest
 
         $prefix = $this->getAcymPrefix();
         if ($prefix === null) {
-            echo "SKIP (AcyMailing not installed)\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
+            } else {
+                echo "SKIP (AcyMailing not installed)\n";
+            }
             return;
         }
 
@@ -178,7 +182,11 @@ class AcyMailingIntegrationTest
 
         $prefix = $this->getAcymPrefix();
         if ($prefix === null) {
-            echo "SKIP (AcyMailing not installed)\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
+            } else {
+                echo "SKIP (AcyMailing not installed)\n";
+            }
             return;
         }
 

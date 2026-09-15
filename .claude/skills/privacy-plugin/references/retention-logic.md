@@ -6,7 +6,8 @@
 
 1. For each order, calculate `order_date + retention_years`
 2. If any order is within the retention period → block deletion
-3. Return array with `can_remove` (bool) and details per order
+3. If an order contains a lifetime-license product and its retention period has expired → also block deletion (`can_delete = false`, listed under `lifetime_licenses_accounting`)
+4. Return array with `can_delete` (bool) and details per order
 
 ## Anonymization (orders outside retention)
 
@@ -14,7 +15,7 @@
 
 | Field | Value |
 |-------|-------|
-| `user_email` | `anonymized@example.com` |
+| `user_email` | `anonymized@deleted.invalid` |
 | `billing_first_name` | `Anonymized` |
 | `billing_last_name` | `User` |
 | `shipping_first_name` | `''` (cleared) |
@@ -27,12 +28,15 @@ Order numbers, dates, amounts, and product information are preserved (required f
 
 ## Lifetime License Exception
 
-If a user has a lifetime license (`#__license_keys` + `#__j2store_product_customfields.is_lifetime_license = Yes`):
+Lifetime detection: J2Commerce 4 `#__j2store_product_customfields.field_value`, J2Commerce 6 `#__j2commerce_metafields.metavalue` (`metakey = is_lifetime_license`, case-insensitive `yes`). `#__license_keys` is not used by this plugin.
 
-- After retention expires: orders are anonymized BUT email is preserved
+If a user has a lifetime license:
+
+- A deletion request is blocked (`can_delete = false`), also after the retention period has expired
+- The scheduled task anonymizes the orders after retention expires BUT keeps the order email
 - Reason: email is needed for license activation/verification
-- `partialAnonymizeUserData()` handles this case (email kept, all other PII cleared)
-- `anonymizeUserData()` handles the normal case (email also cleared)
+- In the task plugin, `partialAnonymizeUserData()` handles this case (email kept, all other PII cleared)
+- `anonymizeUserData()` handles the normal case (email also set to `anonymized@deleted.invalid`)
 
 ## Retention Periods by Country
 
@@ -50,4 +54,4 @@ Default: 10 years (Swiss standard).
 
 ## Scheduled Cleanup
 
-`AutoCleanupTask` runs via Joomla Scheduler. It processes all users with expired retention periods automatically, without requiring a manual deletion request. Configure under `System → Scheduled Tasks`.
+The task plugin class `J2CommercePrivacy` (`plugins/task/j2commerceprivacy/`) provides the routine `plg_task_j2commerceprivacy.autocleanup`, run via Joomla Scheduler. It processes all users whose most recent order is older than the retention period, without requiring a manual deletion request. The task uses its own parameters (`retention_years`, `anonymize_orders`, `delete_addresses`), not the privacy plugin params. Configure under `System → Manage → Scheduled Tasks`.

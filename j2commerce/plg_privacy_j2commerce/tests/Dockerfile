@@ -27,6 +27,7 @@ COPY extension.zip /tmp/extension.zip
 
 # Copy custom entrypoint
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
+COPY scripts/install-extension-http.php /usr/local/bin/install-extension-http.php
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
 ENV EXTENSION_NAME="J2Commerce Privacy Plugin"

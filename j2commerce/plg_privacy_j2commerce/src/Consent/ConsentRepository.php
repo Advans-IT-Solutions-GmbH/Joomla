@@ -21,8 +21,8 @@ use Joomla\Database\ParameterType;
  * Data model (Joomla core, unchanged): id, user_id, state, created, subject, body, remind, token.
  * - One record per J2Commerce order, written only when the shopper ticked the consent checkbox.
  * - user_id is the order's user_id (0 for guest orders), exactly as J2Commerce stored it.
- * - The order is referenced by a language-independent marker in body. No e-mail address is copied:
- *   guests are traced through the order's own user_email column.
+ * - body holds order number, IP address and user agent, plus a language-independent order marker.
+ *   No e-mail address is copied; guests are traced through the order (token + user_email).
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
  */
 final class ConsentRepository
@@ -38,9 +38,6 @@ final class ConsentRepository
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
-
-    /** Upper bound of guest orders inspected for one status lookup. */
-    private const MAX_ORDERS = 500;
 
     private DatabaseInterface $db;
 
@@ -83,6 +80,10 @@ final class ConsentRepository
      */
     public function buildBody(string $orderId, string $ipAddress, string $userAgent): string
     {
+        $language = Factory::getLanguage();
+        $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
+            || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
+
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
         return Text::sprintf(self::BODY_KEY, $escape($orderId), $escape($ipAddress), $escape($userAgent))
@@ -146,22 +147,23 @@ final class ConsentRepository
     /**
      * Consent status for the MyProfile privacy tab.
      *
-     * - Logged-in user: every valid record with the user's user_id (checkout consents of the user's
-     *   own orders and Joomla's registration/profile consent).
-     * - Guest (user_id 0): valid checkout consents of guest orders placed with the given e-mail
-     *   address. The caller must have verified the guest session (order token + e-mail) first.
+     * - Logged-in user: valid records with the user's user_id and either the checkout subject or
+     *   Joomla's registration/profile consent subject.
+     * - Guest: the valid checkout consent of exactly the one guest order identified by order token
+     *   and e-mail address, the same scope J2Commerce grants the guest session.
      *
      * @return  array{consented: bool, latest: ?string, records: list<object>}
      */
-    public function getStatus(int $userId, string $guestEmail = ''): array
+    public function getStatus(int $userId, string $guestEmail = '', string $guestToken = ''): array
     {
-        $records = $userId > 0 ? $this->loadUserConsents($userId) : $this->loadGuestConsents($guestEmail);
+        $records = $userId > 0 ? $this->loadUserConsents($userId) : $this->loadGuestConsent($guestEmail, $guestToken);
 
         usort($records, static fn (object $a, object $b): int => strcmp((string) $b->created, (string) $a->created));
 
         foreach ($records as $record) {
-            $record->order_id = $record->subject === self::SUBJECT ? self::extractOrderId((string) $record->body) : null;
-            $record->source   = $record->order_id !== null ? 'checkout' : 'account';
+            $isCheckout       = $record->subject === self::SUBJECT;
+            $record->order_id = $isCheckout ? self::extractOrderId((string) $record->body) : null;
+            $record->source   = $isCheckout ? 'checkout' : 'account';
             unset($record->body);
         }
 
@@ -180,6 +182,7 @@ final class ConsentRepository
             ->from($this->db->quoteName('#__privacy_consents'))
             ->where($this->db->quoteName('state') . ' = 1')
             ->where($this->db->quoteName('user_id') . ' = :userid')
+            ->where($this->db->quoteName('subject') . ' IN (' . $this->db->quote(self::SUBJECT) . ', ' . $this->db->quote(self::CORE_SUBJECT) . ')')
             ->bind(':userid', $userId, ParameterType::INTEGER);
 
         $this->db->setQuery($query);
@@ -188,49 +191,40 @@ final class ConsentRepository
     }
 
     /** @return list<object> */
-    private function loadGuestConsents(string $guestEmail): array
+    private function loadGuestConsent(string $guestEmail, string $guestToken): array
     {
         $guestEmail = trim($guestEmail);
 
-        if ($guestEmail === '') {
+        if ($guestEmail === '' || $guestToken === '') {
             return [];
         }
 
+        $table = $this->ordersTable();
+
+        if (!array_key_exists('token', $this->db->getTableColumns($table))) {
+            return [];
+        }
+
+        // One token identifies one order; nothing else of that e-mail address is looked up.
         $query = $this->createQuery()
             ->select($this->db->quoteName('order_id'))
-            ->from($this->db->quoteName($this->ordersTable()))
+            ->from($this->db->quoteName($table))
             ->where($this->db->quoteName('user_id') . ' = 0')
+            ->where($this->db->quoteName('token') . ' = :token')
             ->where($this->db->quoteName('user_email') . ' = :email')
-            ->bind(':email', $guestEmail)
-            ->order($this->db->quoteName('created_on') . ' DESC');
+            ->bind(':token', $guestToken)
+            ->bind(':email', $guestEmail);
 
-        $this->db->setQuery($query, 0, self::MAX_ORDERS);
+        $this->db->setQuery($query, 0, 1);
+        $orderId = (string) $this->db->loadResult();
 
-        $orderIds = array_values(array_filter(
-            array_map('strval', $this->db->loadColumn() ?: []),
-            [self::class, 'isValidOrderId']
-        ));
-
-        if ($orderIds === []) {
+        if (!self::isValidOrderId($orderId)) {
             return [];
         }
 
-        $markers = array_map(
-            fn (string $orderId): string => $this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId),
-            $orderIds
-        );
+        $record = $this->findOrderConsent($orderId);
 
-        $query = $this->createQuery()
-            ->select($this->db->quoteName(['id', 'user_id', 'created', 'subject', 'body']))
-            ->from($this->db->quoteName('#__privacy_consents'))
-            ->where($this->db->quoteName('state') . ' = 1')
-            ->where($this->db->quoteName('user_id') . ' = 0')
-            ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
-            ->where('(' . implode(' OR ', $markers) . ')');
-
-        $this->db->setQuery($query);
-
-        return $this->db->loadObjectList() ?: [];
+        return $record !== null && (int) $record->user_id === 0 ? [$record] : [];
     }
 
     private function likeMarker(string $orderId): string

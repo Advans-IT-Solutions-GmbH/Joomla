@@ -11,7 +11,7 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 `AGENTS.md` ist die maßgebliche Quelle für Git-, Branch- und Commit-Konventionen — dort lesen, nicht hier duplizieren. Kernpunkte, die das Arbeiten in diesem Repo prägen:
 
 - Nie direkt auf `main`; jede Änderung über Feature-Branch + PR, der vom Maintainer gemergt wird (Squash).
-- Dieses Repo ist **öffentlich** und erzwingt per Organization-Ruleset **verifizierte GPG-Signaturen** — Signing ist hier verpflichtend, und die Commit-E-Mail muss zum verifizierten Key passen, sonst wird der Merge abgelehnt (Details: `AGENTS.md`).
+- Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte GPG-Signaturen**. Das erfüllt der von GitHub signierte Squash-Merge. Feature-Branch-Commits signierst du, wenn ein Key vorhanden ist (Commit-E-Mail passend zum Key); ohne Key dürfen sie unsigniert sein (Details: `AGENTS.md`).
 - Conventional Commits steuern den automatischen Version-Bump (siehe Release).
 
 ## Tiefenwissen (Skills)
@@ -29,25 +29,24 @@ Joomla/
 ├── j2commerce/                 # J2Commerce-bezogene Extensions
 │   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension
 │   ├── plg_osmap_j2commerce/           # OSMap-Sitemap-Plugin (Gruppe: osmap)
-│   ├── plg_j2commerce_productcompare/  # Produktvergleich (Gruppe: j2store)
+│   ├── plg_j2commerce_productcompare/  # Produktvergleich (Gruppe: j2commerce; auf Joomla 4/5 zusätzlich als `j2store` gespiegelt)
 │   ├── com_j2commerce_importexport/    # Komponente: Bulk-Import/Export
 │   └── com_j2store_cleanup/            # Komponente: Migrationsbereinigung J2Store→J2Commerce
 ├── shared/                     # gemeinsame Build- und Test-Skripte (Single Source of Truth)
-├── tests/logs/                 # eingecheckte Referenz-Testergebnisse pro Extension/Suite
 └── .github/workflows/          # je Extension ein Test- und zwei Release-/Publish-Workflows
 ```
 
-**`shared/` ist der Kern.** Alle Extensions teilen sich genau zwei generische Skripte und kopieren keine Logik:
+**`shared/` ist der Kern.** Kern sind zwei generische Skripte (unten); daneben liegen gemeinsame Hilfsdateien (`verify-package.sh`, Docker-Vorlage, Entrypoint, Installer). Die Extensions kopieren keine Logik:
 
-- `shared/build/build.sh` — generischer Paketierer. Liest `build.env` der Extension (`EXTENSION_NAME`, `VERSION`, `EXTENSION_TYPE`, optional `PLUGIN_GROUP`), rsync't die Dateien unter Ausschluss von Tests/Docker/Composer-Artefakten, erzeugt das Installations-ZIP und ruft anschließend `verify-package.sh`. Jede Extension hat nur einen dünnen Wrapper `build.sh`, der hierher delegiert.
+- `shared/build/build.sh` — generischer Paketierer. Liest `build.env` der Extension (`EXTENSION_NAME`, `VERSION`, `EXTENSION_TYPE`), rsync't die Dateien unter Ausschluss von Tests/Docker/Composer-Artefakten, erzeugt das Installations-ZIP und ruft anschließend `verify-package.sh`. Jede Extension hat nur einen dünnen Wrapper `build.sh`, der hierher delegiert.
 - `shared/tests/run-tests.sh` — generischer Test-Runner. Liest `test.env` (`CONTAINER_NAME`, `TEST_SCRIPTS`-Array im Format `"name:script.php"`), wartet bis der Joomla-Docker-Container bereit ist, kopiert die PHP-Testskripte hinein und führt sie aus. Jede Extension hat einen Wrapper `tests/run-tests.sh`, der via `exec` hierher delegiert.
 
-**Pro Extension** (Details: `.claude/skills/joomla-extensions/references/repo-structure.md`): `build.env`, Manifest (`{plugin}.xml` bzw. Komponenten-Manifest), `script.php` (install/update/uninstall), `services/provider.php` (DI), `src/`, `language/{de-DE,en-GB,fr-FR}/`, `updates/update.xml` und `tests/`. `VERSION`, das Manifest und `update.xml` werden **vom Release-Workflow verwaltet — nie von Hand setzen**. Plugin-`update.xml` muss `<client>site</client>` enthalten (Plugins installieren mit `client_id=0`).
+**Pro Extension** (Details: `.claude/skills/joomla-extensions/references/repo-structure.md`): `build.env`, Manifest (`{plugin}.xml` bzw. Komponenten-Manifest), `script.php` (install/update/uninstall), `services/provider.php` (DI), `src/`, `language/{de-DE,en-GB,fr-FR}/`, `updates/update.xml` und `tests/` (Komponenten weichen ab: siehe jeweiliges README). `VERSION`, das Manifest und `update.xml` werden **vom Release-Workflow verwaltet — nie von Hand setzen**. Plugin-`update.xml` muss `<client>site</client>` enthalten (Plugins installieren mit `client_id=0`).
 
 **Tests** laufen Docker-basiert gegen eine echte Joomla-(+J2Commerce-)Installation. Es gibt zwei Test-Ebenen:
 
 - Integrations-/Funktionstests über die PHP-Skripte in `tests/scripts/` + `shared/tests/run-tests.sh` (das, was die CI ausführt).
-- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce`, Suites `Unit` und `Integration`).
+- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce` mit den Suites `Unit` und `Integration`, ausserdem `com_j2commerce_importexport`, `com_j2store_cleanup` und `plg_j2commerce_productcompare`).
 
 Manche Extensions testen gegen mehrere Plattformen über parallele Test-Ordner bzw. `docker-compose.joomla6.yml` (z. B. `plg_ajax_joomlaajaxforms` mit `tests/`, `tests-j2c4/`, `tests-j2c6/`).
 
@@ -61,6 +60,11 @@ Hinweis: Build und Tests sind Bash-/Docker-basiert. Unter Windows in WSL oder Gi
 cd j2commerce/plg_privacy_j2commerce
 ./build.sh
 ```
+
+**Voraussetzungen für lokale Tests** (vollständig mit allen Befehlen: `.claude/skills/joomla-extensions/references/testing.md`, Abschnitt „Local Prerequisites"). Die Test-Images kopieren die Pakete beim Build hinein; ohne diese Dateien schlägt `docker compose up -d` fehl:
+
+- Paket bauen und als `tests/extension.zip` ablegen (wie der CI-Job `Build Package`): im Extension-Verzeichnis `./build.sh`, `mkdir -p tests`, `cp *.zip tests/extension.zip`. AJAX Forms zusätzlich nach `tests-j2c4/` bzw. `tests-j2c6/` kopieren und die Images mit den `docker build`-Befehlen aus `joomla-ajax-forms.yml` vom Repo-Root aus bauen.
+- Joomla-6-Stacks brauchen zusätzlich `tests/j2commerce6.zip` (AJAX Forms: `tests-j2c6/j2commerce6.zip`), gebaut aus dem im Workflow gepinnten J2Commerce-6-Commit (`J2C6_REF`).
 
 **Integrations-Tests einer Extension** (Docker hochfahren, dann Suite laufen lassen):
 
@@ -90,12 +94,21 @@ vendor/bin/phpunit --testsuite=Unit             # eine Suite
 vendor/bin/phpunit --filter testMethodName      # ein einzelner Test
 ```
 
-**Joomla-6-Variante** (wo vorhanden):
+**Joomla-6-Variante** (wo vorhanden). `test.env` nennt den Joomla-5-Container; deshalb den J6-Container beim Aufruf mitgeben, Variablen genau wie im Workflow:
 
 ```bash
 docker compose -f docker-compose.joomla6.yml up -d
-# bzw. der eigene Ordner tests-j2c6/ mit eigenem run-tests.sh
+J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_privacy_j2commerce_j6_test ./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
+
+- OSMap: `CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all`
+- Import/Export: `CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all`
+- Product Compare: `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all`
+- Cleanup (Workflow setzt nur den Container): `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all`
+- AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
+
+Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
 
 ## Release-Workflow
 

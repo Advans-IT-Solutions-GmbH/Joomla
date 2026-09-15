@@ -103,6 +103,10 @@ jobs:
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
             plugins/task/j2commerceprivacy/j2commerceprivacy.xml
+          sed -i \
+            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+            plugins/system/j2commerceprivacy/j2commerceprivacy.xml
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'
@@ -142,7 +146,7 @@ jobs:
                   <tags>
                       <tag>stable</tag>
                   </tags>
-                  <targetplatform name="joomla" version="(4\.[0-9]|5\.[0-9]|6\.[0-9])" />
+                  <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
                   <php_minimum>8.1</php_minimum>
               </update>
           </updates>

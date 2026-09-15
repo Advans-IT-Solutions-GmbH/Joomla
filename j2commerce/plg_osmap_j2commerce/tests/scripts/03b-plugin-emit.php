@@ -150,7 +150,11 @@ class PluginEmitTest
         $fixtureCatid = (int) $db->setQuery($q)->loadResult();
 
         if ($fixtureCatid === 0) {
-            echo "SKIP emitProductsForCategory() — no enabled fixture products found\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('fixture products available for emitProductsForCategory()', fn () => false);
+            } else {
+                echo "SKIP emitProductsForCategory() — no enabled fixture products found\n";
+            }
             return;
         }
 
@@ -304,7 +308,11 @@ class PluginEmitTest
 
         $newClass = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew';
         if (!class_exists($newClass)) {
-            echo "SKIP J2CommerceNew not available\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('J2CommerceNew class available', fn () => false);
+            } else {
+                echo "SKIP J2CommerceNew not available\n";
+            }
             return;
         }
 

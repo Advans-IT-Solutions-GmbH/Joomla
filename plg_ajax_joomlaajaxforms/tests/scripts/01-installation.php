@@ -69,14 +69,20 @@ class InstallationTest
         $this->db->setQuery($query);
         $plugin = $this->db->loadObject();
         
-        if ($plugin) {
-            $status = $plugin->enabled ? 'enabled' : 'disabled';
-            echo "PASS (ID: {$plugin->extension_id}, Status: {$status})\n";
-            return true;
+        if (!$plugin) {
+            echo "FAIL (Not registered)\n";
+            return false;
         }
-        
-        echo "FAIL (Not registered)\n";
-        return false;
+
+        // The test environment enables the plugin after installation; a
+        // disabled plugin means the environment is not the one under test.
+        if ((int) $plugin->enabled !== 1) {
+            echo "FAIL (ID: {$plugin->extension_id}, plugin is disabled)\n";
+            return false;
+        }
+
+        echo "PASS (ID: {$plugin->extension_id}, Status: enabled)\n";
+        return true;
     }
 
     private function testFilesInstalled(): bool
@@ -127,7 +133,9 @@ class InstallationTest
             '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.ini',
             '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.sys.ini',
             '/var/www/html/plugins/ajax/joomlaajaxforms/language/de-DE/plg_ajax_joomlaajaxforms.ini',
-            '/var/www/html/plugins/ajax/joomlaajaxforms/language/de-DE/plg_ajax_joomlaajaxforms.sys.ini'
+            '/var/www/html/plugins/ajax/joomlaajaxforms/language/de-DE/plg_ajax_joomlaajaxforms.sys.ini',
+            '/var/www/html/plugins/ajax/joomlaajaxforms/language/fr-FR/plg_ajax_joomlaajaxforms.ini',
+            '/var/www/html/plugins/ajax/joomlaajaxforms/language/fr-FR/plg_ajax_joomlaajaxforms.sys.ini'
         ];
         
         $missing = [];

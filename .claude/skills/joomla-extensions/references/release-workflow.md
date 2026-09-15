@@ -26,6 +26,12 @@ prepare version + PR       review          squash         tag + GitHub release
   PR is opened.**
 - Each extension has a paired `release-*.yml` / `publish-*.yml` with its own
   `{prefix}-v*` tag prefix.
+- **Only the latest release per extension exists — intentionally.** After
+  publishing, the publish workflow (step `Delete previous releases`) deletes
+  all older GitHub releases and tags of the same prefix. Do not "fix" this.
+  Consequence: an older version cannot be downloaded from GitHub, so the CI job
+  `Update from previous release (J6)` rebuilds the previous version with
+  `build.sh` from the last `release: <prefix> v` commit on `main`.
 
 ## Branch Strategy
 

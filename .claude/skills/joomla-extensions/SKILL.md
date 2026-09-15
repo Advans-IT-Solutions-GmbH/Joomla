@@ -38,13 +38,12 @@ Advans-IT-Solutions-GmbH/Joomla
 ├── shared/
 │   ├── build/build.sh              # Shared packager (per-extension build.sh delegates here)
 │   └── tests/                      # Shared test infrastructure
-├── tests/                          # Top-level test runner
 └── .github/workflows/              # CI/CD workflows per plugin
 ```
 
 ## Key Rules
 
-1. **Never set version manually** — the release workflow manages VERSION, j2commerce.xml, and update.xml
+1. **Never set version manually** — the release workflow manages `VERSION`, `build.env`, the extension manifest and `updates/update.xml`
 2. **Conventional Commits** — prefix all commits: `fix:`, `feat:`, `docs:`, `chore:`, `test:`, `refactor:`
 3. **Auto-delete branches** is enabled — branches are deleted automatically after merge
 4. **One PR per plugin** — do not mix changes across plugins in a single PR

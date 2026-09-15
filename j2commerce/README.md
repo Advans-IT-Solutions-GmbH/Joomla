@@ -1,6 +1,6 @@
 # J2Commerce Extensions
 
-Extensions for [J2Commerce](https://github.com/joomla-projects/j2commerce) e-commerce platform.
+Extensions for [J2Commerce](https://github.com/j2commerce/j2commerce) e-commerce platform.
 
 ## Available Extensions
 
@@ -8,7 +8,7 @@ Extensions for [J2Commerce](https://github.com/joomla-projects/j2commerce) e-com
 
 #### OSMap J2Commerce (`plg_osmap_j2commerce`)
 
-Adds all enabled J2Commerce products to the OSMap sitemap. Bridges the gap between OSMap's menu-based indexing and J2Commerce's `published=-2` routing pattern. [→ Details](plg_osmap_j2commerce/README.md)
+Adds all publicly visible J2Store/J2Commerce products to the OSMap sitemap. Bridges the gap between OSMap's menu-based indexing and J2Commerce's `published=-2` routing pattern. [→ Details](plg_osmap_j2commerce/README.md)
 
 #### Privacy - J2Commerce (`plg_privacy_j2commerce`)
 GDPR/DSGVO compliance solution with automated data retention management and lifetime license handling.
@@ -23,12 +23,12 @@ Product comparison functionality for J2Commerce stores.
 ### Components
 
 #### J2Commerce Import/Export (`com_j2commerce_importexport`)
-Import and export functionality for J2Commerce products and orders.
+Import and export of J2Commerce products, variants and tier prices; categories can be exported.
 
 [Documentation](com_j2commerce_importexport/README.md)
 
 #### J2Store Cleanup (`com_j2store_cleanup`)
-Database cleanup and maintenance tools for J2Store.
+Scans J2Store/J2Commerce-related extensions for APIs removed in the running Joomla version and uninstalls selected ones.
 
 [Documentation](com_j2store_cleanup/README.md)
 

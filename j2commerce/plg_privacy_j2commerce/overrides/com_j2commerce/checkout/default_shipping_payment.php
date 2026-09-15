@@ -163,12 +163,14 @@ if ($_showConsent && $_privacyArticleId) {
             </label>
         </div>
         <?php
-        // Marker for the bundled system plugin: the checkbox was rendered, so a missing tick
-        // is rejected server-side (when consent is required) and a tick is recorded per order.
-        // J2Commerce 6 loads this step via AJAX and strips <script> tags, so the consent is
-        // validated on the server instead of by a script.
+        // Tell the bundled system plugin server-side (session, bound to the current cart) that
+        // the checkbox was shown. It then refuses this step and the confirmation without a tick
+        // when consent is required, and records a ticked consent per order. J2Commerce 6 loads
+        // this step via AJAX and strips <script> tags, so no client-side script is involved.
+        if (class_exists('Advans\\Plugin\\System\\J2CommercePrivacy\\Extension\\J2CommercePrivacy')) {
+            \Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy::markCheckboxRendered((bool) $_consentRequired);
+        }
         ?>
-        <input type="hidden" name="j2commerce_privacy_consent_rendered" value="1">
     </div>
     <?php endif; ?>
 

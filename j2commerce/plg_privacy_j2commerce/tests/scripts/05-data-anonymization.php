@@ -163,7 +163,11 @@ class DataAnonymizationTest
         $pluginAvailable = file_exists($pluginClassFile);
 
         if (!$pluginAvailable) {
-            echo "  SKIP: plugin not installed at $pluginClassFile — anonymization round-trip skipped\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('plugin class available for anonymization round-trip', false, "not installed at $pluginClassFile");
+            } else {
+                echo "  SKIP: plugin not installed at $pluginClassFile — anonymization round-trip skipped\n";
+            }
         } else {
             $anonymized = false;
             try {

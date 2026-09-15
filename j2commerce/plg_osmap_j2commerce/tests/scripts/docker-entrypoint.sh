@@ -18,9 +18,10 @@ echo "DB prefix: ${DB_PREFIX}"
 install_with_web_installer() {
     local package_path="$1"
     local label="$2"
+    local strict="${3:-0}"
 
     echo "Installing ${label} via Joomla Web Installer..."
-    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" php /usr/local/bin/install-extension-http.php; then
+    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" STRICT_MESSAGES="${strict}" php /usr/local/bin/install-extension-http.php; then
         echo "${label} installed via Joomla Web Installer"
     else
         echo "ERROR: ${label} installation FAILED via Joomla Web Installer"
@@ -42,8 +43,13 @@ else
     exit 1
 fi
 
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 install_with_web_installer /tmp/osmap.zip "OSMap"
-install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin"
+install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}"
 
 echo "Waiting for plugin in DB..."
 until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
@@ -52,6 +58,13 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     sleep 3
 done
 echo "Plugin in DB. Prefix: ${DB_PREFIX}"
+
+# Record plugin states before the test setup enables everything, so tests can
+# verify what the installer itself enabled or disabled.
+mkdir -p /tmp/test-state
+mysql -h mysql -u joomla -pjoomla_pass joomla_db -N \
+    -e "SELECT folder, element, enabled FROM ${DB_PREFIX}extensions WHERE type = 'plugin';" \
+    > /tmp/test-state/plugins-before-activation.tsv 2>/dev/null
 
 echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \

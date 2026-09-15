@@ -33,7 +33,7 @@ references:
 
 Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 
-- Exports J2Commerce orders, addresses, cart data on privacy export requests
+- Exports J2Commerce orders and addresses, optional Joomla user/profile/action-log data, and AcyMailing subscriber data on privacy export requests
 - Enforces configurable retention periods before allowing data deletion
 - Anonymizes orders outside the retention period instead of deleting them
 - Detects lifetime licenses to preserve email after retention expires
@@ -48,7 +48,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `src/Extension/J2Commerce.php` | Main plugin class — all event handlers |
 | `plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Scheduled cleanup task (separate task plugin) |
 | `plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Checkout consent on J2Commerce 6 (`onAfterRoute`, `onJ2CommerceAfterSaveOrder`, `onJ2CommerceCheckoutCleanup`); bundled system plugin installed by `script.php` |
-| `src/Consent/ConsentRepository.php` | `#__privacy_consents`: one record per order without duplicates, status lookup by `user_id` or guest order e-mail |
+| `src/Consent/ConsentRepository.php` | `#__privacy_consents`: one record per order without duplicates, status lookup by `user_id` or, for guests, only the order of the session token + e-mail |
 | `layouts/privacy_tab.php` | Privacy tab markup, rendered by the `myprofile/default_privacy.php` overrides |
 | `script.php` | Install/update/uninstall, post-install message |
 | `language/en-GB/plg_privacy_j2commerce.ini` | All translatable strings |
@@ -60,7 +60,6 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `onPrivacyExportRequest` | Collect J2Commerce data for export |
 | `onPrivacyCanRemoveData` | Check if retention blocks deletion |
 | `onPrivacyRemoveData` | Anonymize/delete data |
-| `onAfterRender` | Inject consent checkbox + privacy section (fallback) |
 | `onAjaxJ2commercePrivacy` | Handle address deletion AJAX requests |
 
 See `references/architecture.md` for full details.
