@@ -389,13 +389,17 @@ jobs:
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose -f docker-compose.production.yml logs joomla 2>&1 | tail -100 || true
-      - name: Run all suites
+      - name: Run all suites (except the SEF suite, which needs the SEF stack)
         env:
           TEST_STRICT_SKIP: '1'
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
-          CONTAINER_NAME=plg_osmap_j2commerce_prod_test J2COMMERCE_STACK=j6 ./run-tests.sh all
+          failed=0
+          for suite in installation configuration plugin-class plugin-emit sitemap osmap-loader sitemap-http mixed-migration install-messages uninstall; do
+            CONTAINER_NAME=plg_osmap_j2commerce_prod_test J2COMMERCE_STACK=j6 ./run-tests.sh "$suite" || failed=1
+          done
+          exit "$failed"
       - name: Evaluate PHP deprecations
         if: always()
         run: |
