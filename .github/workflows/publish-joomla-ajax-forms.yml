@@ -90,7 +90,7 @@ jobs:
             ### Installation
             1. Download `${{ steps.package.outputs.file }}`
             2. Install via Joomla Extension Manager
-            3. Enable plugin in System → Plugins
+            3. Enable plugin in System → Manage → Plugins
 
             ### Requirements
             - Joomla 5.x or 6.x
