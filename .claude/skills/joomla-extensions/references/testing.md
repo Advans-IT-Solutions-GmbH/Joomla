@@ -82,7 +82,7 @@ git init /tmp/j2commerce6-src
 git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
 git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
 git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-cd /tmp/j2commerce6-src && php build/build_package.php
+cd /tmp/j2commerce6-src && php build/build_package.php --no-minify   # needed for 7edb6e11 (esbuild otherwise required); omit for 2dd491e8
 ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
 cp "$ZIP" "$REPO_ROOT/j2commerce/plg_privacy_j2commerce/tests/j2commerce6.zip"
 ```

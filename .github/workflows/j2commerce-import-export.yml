@@ -202,7 +202,9 @@ jobs:
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
           echo "J2Commerce 6 source commit (pinned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
-          cd /tmp/j2commerce6-src && php build/build_package.php
+          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # the tests only need the PHP package, so the unminified build is used.
+          cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
           sha256sum "$ZIP"
