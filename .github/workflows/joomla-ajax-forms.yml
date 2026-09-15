@@ -113,6 +113,8 @@ jobs:
           php-version: '8.3'
       - name: Lint language files
         run: php shared/tests/lang-lint.php plg_ajax_joomlaajaxforms
+      - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
+        run: php shared/tests/requirements-check.php plg_ajax_joomlaajaxforms
 
   test-j5:
     name: ${{ matrix.name }}
@@ -523,7 +525,7 @@ jobs:
         run: |
           docker build \
             -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
-            --build-arg JOOMLA_BASE_IMAGE=joomla:6.1-php8.4-apache \
+            --build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache \
             --build-arg PHP_STRICT_DEPRECATIONS=1 \
             -t plg_ajax_j2c6_test \
             .

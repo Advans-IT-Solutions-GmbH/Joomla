@@ -146,7 +146,7 @@ jobs:
                   <tags>
                       <tag>stable</tag>
                   </tags>
-                  <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+                  <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
                   <php_minimum>8.1</php_minimum>
               </update>
           </updates>

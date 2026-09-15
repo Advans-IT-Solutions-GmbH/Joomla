@@ -1,5 +1,5 @@
 # Production-like lane: Joomla 6.1 on the newest official Joomla image PHP
-# version (joomla:6.1-php8.4-apache; there is no official PHP 8.5 image yet),
+# version (joomla:6-php8.4-apache = newest Joomla 6.x; no official PHP 8.5 image yet),
 # J2Commerce 6 built from the pinned production commit (see workflow), MariaDB
 # 10.6, and every PHP deprecation/warning/error logged for evaluation.
 services:
@@ -8,7 +8,7 @@ services:
       context: .
       dockerfile: Dockerfile.joomla6
       args:
-        JOOMLA_BASE_IMAGE: joomla:6.1-php8.4-apache
+        JOOMLA_BASE_IMAGE: joomla:6-php8.4-apache
         PHP_STRICT_DEPRECATIONS: "1"
     container_name: plg_privacy_j2commerce_prod_test
     ports:

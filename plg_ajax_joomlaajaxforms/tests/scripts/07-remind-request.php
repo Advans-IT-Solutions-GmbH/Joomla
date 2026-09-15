@@ -69,25 +69,34 @@ class RemindRequestTest
      */
     private function sessionAndToken(): array
     {
-        $ch = curl_init($this->baseUrl . '/');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-        curl_setopt($ch, CURLOPT_HEADER, true);
-        $response = (string) curl_exec($ch);
-        curl_close($ch);
+        // The username reminder view of com_users always renders a form with a
+        // CSRF token for guests; the home page only has one when a form module
+        // is published (not the case on a plain Joomla site).
+        $pages = [
+            '/index.php?option=com_users&view=remind',
+            '/',
+        ];
 
-        $cookies = [];
-        if (preg_match('/Set-Cookie:\s*([^=;\s]+)=([^;\r\n]+)/i', $response, $m)) {
-            $cookies[$m[1]] = $m[2];
+        foreach ($pages as $page) {
+            $ch = curl_init($this->baseUrl . $page);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            $response = (string) curl_exec($ch);
+            curl_close($ch);
+
+            $cookies = [];
+            if (preg_match('/Set-Cookie:\s*([^=;\s]+)=([^;\r\n]+)/i', $response, $m)) {
+                $cookies[$m[1]] = $m[2];
+            }
+
+            if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)
+                || preg_match('/"csrf\.token"\s*:\s*"([a-f0-9]{32})"/i', $response, $m)) {
+                return [$cookies, $m[1]];
+            }
         }
 
-        $token = '';
-        if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)
-            || preg_match('/"csrf\.token"\s*:\s*"([a-f0-9]{32})"/i', $response, $m)) {
-            $token = $m[1];
-        }
-
-        return [$cookies, $token];
+        return [[], ''];
     }
 
     /**

@@ -88,6 +88,8 @@ jobs:
           php-version: '8.3'
       - name: Lint language files
         run: php shared/tests/lang-lint.php j2commerce/plg_osmap_j2commerce
+      - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
+        run: php shared/tests/requirements-check.php j2commerce/plg_osmap_j2commerce
 
   test-j5:
     name: ${{ matrix.name }} (J5)

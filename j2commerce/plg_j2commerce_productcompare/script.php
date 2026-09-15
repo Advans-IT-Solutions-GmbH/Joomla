@@ -9,7 +9,7 @@ use Joomla\Database\ParameterType;
 
 class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 {
-    protected $minimumJoomla = '5.0';
+    protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
     public function preflight($type, $parent)

@@ -115,6 +115,20 @@ main() {
     }
     print_success "Joomla is ready"
 
+    # The CI uses moving image tags (newest Joomla 5.4.x / 6.x); record which
+    # versions were actually tested.
+    local versions
+    versions=$(docker exec "$CONTAINER_NAME" php -r '
+        $v = @file_get_contents("/var/www/html/libraries/src/Version.php");
+        preg_match_all("/const (MAJOR|MINOR|PATCH)_VERSION = (\d+);/", (string) $v, $m);
+        $parts = array_combine($m[1] ?: [], $m[2] ?: []);
+        echo "Joomla " . ($parts ? ($parts["MAJOR"] . "." . $parts["MINOR"] . "." . $parts["PATCH"]) : "unknown") . ", PHP " . PHP_VERSION;
+    ' 2>/dev/null || echo "Joomla unknown, PHP unknown")
+    echo "Tested versions: ${versions}"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "- \`${CONTAINER_NAME}\`: ${versions}" >> "$GITHUB_STEP_SUMMARY"
+    fi
+
     copy_test_scripts
 
     # Run tests based on TEST_SCRIPTS array from test.env

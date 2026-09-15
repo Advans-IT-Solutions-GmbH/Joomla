@@ -93,7 +93,7 @@ jobs:
             3. Enable plugin in System → Plugins
 
             ### Requirements
-            - Joomla 5.x or 6.x
+            - Joomla 5.4 or later (5.4.x, 6.x)
             - PHP 8.1 or higher
             - J2Commerce 4.x or higher
         run: |
