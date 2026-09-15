@@ -25,6 +25,12 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /** @var string[] Files skipped because they already existed */
     private array $_overridesSkipped = [];
 
+    /** @var string[] Files that could not be copied */
+    private array $_overridesFailed = [];
+
+    /** Whether the bundled task plugin was installed and enabled in this run */
+    private bool $taskPluginReady = false;
+
     /**
      * Returns a fresh query object compatible with Joomla 5 and 6.
      * Joomla 6 introduced DatabaseInterface::createQuery(); Joomla 5 uses getQuery(true).
@@ -39,6 +45,13 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         if ($type === 'install' || $type === 'update') {
             $packageSource = $parent->getParent()->getPath('source');
 
+            // Load the language first: every message below, including warnings
+            // raised while installing the bundled task plugin, is translated.
+            $app = Factory::getApplication();
+            $lang = $app->getLanguage();
+            $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
+            $lang->load('plg_privacy_j2commerce', $packageSource);
+
             // Remove old manifest filename (renamed to j2commerce.xml in 1.2.8)
             $oldManifest = JPATH_PLUGINS . '/privacy/j2commerce/plg_privacy_j2commerce.xml';
             if (file_exists($oldManifest)) {
@@ -47,6 +60,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             $this->ensureUpdateSite();
             $this->removeLegacyAutoCleanupTaskFile();
+            $this->warnIfJ2CommerceMissing();
 
             // Deploy template overrides on first install only (never overwrite)
             if ($type === 'install') {
@@ -56,10 +70,29 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->installTaskPlugin($packageSource);
             $this->migrateLegacySchedulerTasks();
 
-            $app = Factory::getApplication();
-            $lang = $app->getLanguage();
-            $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
-            $lang->load('plg_privacy_j2commerce', $packageSource);
+            if (!empty($this->_overridesFailed)) {
+                $app->enqueueMessage(
+                    Text::sprintf(
+                        'PLG_PRIVACY_J2COMMERCE_WARN_OVERRIDES_FAILED',
+                        htmlspecialchars(implode(', ', $this->_overridesFailed))
+                    ),
+                    'warning'
+                );
+            }
+
+            // Updates only get a short confirmation; the full setup guide is
+            // shown on the first installation.
+            if ($type === 'update') {
+                $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+                $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+                $app->enqueueMessage(
+                    Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                    'message'
+                );
+
+                return;
+            }
 
             // Inline styles — Joomla 5 <joomla-alert> strips <style> tags
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid';
@@ -81,7 +114,11 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '<div style="' . $sInfo . '">';
             $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_LABEL') . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_TITLE') . '</h3>';
-            $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC') . '</p>';
+            $message .= '<p>' . Text::_(
+                $this->taskPluginReady
+                    ? 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC'
+                    : 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC_TASK_FAILED'
+            ) . '</p>';
             $message .= '</div>';
 
             // Step 2
@@ -241,6 +278,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
     public function uninstall($parent): void
     {
+        Factory::getApplication()->getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+
         $this->uninstallTaskPlugin();
     }
 
@@ -276,6 +315,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $copied  = [];
         $skipped = [];
+        $failed  = [];
 
         foreach ($components as $component) {
             $sourcePath = $sourceBase . '/' . $component;
@@ -300,13 +340,18 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                         continue;
                     }
 
-                    $destDir = dirname($dest);
-                    if (!is_dir($destDir)) {
-                        mkdir($destDir, 0755, true);
+                    $relative = $template . '/html/' . $component . '/' . $file;
+                    $destDir  = dirname($dest);
+
+                    if (!is_dir($destDir) && !@mkdir($destDir, 0755, true) && !is_dir($destDir)) {
+                        $failed[] = $relative;
+                        continue;
                     }
 
-                    if (copy($src, $dest)) {
-                        $copied[] = $template . '/html/' . $component . '/' . $file;
+                    if (@copy($src, $dest)) {
+                        $copied[] = $relative;
+                    } else {
+                        $failed[] = $relative;
                     }
                 }
             }
@@ -315,6 +360,32 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // Store results for display in postflight message
         $this->_overridesCopied  = $copied;
         $this->_overridesSkipped = $skipped;
+        $this->_overridesFailed  = $failed;
+    }
+
+    /**
+     * Warn when neither J2Commerce 6 nor J2Store/J2Commerce 4 is installed.
+     */
+    private function warnIfJ2CommerceMissing(): void
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->dbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->whereIn($db->quoteName('element'), ['com_j2store', 'com_j2commerce'], ParameterType::STRING);
+            $db->setQuery($query);
+
+            if ((int) $db->loadResult() === 0) {
+                Factory::getApplication()->enqueueMessage(
+                    Text::_('PLG_PRIVACY_J2COMMERCE_WARN_J2COMMERCE_MISSING'),
+                    'warning'
+                );
+            }
+        } catch (\Throwable $e) {
+            // Detection is advisory only; never block the installation.
+        }
     }
 
     /**
@@ -372,6 +443,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         if (!$extensionId) {
             return;
         }
+
+        $this->removeLegacyUpdateSites($db, $extensionId);
 
         $query = $this->dbQuery($db)
             ->select($db->quoteName('update_site_id'))
@@ -433,33 +506,94 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     }
 
     /**
+     * Remove update sites of this plugin that still point to the repository's
+     * former organisation name. Joomla would otherwise keep querying both the
+     * old and the new update URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->dbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $db->setQuery($query);
+        $siteIds = array_map('intval', $db->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->dbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query);
+            $db->execute();
+
+            $query = $this->dbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+            $db->setQuery($query);
+
+            if ((int) $db->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->dbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query);
+                $db->execute();
+            }
+        }
+    }
+
+    /**
      * Install or update the bundled Joomla task plugin.
+     *
+     * A dedicated Installer instance is used on purpose. The backend installs the
+     * privacy plugin through the Installer singleton; installing the task plugin
+     * through that same singleton from inside postflight() would replace its
+     * manifest and state while the outer installation is still running.
      */
     private function installTaskPlugin(string $packageSource): void
     {
         $source = $packageSource . '/plugins/task/j2commerceprivacy';
+        $app    = Factory::getApplication();
 
         if (!is_dir($source) || !is_file($source . '/j2commerceprivacy.xml')) {
-            Factory::getApplication()->enqueueMessage(
-                'J2Commerce Privacy cleanup task plugin was not found in the installation package.',
-                'warning'
-            );
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_TASK_PLUGIN_MISSING'), 'warning');
 
             return;
         }
 
-        $installer = Installer::getInstance();
+        $installer = new Installer();
+
+        if (method_exists($installer, 'setDatabase')) {
+            $installer->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
+        }
 
         if (!$installer->install($source)) {
-            Factory::getApplication()->enqueueMessage(
-                'J2Commerce Privacy cleanup task plugin could not be installed automatically.',
-                'warning'
-            );
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_TASK_PLUGIN_INSTALL_FAILED'), 'warning');
 
             return;
         }
 
         $this->setTaskPluginEnabled(true);
+        $this->taskPluginReady = $this->getTaskPluginExtensionId() > 0;
     }
 
     /**
@@ -472,6 +606,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $taskType = 'plg_task_j2commerceprivacy.autocleanup';
         $tables   = $db->getTableList();
+        $app      = Factory::getApplication();
 
         if (in_array($db->getPrefix() . 'scheduler_tasks', $tables, true)) {
             $query = $this->dbQuery($db)
@@ -480,9 +615,23 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 ->bind(':taskType', $taskType);
             $db->setQuery($query);
             $db->execute();
+
+            $removedTasks = (int) $db->getAffectedRows();
+
+            if ($removedTasks > 0) {
+                $app->enqueueMessage(
+                    Text::sprintf('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASKS_REMOVED', $removedTasks),
+                    'message'
+                );
+            }
         }
 
+        // The task plugin is removed directly (database rows and files) because
+        // running Joomla's installer from inside uninstall() would reset the
+        // state of the installation that is currently in progress.
         if ($extensionId) {
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASK_PLUGIN_REMOVED'), 'message');
+
             $query = $this->dbQuery($db)
                 ->delete($db->quoteName('#__schemas'))
                 ->where($db->quoteName('extension_id') . ' = :extensionId')
