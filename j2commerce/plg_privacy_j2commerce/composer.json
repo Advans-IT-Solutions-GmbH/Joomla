@@ -2,7 +2,7 @@
     "name": "advans/plg-privacy-j2commerce",
     "description": "J2Commerce integration for Joomla Privacy Component",
     "type": "joomla-plugin",
-    "license": "GPL-2.0-or-later",
+    "license": "GPL-3.0-or-later",
     "require": {
         "php": "^8.1"
     },
