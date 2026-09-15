@@ -15,7 +15,7 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Feature | AJAX Task | Description |
 |---------|-----------|-------------|
 | Login | `login` | Authentication with redirect to Joomla's MFA captive page when 2FA is enabled |
-| Logout | `logout` | Session termination with redirect |
+| Logout | `logout` | Session termination with redirect (requires a logged-in user) |
 | Registration | `register` | User registration with email verification and admin approval |
 | Password Reset | `reset` | Password reset email request |
 | Username Reminder | `remind` | Username reminder email request |
@@ -23,7 +23,7 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
-All features can be individually enabled/disabled via plugin parameters.
+Login, registration, password reset and username reminder can be disabled individually via plugin parameters. `logout`, `saveProfile`, `removeCartItem` and `getCartCount` are always available: the parameters `enable_profile` and `enable_j2store_cart` exist in the configuration but are currently not evaluated.
 
 ## Requirements
 
@@ -33,9 +33,9 @@ All features can be individually enabled/disabled via plugin parameters.
 
 ## Installation
 
-1. Download `plg_ajax_joomlaajaxforms.zip` from the [latest release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases?q=ajaxforms)
+1. Download `plg_ajax_joomlaajaxforms_<version>.zip` from the [latest release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases?q=ajaxforms)
 2. Install via Joomla Extension Manager
-3. Enable under System > Plugins > "Joomla! AJAX Forms"
+3. Enable under **System → Manage → Plugins → Joomla! AJAX Forms**
 
 The installer checks the `.htaccess` on the web server. If rewrite rules block `/component/` or `index.php?option=com_*` URLs, `com_ajax` must be whitelisted — otherwise all AJAX calls will fail silently. The installer warns if exceptions are missing.
 
@@ -49,6 +49,19 @@ RewriteCond %{QUERY_STRING} !plugin= [NC]
 RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
 ```
 
+## Updating
+
+The manifest declares the update server
+`https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_ajax_joomlaajaxforms/updates/update.xml`.
+New versions appear under **System → Update → Extensions**. Alternatively,
+install the newer ZIP over the existing installation.
+
+## Uninstall
+
+Uninstall the plugin via **System → Manage → Extensions**. The plugin has no
+uninstall routine; `.htaccess` exceptions you added for `com_ajax` are not
+removed.
+
 ## Configuration
 
 | Parameter | Description | Default |
@@ -57,14 +70,14 @@ RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
 | Enable Registration | AJAX user registration | Yes |
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
-| Enable Profile Editing | AJAX profile save (name, email, password) | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) | Yes |
+| Enable Profile Editing | AJAX profile save (name, email, password) — currently not evaluated, `saveProfile` is always available | Yes |
+| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) — currently not evaluated, cart tasks are always available | Yes |
 
 ### J2Commerce Cart Compatibility
 
 The cart features support both J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The version is detected at runtime by checking whether `#__j2store_carts` exists in the database.
 
-If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, cart operations return a `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` error — the cart feature is silently unavailable without breaking other plugin functionality.
+If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
 
 **Schema differences handled automatically:**
 
@@ -84,6 +97,7 @@ If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, cart operation
 Load the script in your template overrides:
 
 ```php
+use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
 
 if (PluginHelper::isEnabled('ajax', 'joomlaajaxforms')) {
@@ -99,11 +113,15 @@ The plugin automatically initializes form handlers for login, reset, remind, and
 JoomlaAjaxForms.removeCartItem(cartItemId, clickedElement, callback);
 
 // Save profile form
-JoomlaAjaxForms.saveProfile(formElement, callback);
+JoomlaAjaxForms.saveProfile(formElement);
 
 // Logout
 JoomlaAjaxForms.logout(returnUrl);
 ```
+
+### Request handling
+
+Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
 
 ### JSON Response Format
 
@@ -149,11 +167,11 @@ plg_ajax_joomlaajaxforms/
 ./build.sh
 ```
 
-Creates: `plg_ajax_joomlaajaxforms.zip`
+Creates: `plg_ajax_joomlaajaxforms_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
+This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (Joomla 6.1, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -175,17 +193,20 @@ That misleading step has been removed; see issue #98.)
 6. **Password Reset** — reset email request
 7. **Username Reminder** — reminder email request
 8. **Security** — CSRF rejection only: a no-token `GET` and a fake-token `POST` to the AJAX endpoint (`getCartCount`) must both be rejected. On the standard matrix this is the **only** part of the Security suite that runs — the IDOR/cart portion of `08-security.php` auto-skips because no J2Commerce cart tables exist (`SKIP: J2Commerce not installed — cart tables absent`). Real IDOR/cart coverage (seeding a victim cart row and verifying it is not deleted) runs **only** in the J2Commerce 4 and 6 full-install suites described below.
-9. **Uninstall** — clean removal from database and filesystem
-10. **Profile** — AJAX profile save (name, email, password)
-11. **htaccess Check** — `.htaccess` rule validation
+9. **Profile** — AJAX profile save (name, email, password)
+10. **htaccess Check** — behaviour test: places `.htaccess` fixtures in the Joomla root, installs the real package through the Joomla CLI and checks the installer warnings (README rules and Joomla's `htaccess.txt` → no warning; missing exception → warning)
+11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+12. **Uninstall** — clean removal from database and filesystem
+
+The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart`).
 
 ### Full-Install Tests (J2Commerce) — authoritative cart coverage
 
 Cart functionality is covered **only** by real, functional tests that run against
 genuine J2Commerce installations with seeded cart data. These two CI jobs are the
-authoritative cart gate: both are required (the `collect-results` job fails if
-either fails, and the `official-j5-j2c4` / `official-j6-j2c6` checks verify each
-matrix passed), so a broken cart genuinely fails CI for **both** stacks.
+authoritative cart gate: both are required (the final `Ajax Forms / all jobs` job
+fails if any job fails, and the `official-j5-j2c4` / `official-j6-j2c6` checks verify
+each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 
 **`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds a cart for test user `999` (3 items), then verifies — via real HTTP requests with CSRF tokens plus direct DB-state assertions:
 - `isJ2CommerceInstalled()` returns `true`, `isJ2Commerce4()` returns `true`
@@ -194,37 +215,59 @@ matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 - IDOR: unauthenticated `removeCartItem` rejected, victim row still present in `#__j2store_cartitems`
 - Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
-**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source (`git clone j2commerce/j2commerce && php build/build_package.php`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
+**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the commit pinned in the workflow (`J2C6_REF`, `7edb6e11ae9148bf996b06c47a0d8266865af7b2`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
 
 ### Running Tests Locally
 
+Prerequisites (full commands: [Local Prerequisites](../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites)):
+
+- Build the plugin (`./build.sh`) and copy `plg_ajax_joomlaajaxforms_<version>.zip` as `extension.zip` into each test directory you use (`tests/`, `tests-j2c4/`, `tests-j2c6/`).
+- `tests-j2c4/`: J2Commerce 4 is downloaded automatically during the image build. Build the image from the repository root:
+  ```bash
+  docker build \
+    -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
+    --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.4/com_j2store_v4-4.1.4-pro.zip \
+    -t plg_ajax_j2c4_test \
+    .
+  ```
+- `tests-j2c6/`: build J2Commerce 6 from the pinned commit (see testing.md) and copy the package to `plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip`, then build the image from the repository root:
+  ```bash
+  docker build \
+    -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
+    -t plg_ajax_j2c6_test \
+    .
+  ```
+
 ```bash
-# Standard tests (Joomla 5 + Joomla 6, no J2Commerce)
-cd tests
+# Standard tests, Joomla 5 (no J2Commerce)
+cd plg_ajax_joomlaajaxforms/tests
 docker compose up -d
-timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
+timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 
-# J2Commerce 4 full-install tests (Joomla 5 + J2Commerce 4)
-cd tests-j2c4
-# Place com_j2store ZIP as extension.zip and j2store4.zip in this directory first
+# Standard tests, Joomla 6 (no J2Commerce)
+docker compose -f docker-compose.joomla6.yml up -d
+timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
+
+# J2Commerce 4 full-install tests (Joomla 5 + J2Commerce 4; image built above)
+cd ../tests-j2c4
 docker compose up -d
 timeout 360 bash -c 'until docker exec plg_ajax_j2c4_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 
-# J2Commerce 6 full-install tests (Joomla 6 + J2Commerce 6)
-cd tests-j2c6
-# Build J2Commerce 6 from source first:
-#   git clone --depth=1 https://github.com/j2commerce/j2commerce.git /tmp/j2c6-src
-#   cd /tmp/j2c6-src && php build/build_package.php
-#   cp docs/packages/pkg_j2commerce_*.zip tests-j2c6/j2commerce6.zip
+# J2Commerce 6 full-install tests (Joomla 6 + J2Commerce 6; image built above)
+cd ../tests-j2c6
 docker compose up -d
 timeout 360 bash -c 'until docker exec plg_ajax_j2c6_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 ```
+
+CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command with it to reproduce CI.
 
 ## Troubleshooting
 
@@ -234,8 +277,8 @@ The plugin runs inside `com_ajax` with `format=json`. This affects several Jooml
 
 | Issue | Detail | Solution |
 |---|---|---|
-| `Route::_()` generates wrong URLs | The SEF router uses the active menu item (`com_ajax`), producing URLs like `/component/j2store/?Itemid=240` | Look up the target menu item via `$menu->getItems()` and call `Route::_('index.php?Itemid=' . $id)` with the explicit Itemid |
-| `$menuItem->route` lacks language prefix | The `route` field contains only the alias path (e.g. `benutzerkonto`), not the language segment (`de/benutzerkonto`) | Always use `Route::_()` with Itemid — never use `$item->route` directly as a URL |
+| `Route::_()` generates wrong URLs | The SEF router uses the active menu item (`com_ajax`), producing URLs like `/component/j2store/?Itemid=123` | Look up the target menu item via `$menu->getItems()` and call `Route::_('index.php?Itemid=' . $id)` with the explicit Itemid |
+| `$menuItem->route` lacks language prefix | The `route` field contains only the alias path (e.g. `account`), not the language segment (`de/account`) | Always use `Route::_()` with Itemid — never use `$item->route` directly as a URL |
 | `onAfterRoute` only fires for `com_ajax` | Joomla dispatches `onAfterRoute` only to `system` plugins. An `ajax` plugin is not loaded for `com_users` or other component requests | Logic that needs to intercept other components must go into a `system` plugin or a template override |
 
 ### MFA redirect flow
@@ -251,7 +294,7 @@ After AJAX login with MFA enabled, the plugin redirects the browser to Joomla's 
 
 **Key constraints:**
 
-- `Uri::isInternal()` requires absolute URLs (`https://...`) or URLs starting with `index.php`. Relative SEF URLs like `/de/benutzerkonto` are rejected.
+- `Uri::isInternal()` requires absolute URLs (`https://...`) or URLs starting with `index.php`. Relative SEF URLs like `/de/account` are rejected.
 - The handler does nothing when `isMultiFactorAuthenticationPage()` is true (captive view or `captive.validate` task).
 - `CaptiveController::validate()` reads **only** from the session — it does not check POST parameters.
 
