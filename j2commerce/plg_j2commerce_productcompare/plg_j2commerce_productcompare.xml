@@ -13,7 +13,7 @@
     <version>1.1.1</version>
     <description>PLG_J2COMMERCE_PRODUCTCOMPARE_XML_DESCRIPTION</description>
     
-    <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
 
     <namespace path="src">Advans\Plugin\J2Commerce\ProductCompare</namespace>
 
