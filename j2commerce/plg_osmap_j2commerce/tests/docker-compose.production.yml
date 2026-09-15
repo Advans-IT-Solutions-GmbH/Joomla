@@ -1,4 +1,4 @@
-# Production-like lane: Joomla 6.1 on the newest official Joomla image PHP
+# Production-like lane: the newest Joomla 6.x on the newest official Joomla image PHP
 # version (joomla:6-php8.4-apache = newest Joomla 6.x; no official PHP 8.5 image yet),
 # J2Commerce 6 built from the pinned production commit (see workflow), MariaDB
 # 10.6, and every PHP deprecation/warning/error logged for evaluation.
