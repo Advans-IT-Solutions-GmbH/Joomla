@@ -9,7 +9,7 @@ use Joomla\Database\ParameterType;
 
 class Com_j2commerce_importexportInstallerScript extends InstallerScript
 {
-    protected $minimumJoomla = '5.0';
+    protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
     public function postflight($type, $parent)
