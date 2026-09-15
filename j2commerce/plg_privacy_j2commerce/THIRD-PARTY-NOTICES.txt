@@ -1,0 +1,50 @@
+THIRD-PARTY NOTICES - plg_privacy_j2commerce
+============================================
+
+This plugin is licensed under the GNU General Public License version 3 or
+later (GPL-3.0-or-later); see LICENSE.txt.
+
+The following bundled template overrides are modified copies of third-party
+templates. The original copyright notices are kept in the file headers.
+
+1. J2Commerce 6 templates
+
+   Files:     overrides/com_j2commerce/myprofile/default.php
+              overrides/com_j2commerce/myprofile/default_addresses.php
+   Source:    https://github.com/j2commerce/j2commerce
+              components/com_j2commerce/tmpl/myprofile/bootstrap5/default.php
+              components/com_j2commerce/tmpl/myprofile/bootstrap5/default_addresses.php
+   Copyright: (C) 2024-2026 J2Commerce, LLC <https://www.j2commerce.com>
+   License:   GNU General Public License version 2 or later
+              The modified files are distributed under GPL-3.0-or-later, as
+              permitted by the "or later" clause of the original license.
+
+   The J2Commerce 6 checkout override is no longer shipped as an active
+   template override; a modified copy of that checkout template survives only
+   as the byte-frozen test fixture described below.
+
+2. J2Store 4 template
+
+   File:      overrides/com_j2store/myprofile/default.php
+   Source:    https://github.com/J2Store4/j2store4 (tag v4.0.5)
+              components/com_j2store/views/myprofile/tmpl/default.php
+   Copyright: Copyright (c)2014-17 Ramesh Elamathi / J2Store.org
+   License:   GNU General Public License version 3 or later
+
+The files overrides/com_j2store/checkout/default_shipping_payment.php and
+overrides/com_j2store/myprofile/default_addresses.php replace the corresponding
+J2Store 4 templates but were written for this plugin and are not copies of
+them. The default_privacy.php overrides are original work.
+
+Test fixture (not shipped in the installable package)
+
+   File:      tests/scripts/fixture-checkout-override-1.5.5.php
+   This file is a byte-for-byte snapshot of the checkout override that plugin
+   version 1.5.5 shipped. Its SHA-256 is pinned in script.php
+   (BUNDLED_CHECKOUT_OVERRIDE_HASHES) and drives the update-time retirement of
+   unchanged overrides, so its bytes must not change. It therefore keeps the
+   verbatim 1.5.5 file header (which predates this relicensing) and is
+   intentionally excluded from the relicensing. The layout was originally based
+   on the J2Commerce 6 checkout template
+   (components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php,
+   (C) 2024-2026 J2Commerce, LLC, GPL-2.0-or-later).

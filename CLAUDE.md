@@ -13,6 +13,7 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 - Nie direkt auf `main`; jede Änderung über Feature-Branch + PR, der vom Maintainer gemergt wird (Squash).
 - Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte Signaturen**. Das erfüllt der von GitHub signierte Squash-Merge. Feature-Branch-Commits signierst du, wenn ein Key vorhanden ist (Commit-E-Mail passend zum Key); ohne Key dürfen sie unsigniert sein (Details: `AGENTS.md`).
 - Conventional Commits steuern den automatischen Version-Bump (siehe Release).
+- Lizenz: alle Extensions GPL-3.0-or-later; Kopfvorlage und Regeln für Fremdcode in `AGENTS.md` (Abschnitt „Lizenz“).
 
 ## Tiefenwissen (Skills)
 

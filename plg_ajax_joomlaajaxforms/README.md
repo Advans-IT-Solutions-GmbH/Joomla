@@ -151,6 +151,7 @@ Error responses use J2Commerce-compatible format:
 
 ```
 plg_ajax_joomlaajaxforms/
+├── LICENSE.txt
 ├── joomlaajaxforms.xml
 ├── build.sh
 ├── script.php
@@ -331,4 +332,8 @@ https://advans.ch
 
 ## License
 
-Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+Copyright (C) 2026 Advans IT Solutions GmbH
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE.txt](LICENSE.txt) for the full license text.
+
+SPDX-License-Identifier: `GPL-3.0-or-later`

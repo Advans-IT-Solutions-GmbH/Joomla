@@ -53,3 +53,24 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 - All AJAX handlers validate `Session::checkToken()`
 - No secrets, API keys, or credentials in code or commits
 - `script.php` must define `minimumJoomla` and `minimumPhp`
+
+## License
+
+All extensions are licensed under **GPL-3.0-or-later**. Every extension directory ships the unmodified GPL-3.0 text (https://www.gnu.org/licenses/gpl-3.0.txt) as `LICENSE.txt`, identical to the repository root.
+
+- Manifests: `<license>GNU General Public License version 3 or later; see LICENSE.txt</license>` and `<copyright>(C) <year> Advans IT Solutions GmbH</copyright>` (no "All rights reserved").
+- `composer.json` and `joomla.asset.json`: `"license": "GPL-3.0-or-later"`.
+- Header for new PHP/JS/CSS files:
+
+  ```php
+  /**
+   * @package     <Extension name>
+   *
+   * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+   * @license     GNU General Public License version 3 or later; see LICENSE.txt
+   * SPDX-License-Identifier: GPL-3.0-or-later
+   */
+  ```
+
+- Code derived from third-party sources (for example template overrides copied from J2Commerce or J2Store): keep the original copyright line first, add `Modifications (C) <year> Advans IT Solutions GmbH`, never remove third-party notices, and record the source in the extension's `THIRD-PARTY-NOTICES.txt`.
+- Only incorporate code under a GPL-3.0-compatible license (GPL-2.0-or-later, GPL-3.0-or-later, LGPL, MIT, BSD, Apache-2.0). Never copy GPL-2.0-only code.
