@@ -65,10 +65,18 @@ The `t('suffix')` helper returns the correct table name and `col('j2store_col')`
 
 ## Installation
 
-1. Download `com_j2commerce_importexport_1.0.0.zip`
-2. **System → Extensions → Install**
+1. Download `com_j2commerce_importexport_<version>.zip` from the latest release
+2. **System → Install → Extensions**
 3. Upload and install
 4. Access via **Components → J2Commerce Import/Export**
+
+## Updating
+
+The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
+
+## Uninstall
+
+Uninstall via **System → Manage → Extensions**. The component has no uninstall routine of its own and creates no database tables; Joomla removes the component files and its language files. Imported articles, categories and J2Commerce product data remain in the database.
 
 ## Configuration
 
@@ -78,7 +86,7 @@ The `t('suffix')` helper returns the correct table name and `col('j2store_col')`
 |---------|---------|-------------|
 | Batch Size | 100 | Records per batch (10-1000) |
 | Default Format | JSON | Export format |
-| CSV Delimiter | ; | Field separator for CSV |
+| CSV Delimiter | `,` | Field separator (`,`, `;` or Tab) |
 | CSV Enclosure | " | Text qualifier for CSV |
 
 ## Usage
@@ -92,7 +100,7 @@ The export includes all product data in a single JSON file that can be re-import
 
 ### Full Product Import
 1. Select **Products (Complete)** as import type
-2. Upload the JSON or CSV file
+2. Upload the JSON or CSV file (maximum 10 MB)
 3. Configure options:
    - **Update existing products** - Update if article_id, alias, or SKU matches
    - **Create menu items** - Auto-create menu entries
@@ -130,7 +138,7 @@ For bulk updates of specific data:
 - **Products (J2Store only)** - Basic product data
 - **Variants** - SKU, prices, stock
 - **Prices** - Tier pricing only
-- **Categories** - Category structure
+- **Categories** — export only
 
 ## Export Formats
 
@@ -240,7 +248,7 @@ com_j2commerce_importexport/
 
 ## Automated Testing
 
-This component has automated tests that run on every push via GitHub Actions.
+This component has automated tests that run via GitHub Actions (`j2commerce-import-export.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Scope Note
 
@@ -250,30 +258,43 @@ The export controller is now covered by a **real HTTP export test** (`07-export-
 
 ### Test Suites
 
+Order as in `tests/test.env`:
+
 1. **Installation** — component registration in DB, file deployment
 2. **Component Structure** — `php -l` lint of every shipped PHP file + reflection-based class/type checks
 3. **Export Model** — JSON, CSV, XML export output validation (J2Commerce 4 and 6)
 4. **Import Model** — full product import, duplicate detection, quantity modes (J2Commerce 4 and 6)
-5. **Export Controller** — `core.manage` access check and structure (reflection)
-6. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
-7. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
-8. **Uninstall** — clean removal from database and filesystem
+5. **Round-Trip** (`04b-roundtrip.php`) — imports a product via `importProductFull()`, exports it via `exportData('products_full')` and verifies the exported record matches the imported data
+6. **Export Controller** — `core.manage` access check and structure (reflection)
+7. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
+8. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
+9. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+10. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
+Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+
 ```bash
+# in j2commerce/com_j2commerce_importexport
+./build.sh
+mkdir -p tests
+cp *.zip tests/extension.zip
+
 cd tests
 docker compose up -d
 timeout 300 bash -c 'until docker exec com_j2commerce_importexport_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 
-# Joomla 6
+# Joomla 6 (requires tests/j2commerce6.zip)
 docker compose -f docker-compose.joomla6.yml up -d
 timeout 300 bash -c 'until docker exec com_j2commerce_importexport_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
-./run-tests.sh all
+CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
 ```
+
+CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command with it to reproduce CI.
 
 ## Troubleshooting
 
@@ -281,9 +302,13 @@ docker compose -f docker-compose.joomla6.yml down -v
 **Problem:** Upload rejected immediately  
 **Solution:** Only CSV, XML and JSON files are accepted. Verify the file extension and that the file is not corrupted.
 
+### Upload Rejected Because the File Is Too Large
+**Problem:** Upload fails for a large import file  
+**Solution:** The component accepts files up to 10 MB. PHP's `upload_max_filesize` and `post_max_size` can set a lower limit; split the file or raise these values.
+
 ### Import Stops Partway Through
 **Problem:** Some rows imported, then error  
-**Solution:** Check the error message for the row number. Common causes: missing required `title` field, invalid category path, or malformed image path. Fix the row and re-import — duplicate detection will skip already-imported products.
+**Solution:** Check the error message for the row number. Common causes: missing required `title` field, invalid category path, or malformed image path. Fix the row and re-import. Re-import with *Update existing products* enabled updates already-imported products instead of duplicating them.
 
 ### Exported JSON is Empty
 **Problem:** Export file contains no products  
