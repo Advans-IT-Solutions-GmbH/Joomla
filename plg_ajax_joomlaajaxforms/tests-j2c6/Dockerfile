@@ -1,4 +1,6 @@
-FROM joomla:6.1-php8.3-apache
+# The base image can be switched for the production-like lane (PHP 8.4).
+ARG JOOMLA_BASE_IMAGE=joomla:6.1-php8.3-apache
+FROM ${JOOMLA_BASE_IMAGE}
 
 ARG JOOMLA_VERSION=6.1.1
 ARG JOOMLA_PACKAGE_URL=https://github.com/joomla/joomla-cms/releases/download/${JOOMLA_VERSION}/Joomla_${JOOMLA_VERSION}-Stable-Full_Package.zip
@@ -14,6 +16,15 @@ RUN rm -rf /usr/src/joomla/* /var/www/html/* \
 
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
 
+# Production-like lane (docker-compose.production.yml): log every PHP
+# deprecation, warning and error of CLI and Apache to /tmp/php-errors.log.
+# The shared-deprecations.php suite evaluates the log afterwards.
+ARG PHP_STRICT_DEPRECATIONS=0
+RUN if [ "$PHP_STRICT_DEPRECATIONS" = "1" ]; then \
+        printf 'error_reporting = E_ALL\ndisplay_errors = Off\nlog_errors = On\nerror_log = /tmp/php-errors.log\n' \
+            > "$PHP_INI_DIR/conf.d/zz-strict-deprecations.ini" \
+        && touch /tmp/php-errors.log && chmod 0666 /tmp/php-errors.log; \
+    fi
 # Plugin ZIP copied in by CI
 COPY plg_ajax_joomlaajaxforms/tests-j2c6/extension.zip /tmp/extension.zip
 
