@@ -9,7 +9,7 @@ use Joomla\Database\ParameterType;
 
 class Com_j2store_cleanupInstallerScript extends InstallerScript
 {
-    protected $minimumJoomla = '4.0';
+    protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
     public function postflight($type, $parent)
