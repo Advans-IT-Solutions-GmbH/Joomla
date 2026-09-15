@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -27,7 +27,7 @@ Login, registration, password reset and username reminder can be disabled indivi
 
 ## Requirements
 
-- Joomla 5.x or 6.x
+- Joomla 5.4 or later (5.4.x, 6.x)
 - PHP 8.1+
 - J2Commerce 4.x or 6.x (only for cart features)
 
@@ -171,7 +171,7 @@ Creates: `plg_ajax_joomlaajaxforms_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (Joomla 6.1, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
