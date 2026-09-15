@@ -1,20 +1,13 @@
-# The base image can be switched for the production-like lane (PHP 8.4).
-ARG JOOMLA_BASE_IMAGE=joomla:6.1-php8.3-apache
+# Moving tag: newest Joomla 6.x release on the newest PHP of the official image.
+ARG JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache
 FROM ${JOOMLA_BASE_IMAGE}
 
-ARG JOOMLA_VERSION=6.1.1
-ARG JOOMLA_PACKAGE_URL=https://github.com/joomla/joomla-cms/releases/download/${JOOMLA_VERSION}/Joomla_${JOOMLA_VERSION}-Stable-Full_Package.zip
 
 RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
-
-RUN rm -rf /usr/src/joomla/* /var/www/html/* \
-    && curl -fsSL "$JOOMLA_PACKAGE_URL" -o /tmp/joomla.zip \
-    && unzip -q /tmp/joomla.zip -d /usr/src/joomla \
-    && rm /tmp/joomla.zip
 
 RUN echo "PassEnv J2COMMERCE_TEST_MODE" >> /etc/apache2/apache2.conf
 

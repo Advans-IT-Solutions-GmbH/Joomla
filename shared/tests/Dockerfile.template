@@ -1,4 +1,5 @@
-FROM joomla:5-php8.2-apache
+# Moving tag: newest Joomla 5.4.x release on the newest PHP of the official image.
+FROM joomla:5.4-php8.3-apache
 
 # Install required packages
 RUN apt-get update && apt-get install -y \

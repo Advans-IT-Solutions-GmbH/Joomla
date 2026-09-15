@@ -40,6 +40,12 @@ function up_check(string $name, bool $ok, string $detail = ''): void
 
 echo "=== Update From Previous Release ===\n\n";
 
+$versionSource = (string) @file_get_contents(JOOMLA_ROOT . '/libraries/src/Version.php');
+preg_match_all('/const (MAJOR|MINOR|PATCH)_VERSION = (\d+);/', $versionSource, $versionParts);
+$versionMap = array_combine($versionParts[1] ?: [], $versionParts[2] ?: []);
+echo 'Tested versions: Joomla ' . ($versionMap ? $versionMap['MAJOR'] . '.' . $versionMap['MINOR'] . '.' . $versionMap['PATCH'] : 'unknown')
+    . ', PHP ' . PHP_VERSION . "\n\n";
+
 if (!is_file($newPackage)) {
     $message = "new package $newPackage not present (this suite needs a container set up with the previous release)";
 
