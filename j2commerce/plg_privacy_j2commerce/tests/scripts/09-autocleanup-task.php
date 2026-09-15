@@ -260,6 +260,16 @@ class AutoCleanupTaskTest
 
         $this->test('scheduler:run exits with 0', $exit === 0, "exit code $exit");
 
+        if ($exit !== 0) {
+            // Diagnostics for a task plugin class that cannot be autoloaded.
+            $map = JPATH_BASE . '/administrator/cache/autoload_psr4.php';
+            $owner = is_file($map) && function_exists('posix_getpwuid') ? (posix_getpwuid(fileowner($map))['name'] ?? '?') : '?';
+            echo '  DIAG autoload_psr4.php exists=' . (is_file($map) ? 'yes' : 'no')
+                . ' owner=' . $owner
+                . ' contains task namespace=' . (is_file($map) && str_contains((string) file_get_contents($map), 'J2CommercePrivacy') ? 'yes' : 'no')
+                . "\n";
+        }
+
         $row = $this->db->setQuery(
             $this->db->getQuery(true)
                 ->select([$this->db->quoteName('last_exit_code'), $this->db->quoteName('times_executed')])

@@ -116,6 +116,11 @@ fi
 # the Installer singleton; installing the same way covers the nested task plugin
 # installation exactly as it happens for users. The administrator password is
 # set to a known value first because the site may come from the fallback above.
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 echo "Installing privacy plugin extension via the Joomla web installer..."
 mkdir -p /tmp/test-state
 TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"

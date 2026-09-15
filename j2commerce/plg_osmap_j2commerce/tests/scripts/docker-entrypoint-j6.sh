@@ -47,6 +47,11 @@ else
     exit 1
 fi
 
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 install_with_web_installer /tmp/osmap.zip "OSMap"
 install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}"
 
