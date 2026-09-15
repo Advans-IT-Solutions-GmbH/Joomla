@@ -24,14 +24,29 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        $this->patchOsmapFactory();
-        $this->disableLegacyPlugin();
-        $this->ensureUpdateSite();
-
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('plg_osmap_j2commerce', JPATH_ADMINISTRATOR);
         $lang->load('plg_osmap_j2commerce', $parent->getParent()->getPath('source'));
+
+        $this->warnAboutMissingDependencies();
+        $this->patchOsmapFactory();
+        $this->disableLegacyPlugin();
+        $this->ensureUpdateSite();
+
+        // Updates only get a short confirmation; the setup guide is shown on
+        // the first installation.
+        if ($type === 'update') {
+            $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+            $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+            $app->enqueueMessage(
+                Text::sprintf('PLG_OSMAP_J2COMMERCE_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                'message'
+            );
+
+            return;
+        }
 
         // Inline styles — Joomla 5 <joomla-alert> strips <style> tags
         $sBox    = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid';
@@ -85,7 +100,56 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * Disables the legacy plg_osmap_j2store plugin if still present.
+     * Returns a fresh query object compatible with Joomla 5 and 6.
+     */
+    private function dbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
+     * Warns when OSMap or J2Store/J2Commerce is not available. The plugin still
+     * installs, but it has nothing to do until both are present.
+     */
+    private function warnAboutMissingDependencies(): void
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->dbQuery($db)
+                ->select([$db->quoteName('element'), $db->quoteName('enabled')])
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->whereIn(
+                    $db->quoteName('element'),
+                    ['com_osmap', 'com_j2store', 'com_j2commerce'],
+                    ParameterType::STRING
+                );
+            $rows = $db->setQuery($query)->loadObjectList('element');
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        $app = Factory::getApplication();
+
+        if (empty($rows['com_osmap'])) {
+            $app->enqueueMessage(Text::_('PLG_OSMAP_J2COMMERCE_WARN_OSMAP_MISSING'), 'warning');
+        }
+
+        $shopEnabled = false;
+
+        foreach (['com_j2store', 'com_j2commerce'] as $element) {
+            if (!empty($rows[$element]) && (int) $rows[$element]->enabled === 1) {
+                $shopEnabled = true;
+            }
+        }
+
+        if (!$shopEnabled) {
+            $app->enqueueMessage(Text::_('PLG_OSMAP_J2COMMERCE_WARN_J2COMMERCE_MISSING'), 'warning');
+        }
+    }
+
+    /**
+     * Disables the legacy plg_osmap_j2store plugin if still present and enabled.
      *
      * The legacy plugin (element=j2store, folder=osmap) generates incorrect
      * sitemap URLs (index.php?option=com_content&view=article&id=...) for
@@ -94,19 +158,37 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
      */
     private function disableLegacyPlugin(): void
     {
+        $app = Factory::getApplication();
+
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
 
-            $query = $db->getQuery(true)
-                ->update($db->quoteName('#__extensions'))
-                ->set($db->quoteName('enabled') . ' = 0')
+            $query = $this->dbQuery($db)
+                ->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
                 ->where($db->quoteName('folder') . ' = ' . $db->quote('osmap'))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('j2store'));
+                ->where($db->quoteName('element') . ' = ' . $db->quote('j2store'))
+                ->where($db->quoteName('enabled') . ' = 1');
+            $legacyId = (int) $db->setQuery($query)->loadResult();
 
+            if ($legacyId === 0) {
+                return;
+            }
+
+            $query = $this->dbQuery($db)
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('enabled') . ' = 0')
+                ->where($db->quoteName('extension_id') . ' = :id')
+                ->bind(':id', $legacyId, ParameterType::INTEGER);
             $db->setQuery($query)->execute();
+
+            $app->enqueueMessage(Text::_('PLG_OSMAP_J2COMMERCE_INFO_LEGACY_DISABLED'), 'message');
         } catch (\Throwable $e) {
-            // Non-fatal — legacy plugin may not be installed
+            $app->enqueueMessage(
+                Text::sprintf('PLG_OSMAP_J2COMMERCE_WARN_LEGACY_DISABLE_FAILED', htmlspecialchars($e->getMessage())),
+                'warning'
+            );
         }
     }
 
@@ -127,9 +209,13 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        $content = file_get_contents($file);
+        $relative = 'administrator/components/com_osmap/library/Alledia/OSMap/Factory.php';
+        $app      = Factory::getApplication();
+        $content  = @file_get_contents($file);
 
         if ($content === false) {
+            $app->enqueueMessage(Text::sprintf('PLG_OSMAP_J2COMMERCE_WARN_OSMAP_PATCH_FAILED', $relative), 'warning');
+
             return;
         }
 
@@ -144,7 +230,65 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        file_put_contents($file, str_replace($buggy, $fixed, $content));
+        if (@file_put_contents($file, str_replace($buggy, $fixed, $content)) === false) {
+            $app->enqueueMessage(Text::sprintf('PLG_OSMAP_J2COMMERCE_WARN_OSMAP_PATCH_FAILED', $relative), 'warning');
+
+            return;
+        }
+
+        $app->enqueueMessage(Text::sprintf('PLG_OSMAP_J2COMMERCE_INFO_OSMAP_PATCHED', $relative), 'message');
+    }
+
+    /**
+     * Remove update sites of this plugin that still point to the repository's
+     * former organisation name. Joomla would otherwise keep querying both the
+     * old and the new update URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->dbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->dbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            $query = $this->dbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->dbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
     }
 
     /**
@@ -157,7 +301,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         $element   = 'j2commerce';
         $folder    = 'osmap';
 
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->select($db->quoteName('extension_id'))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('element') . ' = :element')
@@ -171,7 +315,9 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
             return;
         }
 
-        $query = $db->getQuery(true)
+        $this->removeLegacyUpdateSites($db, $extensionId);
+
+        $query = $this->dbQuery($db)
             ->select($db->quoteName('update_site_id'))
             ->from($db->quoteName('#__update_sites'))
             ->where($db->quoteName('location') . ' = :url')
@@ -179,7 +325,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         $siteId = (int) $db->setQuery($query)->loadResult();
 
         if ($siteId) {
-            $query = $db->getQuery(true)
+            $query = $this->dbQuery($db)
                 ->select('COUNT(*)')
                 ->from($db->quoteName('#__update_sites_extensions'))
                 ->where($db->quoteName('update_site_id') . ' = :siteId')
@@ -188,7 +334,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
                 ->bind(':extId', $extensionId, ParameterType::INTEGER);
 
             if (!(int) $db->setQuery($query)->loadResult()) {
-                $query = $db->getQuery(true)
+                $query = $this->dbQuery($db)
                     ->insert($db->quoteName('#__update_sites_extensions'))
                     ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
                     ->values(':siteId, :extId')
@@ -201,7 +347,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
 
         $name = 'OSMap J2Commerce Plugin';
         $type = 'extension';
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->insert($db->quoteName('#__update_sites'))
             ->columns([
                 $db->quoteName('name'),
@@ -216,7 +362,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         $db->setQuery($query)->execute();
         $siteId = (int) $db->insertid();
 
-        $query = $db->getQuery(true)
+        $query = $this->dbQuery($db)
             ->insert($db->quoteName('#__update_sites_extensions'))
             ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
             ->values(':siteId, :extId')
