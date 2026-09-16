@@ -243,6 +243,69 @@ function sh_strip_ansi(string $text): string
 }
 
 /**
+ * Text without HTML tags, entities and line wrapping, for comparing CLI output
+ * (which wraps long messages) with language strings.
+ */
+function sh_plain_text(string $text): string
+{
+    $text = html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    return trim((string) preg_replace('/\s+/u', ' ', $text));
+}
+
+/**
+ * All language strings of one language in an installation package
+ * (every <tag>/*.ini except *.sys.ini).
+ *
+ * @return array<string, string>
+ */
+function sh_read_package_language(string $package, string $tag): array
+{
+    $strings = [];
+
+    if (!is_file($package) || !class_exists('ZipArchive')) {
+        return $strings;
+    }
+
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        return $strings;
+    }
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = (string) $zip->getNameIndex($i);
+
+        if (!preg_match('#(^|/)' . preg_quote($tag, '#') . '/[^/]+\.ini$#', $name) || str_ends_with($name, '.sys.ini')) {
+            continue;
+        }
+
+        $parsed = @parse_ini_string((string) $zip->getFromIndex($i), false, INI_SCANNER_RAW);
+
+        foreach (is_array($parsed) ? $parsed : [] as $key => $value) {
+            $strings[(string) $key] = str_replace('"_QQ_"', '"', (string) $value);
+        }
+    }
+
+    $zip->close();
+
+    return $strings;
+}
+
+function sh_extension_enabled(int $extensionId): ?int
+{
+    $result = sh_db()->query('SELECT enabled FROM ' . sh_table('extensions') . ' WHERE extension_id = ' . $extensionId);
+    $row    = $result ? $result->fetch_row() : null;
+
+    return $row ? (int) $row[0] : null;
+}
+
+function sh_set_extension_enabled(int $extensionId, int $enabled): void
+{
+    sh_db()->query('UPDATE ' . sh_table('extensions') . ' SET enabled = ' . ($enabled ? 1 : 0) . ' WHERE extension_id = ' . $extensionId);
+}
+
+/**
  * @return string[]
  */
 function sh_find_raw_language_keys(string $text): array
