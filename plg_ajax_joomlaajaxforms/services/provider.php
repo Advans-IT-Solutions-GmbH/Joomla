@@ -32,10 +32,9 @@ return new class () implements ServiceProviderInterface {
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new JoomlaAjaxForms(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('ajax', 'joomlaajaxforms')
-                );
+                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+                $plugin = new JoomlaAjaxForms((array) PluginHelper::getPlugin('ajax', 'joomlaajaxforms'));
+                $plugin->setDispatcher($container->get(DispatcherInterface::class));
                 $plugin->setApplication(Factory::getApplication());
                 $plugin->setDatabase($container->get(DatabaseInterface::class));
 

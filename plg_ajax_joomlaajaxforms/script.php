@@ -107,18 +107,69 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
     }
 
     /**
+     * Sample com_ajax requests of this plugin, per issue type. Each variant
+     * holds the values mod_rewrite would see in a .htaccess context: the
+     * RewriteRule path (no leading slash) and the server variables.
+     */
+    private const AJAX_REQUESTS = [
+        'component' => [
+            [
+                'path'            => 'component/ajax/',
+                '%{REQUEST_URI}'  => '/component/ajax/',
+                '%{QUERY_STRING}' => 'plugin=joomlaajaxforms&group=ajax&format=json',
+                '%{THE_REQUEST}'  => 'POST /component/ajax/?plugin=joomlaajaxforms&group=ajax&format=json HTTP/1.1',
+            ],
+            [
+                'path'            => 'en/component/ajax/',
+                '%{REQUEST_URI}'  => '/en/component/ajax/',
+                '%{QUERY_STRING}' => 'plugin=joomlaajaxforms&group=ajax&format=json',
+                '%{THE_REQUEST}'  => 'POST /en/component/ajax/?plugin=joomlaajaxforms&group=ajax&format=json HTTP/1.1',
+            ],
+        ],
+        'option' => [
+            [
+                'path'            => 'index.php',
+                '%{REQUEST_URI}'  => '/index.php',
+                '%{QUERY_STRING}' => 'option=com_ajax&plugin=joomlaajaxforms&format=json',
+                '%{THE_REQUEST}'  => 'POST /index.php?option=com_ajax&plugin=joomlaajaxforms&format=json HTTP/1.1',
+            ],
+            [
+                'path'            => '',
+                '%{REQUEST_URI}'  => '/',
+                '%{QUERY_STRING}' => 'option=com_ajax&plugin=joomlaajaxforms&format=json',
+                '%{THE_REQUEST}'  => 'POST /?option=com_ajax&plugin=joomlaajaxforms&format=json HTTP/1.1',
+            ],
+        ],
+    ];
+
+    /**
+     * Server variables whose conditions can mark a rule as aimed at the
+     * request type, together with the word the pattern has to contain.
+     */
+    private const TARGET_VARIABLES = [
+        'component' => ['word' => 'component', 'variables' => ['%{REQUEST_URI}', '%{THE_REQUEST}']],
+        'option'    => ['word' => 'option', 'variables' => ['%{QUERY_STRING}', '%{THE_REQUEST}']],
+    ];
+
+    /**
      * Analyse rewrite rules block by block.
      *
      * mod_rewrite applies a group of RewriteCond lines only to the RewriteRule
-     * that directly follows them. Each rule is therefore evaluated together
-     * with its own conditions:
+     * that directly follows them. Consecutive conditions joined with [OR]
+     * form one group; all groups must be true (AND) for the rule to fire.
      *
-     * - "component": a redirecting/forbidding rule that targets /component/
-     *   URLs without a condition that exempts com_ajax
-     *   (e.g. `RewriteCond %{QUERY_STRING} !plugin= [NC]`).
-     * - "option": a redirecting/forbidding rule for index.php?option=com_*
-     *   without a condition that exempts com_ajax
-     *   (e.g. `RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]`).
+     * A redirecting or forbidding rule is reported when it is aimed at
+     * /component/ URLs ("component") or at index.php?option=com_* URLs
+     * ("option") and would still fire for the com_ajax request of this
+     * plugin. A rule is aimed at a type when its pattern or one of its
+     * positive conditions mentions the type and matches the sample request;
+     * a generic rule (for example an HTTP to HTTPS redirect) is ignored.
+     * A condition only protects com_ajax when it is false for the sample
+     * request and not joined with another condition that may be true, e.g.
+     * `RewriteCond %{QUERY_STRING} !plugin= [NC]` for /component/ rules and
+     * `RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]` for option rules.
+     * Conditions on other variables or with special patterns (-f, =, <, ...)
+     * count as possibly true.
      *
      * @return string[] Unique issue identifiers ("component", "option").
      */
@@ -134,10 +185,13 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
                 continue;
             }
 
-            if (preg_match('/^RewriteCond\s+(\S+)\s+(\S+)/i', $line, $match)) {
+            if (preg_match('/^RewriteCond\s+(\S+)\s+(\S+)(?:\s+\[([^\]]*)\])?/i', $line, $match)) {
+                $flags        = $this->ruleFlags($match[3] ?? '');
                 $conditions[] = [
                     'variable' => strtoupper($match[1]),
                     'pattern'  => $match[2],
+                    'nocase'   => isset($flags['NC']) || isset($flags['NOCASE']),
+                    'or'       => isset($flags['OR']) || isset($flags['ORNEXT']),
                 ];
                 continue;
             }
@@ -147,59 +201,180 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
             }
 
             $rulePattern = $match[1];
-            $flags       = strtoupper($match[3] ?? '');
+            $target      = $match[2];
+            $flags       = $this->ruleFlags($match[3] ?? '');
             $blockConds  = $conditions;
             $conditions  = [];
 
-            if (!preg_match('/(^|,)\s*(R(=\d+)?|REDIRECT(=\d+)?|F|FORBIDDEN|G|GONE)\s*(,|$)/', $flags)) {
+            $redirects = isset($flags['R']) || isset($flags['REDIRECT'])
+                || isset($flags['F']) || isset($flags['FORBIDDEN'])
+                || isset($flags['G']) || isset($flags['GONE'])
+                || preg_match('#^https?://#i', $target);
+
+            if (!$redirects) {
                 continue;
             }
 
-            $targetsComponent = stripos($rulePattern, 'component') !== false;
-            $targetsOption    = false;
-            $exemptsAjax      = false;
+            $ruleNocase = isset($flags['NC']) || isset($flags['NOCASE']);
+            $groups     = $this->conditionGroups($blockConds);
 
-            foreach ($blockConds as $condition) {
-                $negated = str_starts_with($condition['pattern'], '!');
-                $pattern = ltrim($condition['pattern'], '!');
-                $isUri   = in_array($condition['variable'], ['%{REQUEST_URI}', '%{THE_REQUEST}'], true);
-                $isQuery = $condition['variable'] === '%{QUERY_STRING}';
-
-                if ($negated) {
-                    if ($isQuery && (stripos($pattern, 'plugin=') !== false || stripos($pattern, 'option=com_ajax') !== false)) {
-                        $exemptsAjax = true;
+            foreach (self::AJAX_REQUESTS as $type => $variants) {
+                foreach ($variants as $request) {
+                    if (!$this->ruleAimsAt($type, $rulePattern, $ruleNocase, $blockConds, $request)) {
+                        continue;
                     }
 
-                    if ($isUri && stripos($pattern, 'component/ajax') !== false) {
-                        $exemptsAjax = true;
+                    if ($this->patternMayMatch($rulePattern, $request['path'], $ruleNocase) === false) {
+                        continue;
                     }
 
-                    continue;
+                    foreach ($groups as $group) {
+                        $groupMayBeTrue = false;
+
+                        foreach ($group as $condition) {
+                            if ($this->conditionMayBeTrue($condition, $request)) {
+                                $groupMayBeTrue = true;
+                                break;
+                            }
+                        }
+
+                        if (!$groupMayBeTrue) {
+                            continue 2;
+                        }
+                    }
+
+                    $issues[$type] = $type;
+                    break;
                 }
-
-                if ($isUri && stripos($pattern, 'component') !== false) {
-                    $targetsComponent = true;
-                }
-
-                if ($isQuery && stripos($pattern, 'option=com_') !== false) {
-                    $targetsOption = true;
-                }
-            }
-
-            if ($exemptsAjax) {
-                continue;
-            }
-
-            if ($targetsComponent) {
-                $issues['component'] = 'component';
-            }
-
-            if ($targetsOption) {
-                $issues['option'] = 'option';
             }
         }
 
         return array_values($issues);
+    }
+
+    /**
+     * Parse a flag list like "NC,R=301,L" into upper-case flag names.
+     *
+     * @return array<string, true>
+     */
+    private function ruleFlags(string $flags): array
+    {
+        $result = [];
+
+        foreach (explode(',', $flags) as $flag) {
+            $name = strtoupper(trim(explode('=', $flag, 2)[0]));
+
+            if ($name !== '') {
+                $result[$name] = true;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Split conditions into OR groups; the groups are combined with AND.
+     *
+     * @return array<int, array<int, array>>
+     */
+    private function conditionGroups(array $conditions): array
+    {
+        $groups  = [];
+        $current = [];
+
+        foreach ($conditions as $condition) {
+            $current[] = $condition;
+
+            if (!$condition['or']) {
+                $groups[] = $current;
+                $current  = [];
+            }
+        }
+
+        if ($current !== []) {
+            $groups[] = $current;
+        }
+
+        return $groups;
+    }
+
+    /**
+     * Whether the rule is aimed at the given request type.
+     */
+    private function ruleAimsAt(string $type, string $rulePattern, bool $ruleNocase, array $conditions, array $request): bool
+    {
+        $word = self::TARGET_VARIABLES[$type]['word'];
+
+        if ($type === 'component'
+            && !str_starts_with($rulePattern, '!')
+            && stripos($rulePattern, $word) !== false
+            && $this->patternMayMatch($rulePattern, $request['path'], $ruleNocase, true)
+        ) {
+            return true;
+        }
+
+        foreach ($conditions as $condition) {
+            if (str_starts_with($condition['pattern'], '!')
+                || !in_array($condition['variable'], self::TARGET_VARIABLES[$type]['variables'], true)
+                || stripos($condition['pattern'], $word) === false
+            ) {
+                continue;
+            }
+
+            if ($this->patternMayMatch($condition['pattern'], $request[$condition['variable']], $condition['nocase'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether a condition may be true for the sample request. Unknown
+     * variables and special patterns are treated as possibly true.
+     */
+    private function conditionMayBeTrue(array $condition, array $request): bool
+    {
+        if (!str_starts_with($condition['variable'], '%{') || !array_key_exists($condition['variable'], $request)) {
+            return true;
+        }
+
+        $pattern = $condition['pattern'];
+
+        if (preg_match('/^!?(-[a-zA-Z]+$|[<>=])/', $pattern)) {
+            return true;
+        }
+
+        return $this->patternMayMatch($pattern, $request[$condition['variable']], $condition['nocase']) !== false;
+    }
+
+    /**
+     * Evaluate a mod_rewrite pattern (optionally negated with "!") against a
+     * subject. Returns null when the pattern cannot be evaluated in PHP.
+     *
+     * With $strict, a pattern that cannot be evaluated falls back to a plain
+     * text check for "component/" or "option=com_" and never returns null.
+     */
+    private function patternMayMatch(string $pattern, string $subject, bool $nocase, bool $strict = false): ?bool
+    {
+        $negated = str_starts_with($pattern, '!');
+        $regex   = $negated ? substr($pattern, 1) : $pattern;
+
+        if (strlen($regex) > 1 && $regex[0] === '"' && substr($regex, -1) === '"') {
+            $regex = substr($regex, 1, -1);
+        }
+
+        $result = @preg_match("\x01" . $regex . "\x01" . ($nocase ? 'i' : ''), $subject);
+
+        if ($result === false) {
+            if (!$strict) {
+                return null;
+            }
+
+            return !$negated && preg_match('#(^|[^a-z])(component/|option=com_)#i', $regex) === 1;
+        }
+
+        return $negated ? $result === 0 : $result === 1;
     }
 
     /**
