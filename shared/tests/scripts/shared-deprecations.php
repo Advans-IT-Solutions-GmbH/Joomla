@@ -23,7 +23,8 @@
  *         2. reads the PHP error log of all previous suites,
  *         3. reads the tracer log: every deprecation, including @-suppressed ones
  *            and Joomla's Log::add(..., 'deprecated') entries, is attributed to
- *            the first caller outside Joomla's libraries,
+ *            the code that called the deprecated function directly (calls
+ *            made inside Joomla's libraries are Joomla's own),
  *         4. reads Joomla's deprecated.php log.
  *       Anything attributed to a file of this extension fails the suite. Entries
  *       from Joomla core or other extensions are listed for information only.
@@ -34,6 +35,7 @@ const TRACER_TARGET  = '/usr/local/lib/advans-deprecation-tracer.php';
 const TRACER_INI     = 'zz-deprecation-tracer.ini';
 const CANARY_PREFIX  = 'ADVANS-DEPRECATION-CANARY-';
 const FRAMEWORK_MARK = 'advans-deprecation-tracer';
+const DEP_RAISING_CALLS = ['trigger_error', 'user_error', 'trigger_deprecation', 'Joomla\CMS\Log\Log::add'];
 
 require_once __DIR__ . '/shared-test-helpers.php';
 
@@ -172,13 +174,30 @@ foreach (dep_read_trace($traceFile) as $record) {
         array_unshift($frames, ['file' => $record['file'], 'line' => $record['line'] ?? 0]);
     }
 
-    // First caller outside Joomla's libraries (libraries/src, libraries/vendor).
-    $culprit = null;
+    // The deprecated function is the one that raised the notice; the code that
+    // called it directly is responsible. The frame after the last raising call
+    // (trigger_error, trigger_deprecation, Log::add) is that call. When Joomla
+    // itself makes the call (Text::_() using Factory::getLanguage(), for
+    // example), it is Joomla's own deprecation even if the extension started
+    // the request. Without a raising call, the first caller outside Joomla's
+    // libraries is used.
+    $culprit   = null;
+    $lastRaise = -1;
 
-    foreach ($frames as $frame) {
-        if (!$isLibrary((string) $frame['file'])) {
-            $culprit = $frame;
-            break;
+    foreach ($frames as $index => $frame) {
+        if (in_array($frame['call'] ?? '', DEP_RAISING_CALLS, true)) {
+            $lastRaise = $index;
+        }
+    }
+
+    if ($lastRaise >= 0 && isset($frames[$lastRaise + 1])) {
+        $culprit = $frames[$lastRaise + 1];
+    } else {
+        foreach ($frames as $frame) {
+            if (!$isLibrary((string) $frame['file'])) {
+                $culprit = $frame;
+                break;
+            }
         }
     }
 
