@@ -30,6 +30,7 @@ The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x) plus
 - Joomla 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce 4.0 or higher (J2Commerce 6 supported)
+- J2Commerce 6: **6.3.4 or later** for the checkout consent checkbox. The core checkout templates fire the event `AfterDisplayShippingPayment` since J2Commerce commit `d7992c66` (PR #1109, merged 2026-05-28, after the 6.3.3 version bump of 2026-05-27); 6.3.4 (version bump of 2026-06-01) is the first version that contains it. The installer warns when an older J2Commerce 6 is installed
 - Joomla Privacy Component enabled (`com_privacy`)
 
 ---
@@ -145,7 +146,8 @@ For a full overview of how Joomla's Privacy Suite works, see the [Joomla Privacy
 
 The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: Shipping & Payment).
 
-- **J2Commerce 6:** the bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed together with this plugin and enabled on first installation) renders the checkbox through the J2Commerce event `AfterDisplayShippingPayment`, which the J2Commerce 6 templates (bootstrap5 and uikit) fire directly before the Continue button. The checkbox therefore appears with the J2Commerce core templates and with any template override that keeps this event call; the bundled override `default_shipping_payment.php` is optional (styling only).
+- **J2Commerce 6:** the bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed together with this plugin and enabled on first installation) renders the checkbox through the J2Commerce event `AfterDisplayShippingPayment`, which the J2Commerce 6 core templates (bootstrap5 and uikit, J2Commerce 6.3.4 or later) fire directly before the Continue button. The checkbox therefore appears with the J2Commerce core templates and with any template override that keeps this event call. No J2Commerce 6 checkout override is shipped or deployed; for your own override, copy the J2Commerce core template (`components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php`) and keep the event call.
+- **Checkout overrides of earlier plugin versions (J2Commerce 6):** versions up to 1.5.5 copied `html/com_j2commerce/checkout/default_shipping_payment.php` into the site templates. That copy replaces both core templates and lacks newer J2Commerce features (payment-step custom fields, payment method descriptions, image URL handling, uikit markup). On installation and update, a copy that is still **unchanged** (identical to a shipped version) is renamed to `default_shipping_payment.php.plg_privacy_j2commerce-disabled` when J2Commerce 6.3.4 or later is installed, so the core template takes over; the installer lists the renamed files. Renaming instead of deleting keeps the file for comparison and can be undone. A **changed** copy may contain your own changes: it is left in place and the installer warns about it. With an older or unknown J2Commerce version nothing is renamed, because the copy is then the only place that renders the checkbox.
 - **J2Commerce 4 / J2Store:** the checkbox is rendered by the template override `default_shipping_payment.php`. See [Template Integration](#template-integration).
 
 **Validation (J2Commerce 6):** J2Commerce 6 loads the checkout steps via AJAX and removes `<script>` tags from the step HTML, so the consent is validated on the server by the system plugin.
@@ -154,7 +156,7 @@ The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: S
 - Every render of the shipping & payment step discards an earlier consent, so the checkbox has to be ticked again.
 - Shipping & payment step (`checkout.shippingPaymentMethodValidate`, also when called as `controller=checkout&task=shippingPaymentMethodValidate`): ticked, the consent is stored in the session for the current J2Commerce cart; not ticked while required, J2Commerce receives a field error for `j2commerce_privacy_consent` and the checkout does not advance.
 - Confirmation (`checkout.confirm`) and payment submission (`checkout.confirmPayment`, browser POST) are refused while required and no consent is stored for the current cart. This covers requests that skip the shipping & payment step, zero-total orders and cart changes (for example a login in another tab): the shopper has to tick the checkbox again. Off-site payment returns (GET) are not refused.
-- A custom J2Commerce 6 checkout override that neither fires `AfterDisplayShippingPayment` nor renders the checkbox (`j2commerce_privacy_consent`) cannot complete a checkout while consent is required. The installer warns about such overrides (also in the `bootstrap5/` and `uikit/` subfolders) on installation and update.
+- A custom J2Commerce 6 checkout override that neither fires `AfterDisplayShippingPayment` nor renders the checkbox (`j2commerce_privacy_consent`) cannot complete a checkout while consent is required. The installer warns about such overrides (also in the `bootstrap5/`, `uikit/` and, for J2Commerce before 6.3.6, `uikit3/` subfolders) on installation and update.
 
 **Validation (J2Commerce 4 / J2Store):** the `com_j2store` checkout override keeps the client-side script `media/js/consent-validator.js`, which blocks the checkout form submit while the required checkbox is unticked.
 
@@ -198,12 +200,14 @@ The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy 
 | Logged-in | Records with the user's `user_id` and the subject of this plugin or of Joomla's registration/profile consent (`PLG_SYSTEM_PRIVACYCONSENT_SUBJECT`). Consents of other extensions are not shown |
 | Guest (order token and `guest_order_email` in the J2Commerce session) | The checkout consent of exactly the one order identified by that token and e-mail address, the same order J2Commerce shows the guest. Other orders of the same e-mail address are not shown |
 
-**Privacy request link** (shown for logged-in users and verified guest sessions when **Show Export Data** or **Show Delete All Data** is enabled):
+**Privacy request buttons** (logged-in users and verified guest sessions): one button for a data export request while **Show Export Data** is Yes, and one for a data deletion request while **Show Delete All Data** is Yes. With both options off, the tab shows only the consent status.
 
 | User Type | Link |
 |-----------|------|
-| Logged-in | `com_privacy` request form (`index.php?option=com_privacy&view=request`; requires the menu item, see above) |
-| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login) |
+| Logged-in | Both buttons open the `com_privacy` request form (`index.php?option=com_privacy&view=request`; requires the menu item, see above). The form offers both request types and cannot be preselected through the URL, so the shopper selects the type there |
+| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty, with the request type as subject (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login) |
+
+**Show Privacy Section** off hides the tab. **Show Delete Address Buttons** off hides the delete button per address in the Addresses tab (`myprofile/default_addresses.php`). Every option applies only while the plugin is enabled; with the plugin disabled, the overrides show neither the tab nor the delete buttons.
 
 ---
 
@@ -227,9 +231,8 @@ templates/{template}/html/com_j2store/myprofile/default_addresses.php
 templates/{template}/html/com_j2store/myprofile/default_privacy.php
 ```
 
-**J2Commerce 6.x** (`com_j2commerce`):
+**J2Commerce 6.x** (`com_j2commerce`; no checkout override, the core templates show the consent checkbox):
 ```
-templates/{template}/html/com_j2commerce/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2commerce/myprofile/default.php
 templates/{template}/html/com_j2commerce/myprofile/default_addresses.php
 templates/{template}/html/com_j2commerce/myprofile/default_privacy.php
@@ -237,7 +240,7 @@ templates/{template}/html/com_j2commerce/myprofile/default_privacy.php
 
 Rules:
 - Files are **only copied if they do not already exist** — existing customisations are never overwritten.
-- On **updates**, only `myprofile/default_privacy.php` is copied, and only into templates that already have `myprofile/default.php` for an installed J2Commerce component and where it is still missing (the deployed `default.php` loads it for the Privacy tab). All other overrides are not touched; manage them manually after updating. Installation and update warn about J2Commerce 6 checkout overrides (including `bootstrap5/` and `uikit/` subfolders) that neither fire the J2Commerce event `AfterDisplayShippingPayment` nor render the consent checkbox; with a required consent the checkout cannot be completed with them.
+- On **updates**, only `myprofile/default_privacy.php` is copied, and only into templates that already have `myprofile/default.php` for an installed J2Commerce component and where it is still missing (the deployed `default.php` loads it for the Privacy tab). All other overrides are not changed, except that unchanged J2Commerce 6 checkout overrides of earlier plugin versions are renamed (see [Checkout Consent Checkbox](#checkout-consent-checkbox)); manage them manually after updating. Installation and update warn about J2Commerce 6 checkout overrides (including `bootstrap5/`, `uikit/` and `uikit3/` subfolders) that neither fire the J2Commerce event `AfterDisplayShippingPayment` nor render the consent checkbox; with a required consent the checkout cannot be completed with them.
 - The postflight message lists which files were copied and which were skipped.
 
 ### Manual deployment
@@ -342,22 +345,22 @@ No AcyMailing PHP classes are loaded. All queries use Joomla's `DatabaseDriver` 
 
 ### How `default.php` activates the privacy tab
 
-`default.php` checks for the plugin at runtime:
+`default.php` checks the plugin and the option **Show Privacy Section** at runtime through `PrivacyOptions` (`src/Frontend/PrivacyOptions.php`):
 
 ```php
-$privacyPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
-if ($privacyPlugin) {
-    $privacyParams = new \Joomla\Registry\Registry($privacyPlugin->params);
-    $showPrivacyTab = (bool) $privacyParams->get('show_privacy_section', 1);
-    Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showPrivacyTab();
+
+if ($_privacyEnabled) {
+    $_privacyOptions::loadLanguage();
 }
 ```
 
-If the plugin is not installed or disabled, `$showPrivacyTab` stays `false` and the tab is not rendered — no errors.
+If the plugin is not installed or disabled, or the option is off, `$_privacyEnabled` is `false` and the tab is not rendered — no errors. `default_addresses.php` uses `PrivacyOptions::showDeleteAddress()` the same way.
 
 ### Language file must be loaded manually
 
-Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the explicit `Factory::getLanguage()->load(...)` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys render as raw strings in the tab. This call is already included in the provided `default.php` — do not remove it.
+Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the `PrivacyOptions::loadLanguage()` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys (including the tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`) render as raw strings. This call is already included in the provided `default.php` — do not remove it. The consent system plugin also loads this language file for MyProfile pages.
 
 ### Updating overrides after plugin updates
 
@@ -953,10 +956,12 @@ This plugin does not store or have access to complete payment details. Users mus
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Show Privacy Section | Yes | Render the Privacy tab in the J2Commerce MyProfile page |
-| Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab |
-| Show Delete All Data | Yes | Show data deletion request button in the Privacy tab |
-| Show Export Data | Yes | Show data export request button in the Privacy tab |
+| Show Privacy Section | Yes | Render the Privacy tab in the J2Commerce MyProfile page (`myprofile/default.php` override) |
+| Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab (`myprofile/default_addresses.php` override) |
+| Show Delete All Data | Yes | Show the data deletion request button in the Privacy tab |
+| Show Export Data | Yes | Show the data export request button in the Privacy tab |
+
+These options are evaluated by the deployed MyProfile overrides; see [Profile Privacy Tab](#profile-privacy-tab).
 
 #### Notifications & Logging
 
@@ -1212,9 +1217,9 @@ Order as in `tests/test.env`:
 6. **Data Export** — `onPrivacyExportRequest` output validation
 7. **Data Anonymization** — `onPrivacyRemoveData` retention logic
 8. **GDPR Compliance** — all DSGVO-relevant methods and hooks
-9. **Template Overrides** — override source files and deployment verification
-10. **Consent UI Render** — renders the deployed checkout and MyProfile overrides for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon) actually appear in the produced HTML. Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
-11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override; `onJ2CommerceAfterSaveOrder` only for the consent's cart; Privacy tab links (`com_privacy` form vs. `mailto:`); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component)
+9. **Template Overrides** — override source files and deployment verification (no J2Commerce 6 checkout override)
+10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
+11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override (accepted steps must return J2Commerce JSON without error), and the privacy policy link with SEF URLs off and on (escaped once); `onJ2CommerceAfterSaveOrder` only for the consent's cart; Privacy tab links (`com_privacy` form vs. `mailto:`, one button per enabled request option); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component, an unchanged checkout override of 1.5.5 is renamed, a changed one is kept with a warning, custom checkout overrides without the event are reported)
 12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`
 13. **AcyMailing Integration** — newsletter consent sync
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code

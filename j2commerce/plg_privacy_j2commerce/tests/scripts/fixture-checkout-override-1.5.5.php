@@ -3,15 +3,14 @@
  * J2Commerce 6 Checkout — Shipping & Payment Step
  * Template override for plg_privacy_j2commerce
  *
+ * Adds a privacy consent checkbox before the "Continue" button.
  * Based on com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php.
  *
- * OPTIONAL
- * The privacy consent checkbox is rendered by the bundled system plugin
- * (plg_system_j2commerceprivacy) through the J2Commerce event
- * AfterDisplayShippingPayment, which the J2Commerce core templates fire before
- * the "Continue" button. This override is not required for the checkbox; it is
- * kept as a styling starting point and fires the same event. Custom overrides
- * must keep that event call.
+ * WHY THIS OVERRIDE IS NEEDED
+ * J2Commerce's plugin events only include plugins in the 'j2store' group.
+ * The privacy plugin is in the 'privacy' group (required for Joomla's native
+ * com_privacy integration). There is no hook available to a privacy-group
+ * plugin inside the J2Commerce checkout flow — hence this template override.
  *
  * INSTALLATION
  * Automatically copied to:
@@ -32,9 +31,11 @@ if (!class_exists('J2Commerce\Component\J2commerce\Administrator\Helper\J2Commer
 }
 
 use J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper;
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Uri\Uri;
 
 /** @var \J2Commerce\Component\J2commerce\Site\View\Checkout\HtmlView $this */
 
@@ -49,6 +50,21 @@ $showTerms           = $this->showTerms ?? 0;
 $termsDisplayType    = $this->termsDisplayType ?? 'link';
 $currency            = J2CommerceHelper::currency();
 
+// Privacy consent configuration
+$_privacyPlugin    = PluginHelper::getPlugin('privacy', 'j2commerce');
+$_privacyEnabled   = !empty($_privacyPlugin);
+$_privacyParams    = $_privacyEnabled ? new \Joomla\Registry\Registry($_privacyPlugin->params) : null;
+$_showConsent      = $_privacyEnabled && $_privacyParams->get('show_consent_checkbox', 1);
+$_consentRequired  = $_privacyEnabled && $_privacyParams->get('consent_required', 1);
+$_consentText      = $_privacyEnabled ? $_privacyParams->get('consent_text', Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_CHECKBOX_DEFAULT')) : '';
+$_privacyArticleId = $_privacyEnabled ? (int) $_privacyParams->get('privacy_article', 0) : 0;
+
+if ($_showConsent && $_privacyArticleId) {
+    $_privacyLink     = Route::_('index.php?option=com_content&view=article&id=' . $_privacyArticleId);
+    $_privacyLinkHtml = '<a href="' . $_privacyLink . '" target="_blank" rel="noopener noreferrer">'
+        . Text::_('PLG_PRIVACY_J2COMMERCE_POLICY_LINK') . '</a>';
+    $_consentText     = str_replace('{privacy_policy}', $_privacyLinkHtml, $_consentText);
+}
 ?>
 <div class="j2commerce-shipping-payment">
 
@@ -132,12 +148,38 @@ $currency            = J2CommerceHelper::currency();
         </div>
     <?php endif; ?>
 
-    <?php
-    // The privacy consent checkbox is rendered by the bundled system plugin through this
-    // J2Commerce core event (same call as in the J2Commerce templates). Keep it when
-    // customising this override, otherwise no checkbox is shown.
-    echo J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [$this->order ?? null]);
-    ?>
+    <?php if ($_showConsent) : ?>
+    <div class="j2commerce-privacy-consent mb-3">
+        <div class="form-check">
+            <input type="checkbox"
+                   class="form-check-input"
+                   id="j2commerce_privacy_consent"
+                   name="j2commerce_privacy_consent"
+                   value="1"
+                   <?php echo $_consentRequired ? 'required' : ''; ?>>
+            <label class="form-check-label" for="j2commerce_privacy_consent">
+                <?php echo $_consentText; ?>
+                <?php if ($_consentRequired) : ?>
+                    <span class="text-danger" aria-hidden="true">*</span>
+                <?php endif; ?>
+            </label>
+        </div>
+    </div>
+    <?php if ($_consentRequired) : ?>
+        <div id="j2commerce-consent-validator"
+             data-error="<?php echo $this->escape(Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_REQUIRED_ERROR')); ?>"
+             style="display:none;"></div>
+        <?php
+        Factory::getApplication()->getDocument()->getWebAssetManager()
+            ->registerAndUseScript(
+                'plg_privacy_j2commerce.consent-validator',
+                Uri::root(true) . '/media/plg_privacy_j2commerce/js/consent-validator.js',
+                [],
+                ['defer' => true]
+            );
+        ?>
+    <?php endif; ?>
+    <?php endif; ?>
 
     <div class="mt-3">
         <button type="button" id="button-payment-method" class="btn btn-primary btn-checkout-step">

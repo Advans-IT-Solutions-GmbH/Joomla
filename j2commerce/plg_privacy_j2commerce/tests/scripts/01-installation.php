@@ -204,9 +204,9 @@ class InstallationTest
 
         // Test 5: Bundled override source files exist for both J2Commerce generations
         $overrideFiles = [
-            'checkout/default_shipping_payment.php',
             'myprofile/default.php',
             'myprofile/default_addresses.php',
+            'myprofile/default_privacy.php',
         ];
 
         foreach (['com_j2store', 'com_j2commerce'] as $component) {
@@ -217,6 +217,16 @@ class InstallationTest
                 $this->test("Override source: $component/$file", file_exists($overrideSrc . '/' . $file));
             }
         }
+
+        // J2Store 4 needs the checkout override; J2Commerce 6 shows the checkbox in its core
+        // templates through AfterDisplayShippingPayment, so no J2Commerce 6 checkout override ships.
+        $pluginOverrides = JPATH_BASE . '/plugins/privacy/j2commerce/overrides';
+        $this->test('Override source: com_j2store/checkout/default_shipping_payment.php',
+            file_exists($pluginOverrides . '/com_j2store/checkout/default_shipping_payment.php'));
+        $this->test('No J2Commerce 6 checkout override is shipped',
+            !file_exists($pluginOverrides . '/com_j2commerce/checkout/default_shipping_payment.php'));
+        $this->test('Frontend options class installed',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/src/Frontend/PrivacyOptions.php'));
 
         // Test 6: Overrides deployed for the component of this stack
         $component = $this->isJ6() ? 'com_j2commerce' : 'com_j2store';

@@ -47,9 +47,10 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 |------|---------|
 | `src/Extension/J2Commerce.php` | Main plugin class — all event handlers |
 | `plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Scheduled cleanup task (separate task plugin) |
-| `plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Checkout consent on J2Commerce 6 (`onAfterRoute`, `onJ2CommerceAfterSaveOrder`, `onJ2CommerceCheckoutCleanup`); bundled system plugin installed by `script.php` |
+| `plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Checkout consent on J2Commerce 6 (`onAfterRoute`, `onJ2CommerceAfterDisplayShippingPayment`, `onJ2CommerceAfterSaveOrder`, `onJ2CommerceCheckoutCleanup`); bundled system plugin installed by `script.php` |
 | `src/Consent/ConsentRepository.php` | `#__privacy_consents`: one record per order without duplicates, status lookup by `user_id` or, for guests, only the order of the session token + e-mail |
 | `layouts/privacy_tab.php` | Privacy tab markup, rendered by the `myprofile/default_privacy.php` overrides |
+| `src/Frontend/PrivacyOptions.php` | Frontend options for the MyProfile overrides (`show_privacy_section`, `show_delete_address`, `show_export_data`, `show_delete_all`), all off while the plugin is disabled; loads the plugin language |
 | `script.php` | Install/update/uninstall, post-install message |
 | `language/en-GB/plg_privacy_j2commerce.ini` | All translatable strings |
 

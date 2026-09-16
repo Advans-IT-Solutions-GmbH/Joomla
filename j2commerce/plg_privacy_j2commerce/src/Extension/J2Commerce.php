@@ -1256,7 +1256,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return ['success' => false, 'message' => Text::_('JINVALID_TOKEN')];
         }
 
-        $task = $app->input->get('task', '');
+        $task = $app->getInput()->get('task', '');
         $user = $app->getIdentity();
 
         if (!$user || $user->guest) {
@@ -1265,7 +1265,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         switch ($task) {
             case 'deleteAddress':
-                return $this->deleteUserAddress($app->input->getInt('address_id', 0), $user->id);
+                return $this->deleteUserAddress($app->getInput()->getInt('address_id', 0), $user->id);
             default:
                 return ['success' => false, 'message' => 'Invalid task'];
         }

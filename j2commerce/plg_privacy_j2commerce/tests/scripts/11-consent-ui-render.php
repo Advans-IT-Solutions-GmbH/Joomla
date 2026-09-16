@@ -29,9 +29,12 @@
  * that Joomla loads or enables the plugin, nor that J2Commerce routes a real
  * checkout request to these layouts. Plugin registration/enabling is covered by
  * 01-installation.php (state recorded before the test setup activates plugins).
- * On J2Commerce 6 the checkbox comes from the J2Commerce event
- * AfterDisplayShippingPayment, which the bundled consent system plugin answers;
- * the harness returns that plugin HTML for the event. The server-side check of
+ * On J2Commerce 6 no checkout override ships: the checkbox comes from the
+ * J2Commerce event AfterDisplayShippingPayment of the core templates, which the
+ * bundled consent system plugin answers; the harness returns that plugin HTML
+ * for the event. The frontend options (Show Privacy Section, Show Delete
+ * Address Buttons, Show Export Data, Show Delete All Data) are checked through
+ * PrivacyOptions and the rendered MyProfile override. The server-side check of
  * the checkout requests is covered by 12-consent-logging.php; browser
  * interaction is not covered by the automated tests.
  */
@@ -369,6 +372,20 @@ class ConsentUiRenderTest
         }
     }
 
+    /** Replace PluginHelper's plugin cache: privacy plugin with these params, or no plugin (null). */
+    private function seedPrivacyPlugin(?string $params): void
+    {
+        $plugins = [];
+
+        if ($params !== null) {
+            $plugins[] = (object) ['type' => 'privacy', 'name' => 'j2commerce', 'params' => $params];
+        }
+
+        $property = (new \ReflectionClass(PluginHelper::class))->getProperty('plugins');
+        $property->setAccessible(true);
+        $property->setValue(null, $plugins);
+    }
+
     /** Render an override file in the scope of a view double and return its HTML. */
     private function renderOverride(string $file, RenderHarnessView $view): string
     {
@@ -395,10 +412,15 @@ class ConsentUiRenderTest
         $checkoutFile  = $overrideDir . '/checkout/default_shipping_payment.php';
         $myprofileFile = $overrideDir . '/myprofile/default.php';
 
-        $this->test('Checkout override exists', file_exists($checkoutFile), $checkoutFile);
+        // J2Commerce 6 ships no checkout override: its core templates fire AfterDisplayShippingPayment.
+        if ($isJ6) {
+            $this->test('No J2Commerce 6 checkout override shipped', !file_exists($checkoutFile), $checkoutFile);
+        } else {
+            $this->test('Checkout override exists', file_exists($checkoutFile), $checkoutFile);
+        }
         $this->test('MyProfile override exists', file_exists($myprofileFile), $myprofileFile);
 
-        // ── Render checkout override → assert real consent checkbox ──────────
+        // ── Checkout → assert real consent checkbox ──────────────────────────
         echo "\n-- Checkout: GDPR consent checkbox --\n";
         $view        = new RenderHarnessView();
         $view->order = new \stdClass();
@@ -406,7 +428,17 @@ class ConsentUiRenderTest
         $view->params = new Registry(['bootstrap_version' => 5, 'download_area' => 1]);
 
         $checkoutHtml = '';
-        if (!file_exists($checkoutFile)) {
+        if ($isJ6) {
+            // What the J2Commerce 6 core template echoes before the Continue button.
+            try {
+                $checkoutHtml = (string) \J2Commerce\Component\J2commerce\Administrator\Helper\J2CommerceHelper::plugin()
+                    ->eventWithHtml('AfterDisplayShippingPayment', [$view->order]);
+                $this->test('Checkout event output rendered without error', true);
+            } catch (\Throwable $e) {
+                $this->test('Checkout event output rendered without error', false,
+                    $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            }
+        } elseif (!file_exists($checkoutFile)) {
             $this->test('Checkout override rendered without error', false,
                 'Checkout override file missing, render skipped: ' . $checkoutFile);
         } else {
@@ -457,9 +489,54 @@ class ConsentUiRenderTest
             strpos($profileHtml, 'j2commerce-privacy-tab') !== false);
         $this->test('Privacy tab shield icon present',
             strpos($profileHtml, 'fa-shield') !== false);
-        $this->test('Privacy tab title token present',
-            strpos($profileHtml, 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE') !== false
-            || strpos($profileHtml, 'Privacy') !== false);
+        $tabTitle = Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE');
+        $this->test('Privacy tab title key is translated',
+            $tabTitle !== 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE'
+            && strpos($profileHtml, 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE') === false
+            && strpos($profileHtml, htmlspecialchars($tabTitle, ENT_QUOTES, 'UTF-8')) !== false,
+            'Tab title: ' . $tabTitle);
+        $this->test('No untranslated plugin language key in MyProfile',
+            strpos($profileHtml, 'PLG_PRIVACY_J2COMMERCE_') === false);
+
+        // ── Frontend options ─────────────────────────────────────────────────
+        echo "\n-- Frontend options --\n";
+        $installedParams = (string) (PluginHelper::getPlugin('privacy', 'j2commerce')->params ?? '{}');
+        $options         = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+        $this->test('PrivacyOptions class available', class_exists($options));
+
+        if (class_exists($options)) {
+            $this->seedPrivacyPlugin('{}');
+            $this->test('Options default to on (tab, delete address, export, deletion)',
+                $options::showPrivacyTab() && $options::showDeleteAddress() && $options::showExportRequest() && $options::showDeletionRequest());
+
+            $this->seedPrivacyPlugin('{"show_privacy_section":0,"show_delete_address":0,"show_export_data":0,"show_delete_all":0}');
+            $this->test('Options switched off are reported off',
+                !$options::showPrivacyTab() && !$options::showDeleteAddress() && !$options::showExportRequest() && !$options::showDeletionRequest());
+
+            try {
+                $hiddenHtml = $this->renderOverride($myprofileFile, $view2);
+                $this->test('"Show Privacy Section" off: no Privacy tab',
+                    strpos($hiddenHtml, 'j2commerce-privacy-tab') === false && strpos($hiddenHtml, 'loadTemplate:privacy') === false);
+                $this->test('"Show Privacy Section" off: MyProfile still renders', strlen(trim($hiddenHtml)) > 0);
+            } catch (\Throwable $e) {
+                $this->test('MyProfile override renders with the privacy section off', false, $e->getMessage());
+            }
+
+            $this->seedPrivacyPlugin(null);
+            $this->test('Plugin disabled: every option is off',
+                !$options::showPrivacyTab() && !$options::showDeleteAddress() && !$options::showExportRequest() && !$options::showDeletionRequest());
+
+            $this->seedPrivacyPlugin($installedParams);
+        }
+
+        // Address and privacy tab overrides evaluate the options (rendered in 12-consent-logging.php).
+        foreach (['com_j2store', 'com_j2commerce'] as $component) {
+            $base      = JPATH_BASE . '/plugins/privacy/j2commerce/overrides/' . $component . '/myprofile/';
+            $addresses = (string) @file_get_contents($base . 'default_addresses.php');
+            $this->test("[$component] address delete button depends on \"Show Delete Address Buttons\"",
+                str_contains($addresses, '$_privacyOptions::showDeleteAddress()')
+                && substr_count($addresses, 'if ($_privacyEnabled)') >= 2);
+        }
 
         echo "\n=== Consent-UI Render Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

@@ -44,9 +44,16 @@ if (empty($_privacyPlugin)) {
 }
 
 $_app = Factory::getApplication();
-$_app->getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+$_app->getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce')
+    || $_app->getLanguage()->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
 
 $_params  = new Registry($_privacyPlugin->params);
+
+// "Show Privacy Section" off: no tab content.
+if (!(int) $_params->get('show_privacy_section', 1)) {
+    return;
+}
+
 $_session = $_app->getSession();
 $_userId  = (int) ($this->user->id ?? 0);
 
@@ -95,8 +102,9 @@ echo $_layout->render([
     'consented'      => $_status['consented'],
     'records'        => $_records,
     'isGuest'        => $_isGuest,
-    'showRequest'    => ($_userId > 0 || $_isGuest)
-        && ((bool) $_params->get('show_export_data', 1) || (bool) $_params->get('show_delete_all', 1)),
+    'showRequest'    => $_userId > 0 || $_isGuest,
+    'showExport'     => (bool) $_params->get('show_export_data', 1),
+    'showDelete'     => (bool) $_params->get('show_delete_all', 1),
     'requestUrl'     => $_userId > 0 ? Route::_('index.php?option=com_privacy&view=request') : '',
     'contactEmail'   => filter_var($_contactEmail, FILTER_VALIDATE_EMAIL) ? $_contactEmail : '',
     'retentionYears' => (int) $_params->get('retention_years', 10),

@@ -13,11 +13,15 @@
  *   - HTTP (J2Commerce 6): real site requests against this container with a real session and a
  *     real J2Commerce cart (onAfterRoute(), event rendering, currentCartId()), including the
  *     bypass routes: skipped step 4, cart change, template/templateStyle/Itemid request
- *     parameters, and a checkout without any template override
+ *     parameters, and a checkout without any template override; accepted steps must return
+ *     J2Commerce JSON without error; privacy policy link escaped once with SEF off and on
  *   - onJ2CommerceAfterSaveOrder records consent only for the cart the consent was given for
- *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest)
- *   - update path: CLI reinstall keeps a disabled system plugin disabled and adds a missing
- *     default_privacy.php only next to an existing MyProfile override of an installed component
+ *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest), one button per
+ *     enabled request type (Show Export Data / Show Delete All Data)
+ *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
+ *     default_privacy.php only next to an existing MyProfile override of an installed component,
+ *     disables an unchanged J2Commerce 6 checkout override shipped by 1.5.5, keeps a changed one
+ *     with a warning, and warns about custom checkout overrides without the J2Commerce event
  *
  * Stack-aware: #__j2store_orders (J2Commerce 4) or #__j2commerce_orders (J2Commerce 6).
  */
@@ -114,6 +118,9 @@ class ConsentLoggingTest
     private const USER_ID     = 100;
     private const FORM_TOKEN  = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
     private const SITE_URL    = 'http://localhost/index.php';
+
+    /** script.php RETIRED_OVERRIDE_SUFFIX */
+    private const RETIRED_SUFFIX = '.plg_privacy_j2commerce-disabled';
 
     private $db;
     private int $passed = 0;
@@ -621,6 +628,14 @@ class ConsentLoggingTest
 
             return is_array($json) && isset($json['error'][J2CommercePrivacy::CONSENT_FIELD]);
         };
+        // An accepted step is the J2Commerce JSON response without any error (the test cart is
+        // empty, so no shipping or payment method is required). HTML, error pages, token errors or
+        // an empty body do not count as accepted.
+        $stepAccepted = static function (string $body): bool {
+            $json = json_decode($body, true);
+
+            return is_array($json) && !array_key_exists('error', $json);
+        };
 
         try {
             // Flow A: render step 4 (checkbox through the event), tick, render again
@@ -637,7 +652,7 @@ class ConsentLoggingTest
                 $this->test('Flow A: unticked step is rejected by onAfterRoute (JSON field error)', $stepError($body), $this->lastHttp);
 
                 $body = $this->post($a, $validate + $ticked);
-                $this->test('Flow A: ticked step is not rejected by the consent check', !$stepError($body), $this->lastHttp);
+                $this->test('Flow A: ticked step is accepted (JSON without error)', $stepAccepted($body), $this->lastHttp);
 
                 $body = $this->post($a, $confirm);
                 $this->test('Flow A: confirm after ticking is not refused (consent bound to the current cart)', !str_contains($body, $message), $this->lastHttp);
@@ -680,7 +695,8 @@ class ConsentLoggingTest
 
             if ($this->test('Flow C: site session and form token obtained', $c !== null, $this->lastHttp)) {
                 $c['cart'] = $this->createSessionCart($c['session']);
-                $this->post($c, $validate + $ticked);
+                $body = $this->post($c, $validate + $ticked);
+                $this->test('Flow C: ticked step is accepted (JSON without error)', $stepAccepted($body), $this->lastHttp);
 
                 $body = $this->post($c, $confirm);
                 $this->test('Flow C: confirm with consent for the current cart is not refused', !str_contains($body, $message), $this->lastHttp);
@@ -713,14 +729,22 @@ class ConsentLoggingTest
                     $body = $this->post($d, $validate);
                     $this->test('Flow D: unticked step is rejected without override', $stepError($body), $this->lastHttp);
 
+                    $body = $this->post($d, $confirm);
+                    $this->test('Flow D: confirm without ticked checkbox is refused', str_contains($body, $message), $this->lastHttp);
+
                     $body = $this->post($d, $validate + $ticked);
-                    $this->test('Flow D: ticked step is accepted without override', !$stepError($body), $this->lastHttp);
+                    $this->test('Flow D: ticked step is accepted without override (JSON without error)', $stepAccepted($body), $this->lastHttp);
+
+                    $body = $this->post($d, $confirm);
+                    $this->test('Flow D: confirm after ticking is not refused (consent stored without override)', !str_contains($body, $message), $this->lastHttp);
                 }
             } finally {
                 foreach ($moved as $original => $aside) {
                     @rename($aside, $original);
                 }
             }
+
+            $this->runPrivacyLinkHttpTests($render);
         } catch (\Throwable $e) {
             $this->test('HTTP checkout tests run without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
@@ -731,6 +755,123 @@ class ConsentLoggingTest
                         ->where($this->db->quoteName('j2commerce_cart_id') . ' IN (' . implode(',', array_map('intval', $this->httpCarts)) . ')')
                 )->execute();
             }
+        }
+    }
+
+    /**
+     * Flow E: privacy policy link of the rendered step 4 with "Privacy Policy Article" set, with SEF
+     * URLs off and on. The href must be escaped exactly once (no "&amp;amp;", no "amp;" parameters).
+     * configuration.php, the plugin params and the test article are restored afterwards.
+     */
+    private function runPrivacyLinkHttpTests(array $render): void
+    {
+        echo "  Flow E: privacy policy link (SEF off and on)\n";
+
+        $configFile = JPATH_BASE . '/configuration.php';
+        $config     = (string) @file_get_contents($configFile);
+
+        $this->db->setQuery(
+            $this->query()
+                ->select($this->db->quoteName(['extension_id', 'params']))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('privacy'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        );
+        $plugin = $this->db->loadObject();
+
+        if (!$this->test('Flow E: configuration.php and privacy plugin row readable', $config !== '' && $plugin !== null)) {
+            return;
+        }
+
+        $setParams = function (string $params) use ($plugin): void {
+            $this->db->setQuery(
+                $this->query()
+                    ->update($this->db->quoteName('#__extensions'))
+                    ->set($this->db->quoteName('params') . ' = ' . $this->db->quote($params))
+                    ->where($this->db->quoteName('extension_id') . ' = ' . (int) $plugin->extension_id)
+            )->execute();
+        };
+
+        // A real article, so the SEF router builds a real article URL.
+        $now     = Factory::getDate()->toSql();
+        $article = (object) [
+            'title' => 'Consent link test', 'alias' => 'consent-link-test-' . random_int(1000, 9999),
+            'introtext' => '', 'fulltext' => '', 'state' => 1, 'catid' => 2, 'created' => $now,
+            'created_by' => self::USER_ID, 'created_by_alias' => '', 'modified' => $now, 'modified_by' => self::USER_ID,
+            'publish_up' => $now, 'images' => '{}', 'urls' => '{}', 'attribs' => '{}', 'version' => 1,
+            'ordering' => 0, 'metakey' => '', 'metadesc' => '', 'access' => 1, 'hits' => 0,
+            'metadata' => '{}', 'featured' => 0, 'language' => '*', 'note' => '',
+        ];
+        $articleId = 0;
+
+        try {
+            $this->db->insertObject('#__content', $article, 'id');
+            $articleId = (int) ($article->id ?? $this->db->insertid());
+        } catch (\Throwable $e) {
+            $this->test('Flow E: test article created', false, $e->getMessage());
+
+            return;
+        }
+
+        $params = new Registry($plugin->params);
+        $params->set('show_consent_checkbox', 1);
+        $params->set('privacy_article', $articleId);
+        $params->set('consent_text', 'I accept the {privacy_policy}.');
+        $setParams($params->toString());
+
+        try {
+            foreach (['SEF off' => '0', 'SEF on' => '1'] as $label => $sef) {
+                $updated = preg_replace('/public \$sef\s*=\s*[^;]+;/', "public \$sef = '$sef';", $config, 1, $count);
+
+                if (!$this->test("Flow E ($label): SEF setting written", $count === 1 && @file_put_contents($configFile, $updated) !== false)) {
+                    continue;
+                }
+
+                // Apache OPcache revalidates configuration.php after revalidate_freq (2 s in the official image).
+                sleep(3);
+
+                $session = $this->startSiteSession();
+
+                if (!$this->test("Flow E ($label): site session and form token obtained", $session !== null, $this->lastHttp)) {
+                    continue;
+                }
+
+                $this->createSessionCart($session['session']);
+                $body = $this->post($session, $render);
+                $href = preg_match('/for="' . J2CommercePrivacy::CONSENT_FIELD . '">.*?<a href="([^"]*)"/s', $body, $match) ? $match[1] : null;
+
+                if (!$this->test("Flow E ($label): consent text links the privacy article", $href !== null, $this->lastHttp)) {
+                    continue;
+                }
+
+                $url = html_entity_decode($href, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+                $diag = 'href="' . $href . '"';
+
+                $this->test("Flow E ($label): href is escaped once (no &amp;amp;)", !str_contains($href, '&amp;amp;') && !str_contains($url, '&amp;'), $diag);
+                $this->test("Flow E ($label): no query parameter starts with amp;", !preg_grep('/^amp;/', array_keys($query)), $diag);
+
+                if ($sef === '0') {
+                    $this->test(
+                        'Flow E (SEF off): href opens the article (view=article, id)',
+                        ($query['option'] ?? '') === 'com_content' && ($query['view'] ?? '') === 'article' && (int) ($query['id'] ?? 0) === $articleId
+                            && str_contains($href, '&amp;view=article'),
+                        $diag
+                    );
+                } else {
+                    $this->test('Flow E (SEF on): href is a SEF URL', !isset($query['option']) && str_contains($url, $article->alias), $diag);
+                }
+            }
+        } finally {
+            file_put_contents($configFile, $config);
+            $setParams((string) $plugin->params);
+            $this->db->setQuery(
+                $this->query()
+                    ->delete($this->db->quoteName('#__content'))
+                    ->where($this->db->quoteName('id') . ' = ' . $articleId)
+            )->execute();
+            sleep(3);
         }
     }
 
@@ -911,6 +1052,34 @@ class ConsentLoggingTest
         $hiddenHtml = $render(['consented' => false, 'records' => [], 'isGuest' => false, 'showRequest' => false, 'requestUrl' => '/x']);
         $this->test('Request block hidden when not requested', !str_contains($hiddenHtml, 'data-privacy-request'));
 
+        // "Show Export Data" / "Show Delete All Data": one button per enabled request type.
+        $types = static function (string $html, string $kind): array {
+            preg_match_all('/data-privacy-request="' . $kind . '" data-request-type="([a-z]+)"/', $html, $m);
+
+            return $m[1];
+        };
+        $userData  = ['consented' => false, 'records' => [], 'isGuest' => false, 'showRequest' => true, 'requestUrl' => '/index.php?option=com_privacy&view=request', 'contactEmail' => 'privacy@example.invalid'];
+        $guestData = ['isGuest' => true, 'requestUrl' => ''] + $userData;
+
+        $this->test('Both options on: export and remove buttons (logged-in)', $types($userHtml, 'form') === ['export', 'remove']);
+        $this->test('Both options on: export and remove mailto links (guest)', $types($guestHtml, 'mailto') === ['export', 'remove']);
+        $this->test('Export only (logged-in)', $types($render($userData + ['showExport' => true, 'showDelete' => false]), 'form') === ['export']);
+        $this->test('Delete only (logged-in)', $types($render($userData + ['showExport' => false, 'showDelete' => true]), 'form') === ['remove']);
+
+        $guestExport = $render($guestData + ['showExport' => true, 'showDelete' => false]);
+        $this->test('Export only (guest): mailto with the export subject',
+            $types($guestExport, 'mailto') === ['export']
+                && str_contains($guestExport, 'subject=' . rawurlencode(Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_EXPORT_TITLE'))));
+
+        $guestDelete = $render($guestData + ['showExport' => false, 'showDelete' => true]);
+        $this->test('Delete only (guest): mailto with the deletion subject',
+            $types($guestDelete, 'mailto') === ['remove']
+                && str_contains($guestDelete, 'subject=' . rawurlencode(Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_DELETE_TITLE'))));
+
+        $none = $render($userData + ['showExport' => false, 'showDelete' => false]) . $render($guestData + ['showExport' => false, 'showDelete' => false]);
+        $this->test('Both options off: no request section', !str_contains($none, 'data-privacy-request') && !str_contains($none, 'j2commerce-privacy-request'));
+        $this->test('Both options off: consent status still shown', str_contains($none, 'data-consent-status="none"'));
+
         foreach (['com_j2commerce', 'com_j2store'] as $component) {
             $source = (string) @file_get_contents(JPATH_PLUGINS . '/privacy/j2commerce/overrides/' . $component . '/myprofile/default_privacy.php');
             $this->test(
@@ -919,6 +1088,12 @@ class ConsentLoggingTest
                     && strpos($source, 'html/layouts/plg_privacy_j2commerce') < strpos($source, "/privacy/j2commerce/layouts'")
             );
             $this->test("[$component] override passes the verified guest session as isGuest", str_contains($source, "'isGuest'        => \$_isGuest"));
+            $this->test(
+                "[$component] override passes the export/delete options to the layout",
+                str_contains($source, "'showExport'     => (bool) \$_params->get('show_export_data', 1)")
+                    && str_contains($source, "'showDelete'     => (bool) \$_params->get('show_delete_all', 1)")
+            );
+            $this->test("[$component] override returns early when the privacy section is off", str_contains($source, "get('show_privacy_section', 1)"));
         }
     }
 
@@ -991,16 +1166,75 @@ class ConsentLoggingTest
             )->execute();
         };
 
+        // J2Commerce 6 checkout overrides in the same template (installer checks of the update):
+        // flat file = unchanged copy shipped by 1.5.5, bootstrap5 = custom override without the
+        // event, uikit = custom override with the event call.
+        $j6        = is_dir(JPATH_SITE . '/components/com_j2commerce');
+        $checkout  = "$htmlBase/com_j2commerce/checkout";
+        $legacy    = "$checkout/default_shipping_payment.php";
+        $retired   = $legacy . self::RETIRED_SUFFIX;
+        $noEvent   = "$checkout/bootstrap5/default_shipping_payment.php";
+        $withEvent = "$checkout/uikit/default_shipping_payment.php";
+        $fixture   = (string) @file_get_contents(__DIR__ . '/fixture-checkout-override-1.5.5.php');
+        $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
+
+        if ($j6) {
+            foreach ([$legacy, $retired, $noEvent, $withEvent] as $file) {
+                $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+                @mkdir(dirname($file), 0755, true);
+            }
+
+            $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
+            file_put_contents($legacy, $fixture);
+            @unlink($retired);
+            file_put_contents($noEvent, "<?php\n// custom step 4 override without the consent event\n");
+            file_put_contents($withEvent, "<?php\n// custom step 4 override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
+        }
+
         $setEnabled(0);
 
-        $command = sprintf(
-            'HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
-            escapeshellarg(PHP_BINARY),
-            escapeshellarg(JPATH_BASE . '/cli/joomla.php'),
-            escapeshellarg($package)
-        );
-        exec($command, $output, $exitCode);
-        $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . implode(' | ', array_slice($output, -5)));
+        [$exitCode, $output] = $this->runCliUpdate($package);
+        $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($output, -400));
+
+        if ($j6) {
+            $version   = $this->getJ2CommerceVersion();
+            $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
+            $outdated  = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED');
+            $diag      = mb_substr($output, 0, 1500);
+
+            clearstatcache();
+            $this->test('Update warns about a custom checkout override without the event (bootstrap5)',
+                str_contains($output, $outdated) && str_contains($output, $relative($noEvent)), $diag);
+            $this->test('Update does not name a custom checkout override with the event (uikit)', !str_contains($output, $relative($withEvent)), $diag);
+            $this->test('No untranslated installer message', !str_contains($output, 'PLG_PRIVACY_J2COMMERCE_'), $diag);
+
+            if ($hasEvent) {
+                $this->test("Update disables the unchanged 1.5.5 checkout override (J2Commerce $version)",
+                    !is_file($legacy) && is_file($retired) && file_get_contents($retired) === $fixture, $diag);
+                $this->test('Update reports the disabled checkout override',
+                    str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')) && str_contains($output, $relative($legacy)), $diag);
+            } else {
+                $this->test("Update keeps the 1.5.5 checkout override while J2Commerce ($version) lacks the event", is_file($legacy), $diag);
+                $this->test('Update warns that J2Commerce is too old',
+                    str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2COMMERCE_TOO_OLD')), $diag);
+            }
+
+            // A changed copy of the shipped override may contain shop changes: kept, with a warning.
+            $changed = $fixture . "\n<?php // changed by the shop\n";
+            file_put_contents($legacy, $changed);
+            @unlink($retired);
+            file_put_contents($noEvent, "<?php\n// custom override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
+
+            [$exitCode, $output] = $this->runCliUpdate($package);
+            $diag = mb_substr($output, 0, 1500);
+            clearstatcache();
+            $this->test('Second CLI update succeeds', $exitCode === 0, $diag);
+            $this->test('Update keeps a changed copy of the shipped checkout override',
+                is_file($legacy) && file_get_contents($legacy) === $changed && !is_file($retired), $diag);
+            $this->test('Update warns about the changed copy of the shipped checkout override',
+                str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED')) && str_contains($output, $relative($legacy)), $diag);
+            $this->test('No outdated-override warning once every override fires the event', !str_contains($output, $outdated), $diag);
+        }
 
         $this->db->setQuery(
             $this->query()
@@ -1027,6 +1261,54 @@ class ConsentLoggingTest
                 file_put_contents($file, $content);
             }
         }
+
+        // Remove folders created for the test (rmdir fails on non-empty folders).
+        foreach (["$checkout/bootstrap5", "$checkout/uikit", $checkout] as $dir) {
+            @rmdir($dir);
+        }
+    }
+
+    /**
+     * Reinstall the package through the Joomla CLI. The console prints the enqueued installer
+     * messages; the output is returned with whitespace collapsed (the console wraps long lines).
+     *
+     * @return  array{0: int, 1: string}
+     */
+    private function runCliUpdate(string $package): array
+    {
+        $command = sprintf(
+            'HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg(JPATH_BASE . '/cli/joomla.php'),
+            escapeshellarg($package)
+        );
+        $output = [];
+        exec($command, $output, $exitCode);
+
+        return [$exitCode, trim(preg_replace('/\s+/', ' ', implode(' ', $output)))];
+    }
+
+    /** Longest literal part of a translated installer message (placeholders removed, whitespace collapsed). */
+    private function messagePrefix(string $key): string
+    {
+        $parts = preg_split('/%(\d+\$)?s/', Text::_($key));
+        usort($parts, static fn ($a, $b) => strlen($b) <=> strlen($a));
+
+        return trim(preg_replace('/\s+/', ' ', $parts[0]));
+    }
+
+    private function getJ2CommerceVersion(): string
+    {
+        $this->db->setQuery(
+            $this->query()
+                ->select($this->db->quoteName('manifest_cache'))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('component'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('com_j2commerce'))
+        );
+        $cache = json_decode((string) $this->db->loadResult(), true);
+
+        return is_array($cache) ? (string) ($cache['version'] ?? '') : '';
     }
 }
 

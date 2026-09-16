@@ -10,8 +10,10 @@
  * @var  array  $displayData {
  *     @type  bool    $consented       A valid consent record exists.
  *     @type  array   $records         [{date: string, order_id: ?string, source: 'checkout'|'account'}]
- *     @type  bool    $isGuest         Guest access via order token + e-mail.
- *     @type  bool    $showRequest     Show the privacy request block.
+ *     @type  bool    $isGuest         Verified guest access via order token + e-mail.
+ *     @type  bool    $showRequest     A logged-in user or a verified guest session is present.
+ *     @type  bool    $showExport      "Show Export Data" (default true).
+ *     @type  bool    $showDelete      "Show Delete All Data" (default true).
  *     @type  string  $requestUrl      com_privacy request form URL (logged-in users).
  *     @type  string  $contactEmail    Contact address for guests (mailto link).
  *     @type  int     $retentionYears  Retention period shown in the request description.
@@ -27,10 +29,23 @@ $escape = static fn ($value): string => htmlspecialchars((string) $value, ENT_QU
 $consented      = !empty($displayData['consented']);
 $records        = $displayData['records'] ?? [];
 $isGuest        = !empty($displayData['isGuest']);
-$showRequest    = !empty($displayData['showRequest']);
+$showExport     = (bool) ($displayData['showExport'] ?? true);
+$showDelete     = (bool) ($displayData['showDelete'] ?? true);
+$showRequest    = !empty($displayData['showRequest']) && ($showExport || $showDelete);
 $requestUrl     = (string) ($displayData['requestUrl'] ?? '');
 $contactEmail   = (string) ($displayData['contactEmail'] ?? '');
 $retentionYears = (int) ($displayData['retentionYears'] ?? 10);
+
+// The Joomla request form offers both request types; each button stands for one of them.
+$requests = [];
+
+if ($showExport) {
+    $requests['export'] = ['button' => 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_EXPORT_BTN', 'subject' => 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_EXPORT_TITLE'];
+}
+
+if ($showDelete) {
+    $requests['remove'] = ['button' => 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_DELETE_BTN', 'subject' => 'PLG_PRIVACY_J2COMMERCE_MYPROFILE_DELETE_TITLE'];
+}
 ?>
 <div class="j2commerce-privacy">
     <h3 class="h5"><?php echo Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_TITLE'); ?></h3>
@@ -73,15 +88,20 @@ $retentionYears = (int) ($displayData['retentionYears'] ?? 10);
             <h4 class="h6"><?php echo Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_REQUEST_TITLE'); ?></h4>
             <?php if (!$isGuest && $requestUrl !== '') : ?>
                 <p><?php echo Text::sprintf('PLG_PRIVACY_J2COMMERCE_MYPROFILE_REQUEST_DESC', $retentionYears); ?></p>
-                <a class="btn btn-outline-primary" data-privacy-request="form" href="<?php echo $escape($requestUrl); ?>">
-                    <?php echo Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_REQUEST_BTN'); ?>
-                </a>
+                <?php foreach ($requests as $type => $request) : ?>
+                    <a class="btn btn-outline-primary me-2 mb-2" data-privacy-request="form" data-request-type="<?php echo $type; ?>"
+                       href="<?php echo $escape($requestUrl); ?>">
+                        <?php echo Text::_($request['button']); ?>
+                    </a>
+                <?php endforeach; ?>
             <?php elseif ($contactEmail !== '') : ?>
                 <p><?php echo Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_GUEST_REQUEST_DESC'); ?></p>
-                <a class="btn btn-outline-primary" data-privacy-request="mailto"
-                   href="mailto:<?php echo $escape($contactEmail); ?>?subject=<?php echo rawurlencode(Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_REQUEST_TITLE')); ?>">
-                    <?php echo Text::_('PLG_PRIVACY_J2COMMERCE_MYPROFILE_GUEST_REQUEST_BTN'); ?>
-                </a>
+                <?php foreach ($requests as $type => $request) : ?>
+                    <a class="btn btn-outline-primary me-2 mb-2" data-privacy-request="mailto" data-request-type="<?php echo $type; ?>"
+                       href="mailto:<?php echo $escape($contactEmail); ?>?subject=<?php echo rawurlencode(Text::_($request['subject'])); ?>">
+                        <?php echo Text::_($request['button']); ?>
+                    </a>
+                <?php endforeach; ?>
             <?php endif; ?>
         </section>
     <?php endif; ?>

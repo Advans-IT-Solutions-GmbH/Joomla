@@ -24,11 +24,19 @@ class TemplateOverridesTest
     private int $failed = 0;
 
     private const OVERRIDE_FILES = [
-        'checkout/default_shipping_payment.php',
         'myprofile/default.php',
         'myprofile/default_addresses.php',
         'myprofile/default_privacy.php',
     ];
+
+    /** Checkout override: J2Store 4 only (J2Commerce 6 renders the checkbox in its core templates). */
+    private const CHECKOUT_FILE = 'checkout/default_shipping_payment.php';
+
+    /** Files expected for the component of this stack. */
+    private function overrideFiles(): array
+    {
+        return $this->isJ6() ? self::OVERRIDE_FILES : array_merge([self::CHECKOUT_FILE], self::OVERRIDE_FILES);
+    }
 
     public function __construct()
     {
@@ -72,7 +80,7 @@ class TemplateOverridesTest
         $this->test('Override source directory exists', is_dir($pluginOverrideDir),
             "Expected: $pluginOverrideDir");
 
-        foreach (self::OVERRIDE_FILES as $file) {
+        foreach ($this->overrideFiles() as $file) {
             $this->test(
                 "Source: $file",
                 file_exists($pluginOverrideDir . '/' . $file)
@@ -81,14 +89,21 @@ class TemplateOverridesTest
 
         // 2. Source files contain PluginHelper check
         echo "\n-- Source file integrity --\n";
-        foreach (['checkout/default_shipping_payment.php', 'myprofile/default.php'] as $file) {
+        if ($this->isJ6()) {
+            $this->test('No J2Commerce 6 checkout override shipped', !file_exists($pluginOverrideDir . '/' . self::CHECKOUT_FILE));
+        }
+
+        foreach ($this->isJ6() ? ['myprofile/default.php'] : [self::CHECKOUT_FILE, 'myprofile/default.php'] as $file) {
             $src = $pluginOverrideDir . '/' . $file;
             if (file_exists($src)) {
                 $content = file_get_contents($src);
+                // The checkout override reads the plugin via PluginHelper, the MyProfile override via
+                // PrivacyOptions (plugin enabled + "Show Privacy Section").
+                $check = $file === self::CHECKOUT_FILE ? 'PluginHelper::getPlugin(' : '$_privacyOptions::showPrivacyTab()';
                 $this->test(
-                    "Source $file uses PluginHelper",
-                    strpos($content, 'PluginHelper') !== false,
-                    'PluginHelper check missing'
+                    "Source $file checks the privacy plugin state",
+                    strpos($content, $check) !== false,
+                    "$check missing"
                 );
             }
         }
@@ -114,7 +129,11 @@ class TemplateOverridesTest
 
         foreach ($templates as $tpl) {
             $tplBase = JPATH_BASE . '/templates/' . $tpl . '/html/' . $comName;
-            foreach (self::OVERRIDE_FILES as $file) {
+            if ($this->isJ6()) {
+                $this->test("[$tpl] no J2Commerce 6 checkout override deployed", !file_exists($tplBase . '/' . self::CHECKOUT_FILE));
+            }
+
+            foreach ($this->overrideFiles() as $file) {
                 $dest = $tplBase . '/' . $file;
                 $this->test(
                     "[$tpl] $file deployed",

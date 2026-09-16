@@ -32,6 +32,33 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     private bool $taskPluginReady = false;
 
     /**
+     * First J2Commerce 6 version whose core checkout templates (bootstrap5 and uikit) fire
+     * AfterDisplayShippingPayment. The event was added in J2Commerce commit d7992c66
+     * (PR #1109, merged 2026-05-28), after the 6.3.3 version bump (2026-05-27); 6.3.4
+     * (2026-06-01) is the first version bump that contains it.
+     */
+    public const MIN_J2COMMERCE_EVENT_VERSION = '6.3.4';
+
+    /**
+     * SHA-256 (line endings normalised to LF) of every J2Commerce 6 checkout override
+     * (html/com_j2commerce/checkout/default_shipping_payment.php) that earlier versions of this
+     * plugin copied into site templates. An unchanged copy is renamed on install/update, see
+     * retireBundledCheckoutOverrides().
+     */
+    private const BUNDLED_CHECKOUT_OVERRIDE_HASHES = [
+        'f7f80680b6dad4b6a0644a165a004bfa60b70880167c83f861bd9857926a233f', // d2a8ac3
+        'cab562d39f5b02086e7b8c375e2f14840fb2f29f4295642ecbac88e0d093ccff', // 53be1ef
+        '6ae2f79cec5572b5b5e359a6088d37f4774f5ce2c2b45aed2167d77446925c93', // 4f2dab5 (1.5.4, 1.5.5)
+        'd149bc8879defeea0163364c760a5d1962a360facd2ae54e1b9345dd94bf502d', // event-based sample (pre-release)
+    ];
+
+    /** Marker line in the header of every checkout override this plugin shipped */
+    private const BUNDLED_OVERRIDE_MARKER = 'Template override for plg_privacy_j2commerce';
+
+    /** Suffix of a retired checkout override (Joomla no longer loads the file) */
+    public const RETIRED_OVERRIDE_SUFFIX = '.plg_privacy_j2commerce-disabled';
+
+    /**
      * Returns a fresh query object compatible with Joomla 5 and 6.
      * Joomla 6 introduced DatabaseInterface::createQuery(); Joomla 5 uses getQuery(true).
      */
@@ -71,6 +98,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 $this->copyTemplateOverrides($packageSource, ['myprofile/default_privacy.php']);
             }
 
+            $this->warnIfJ2CommerceTooOld();
+            $this->retireBundledCheckoutOverrides();
             $this->warnOutdatedCheckoutOverrides();
 
             $this->installTaskPlugin($packageSource);
@@ -395,6 +424,136 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     }
 
     /**
+     * Installed J2Commerce 6 version from the component manifest cache, '' if unknown or not installed.
+     */
+    private function getJ2CommerceVersion(): string
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->dbQuery($db)
+                ->select($db->quoteName('manifest_cache'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('com_j2commerce'));
+            $db->setQuery($query);
+            $cache = json_decode((string) $db->loadResult(), true);
+
+            return is_array($cache) ? trim((string) ($cache['version'] ?? '')) : '';
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    /**
+     * The consent checkbox is rendered through AfterDisplayShippingPayment, which the J2Commerce 6
+     * core checkout templates fire only since MIN_J2COMMERCE_EVENT_VERSION. Advisory only.
+     */
+    private function warnIfJ2CommerceTooOld(): void
+    {
+        $version = $this->getJ2CommerceVersion();
+
+        if ($version !== '' && version_compare($version, self::MIN_J2COMMERCE_EVENT_VERSION, '<')) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf(
+                    'PLG_PRIVACY_J2COMMERCE_WARN_J2COMMERCE_TOO_OLD',
+                    htmlspecialchars($version),
+                    self::MIN_J2COMMERCE_EVENT_VERSION
+                ),
+                'warning'
+            );
+        }
+    }
+
+    /**
+     * Retire J2Commerce 6 checkout overrides that earlier versions of this plugin copied into site
+     * templates (html/com_j2commerce/checkout/default_shipping_payment.php). Such a copy shadows the
+     * core bootstrap5 and uikit templates and lacks later core features (payment-step custom fields,
+     * payment descriptions, image URL handling, uikit markup).
+     *
+     * - Unchanged copy (hash of a shipped version) and J2Commerce fires the event: renamed with
+     *   RETIRED_OVERRIDE_SUFFIX, so the core template (which renders the checkbox through the event)
+     *   takes over. Renaming instead of deleting keeps the file for comparison and can be undone.
+     * - Changed copy (plugin marker, unknown hash): may contain shop changes, left in place with a
+     *   warning.
+     * - J2Commerce older than MIN_J2COMMERCE_EVENT_VERSION or version unknown: left in place, the
+     *   copy is then the only place that renders the checkbox.
+     */
+    private function retireBundledCheckoutOverrides(): void
+    {
+        if (!is_dir(JPATH_SITE . '/components/com_j2commerce')) {
+            return;
+        }
+
+        $version    = $this->getJ2CommerceVersion();
+        $hasEvent   = $version !== '' && version_compare($version, self::MIN_J2COMMERCE_EVENT_VERSION, '>=');
+        $db         = Factory::getContainer()->get(DatabaseInterface::class);
+        $retired    = [];
+        $modified   = [];
+        $failed     = [];
+
+        foreach ($this->getFrontendTemplates($db) as $template) {
+            $relative = $template . '/html/com_j2commerce/checkout/default_shipping_payment.php';
+            $file     = JPATH_SITE . '/templates/' . $relative;
+
+            if (!is_file($file)) {
+                continue;
+            }
+
+            $content = (string) @file_get_contents($file);
+
+            if (!str_contains($content, self::BUNDLED_OVERRIDE_MARKER)) {
+                continue;
+            }
+
+            $hash = hash('sha256', str_replace("\r\n", "\n", $content));
+
+            if (!in_array($hash, self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)) {
+                $modified[] = $relative;
+                continue;
+            }
+
+            if (!$hasEvent) {
+                continue;
+            }
+
+            $target = $file . self::RETIRED_OVERRIDE_SUFFIX;
+
+            if (file_exists($target)) {
+                $target .= '-' . date('YmdHis');
+            }
+
+            if (@rename($file, $target)) {
+                $retired[] = $relative;
+            } else {
+                $failed[] = $relative;
+            }
+        }
+
+        $app = Factory::getApplication();
+
+        if ($retired !== []) {
+            $app->enqueueMessage(
+                Text::sprintf(
+                    'PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED',
+                    htmlspecialchars(implode(', ', $retired)),
+                    self::RETIRED_OVERRIDE_SUFFIX
+                ),
+                'message'
+            );
+        }
+
+        if ($modified !== [] || $failed !== []) {
+            $app->enqueueMessage(
+                Text::sprintf(
+                    'PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED',
+                    htmlspecialchars(implode(', ', array_merge($modified, $failed)))
+                ),
+                'warning'
+            );
+        }
+    }
+
+    /**
      * Warn about J2Commerce 6 checkout overrides (also in the bootstrap5/uikit subfolders) that
      * neither fire the J2Commerce event AfterDisplayShippingPayment, through which the consent
      * system plugin renders the checkbox, nor render a checkbox themselves. With a required consent
@@ -410,7 +569,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $outdated = [];
 
         foreach ($this->getFrontendTemplates($db) as $template) {
-            foreach (['', 'bootstrap5/', 'uikit/'] as $subfolder) {
+            // uikit3/ is the framework folder of J2Commerce before 6.3.6.
+            foreach (['', 'bootstrap5/', 'uikit/', 'uikit3/'] as $subfolder) {
                 $relative = $template . '/html/com_j2commerce/checkout/' . $subfolder . 'default_shipping_payment.php';
                 $file     = JPATH_SITE . '/templates/' . $relative;
 
@@ -455,6 +615,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $db        = Factory::getContainer()->get(DatabaseInterface::class);
         $templates = $this->getFrontendTemplates($db);
 
+        // checkout/default_shipping_payment.php exists only for com_j2store: J2Commerce 6 renders
+        // the consent checkbox through AfterDisplayShippingPayment of its core templates.
         $overrideFiles = $onlyFiles ?? [
             'checkout/default_shipping_payment.php',
             'myprofile/default.php',

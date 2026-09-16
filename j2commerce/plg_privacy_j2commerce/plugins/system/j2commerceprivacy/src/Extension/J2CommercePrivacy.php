@@ -35,8 +35,8 @@ use Joomla\Registry\Registry;
  * CHECKBOX
  * J2Commerce 6 fires AfterDisplayShippingPayment in its own shipping & payment templates
  * (bootstrap5 and uikit) directly before the Continue button. This plugin renders the checkbox
- * through that event, so it appears with every template that keeps the J2Commerce event call;
- * a template override is only needed for custom styling.
+ * through that event (J2Commerce 6.3.4 and later), so it appears with the core templates and every
+ * override that keeps the J2Commerce event call.
  *
  * ENFORCEMENT
  * Decided only by the privacy plugin options "Show Consent Checkbox" and "Consent Required".
@@ -140,8 +140,9 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $linkText  = htmlspecialchars($language->_('PLG_PRIVACY_J2COMMERCE_POLICY_LINK'), ENT_QUOTES, 'UTF-8');
 
         // The consent text is configured by the site administrator and may contain HTML.
+        // Route::_() without xhtml returns the raw URL; it is escaped exactly once here.
         $policy = $articleId > 0
-            ? '<a href="' . htmlspecialchars(Route::_('index.php?option=com_content&view=article&id=' . $articleId), ENT_QUOTES, 'UTF-8')
+            ? '<a href="' . htmlspecialchars(Route::_('index.php?option=com_content&view=article&id=' . $articleId, false), ENT_QUOTES, 'UTF-8')
                 . '" target="_blank" rel="noopener noreferrer">' . $linkText . '</a>'
             : $linkText;
         $text = str_replace('{privacy_policy}', $policy, $text);
@@ -266,9 +267,20 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $input = $app->getInput();
+        $input  = $app->getInput();
+        $option = $input->getCmd('option');
 
-        if ($input->getCmd('option') !== 'com_j2commerce'
+        // MyProfile: the privacy plugin group is not imported in the frontend. Loading its
+        // language here also serves MyProfile overrides deployed by earlier versions.
+        if (\in_array($option, ['com_j2commerce', 'com_j2store'], true)
+            && $input->getCmd('view') === 'myprofile'
+            && $this->getPrivacyParams() !== null
+        ) {
+            $app->getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce')
+                || $app->getLanguage()->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
+        }
+
+        if ($option !== 'com_j2commerce'
             || !\in_array(self::resolveTask($input), [self::TASK_VALIDATE, self::TASK_CONFIRM, self::TASK_CONFIRM_PAYMENT], true)
         ) {
             return;

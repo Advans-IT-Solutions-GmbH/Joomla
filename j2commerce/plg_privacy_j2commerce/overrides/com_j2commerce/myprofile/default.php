@@ -34,9 +34,15 @@ use Joomla\CMS\Router\Route;
 $params = $this->params;
 $user   = $this->user;
 
-$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled = !empty($_privacyPlugin);
+// Privacy tab: only while the privacy plugin is enabled and "Show Privacy Section" is on.
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showPrivacyTab();
 $_privacyTabId   = 'j2commerce-privacy-tab';
+
+if ($_privacyEnabled) {
+    // The privacy plugin group is not imported in the frontend, so its language is loaded here.
+    $_privacyOptions::loadLanguage();
+}
 ?>
 <div class="j2commerce">
     <?php if ($this->params->get('show_page_heading')) : ?>
