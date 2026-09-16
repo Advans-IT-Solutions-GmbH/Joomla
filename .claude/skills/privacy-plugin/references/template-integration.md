@@ -2,7 +2,7 @@
 
 ## Rendering Mechanism
 
-Checkout consent, the MyProfile Privacy tab and the address delete buttons are rendered only via the bundled template overrides. `onAfterRender` was removed; there is no HTML-injection fallback.
+The MyProfile Privacy tab, the address delete buttons and (J2Commerce 4) the checkout consent checkbox are rendered via the bundled template overrides. On J2Commerce 6 the checkout consent checkbox is rendered by the bundled system plugin through the J2Commerce event `AfterDisplayShippingPayment` (see below). `onAfterRender` was removed; there is no HTML-injection fallback.
 
 ## Bundled Override Files
 
@@ -22,7 +22,7 @@ templates/{template}/html/com_j2store/...
 templates/{template}/html/com_j2commerce/...
 ```
 
-Existing files are never overwritten (listed as skipped in the post-installation message). On updates only `myprofile/default_privacy.php` is added, and only where the template already has `myprofile/default.php` for an installed component and the file is missing. Updates also warn about J2Commerce 6 checkout overrides that render the checkbox but do not call `markCheckboxRendered()`.
+Existing files are never overwritten (listed as skipped in the post-installation message). On updates only `myprofile/default_privacy.php` is added, and only where the template already has `myprofile/default.php` for an installed component and the file is missing. Install and update warn (`warnOutdatedCheckoutOverrides()`) about J2Commerce 6 checkout overrides in `checkout/`, `checkout/bootstrap5/` or `checkout/uikit/` that neither fire `AfterDisplayShippingPayment` nor contain `j2commerce_privacy_consent`.
 
 `myprofile/default.php` calls `$this->loadTemplate('privacy')`; `myprofile/default_privacy.php` renders `privacy_tab` via `FileLayout` with the include paths `templates/{template}/html/layouts/plg_privacy_j2commerce/` (and the parent template) before `plugins/privacy/j2commerce/layouts/`.
 
@@ -43,22 +43,23 @@ The tab is rendered when the plugin is enabled. If the plugin is disabled or not
 
 ## Checkout Consent
 
-`default_shipping_payment.php` renders the checkbox (`id`/`name` `j2commerce_privacy_consent`) when `PluginHelper::getPlugin('privacy', 'j2commerce')` returns the plugin and `show_consent_checkbox` is on.
-
 **J2Commerce 6 (verified against J2Commerce 6.6.1, `7edb6e11`):** steps are loaded via AJAX and `J2CommerceDom.adopt()` strips `<script>` tags; the privacy group is not imported during the checkout. The bundled **system** plugin `plg_system_j2commerceprivacy` handles consent.
 
-Enforced = `show_consent_checkbox` and `consent_required` on **and** the active site template (or its parent) has `html/com_j2commerce/checkout/default_shipping_payment.php` containing `markCheckboxRendered` (`templateReportsCheckbox()`, cached per request). Never decided from request or session. The only session key is `plg_system_j2commerceprivacy_consent` = `['cart' => cart ID]` (`CartHelper::getInstance()->getCart(0, false)`).
+- Checkbox: `tmpl/checkout/bootstrap5/default_shipping_payment.php` (L131) and `tmpl/checkout/uikit/default_shipping_payment.php` (L125) call `J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [$this->order])` before the Continue button. `eventWithHtml()` dispatches `onJ2CommerceAfterDisplayShippingPayment` on the application dispatcher and concatenates the string results (`PluginEvent::addResult()`) into the `html` argument. The listener adds `renderConsentCheckbox()` (id/name `j2commerce_privacy_consent`, no script) and calls `markCheckboxRendered()`, which removes a stored consent. The bundled J2Commerce 6 override only fires the same event (optional, styling).
+- Enforced = `show_consent_checkbox` and `consent_required` on. Nothing else (no template check, no request input).
+- Session key `plg_system_j2commerceprivacy_consent` = `['cart' => cart ID]` (`CartHelper::getInstance()->getCart(0, false)`).
 
-1. The override calls `J2CommercePrivacy::markCheckboxRendered($required)` on every render of step 4; it removes the stored consent (fresh tick required).
-2. `onAfterRoute` calls `handleCheckoutRequest()`; the task is resolved like `ComponentDispatcher` (`controller` + `task` without dot).
-   - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the current cart; unticked while enforced, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
-   - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused while enforced and no consent exists for the current cart (skipped step 4, cart change). GET gateway returns pass.
-3. `onJ2CommerceAfterSaveOrder` (dispatched by `CartOrder::saveOrder()`, argument 0 = saved order): consent cart equals `order->cart_id`, then `ConsentRepository::ensureOrderConsent()`.
-4. `onJ2CommerceCheckoutCleanup` removes the consent.
+Flow:
+
+1. `onAfterRoute` calls `handleCheckoutRequest()`; the task is resolved like `ComponentDispatcher` (`controller` + `task` without dot).
+   - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the current cart; unticked while required, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
+   - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused while required and no consent exists for the current cart (skipped step 4, cart change). GET gateway returns pass.
+2. `onJ2CommerceAfterSaveOrder` (dispatched by `CartOrder::saveOrder()`, argument 0 = saved order): consent cart equals `order->cart_id`, then `ConsentRepository::ensureOrderConsent()`.
+3. `onJ2CommerceCheckoutCleanup` removes the consent.
 
 Consent is never created retroactively from an existing order. IP address and user agent are kept (not anonymized); guest rows (`user_id = 0`) are outside com_privacy export and deletion.
 
-**J2Commerce 4 / J2Store:** the `com_j2store` override keeps `media/js/consent-validator.js` (client-side). No checkout consent record is written.
+**J2Commerce 4 / J2Store:** `overrides/com_j2store/checkout/default_shipping_payment.php` renders the checkbox and loads `media/js/consent-validator.js` (client-side). No checkout consent record is written.
 
 ## Privacy Tab Content
 

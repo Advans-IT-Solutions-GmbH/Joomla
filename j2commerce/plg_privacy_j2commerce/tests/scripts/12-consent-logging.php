@@ -7,11 +7,13 @@
  *   - status lookup: logged-in by user_id (checkout + Joomla registration subject only),
  *     guest strictly by one order (token + e-mail), only valid (state = 1) records
  *   - no e-mail address copied into the consent
- *   - system plugin: handleCheckoutRequest() for the shipping & payment step, the controller/task
- *     variant, confirm and confirmPayment; enforcement decided by plugin params + template override
+ *   - system plugin: the checkbox is rendered through the J2Commerce event
+ *     AfterDisplayShippingPayment; handleCheckoutRequest() for the shipping & payment step, the
+ *     controller/task variant, confirm and confirmPayment; enforcement only from plugin options
  *   - HTTP (J2Commerce 6): real site requests against this container with a real session and a
- *     real J2Commerce cart, so onAfterRoute(), markCheckboxRendered() and currentCartId() run as
- *     in production, including the bypass routes (skipped step 4, cart change)
+ *     real J2Commerce cart (onAfterRoute(), event rendering, currentCartId()), including the
+ *     bypass routes: skipped step 4, cart change, template/templateStyle/Itemid request
+ *     parameters, and a checkout without any template override
  *   - onJ2CommerceAfterSaveOrder records consent only for the cart the consent was given for
  *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled and adds a missing
@@ -64,11 +66,24 @@ class ConsentTestSession
     }
 }
 
+/** Event with addResult() for stacks without the J2Commerce 6 PluginEvent class. */
+class ConsentTestHtmlEvent extends Event
+{
+    public array $results = [];
+
+    public function addResult($value): void
+    {
+        $this->results[] = $value;
+    }
+}
+
 if (class_exists(J2CommercePrivacy::class)) {
-    /** Test double for the event dispatch test: replaces only session and request access. */
+    /** Test double for the event dispatch tests: replaces only session and request access. */
     class ConsentLoggingTestPlugin extends J2CommercePrivacy
     {
         public ?int $consentCart = null;
+
+        public array $privacyOptions = ['show_consent_checkbox' => 1, 'consent_required' => 1];
 
         protected function getSessionConsentCartId(): ?int
         {
@@ -87,7 +102,7 @@ if (class_exists(J2CommercePrivacy::class)) {
 
         protected function getPrivacyParams(): ?Registry
         {
-            return new Registry(['show_consent_checkbox' => 1, 'consent_required' => 1]);
+            return new Registry($this->privacyOptions);
         }
     }
 }
@@ -108,6 +123,9 @@ class ConsentLoggingTest
 
     /** @var int[] J2Commerce carts created by the HTTP tests */
     private array $httpCarts = [];
+
+    /** Diagnostics of the last HTTP request (status, final URL, body start). */
+    private string $lastHttp = '';
 
     public function __construct()
     {
@@ -383,12 +401,13 @@ class ConsentLoggingTest
 
         if (class_exists(J2CommercePrivacy::class)) {
             $events = J2CommercePrivacy::getSubscribedEvents();
-            // J2Commerce 6 CartOrder::saveOrder() dispatches 'onJ2Commerce' . 'AfterSaveOrder'.
+            // J2Commerce 6 dispatches 'onJ2Commerce' . 'AfterDisplayShippingPayment' / 'AfterSaveOrder'.
+            $this->test('Subscribes to onJ2CommerceAfterDisplayShippingPayment', isset($events['onJ2CommerceAfterDisplayShippingPayment']));
             $this->test('Subscribes to onJ2CommerceAfterSaveOrder', isset($events['onJ2CommerceAfterSaveOrder']));
             $this->test('Subscribes to onAfterRoute', isset($events['onAfterRoute']));
             $this->test('Subscribes to onJ2CommerceCheckoutCleanup', isset($events['onJ2CommerceCheckoutCleanup']));
 
-            $this->runTemplateCheckTests();
+            $this->runCheckboxRenderTests();
             $this->runCheckoutRequestTests();
             $this->runAfterSaveOrderTests($repository);
             $this->runHttpCheckoutTests();
@@ -407,38 +426,44 @@ class ConsentLoggingTest
         return $this->failed === 0;
     }
 
-    private function runTemplateCheckTests(): void
+    private function runCheckboxRenderTests(): void
     {
-        echo "\n-- Enforcement from the site template --\n";
+        echo "\n-- Checkbox through AfterDisplayShippingPayment --\n";
 
-        $base = sys_get_temp_dir() . '/consent-template-check-' . bin2hex(random_bytes(4));
-        $with = $base . '/with';
-        $old  = $base . '/old';
-        $none = $base . '/none';
+        $required = J2CommercePrivacy::renderConsentCheckbox(new Registry(['show_consent_checkbox' => 1, 'consent_required' => 1]));
+        $this->test('Checkbox has id and name j2commerce_privacy_consent',
+            str_contains($required, 'id="j2commerce_privacy_consent"') && str_contains($required, 'name="j2commerce_privacy_consent"'));
+        $this->test('Required checkbox is marked required', str_contains($required, ' required') && str_contains($required, 'text-danger'));
+        $this->test('Checkbox HTML contains no script', !str_contains(strtolower($required), '<script'));
+        $this->test('Default consent text is translated', !str_contains($required, 'PLG_PRIVACY_J2COMMERCE_') && !str_contains($required, '{privacy_policy}'));
 
-        foreach ([$with, $old] as $dir) {
-            mkdir($dir . '/html/com_j2commerce/checkout', 0755, true);
-        }
+        $optional = J2CommercePrivacy::renderConsentCheckbox(new Registry(['consent_required' => 0, 'consent_text' => 'Custom {privacy_policy} text']));
+        $this->test('Optional checkbox is not marked required', !str_contains($optional, ' required'));
+        $this->test('Custom consent text with placeholder is used', str_contains($optional, 'Custom ') && !str_contains($optional, '{privacy_policy}'));
 
-        mkdir($none, 0755, true);
-        file_put_contents($with . '/html/com_j2commerce/checkout/default_shipping_payment.php', '<?php // J2CommercePrivacy::markCheckboxRendered(true);');
-        file_put_contents($old . '/html/com_j2commerce/checkout/default_shipping_payment.php', '<?php // j2commerce_privacy_consent without server report');
+        $plugin = new ConsentLoggingTestPlugin(['name' => 'j2commerceprivacy', 'type' => 'system', 'params' => '{}']);
 
-        $this->test('Override that reports the checkbox enables enforcement', J2CommercePrivacy::templateReportsCheckbox([$with]));
-        $this->test('Outdated override does not enable enforcement', !J2CommercePrivacy::templateReportsCheckbox([$old]));
-        $this->test('Template without override does not enable enforcement', !J2CommercePrivacy::templateReportsCheckbox([$none]));
-        $this->test('Override in the parent template counts', J2CommercePrivacy::templateReportsCheckbox([$none, $with]));
+        $dispatcher = new Dispatcher();
+        $dispatcher->addSubscriber($plugin);
 
-        foreach ([$with, $old] as $dir) {
-            @unlink($dir . '/html/com_j2commerce/checkout/default_shipping_payment.php');
-            @rmdir($dir . '/html/com_j2commerce/checkout');
-            @rmdir($dir . '/html/com_j2commerce');
-            @rmdir($dir . '/html');
-            @rmdir($dir);
-        }
+        $eventClass = 'J2Commerce\\Component\\J2commerce\\Administrator\\Event\\PluginEvent';
+        $makeEvent  = static fn () => class_exists($eventClass)
+            ? new $eventClass('onJ2CommerceAfterDisplayShippingPayment', [null])
+            : new ConsentTestHtmlEvent('onJ2CommerceAfterDisplayShippingPayment', [null]);
+        $resultHtml = static function ($event): string {
+            $results = $event instanceof ConsentTestHtmlEvent ? $event->results : (array) $event->getArgument('result', []);
 
-        @rmdir($none);
-        @rmdir($base);
+            return implode('', array_filter($results, 'is_string'));
+        };
+
+        $event = $makeEvent();
+        $dispatcher->dispatch('onJ2CommerceAfterDisplayShippingPayment', $event);
+        $this->test('Event listener adds the checkbox to the J2Commerce event result', str_contains($resultHtml($event), 'id="j2commerce_privacy_consent"'));
+
+        $plugin->privacyOptions = ['show_consent_checkbox' => 0];
+        $event                  = $makeEvent();
+        $dispatcher->dispatch('onJ2CommerceAfterDisplayShippingPayment', $event);
+        $this->test('No checkbox when "Show Consent Checkbox" is off', $resultHtml($event) === '');
     }
 
     private function runCheckoutRequestTests(): void
@@ -454,13 +479,13 @@ class ConsentLoggingTest
         $validate = ['option' => 'com_j2commerce', 'task' => 'checkout.shippingPaymentMethodValidate'];
         $confirm  = ['option' => 'com_j2commerce', 'task' => 'checkout.confirm'];
         $payment  = ['option' => 'com_j2commerce', 'task' => 'checkout.confirmPayment'];
-        $call     = fn (Input $input, ConsentTestSession $session, Registry $params, int $cartId, bool $override = true) =>
-            $plugin->handleCheckoutRequest($input, $session, $params, $cartId, self::FORM_TOKEN, $override);
+        $call     = fn (Input $input, ConsentTestSession $session, Registry $params, int $cartId) =>
+            $plugin->handleCheckoutRequest($input, $session, $params, $cartId, self::FORM_TOKEN);
 
-        // Shipping & payment step (no session state is needed for enforcement)
+        // Shipping & payment step
         $session  = new ConsentTestSession();
         $response = $call($this->request($validate, $token), $session, $required, $cart);
-        $this->test('Step: unticked required checkbox is rejected without any earlier render', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR);
+        $this->test('Step: unticked required checkbox is rejected', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR);
         $this->test('Step: rejection message is translated', isset($response['message']) && !str_contains($response['message'], 'PLG_PRIVACY_J2COMMERCE_'));
 
         $response = $call($this->request($validate, $token + [J2CommercePrivacy::CONSENT_FIELD => '1']), $session, $required, $cart);
@@ -475,14 +500,11 @@ class ConsentLoggingTest
         $response = $call($this->request($variant, $token), $session, $required, $cart);
         $this->test('Step: controller=checkout&task=... variant is rejected too', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR);
 
-        $response = $call($this->request($validate, $token + ['j2commerce_privacy_consent_rendered' => '0']), $session, $required, $cart);
-        $this->test('Step: posted fields cannot switch enforcement off', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR);
+        $response = $call($this->request($validate + ['template' => 'cassiopeia', 'templateStyle' => '1', 'Itemid' => '999'], $token), $session, $required, $cart);
+        $this->test('Step: template/templateStyle/Itemid request parameters do not switch enforcement off', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR);
 
         $response = $call($this->request($validate, [J2CommercePrivacy::CONSENT_FIELD => '1']), $session, $required, $cart);
         $this->test('Step: invalid token stores nothing', $response === null && $session->get(J2CommercePrivacy::SESSION_CONSENT) === null);
-
-        $response = $call($this->request($validate, $token), $session, $required, $cart, false);
-        $this->test('Step: template without the override does not block', $response === null);
 
         $response = $call($this->request($validate, $token), $session, $optional, $cart);
         $this->test('Step: optional consent is not enforced', $response === null);
@@ -504,9 +526,6 @@ class ConsentLoggingTest
 
         $response = $call($this->request($confirm), $session, $required, $cart);
         $this->test('Confirm: allowed with consent for the current cart', $response === null);
-
-        $response = $call($this->request($confirm), new ConsentTestSession(), $required, $cart, false);
-        $this->test('Confirm: not refused when the template has no override', $response === null);
 
         $response = $call($this->request($confirm), new ConsentTestSession(), $optional, $cart);
         $this->test('Confirm: not refused when consent is optional', $response === null);
@@ -575,7 +594,7 @@ class ConsentLoggingTest
     /**
      * Real site requests against this container: real Joomla session (database handler), real
      * J2Commerce cart lookup, the real onAfterRoute() of the enabled system plugin and the real
-     * checkout override calling markCheckboxRendered().
+     * AfterDisplayShippingPayment event of the rendered step.
      */
     private function runHttpCheckoutTests(): void
     {
@@ -591,22 +610,12 @@ class ConsentLoggingTest
             return;
         }
 
-        $query = $this->query()
-            ->select($this->db->quoteName('template'))
-            ->from($this->db->quoteName('#__template_styles'))
-            ->where($this->db->quoteName('client_id') . ' = 0')
-            ->where($this->db->quoteName('home') . ' = ' . $this->db->quote('1'));
-        $this->db->setQuery($query, 0, 1);
-        $siteTemplate = (string) $this->db->loadResult();
-
-        $this->test("Default site template ($siteTemplate) has the checkout override that reports the checkbox",
-            $siteTemplate !== '' && J2CommercePrivacy::templateReportsCheckbox([JPATH_THEMES . '/' . $siteTemplate]));
-
         $message   = htmlspecialchars(Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_REQUIRED_ERROR'), ENT_QUOTES, 'UTF-8');
         $validate  = ['option' => 'com_j2commerce', 'task' => 'checkout.shippingPaymentMethodValidate'];
         $render    = ['option' => 'com_j2commerce', 'task' => 'checkout.shippingPaymentMethod'];
         $confirm   = ['option' => 'com_j2commerce', 'task' => 'checkout.confirm'];
         $payment   = ['option' => 'com_j2commerce', 'task' => 'checkout.confirmPayment'];
+        $ticked    = [J2CommercePrivacy::CONSENT_FIELD => '1', 'payment_plugin' => 'payment_cash'];
         $stepError = static function (string $body): bool {
             $json = json_decode($body, true);
 
@@ -614,60 +623,67 @@ class ConsentLoggingTest
         };
 
         try {
-            // Flow A: render step 4, tick, render again (fresh tick required)
+            // Flow A: render step 4 (checkbox through the event), tick, render again
+            echo "  Flow A: render, tick, re-render\n";
             $a = $this->startSiteSession();
 
-            if (!$this->test('Flow A: site session and form token obtained', $a !== null)) {
-                return;
+            if ($this->test('Flow A: site session and form token obtained', $a !== null, $this->lastHttp)) {
+                $a['cart'] = $this->createSessionCart($a['session']);
+
+                $body = $this->post($a, $render);
+                $this->test('Flow A: step 4 contains the consent checkbox', str_contains($body, 'id="j2commerce_privacy_consent"'), $this->lastHttp);
+
+                $body = $this->post($a, $validate);
+                $this->test('Flow A: unticked step is rejected by onAfterRoute (JSON field error)', $stepError($body), $this->lastHttp);
+
+                $body = $this->post($a, $validate + $ticked);
+                $this->test('Flow A: ticked step is not rejected by the consent check', !$stepError($body), $this->lastHttp);
+
+                $body = $this->post($a, $confirm);
+                $this->test('Flow A: confirm after ticking is not refused (consent bound to the current cart)', !str_contains($body, $message), $this->lastHttp);
+
+                $this->post($a, $render);
+                $body = $this->post($a, $confirm);
+                $this->test('Flow A: re-rendering step 4 discards the earlier consent', str_contains($body, $message), $this->lastHttp);
             }
 
-            $a['cart'] = $this->createSessionCart($a['session']);
-
-            [, $body] = $this->post($a, $render);
-            $this->test('Flow A: step 4 renders the consent checkbox', str_contains($body, 'id="j2commerce_privacy_consent"'), mb_substr(strip_tags($body), 0, 200));
-
-            [, $body] = $this->post($a, $validate);
-            $this->test('Flow A: unticked step is rejected by onAfterRoute (JSON field error)', $stepError($body), mb_substr($body, 0, 200));
-
-            [, $body] = $this->post($a, $validate + [J2CommercePrivacy::CONSENT_FIELD => '1', 'payment_plugin' => 'payment_cash']);
-            $this->test('Flow A: ticked step is not rejected by the consent check', !$stepError($body));
-
-            [, $body] = $this->post($a, $confirm);
-            $this->test('Flow A: confirm after ticking is not refused (consent bound to the cart found by currentCartId())', !str_contains($body, $message));
-
-            $this->post($a, $render);
-            [, $body] = $this->post($a, $confirm);
-            $this->test('Flow A: re-rendering step 4 (markCheckboxRendered) discards the earlier consent', str_contains($body, $message));
-
-            // Flow B: skip step 4 completely
+            // Flow B: skip step 4 and try to switch the check off through request parameters
+            echo "  Flow B: skipped step 4 and request parameters\n";
             $b = $this->startSiteSession();
 
-            if ($this->test('Flow B: second site session obtained', $b !== null)) {
+            if ($this->test('Flow B: site session and form token obtained', $b !== null, $this->lastHttp)) {
                 $b['cart'] = $this->createSessionCart($b['session']);
 
-                [, $body] = $this->post($b, $validate + ['payment_plugin' => 'payment_cash']);
-                $this->test('Flow B: validate without render and without tick is rejected', $stepError($body), mb_substr($body, 0, 200));
+                $body = $this->post($b, $validate + ['payment_plugin' => 'payment_cash']);
+                $this->test('Flow B: validate without render and without tick is rejected', $stepError($body), $this->lastHttp);
 
-                [, $body] = $this->post($b, ['option' => 'com_j2commerce', 'controller' => 'checkout', 'task' => 'shippingPaymentMethodValidate']);
-                $this->test('Flow B: controller=checkout variant is rejected', $stepError($body), mb_substr($body, 0, 200));
+                $body = $this->post($b, ['option' => 'com_j2commerce', 'controller' => 'checkout', 'task' => 'shippingPaymentMethodValidate']);
+                $this->test('Flow B: controller=checkout variant is rejected', $stepError($body), $this->lastHttp);
 
-                [, $body] = $this->post($b, $confirm);
-                $this->test('Flow B: confirm without consent is refused', str_contains($body, $message), mb_substr(strip_tags($body), 0, 200));
+                $body = $this->post($b, $confirm);
+                $this->test('Flow B: confirm without consent is refused', str_contains($body, $message), $this->lastHttp);
 
-                [, $body] = $this->post($b, $payment);
+                foreach ([['template' => 'cassiopeia'], ['template' => 'atum'], ['templateStyle' => '999999'], ['Itemid' => '999999']] as $switch) {
+                    $label = http_build_query($switch);
+                    $body  = $this->post($b, $confirm + $switch);
+                    $this->test("Flow B: confirm with $label is still refused", str_contains($body, $message), $this->lastHttp);
+                }
+
+                $body = $this->post($b, $payment);
                 $json = json_decode($body, true);
-                $this->test('Flow B: confirmPayment (AJAX) without consent is refused', is_array($json) && ($json['success'] ?? null) === false, mb_substr($body, 0, 200));
+                $this->test('Flow B: confirmPayment (AJAX) without consent is refused', is_array($json) && ($json['success'] ?? null) === false, $this->lastHttp);
             }
 
             // Flow C: tick, then the session switches to another cart
+            echo "  Flow C: cart change\n";
             $c = $this->startSiteSession();
 
-            if ($this->test('Flow C: third site session obtained', $c !== null)) {
+            if ($this->test('Flow C: site session and form token obtained', $c !== null, $this->lastHttp)) {
                 $c['cart'] = $this->createSessionCart($c['session']);
-                $this->post($c, $validate + [J2CommercePrivacy::CONSENT_FIELD => '1', 'payment_plugin' => 'payment_cash']);
+                $this->post($c, $validate + $ticked);
 
-                [, $body] = $this->post($c, $confirm);
-                $this->test('Flow C: confirm with consent for the current cart is not refused', !str_contains($body, $message));
+                $body = $this->post($c, $confirm);
+                $this->test('Flow C: confirm with consent for the current cart is not refused', !str_contains($body, $message), $this->lastHttp);
 
                 $this->db->setQuery(
                     $this->query()
@@ -677,8 +693,33 @@ class ConsentLoggingTest
                 )->execute();
                 $newCart = $this->createSessionCart($c['session']);
 
-                [, $body] = $this->post($c, $confirm);
-                $this->test("Flow C: confirm after the cart changed ({$c['cart']} -> $newCart) is refused", str_contains($body, $message), mb_substr(strip_tags($body), 0, 200));
+                $body = $this->post($c, $confirm);
+                $this->test("Flow C: confirm after the cart changed ({$c['cart']} -> $newCart) is refused", str_contains($body, $message), $this->lastHttp);
+            }
+
+            // Flow D: no template override (child or parent), the J2Commerce core template renders the checkbox
+            echo "  Flow D: J2Commerce core template without any override\n";
+            $moved = $this->moveCheckoutOverridesAside();
+
+            try {
+                $d = $this->startSiteSession();
+
+                if ($this->test('Flow D: site session and form token obtained', $d !== null, $this->lastHttp)) {
+                    $d['cart'] = $this->createSessionCart($d['session']);
+
+                    $body = $this->post($d, $render);
+                    $this->test('Flow D: core template step 4 contains the consent checkbox (event)', str_contains($body, 'id="j2commerce_privacy_consent"'), $this->lastHttp);
+
+                    $body = $this->post($d, $validate);
+                    $this->test('Flow D: unticked step is rejected without override', $stepError($body), $this->lastHttp);
+
+                    $body = $this->post($d, $validate + $ticked);
+                    $this->test('Flow D: ticked step is accepted without override', !$stepError($body), $this->lastHttp);
+                }
+            } finally {
+                foreach ($moved as $original => $aside) {
+                    @rename($aside, $original);
+                }
             }
         } catch (\Throwable $e) {
             $this->test('HTTP checkout tests run without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
@@ -694,16 +735,45 @@ class ConsentLoggingTest
     }
 
     /**
-     * Open a guest site session and read its form token from the login form.
+     * Rename every J2Commerce 6 checkout override of step 4 in the site templates
+     * (checkout/, checkout/bootstrap5/, checkout/uikit/).
+     *
+     * @return  array<string, string>  original path => temporary path
+     */
+    private function moveCheckoutOverridesAside(): array
+    {
+        $moved = [];
+        $files = array_merge(
+            glob(JPATH_SITE . '/templates/*/html/com_j2commerce/checkout/default_shipping_payment.php') ?: [],
+            glob(JPATH_SITE . '/templates/*/html/com_j2commerce/checkout/bootstrap5/default_shipping_payment.php') ?: [],
+            glob(JPATH_SITE . '/templates/*/html/com_j2commerce/checkout/uikit/default_shipping_payment.php') ?: []
+        );
+
+        foreach ($files as $file) {
+            $aside = $file . '.consent-test-aside';
+
+            if (@rename($file, $aside)) {
+                $moved[$file] = $aside;
+            }
+        }
+
+        return $moved;
+    }
+
+    /**
+     * Open a guest site session and read its form token from the login form. Redirects are
+     * followed (Joomla 6.1 strict routing redirects non-SEF GET URLs).
      *
      * @return  array{jar: string, token: string, session: string}|null
      */
     private function startSiteSession(): ?array
     {
-        $jar = tempnam(sys_get_temp_dir(), 'consent-cookies-');
-        [, $body] = $this->httpRequest($jar, 'GET', ['option' => 'com_users', 'view' => 'login']);
+        $jar  = tempnam(sys_get_temp_dir(), 'consent-cookies-');
+        $body = $this->httpRequest($jar, 'GET', ['option' => 'com_users', 'view' => 'login']);
 
         if (!preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $body, $match)) {
+            $this->lastHttp .= ' | no form token in response';
+
             return null;
         }
 
@@ -718,7 +788,13 @@ class ConsentLoggingTest
             }
         }
 
-        return $session === '' ? null : ['jar' => $jar, 'token' => $match[1], 'session' => $session];
+        if ($session === '') {
+            $this->lastHttp .= ' | no session cookie in cookie jar';
+
+            return null;
+        }
+
+        return ['jar' => $jar, 'token' => $match[1], 'session' => $session];
     }
 
     private function createSessionCart(string $sessionId): int
@@ -742,13 +818,12 @@ class ConsentLoggingTest
     }
 
     /** POST a checkout request of a site session (with its form token) as the checkout script does. */
-    private function post(array $session, array $params): array
+    private function post(array $session, array $params): string
     {
         return $this->httpRequest($session['jar'], 'POST', $params + [$session['token'] => '1'], ['X-Requested-With: XMLHttpRequest']);
     }
 
-    /** @return array{0: int, 1: string} */
-    private function httpRequest(string $jar, string $method, array $params, array $headers = []): array
+    private function httpRequest(string $jar, string $method, array $params, array $headers = []): string
     {
         $url = self::SITE_URL . ($method === 'GET' ? '?' . http_build_query($params) : '');
         $ch  = curl_init($url);
@@ -757,7 +832,9 @@ class ConsentLoggingTest
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_COOKIEJAR      => $jar,
             CURLOPT_COOKIEFILE     => $jar,
-            CURLOPT_FOLLOWLOCATION => false,
+            // GET pages may be redirected (strict routing); checkout POSTs must not be followed.
+            CURLOPT_FOLLOWLOCATION => $method === 'GET',
+            CURLOPT_MAXREDIRS      => 5,
             CURLOPT_TIMEOUT        => 60,
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_USERAGENT      => 'ConsentLoggingHttpTest/1.0',
@@ -768,11 +845,24 @@ class ConsentLoggingTest
             curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
         }
 
-        $body = (string) curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $body     = (string) curl_exec($ch);
+        $status   = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $finalUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+        $redirect = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+        $error    = curl_error($ch);
         unset($ch); // writes the cookie jar
 
-        return [$code, $body];
+        $this->lastHttp = sprintf(
+            'HTTP %d %s %s%s%s | %s',
+            $status,
+            $method,
+            $finalUrl,
+            $redirect !== '' ? ' -> ' . $redirect : '',
+            $error !== '' ? ' | curl: ' . $error : '',
+            mb_substr(trim(preg_replace('/\s+/', ' ', strip_tags($body))), 0, 160)
+        );
+
+        return $body;
     }
 
     private function runLayoutTests(string $orderGuest): void

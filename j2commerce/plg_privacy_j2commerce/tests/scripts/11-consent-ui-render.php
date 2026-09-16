@@ -29,9 +29,11 @@
  * that Joomla loads or enables the plugin, nor that J2Commerce routes a real
  * checkout request to these layouts. Plugin registration/enabling is covered by
  * 01-installation.php (state recorded before the test setup activates plugins).
- * On J2Commerce 6 the rendered checkbox is not enforced by the checkout step
- * (the "Continue" button is handled by J2Commerce JavaScript without a form
- * submit); browser interaction is not covered by the automated tests.
+ * On J2Commerce 6 the checkbox comes from the J2Commerce event
+ * AfterDisplayShippingPayment, which the bundled consent system plugin answers;
+ * the harness returns that plugin HTML for the event. The server-side check of
+ * the checkout requests is covered by 12-consent-logging.php; browser
+ * interaction is not covered by the automated tests.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -136,19 +138,45 @@ class RenderHarnessApp
 // Result object returned by eventWithHtml(): echoable (J2Store) AND has getArgument() (J2Commerce 6).
 class RenderHarnessEventResult
 {
+    private string $html;
+
+    public function __construct(string $html = '')
+    {
+        $this->html = $html;
+    }
     public function getArgument($name, $default = null)
     {
-        return $default;
+        return $name === 'html' ? $this->html : $default;
     }
     public function __toString()
     {
-        return '';
+        return $this->html;
     }
 }
 class RenderHarnessPlugin
 {
+    /**
+     * J2Commerce 6 dispatches AfterDisplayShippingPayment on the application dispatcher, where the
+     * bundled consent system plugin adds the checkbox. The harness returns exactly that HTML, built
+     * by the real plugin from the real installed privacy plugin params.
+     */
     public function eventWithHtml($event, $args = [])
     {
+        $class = 'Advans\\Plugin\\System\\J2CommercePrivacy\\Extension\\J2CommercePrivacy';
+        $file  = JPATH_BASE . '/plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
+
+        if ($event === 'AfterDisplayShippingPayment') {
+            if (!class_exists($class) && is_file($file)) {
+                require_once $file;
+            }
+
+            $privacy = PluginHelper::getPlugin('privacy', 'j2commerce');
+
+            if (class_exists($class) && !empty($privacy)) {
+                return new RenderHarnessEventResult($class::renderConsentCheckbox(new Registry($privacy->params)));
+            }
+        }
+
         return new RenderHarnessEventResult();
     }
 }

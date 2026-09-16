@@ -69,8 +69,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 $this->copyTemplateOverrides($packageSource);
             } else {
                 $this->copyTemplateOverrides($packageSource, ['myprofile/default_privacy.php']);
-                $this->warnOutdatedCheckoutOverrides();
             }
+
+            $this->warnOutdatedCheckoutOverrides();
 
             $this->installTaskPlugin($packageSource);
             $this->installConsentSystemPlugin($packageSource);
@@ -379,8 +380,10 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * Warn on update about deployed J2Commerce 6 checkout overrides that render the consent checkbox
-     * but do not report it to the bundled system plugin; a required consent is not enforced there.
+     * Warn about J2Commerce 6 checkout overrides (also in the bootstrap5/uikit subfolders) that
+     * neither fire the J2Commerce event AfterDisplayShippingPayment, through which the consent
+     * system plugin renders the checkbox, nor render a checkbox themselves. With a required consent
+     * the checkout cannot be completed with such an override.
      */
     private function warnOutdatedCheckoutOverrides(): void
     {
@@ -392,17 +395,19 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $outdated = [];
 
         foreach ($this->getFrontendTemplates($db) as $template) {
-            $relative = $template . '/html/com_j2commerce/checkout/default_shipping_payment.php';
-            $file     = JPATH_SITE . '/templates/' . $relative;
+            foreach (['', 'bootstrap5/', 'uikit/'] as $subfolder) {
+                $relative = $template . '/html/com_j2commerce/checkout/' . $subfolder . 'default_shipping_payment.php';
+                $file     = JPATH_SITE . '/templates/' . $relative;
 
-            if (!is_file($file)) {
-                continue;
-            }
+                if (!is_file($file)) {
+                    continue;
+                }
 
-            $content = (string) @file_get_contents($file);
+                $content = (string) @file_get_contents($file);
 
-            if (str_contains($content, 'j2commerce_privacy_consent') && !str_contains($content, 'markCheckboxRendered')) {
-                $outdated[] = $relative;
+                if (!str_contains($content, 'AfterDisplayShippingPayment') && !str_contains($content, 'j2commerce_privacy_consent')) {
+                    $outdated[] = $relative;
+                }
             }
         }
 
