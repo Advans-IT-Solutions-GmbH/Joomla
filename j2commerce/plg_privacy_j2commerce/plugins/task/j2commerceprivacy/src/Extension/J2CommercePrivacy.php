@@ -10,6 +10,7 @@ namespace Advans\Plugin\Task\J2CommercePrivacy\Extension;
 
 defined('_JEXEC') or die;
 
+use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
 use Joomla\Component\Scheduler\Administrator\Task\Status;
@@ -404,5 +405,46 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
         $db->setQuery($query);
         $db->execute();
+
+        $this->removeConsentEvidence($userId);
+    }
+
+    /**
+     * Remove IP address and user agent from the checkout consent records of the anonymized orders
+     * (the consent records themselves stay as evidence). The repository belongs to the privacy
+     * plugin that ships this task plugin.
+     *
+     * @param   int  $userId  The user ID
+     *
+     * @return  void
+     */
+    private function removeConsentEvidence(int $userId): void
+    {
+        $class = ConsentRepository::class;
+        $file  = JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php';
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        if (!class_exists($class)) {
+            $this->logTask('Consent repository of the privacy plugin not found; consent records not changed', 'warning');
+
+            return;
+        }
+
+        $db          = $this->getDatabase();
+        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $query       = $this->createDbQuery()
+            ->select($db->quoteName('order_id'))
+            ->from($db->quoteName($ordersTable))
+            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
+        $db->setQuery($query);
+        $orderIds = $db->loadColumn() ?: [];
+
+        if ($orderIds !== []) {
+            $changed = (new ConsentRepository($db))->removeOrderEvidence($orderIds);
+            $this->logTask("Removed IP address and user agent from {$changed} consent record(s) of user ID: {$userId}");
+        }
     }
 }

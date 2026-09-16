@@ -224,6 +224,34 @@ class AutoCleanupTaskTest
             return;
         }
 
+        // Checkout consent of the expired order (IP/UA must be removed by the task) and of an
+        // order of another user (must stay unchanged).
+        $consentIds = [];
+
+        foreach (['expired' => [$orderId, $userId, '203.0.113.60'], 'other' => ['CLEANUP-OTHER-' . time(), 9906, '203.0.113.61']] as $key => [$consentOrder, $consentUser, $ip]) {
+            $consent = (object) [
+                'user_id' => $consentUser,
+                'state'   => 1,
+                'created' => date('Y-m-d H:i:s', strtotime('-1 day')),
+                'subject' => 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT',
+                'body'    => "<p>IP address: $ip</p><p>User agent: CleanupTaskAgent/1.0</p><!-- j2commerce-order:$consentOrder -->",
+                'remind'  => 0,
+                'token'   => '',
+            ];
+            $this->db->insertObject('#__privacy_consents', $consent, 'id');
+            $consentIds[$key] = (int) $consent->id;
+        }
+
+        $consentBody = function (int $id): string {
+            return (string) $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->select($this->db->quoteName('body'))
+                    ->from($this->db->quoteName('#__privacy_consents'))
+                    ->where($this->db->quoteName('id') . ' = ' . $id)
+            )->loadResult();
+        };
+        $otherBefore = $consentBody($consentIds['other']);
+
         $now  = date('Y-m-d H:i:s');
         $task = (object) [
             'title'           => 'J2Commerce privacy cleanup (test)',
@@ -246,6 +274,11 @@ class AutoCleanupTaskTest
             $this->db->insertObject('#__scheduler_tasks', $task, 'id');
         } catch (\Throwable $e) {
             $this->test('scheduled task created', false, $e->getMessage());
+            $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->delete($this->db->quoteName('#__privacy_consents'))
+                    ->where($this->db->quoteName('id') . ' IN (' . implode(',', $consentIds) . ')')
+            )->execute();
             $this->cleanupTestData([$userId]);
             return;
         }
@@ -291,6 +324,19 @@ class AutoCleanupTaskTest
 
         $this->test('expired order e-mail anonymized by the task', $email === 'anonymized@deleted.invalid',
             'user_email=' . var_export($email, true));
+
+        $expiredBody = $consentBody($consentIds['expired']);
+        $this->test('task removes IP address and user agent from the consent of the anonymized order',
+            $expiredBody !== '' && !str_contains($expiredBody, '203.0.113.60') && !str_contains($expiredBody, 'CleanupTaskAgent')
+            && str_contains($expiredBody, "<!-- j2commerce-order:$orderId -->"),
+            'body=' . $expiredBody);
+        $this->test('task leaves the consent of another user unchanged', $consentBody($consentIds['other']) === $otherBefore);
+
+        $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->delete($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('id') . ' IN (' . implode(',', $consentIds) . ')')
+        )->execute();
 
         $this->db->setQuery(
             $this->db->getQuery(true)

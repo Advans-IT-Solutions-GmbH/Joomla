@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 
 defined('_JEXEC') or die;
 
+use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
@@ -1018,6 +1019,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $safeUserId = (int) $userId;
         $safeCutoff = $db->quote($cutoffDate);
 
+        // Orders anonymized below: their checkout consent records lose IP address and user agent.
+        $db->setQuery(
+            $this->createDbQuery()
+                ->select($db->quoteName('order_id'))
+                ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
+                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
+                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff)
+        );
+        $anonymizedOrderIds = $db->loadColumn() ?: [];
+
         if ($this->isJ2Commerce4()) {
             // Anonymize orders table
             $query = $this->createDbQuery()
@@ -1128,6 +1139,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
             $db->setQuery($query);
             $db->execute();
+        }
+
+        if ($anonymizedOrderIds !== []) {
+            (new ConsentRepository($db))->removeOrderEvidence($anonymizedOrderIds);
         }
     }
 

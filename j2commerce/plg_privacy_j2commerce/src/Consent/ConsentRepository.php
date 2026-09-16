@@ -23,6 +23,7 @@ use Joomla\Database\ParameterType;
  * - user_id is the order's user_id (0 for guest orders), exactly as J2Commerce stored it.
  * - body holds order number, IP address and user agent, plus a language-independent order marker.
  *   No e-mail address is copied; guests are traced through the order (token + user_email).
+ *   IP address and user agent are removed when the plugin anonymizes the order (removeOrderEvidence).
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
  */
 final class ConsentRepository
@@ -35,6 +36,12 @@ final class ConsentRepository
 
     /** Subject written by Joomla's own privacy consent plugin (registration / profile). */
     public const CORE_SUBJECT = 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT';
+
+    /** Body language key after anonymization (order number only). */
+    public const BODY_REMOVED_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_EVIDENCE_REMOVED';
+
+    /** Marks a body whose IP address and user agent were removed. */
+    public const EVIDENCE_REMOVED_MARKER = '<!-- j2commerce-evidence-removed -->';
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
@@ -80,14 +87,78 @@ final class ConsentRepository
      */
     public function buildBody(string $orderId, string $ipAddress, string $userAgent): string
     {
-        $language = Factory::getLanguage();
-        $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
-            || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
+        self::loadBodyLanguage();
 
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
         return Text::sprintf(self::BODY_KEY, $escape($orderId), $escape($ipAddress), $escape($userAgent))
             . self::orderMarker($orderId);
+    }
+
+    /**
+     * Body of a consent record after its order was anonymized: consent and order number stay as
+     * evidence, IP address and user agent are gone.
+     */
+    public function buildEvidenceRemovedBody(string $orderId): string
+    {
+        self::loadBodyLanguage();
+
+        return Text::sprintf(self::BODY_REMOVED_KEY, htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
+            . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER;
+    }
+
+    /**
+     * Remove IP address and user agent from the checkout consent records of these orders (any
+     * state). Called when the plugin anonymizes the orders (retention period expired, removal
+     * request or cleanup task): the personal evidence is kept exactly as long as the order.
+     * The record itself (user_id, state, created, subject, order number) is kept.
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  int  Number of records changed
+     */
+    public function removeOrderEvidence(array $orderIds): int
+    {
+        $changed = 0;
+
+        foreach (array_unique(array_map('strval', $orderIds)) as $orderId) {
+            if (!self::isValidOrderId($orderId)) {
+                continue;
+            }
+
+            $query = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
+                ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId));
+            $this->db->setQuery($query);
+
+            foreach ($this->db->loadObjectList() ?: [] as $record) {
+                if (str_contains((string) $record->body, self::EVIDENCE_REMOVED_MARKER)) {
+                    continue;
+                }
+
+                $body   = $this->buildEvidenceRemovedBody($orderId);
+                $id     = (int) $record->id;
+                $update = $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->where($this->db->quoteName('id') . ' = :id')
+                    ->bind(':body', $body)
+                    ->bind(':id', $id, ParameterType::INTEGER);
+                $this->db->setQuery($update)->execute();
+                $changed++;
+            }
+        }
+
+        return $changed;
+    }
+
+    private static function loadBodyLanguage(): void
+    {
+        $language = Factory::getLanguage();
+        $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
+            || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
     }
 
     /**

@@ -61,7 +61,7 @@ Flow:
 2. `onJ2CommerceAfterSaveOrder` (dispatched by `CartOrder::saveOrder()`, argument 0 = saved order): consent cart equals `order->cart_id`, then `ConsentRepository::ensureOrderConsent()`.
 3. `onJ2CommerceCheckoutCleanup` removes the consent.
 
-Consent is never created retroactively from an existing order. IP address and user agent are kept (not anonymized); guest rows (`user_id = 0`) are outside com_privacy export and deletion.
+Consent is never created retroactively from an existing order. IP address and user agent are removed (`ConsentRepository::removeOrderEvidence()`) when the plugin or the cleanup task anonymizes the order; guest rows (`user_id = 0`) are outside com_privacy export and deletion.
 
 **J2Commerce 4 / J2Store:** `overrides/com_j2store/checkout/default_shipping_payment.php` renders the checkbox and loads `media/js/consent-validator.js` (client-side). No checkout consent record is written.
 

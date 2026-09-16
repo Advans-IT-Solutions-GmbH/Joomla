@@ -156,6 +156,48 @@ class DataAnonymizationTest
         $this->db->insertObject($orderinfosTable, $testInfo, $orderinfoPkCol);
         $infoPk = $this->db->insertid();
 
+        // Checkout consent records: one for the expired order (IP/UA must be removed), one for a
+        // recent order of the same user and one of another user (both must stay unchanged).
+        $recentOrderId = 'ANON-RECENT-' . time();
+        $recentOrder   = clone $testOrder;
+        $recentOrder->order_id       = $recentOrderId;
+        $recentOrder->invoice_number = 5002;
+        $recentOrder->created_on     = date('Y-m-d H:i:s', strtotime('-1 year'));
+        $recentOrder->modified_on    = $recentOrder->created_on;
+        $this->db->insertObject($ordersTable, $recentOrder, $orderPkCol);
+        $recentPk = $this->db->insertid();
+
+        $consentIds = [];
+        $consents   = [
+            'expired' => [$orderId, 998, '203.0.113.50', 'AnonTestAgent/1.0'],
+            'recent'  => [$recentOrderId, 998, '203.0.113.51', 'AnonTestAgent/1.1'],
+            'other'   => ['ANON-OTHER-' . time(), 997, '203.0.113.52', 'AnonTestAgent/1.2'],
+        ];
+
+        foreach ($consents as $key => [$consentOrder, $consentUser, $ip, $agent]) {
+            $row = (object) [
+                'user_id' => $consentUser,
+                'state'   => 1,
+                'created' => date('Y-m-d H:i:s', strtotime('-1 day')),
+                'subject' => 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT',
+                'body'    => "<p>Order $consentOrder</p><p>IP address: $ip</p><p>User agent: $agent</p><!-- j2commerce-order:$consentOrder -->",
+                'remind'  => 0,
+                'token'   => '',
+            ];
+            $this->db->insertObject('#__privacy_consents', $row, 'id');
+            $consentIds[$key] = (int) $row->id;
+        }
+
+        $loadConsent = function (int $id): ?object {
+            $query = $this->createDbQuery()
+                ->select('*')
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('id') . ' = ' . $id);
+
+            return $this->db->setQuery($query)->loadObject() ?: null;
+        };
+        $consentsBefore = array_map($loadConsent, $consentIds);
+
         // Anonymize via the real plugin method — not a hand-rolled SQL copy.
         // Load the plugin class file directly (the Joomla autoloader does not
         // register plugin namespaces until the plugin is installed and enabled).
@@ -173,6 +215,9 @@ class DataAnonymizationTest
             try {
                 if (!class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, false)) {
                     require_once $pluginClassFile;
+                }
+                if (!class_exists(\Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository::class, false)) {
+                    require_once JPATH_BASE . '/plugins/privacy/j2commerce/src/Consent/ConsentRepository.php';
                 }
                 $db         = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
                 $dispatcher = new \Joomla\Event\Dispatcher();
@@ -233,10 +278,41 @@ class DataAnonymizationTest
                     ->where($this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk);
                 $this->test('order_total preserved after anonymization',
                     (float) $this->db->setQuery($query)->loadResult() === 50.0);
+
+                // Consent records of the anonymized order lose IP address and user agent only.
+                echo "\n--- Consent evidence of anonymized orders ---\n";
+                $expired = $loadConsent($consentIds['expired']);
+                $before  = $consentsBefore['expired'];
+                $this->test('consent of the anonymized order still exists', $expired !== null);
+                $this->test('consent IP address removed', $expired && !str_contains($expired->body, '203.0.113.50'));
+                $this->test('consent user agent removed', $expired && !str_contains($expired->body, 'AnonTestAgent/1.0'));
+                $this->test('consent keeps order reference and removal marker',
+                    $expired && str_contains($expired->body, "<!-- j2commerce-order:$orderId -->")
+                    && str_contains($expired->body, '<!-- j2commerce-evidence-removed -->'));
+                $this->test('consent body text translated (no raw key)', $expired && !str_contains($expired->body, 'PLG_SYSTEM_J2COMMERCEPRIVACY_'));
+                $this->test('consent user_id, state, created and subject unchanged',
+                    $expired && $before
+                    && (int) $expired->user_id === (int) $before->user_id
+                    && (int) $expired->state === (int) $before->state
+                    && $expired->created === $before->created
+                    && $expired->subject === $before->subject);
+
+                foreach (['recent' => 'recent order of the same user (within retention)', 'other' => 'order of another user'] as $key => $label) {
+                    $after = $loadConsent($consentIds[$key]);
+                    $this->test("consent of the $label unchanged", $after && $after->body === $consentsBefore[$key]->body);
+                }
+
+                // A second anonymization run does not rewrite the record again.
+                $bodyAfterFirstRun = $expired->body ?? '';
+                $method->invoke($plugin, 998);
+                $again = $loadConsent($consentIds['expired']);
+                $this->test('second anonymization leaves the consent unchanged', $again && $again->body === $bodyAfterFirstRun);
             }
         }
 
         // Cleanup
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE ' . $this->db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $consentIds)) . ')')->execute();
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $recentPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
 
