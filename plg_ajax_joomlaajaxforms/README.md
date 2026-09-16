@@ -279,7 +279,7 @@ The plugin runs inside `com_ajax` with `format=json`. This affects several Jooml
 |---|---|---|
 | `Route::_()` generates wrong URLs | The SEF router uses the active menu item (`com_ajax`), producing URLs like `/component/j2store/?Itemid=123` | Look up the target menu item via `$menu->getItems()` and call `Route::_('index.php?Itemid=' . $id)` with the explicit Itemid |
 | `$menuItem->route` lacks language prefix | The `route` field contains only the alias path (e.g. `account`), not the language segment (`de/account`) | Always use `Route::_()` with Itemid — never use `$item->route` directly as a URL |
-| `onAfterRoute` only fires for `com_ajax` | Joomla dispatches `onAfterRoute` only to `system` plugins. An `ajax` plugin is not loaded for `com_users` or other component requests | Logic that needs to intercept other components must go into a `system` plugin or a template override |
+| An `ajax` plugin does not receive `onAfterRoute` | Joomla dispatches `onAfterRoute` only to `system` plugins. An `ajax` plugin is not loaded for `com_users` or other component requests | Logic that needs to intercept other components must go into a `system` plugin or a template override |
 
 ### MFA redirect flow
 
