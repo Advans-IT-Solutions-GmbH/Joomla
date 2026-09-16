@@ -27,7 +27,9 @@ JOOMLA_PID=$!
 echo "Waiting for Joomla files..."
 sleep 10
 
+SELF_INSTALLED=0
 if [ ! -f /var/www/html/configuration.php ]; then
+    SELF_INSTALLED=1
     echo "Installing Joomla via CLI..."
 
     until [ -f /var/www/html/installation/joomla.php ] || [ -f /var/www/html/cli/joomla.php ]; do
@@ -117,6 +119,21 @@ echo "Waiting for Joomla configuration..."
 until [ -f /var/www/html/configuration.php ]; do
     sleep 2
 done
+
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window could hang or lose registrations,
+# so wait until the installation folder is gone and Apache answers. When this
+# script installed Joomla itself, the folder may stay; then only Apache counts.
+READY_ELAPSED=0
+until { [ "$SELF_INSTALLED" = "1" ] || [ ! -d /var/www/html/installation ]; } && curl -fs -o /dev/null http://localhost/; do
+    if [ $READY_ELAPSED -ge 120 ]; then
+        echo "ERROR: Joomla setup did not finish within 120 seconds"
+        exit 1
+    fi
+    sleep 2
+    READY_ELAPSED=$((READY_ELAPSED + 2))
+done
+echo "Joomla setup finished"
 
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
