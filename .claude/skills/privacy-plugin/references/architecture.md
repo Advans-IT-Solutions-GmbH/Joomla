@@ -4,7 +4,9 @@
 
 This plugin is a `privacy` group plugin that extends `com_privacy`. It does not replace the core privacy system — it adds J2Commerce data on top.
 
-**Joomla core handles:** request management UI, export/deletion workflow, consent tracking (`#__privacy_consents`), action logging.
+**Joomla core handles:** request management UI, export/deletion workflow, consent tracking (`#__privacy_consents`), action logging, pseudonymisation of the user account (`plg_privacy_user`, same `User` object and ordering as this plugin, so it may run first).
+
+**Action log:** `#__action_logs` (for example login records) stays under Joomla core. This plugin exports the user's entries (`include_joomla_data`) and, with `activity_logging`, writes its own entries (including the IP address of the request); it never changes or deletes existing entries.
 
 **This plugin handles:** J2Commerce-specific data in exports, retention enforcement, order anonymization, lifetime license detection, checkout consent, MyProfile tab.
 
@@ -22,27 +24,31 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │       ├── createJoomlaProfileDomain()     — if include_joomla_data
 │       ├── createJoomlaActionLogsDomain()  — if include_joomla_data
 │       └── createAcyMailingDomain()        — only if AcyMailing tables exist
-├── onPrivacyCanRemoveData()      — check retention
+├── onPrivacyCanRemoveData()      — never blocks; captures username + account e-mail per user ID
 │   └── checkCanRemoveData()
-│       └── checkRetentionPeriod()   — NOT checkOrderRetention()
-│           └── isLifetimeLicense()
 ├── onPrivacyRemoveData()         — anonymize/delete
-│   └── processDataRemoval()
+│   └── processDataRemoval()      — uses the captured account data and the request e-mail
+│       ├── checkRetentionPeriod()   — retained orders (+ lifetime flag), expired lifetime orders
+│       │   └── lifetimeOrderIds()   — Retention\LifetimeLicenses (fail-closed)
 │       ├── deleteAddresses()        — if delete_addresses
 │       ├── deleteCartData()
-│       ├── anonymizeOrders()        — if anonymize_orders
-│       └── removeAcyMailingData()
+│       ├── anonymizeOrders()        — if anonymize_orders; cutoff Retention\RetentionPeriod;
+│       │                              lifetime orders keep user_email; consent IP/UA removed
+│       ├── removeAcyMailingData()   — lookup by captured e-mails
+│       └── reportRetainedOrders()   — customer e-mail first, then administrator message
 └── onAjaxJ2commercePrivacy()     — AJAX address deletion
     └── deleteUserAddress()
 
 J2CommercePrivacy extends CMSPlugin implements SubscriberInterface — separate task plugin:
 │                    plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php
 │                    routine plg_task_j2commerceprivacy.autocleanup
-└── autoCleanup()                 — scheduled task
-    ├── hasLifetimeLicense()
-    ├── partialAnonymizeUserData()
-    └── anonymizeUserData()
-        └── anonymizeOrderTables()
+└── autoCleanup()                 — scheduled task (site time zone, effective fiscal year end logged)
+    ├── anonymizeExpiredGuestOrders()   — guest orders per order
+    ├── anonymizeUserData()             — partialAnonymizeUserData() is an alias
+    │   └── anonymizeOrderTables()      — lifetime orders keep user_email (per order)
+    ├── ordersWithLifetimeLicense()     — Retention\LifetimeLicenses, fail-closed
+    └── removeConsentEvidenceForOrders()  — Consent\ConsentRepository
+    Status KNOCKOUT if guest orders failed or all users failed.
 ```
 
 ## AJAX
@@ -59,8 +65,10 @@ No dependency on `plg_ajax_joomlaajaxforms` — uses Joomla Core `com_ajax` only
 The `privacy` plugin group is not auto-imported in the Joomla frontend. The plugin has `$autoloadLanguage = true` which loads the language when the plugin is triggered. For template overrides that need the language earlier:
 
 ```php
-Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+\Advans\Plugin\Privacy\J2Commerce\Frontend\PrivacyOptions::loadLanguage();
 ```
+
+Do not use `Factory::getLanguage()` (deprecated, flagged by `shared/tests/deprecated-api-scan.php`); plugin code uses the application language and, without an application (CLI), a language object from `LanguageFactoryInterface`.
 
 ## Database Tables Used
 

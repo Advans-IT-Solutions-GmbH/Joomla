@@ -34,11 +34,11 @@ references:
 Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 
 - Exports J2Commerce orders and addresses, optional Joomla user/profile/action-log data, and AcyMailing subscriber data on privacy export requests
-- Enforces configurable retention periods before allowing data deletion
-- Anonymizes orders outside the retention period instead of deleting them
-- Detects lifetime licenses to preserve email after retention expires
+- Carries out removal requests: deletes addresses, carts and AcyMailing data, anonymizes orders outside the retention period, keeps orders within it and reports them (administrator message, customer e-mail)
+- Anonymizes orders outside the retention period instead of deleting them (registered users and, via the task, guest orders)
+- Detects lifetime licenses: those orders keep only their order e-mail after the retention period (provisional, see Decisions)
 - Adds a consent checkbox to the J2Commerce checkout; on J2Commerce 6 validates it server-side and records one `#__privacy_consents` row per order (bundled system plugin)
-- Renders a self-service privacy tab in the J2Commerce MyProfile page (consent status, link to the `com_privacy` request form or `mailto:` for guests)
+- Renders a self-service privacy tab in the J2Commerce MyProfile page (consent status, request buttons per option: `com_privacy` form for logged-in users, `mailto:` for guests)
 - Runs a scheduled automatic cleanup task
 
 ## Key Files
@@ -64,3 +64,18 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `onAjaxJ2commercePrivacy` | Handle address deletion AJAX requests |
 
 See `references/architecture.md` for full details.
+
+## Decisions (maintainer, PR #187)
+
+| Topic | Decision |
+|-------|----------|
+| Compatibility | Joomla 5.4 or later (5.4.x, 6.x), PHP 8.1+; no compatibility layer for Joomla 5.0 to 5.3. No dispatcher in plugin constructors or `setDispatcher()` in service providers (Joomla sets it on load) |
+| Guest access | One order token = exactly one order (native J2Commerce logic): the Privacy tab of a guest session shows only the order of `guest_order_token` + `guest_order_email`, never other orders of the same address |
+| Checkout checkbox | J2Commerce 6: rendered by the system plugin through the core event `AfterDisplayShippingPayment` (J2Commerce 6.3.4 or later, installer warns for older versions); no J2Commerce 6 checkout override is shipped. Required only through the plugin options "Show Consent Checkbox" and "Consent Required" (no template or request parameter switches it off) |
+| IP address and user agent | Stored in the consent record as proof of consent and for shop security (legitimate interest), not anonymized at checkout. Removed when the order is anonymized, i.e. after the retention period of the order (10 years by default, from the end of the fiscal year, determined in the site time zone); the record stays as evidence without personal data |
+| Retention period | Counted from the end of the fiscal year of the order (`fiscal_year_end`, default 12-31, OR Art. 958f) in the site time zone; the SQL cutoff is converted to UTC |
+| Removal requests | Never refused: everything not subject to a retention obligation is removed; orders within the retention period are kept and reported to the administrator and, by e-mail in the customer's language, to the customer |
+| Lifetime licenses | **Variant A, provisional (confirmation pending):** a removal request is carried out; after the retention period only the order e-mail of lifetime-license orders is kept (license reactivation); the same rule per order in the removal request and the task, fail-closed |
+| Action log | Joomla's action log (`#__action_logs`, e.g. login records) is separate: the plugin only exports it (`include_joomla_data`) and, with `activity_logging`, adds its own entries (with IP address); it never changes or deletes existing entries |
+| Operators | Must define the storage period of consent records and describe the stored data (IP address, user agent, order number, time), its purpose and storage period in their privacy policy; consent records without personal data are not deleted automatically |
+| Not built | Licenses tab / `#__license_keys`; retroactive consent records; consent recording on J2Commerce 4 / J2Store |

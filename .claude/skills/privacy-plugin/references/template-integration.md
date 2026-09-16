@@ -70,6 +70,6 @@ Consent is never created retroactively from an existing order. IP address and us
 `myprofile/default_privacy.php` (both components) calls `ConsentRepository::getStatus()`:
 
 - logged-in: valid rows with the user's `user_id` and subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT` or `PLG_SYSTEM_PRIVACYCONSENT_SUBJECT` (other subjects are not shown);
-- guest (session `guest_order_token` + `guest_order_email`): the one order with that token and e-mail (`user_id = 0`), nothing else of that address.
+- guest (session `guest_order_token` + `guest_order_email`): the one order with that token and e-mail (`user_id = 0`), nothing else of that address. One token = exactly one order, as in J2Commerce's own guest order view (maintainer decision).
 
 One button per enabled request type (`show_export_data` → `export`, `show_delete_all` → `remove`; none → no request section). Logged-in users: both link to `index.php?option=com_privacy&view=request` (the form offers both types, no URL preset). Verified guests: `mailto:` to `support_email` (fallback `mailfrom`) with the type as subject, because the com_privacy Dispatcher redirects guests to login.
