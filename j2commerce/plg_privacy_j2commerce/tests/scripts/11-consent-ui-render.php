@@ -45,6 +45,11 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+// The extension PSR-4 map is loaded by the application constructor (ExtensionNamespaceMapper),
+// which this CLI harness never runs: load it the same way, so the overrides find the plugin classes.
+JLoader::register('JNamespacePsr4Map', JPATH_LIBRARIES . '/namespacemap.php');
+(new JNamespacePsr4Map())->load();
+
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -286,6 +291,8 @@ class RenderHarnessView
 
 class ConsentUiRenderTest
 {
+    private const PRIVACY_OPTIONS = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+
     private $db;
     private int $passed = 0;
     private int $failed = 0;
@@ -409,6 +416,10 @@ class ConsentUiRenderTest
 
         $this->primeJoomlaState();
 
+        // The MyProfile overrides only render the tab when this class loads.
+        $this->test('PrivacyOptions class loads through the extension namespace map', class_exists(self::PRIVACY_OPTIONS),
+            'Joomla extension PSR-4 map does not resolve ' . self::PRIVACY_OPTIONS);
+
         $checkoutFile  = $overrideDir . '/checkout/default_shipping_payment.php';
         $myprofileFile = $overrideDir . '/myprofile/default.php';
 
@@ -501,10 +512,12 @@ class ConsentUiRenderTest
         // ── Frontend options ─────────────────────────────────────────────────
         echo "\n-- Frontend options --\n";
         $installedParams = (string) (PluginHelper::getPlugin('privacy', 'j2commerce')->params ?? '{}');
-        $options         = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
-        $this->test('PrivacyOptions class available', class_exists($options));
+        $options         = self::PRIVACY_OPTIONS;
 
-        if (class_exists($options)) {
+        if (!class_exists($options)) {
+            // Precondition failed (reported at the start of run()); do not skip silently.
+            $this->test('Frontend option checks executed', false, 'PrivacyOptions not loadable');
+        } else {
             $this->seedPrivacyPlugin('{}');
             $this->test('Options default to on (tab, delete address, export, deletion)',
                 $options::showPrivacyTab() && $options::showDeleteAddress() && $options::showExportRequest() && $options::showDeletionRequest());

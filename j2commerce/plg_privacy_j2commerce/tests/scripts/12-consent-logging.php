@@ -1193,30 +1193,38 @@ class ConsentLoggingTest
 
         $setEnabled(0);
 
-        [$exitCode, $output] = $this->runCliUpdate($package);
-        $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($output, -400));
+        [$exitCode, $output, $readable] = $this->runCliUpdate($package);
+        $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($readable, -400));
 
         if ($j6) {
+            // The console cuts long words (paths) at its line length: compare without any whitespace.
+            // By reference: $output is replaced by the second update below.
+            $has       = static function (string $needle) use (&$output): bool {
+                return str_contains($output, preg_replace('/\s+/', '', $needle));
+            };
             $version   = $this->getJ2CommerceVersion();
             $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
             $outdated  = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED');
-            $diag      = mb_substr($output, 0, 1500);
+            $bundled   = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED');
+            $diag      = mb_substr($readable, 0, 1500);
 
             clearstatcache();
             $this->test('Update warns about a custom checkout override without the event (bootstrap5)',
-                str_contains($output, $outdated) && str_contains($output, $relative($noEvent)), $diag);
-            $this->test('Update does not name a custom checkout override with the event (uikit)', !str_contains($output, $relative($withEvent)), $diag);
-            $this->test('No untranslated installer message', !str_contains($output, 'PLG_PRIVACY_J2COMMERCE_'), $diag);
+                $has($outdated) && $has($relative($noEvent)), $diag);
+            // Meaningful only because the same warning is present in this output.
+            $this->test('Update does not name a custom checkout override with the event (uikit)',
+                $has($outdated) && $has($relative($noEvent)) && !$has($relative($withEvent)), $diag);
+            $this->test('No untranslated installer message', $output !== '' && !$has('PLG_PRIVACY_J2COMMERCE_'), $diag);
 
             if ($hasEvent) {
                 $this->test("Update disables the unchanged 1.5.5 checkout override (J2Commerce $version)",
                     !is_file($legacy) && is_file($retired) && file_get_contents($retired) === $fixture, $diag);
                 $this->test('Update reports the disabled checkout override',
-                    str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')) && str_contains($output, $relative($legacy)), $diag);
+                    $has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')) && $has($relative($legacy)), $diag);
             } else {
                 $this->test("Update keeps the 1.5.5 checkout override while J2Commerce ($version) lacks the event", is_file($legacy), $diag);
                 $this->test('Update warns that J2Commerce is too old',
-                    str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2COMMERCE_TOO_OLD')), $diag);
+                    $has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2COMMERCE_TOO_OLD')), $diag);
             }
 
             // A changed copy of the shipped override may contain shop changes: kept, with a warning.
@@ -1225,15 +1233,17 @@ class ConsentLoggingTest
             @unlink($retired);
             file_put_contents($noEvent, "<?php\n// custom override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
 
-            [$exitCode, $output] = $this->runCliUpdate($package);
-            $diag = mb_substr($output, 0, 1500);
+            [$exitCode, $output, $readable] = $this->runCliUpdate($package);
+            $diag = mb_substr($readable, 0, 1500);
             clearstatcache();
             $this->test('Second CLI update succeeds', $exitCode === 0, $diag);
             $this->test('Update keeps a changed copy of the shipped checkout override',
                 is_file($legacy) && file_get_contents($legacy) === $changed && !is_file($retired), $diag);
             $this->test('Update warns about the changed copy of the shipped checkout override',
-                str_contains($output, $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED')) && str_contains($output, $relative($legacy)), $diag);
-            $this->test('No outdated-override warning once every override fires the event', !str_contains($output, $outdated), $diag);
+                $has($bundled) && $has($relative($legacy)), $diag);
+            // Meaningful only because this output contains the installer warnings (bundled copy).
+            $this->test('No outdated-override warning once every override fires the event',
+                $has($bundled) && !$has($outdated), $diag);
         }
 
         $this->db->setQuery(
@@ -1270,14 +1280,16 @@ class ConsentLoggingTest
 
     /**
      * Reinstall the package through the Joomla CLI. The console prints the enqueued installer
-     * messages; the output is returned with whitespace collapsed (the console wraps long lines).
+     * messages. A wide terminal is requested, but Symfony's block output still wraps (and cuts long
+     * words) at its maximum line length, so the output is returned without any whitespace for
+     * comparisons, plus a readable copy for diagnostics.
      *
-     * @return  array{0: int, 1: string}
+     * @return  array{0: int, 1: string, 2: string}
      */
     private function runCliUpdate(string $package): array
     {
         $command = sprintf(
-            'HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
+            'COLUMNS=10000 HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
             escapeshellarg(PHP_BINARY),
             escapeshellarg(JPATH_BASE . '/cli/joomla.php'),
             escapeshellarg($package)
@@ -1285,7 +1297,9 @@ class ConsentLoggingTest
         $output = [];
         exec($command, $output, $exitCode);
 
-        return [$exitCode, trim(preg_replace('/\s+/', ' ', implode(' ', $output)))];
+        $readable = trim(preg_replace('/\s+/', ' ', implode(' ', $output)));
+
+        return [$exitCode, preg_replace('/\s+/', '', $readable), $readable];
     }
 
     /** Longest literal part of a translated installer message (placeholders removed, whitespace collapsed). */

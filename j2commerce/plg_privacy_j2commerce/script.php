@@ -569,7 +569,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $outdated = [];
 
         foreach ($this->getFrontendTemplates($db) as $template) {
-            // uikit3/ is the framework folder of J2Commerce before 6.3.6.
+            // uikit3/ is the framework folder of J2Commerce before 6.3.7.
             foreach (['', 'bootstrap5/', 'uikit/', 'uikit3/'] as $subfolder) {
                 $relative = $template . '/html/com_j2commerce/checkout/' . $subfolder . 'default_shipping_payment.php';
                 $file     = JPATH_SITE . '/templates/' . $relative;
