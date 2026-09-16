@@ -46,6 +46,24 @@ class InstallationTest
             return (int) $this->db->loadResult() === 1;
         });
 
+        $this->test('Exactly one productcompare plugin row exists', function () {
+            $query = $this->dbq()
+                ->select('COUNT(*)')
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('productcompare'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->whereIn($this->db->quoteName('folder'), ['j2commerce', 'j2store'], \Joomla\Database\ParameterType::STRING);
+            $this->db->setQuery($query);
+            return (int) $this->db->loadResult() === 1;
+        });
+
+        if ($expectedFolder === 'j2store') {
+            $this->test('plugins/j2store/productcompare is a real folder, not a symlink', function () {
+                $path = JPATH_PLUGINS . '/j2store/productcompare';
+                return is_dir($path) && !is_link($path);
+            });
+        }
+
         $this->test('Plugin is enabled', function () use ($expectedFolder) {
             $query = $this->dbq()
                 ->select($this->db->quoteName('enabled'))
