@@ -4,7 +4,17 @@
 - Nie direkt auf `main` committen oder pushen. Jede Änderung über einen Feature-Branch + PR.
 - Branch-Namen kurz & beschreibend: `fix/...`, `feat/...`, `docs/...`, `chore/...`.
 - Den PR niemals selbst mergen — das macht der Maintainer.
+  - Solange der Maintainer allein arbeitet, mergt er bewusst per Admin-Bypass der Review-Pflicht;
+    vorher müssen alle Checks grün sein.
+  - Vor dem Merge prüft der Maintainer die Änderung auf seiner Staging-Umgebung. Dort liegen echte
+    Kundendaten: nichts davon in Commits, PRs, Kommentare, Tests oder Doku übernehmen.
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
+- **Review-Takt:** Review-Befunde sofort beheben und pushen, nicht auf die CI warten; rote Checks
+  sofort auswerten und beheben. Unabhängige Reviews laufen mit mehreren Modellen; die
+  Copilot-Runde unten bleibt Teil der Definition of Done.
+- **Öffentliches Repository:** keine Kundendaten, Bestellnummern, Hostnamen, IP-Adressen,
+  Site-spezifischen IDs, internen Prozessdetails oder Verweise auf private Repositories — weder in
+  Code, Tests und Doku noch in Commit-Nachrichten, PR-Texten und Kommentaren.
 - Write PRs, commit messages, and documentation (READMEs, skills) in **English** (this is a public repository); the agent instruction files `AGENTS.md`, `CLAUDE.md` and `copilot-instructions.md` are maintained in German.
 - **Definition of Done für Copilot-Code-Reviews:** Ein PR mit Copilot-Code-Review ist erst
   **fertig**, wenn jeder Review-Kommentar behandelt ist (Fix committen/pushen **oder** mit
@@ -43,7 +53,8 @@
   (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
   die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
   einem fehlenden Key scheitern
-  (siehe „Repo-spezifisch (Joomla)“).
+  (siehe „Repo-spezifisch (Joomla)“). Startet GPG lokal nicht (auf der Windows-Arbeitsstation des
+  Maintainers ist das der Fall), wird es nicht repariert: unsigniert committen und pushen.
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
@@ -75,6 +86,15 @@ Generische Extensions in diesem Repository:
 
 Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
 Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus. Nur wenn ein Versionssprung gewollt ist, wird die Änderung als `fix(...)` oder `feat(...)` mit passendem Scope formuliert.
+
+Festgehaltene Entscheidungen (Details im Skill `joomla-extensions`):
+- Alle Extensions verlangen Joomla 5.4 oder neuer; die Anhebung der Mindestversion wird als Patch-Release ausgeliefert.
+- Die CI testet immer die neuesten Joomla-5.4.x- und 6.x-Releases; J2Commerce 6 ist auf einen Commit gepinnt.
+- Deprecation-Gate in den produktionsnahen Lanes und statischer Scan nach veralteten Joomla-APIs in jeder Workflow-Datei; beide müssen grün sein.
+- Plugin-Service-Provider übergeben den Dispatcher weder im Konstruktor noch per `setDispatcher()`.
+- Pro Extension existiert nur das neueste GitHub-Release; ältere Releases und Tags löscht der Publish-Workflow bewusst.
+- OSMap: Sind J2Store und J2Commerce gleichzeitig aktiv, bleibt die Sitemap ohne Shop-Einträge (dokumentierte Einschränkung, Issue #182); abgedeckt durch die Reihenfolge der Migration.
+- Lizenz: Umstellung auf GPL-3.0-or-later mit Regeln für fremden Code in einem eigenen PR (#189).
 
 Skills liegen in:
 - `.claude/skills/joomla-extensions`
