@@ -39,7 +39,9 @@ return new class implements ServiceProviderInterface
         $container->set(
             PluginInterface::class,
             function () use ($dispatcher, $pluginData, $db) {
-                $plugin = new \PlgOsmapJ2commerce($dispatcher, $pluginData);
+                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+                $plugin = new \PlgOsmapJ2commerce($pluginData);
+                $plugin->setDispatcher($dispatcher);
                 // Resolve the application inside the factory closure so plugin
                 // registration does not throw in a console context.
                 $plugin->setApplication(Factory::getApplication());

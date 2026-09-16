@@ -144,7 +144,7 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * Warns when OSMap or J2Store/J2Commerce is not available. The plugin still
+     * Warns when OSMap or J2Store/J2Commerce is missing or disabled. The plugin still
      * installs, but it has nothing to do until both are present.
      */
     private function warnAboutMissingDependencies(): void
@@ -169,6 +169,8 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
 
         if (empty($rows['com_osmap'])) {
             $app->enqueueMessage(Text::_('PLG_OSMAP_J2COMMERCE_WARN_OSMAP_MISSING'), 'warning');
+        } elseif ((int) $rows['com_osmap']->enabled !== 1) {
+            $app->enqueueMessage(Text::_('PLG_OSMAP_J2COMMERCE_WARN_OSMAP_DISABLED'), 'warning');
         }
 
         $shopEnabled = false;
