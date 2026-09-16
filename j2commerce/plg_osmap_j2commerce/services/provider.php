@@ -22,14 +22,12 @@ use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
-use Joomla\Event\DispatcherInterface;
 
 return new class implements ServiceProviderInterface
 {
     public function register(Container $container): void
     {
         $pluginData = (array) PluginHelper::getPlugin('osmap', 'j2commerce');
-        $dispatcher = $container->get(DispatcherInterface::class);
         $db         = $container->get(DatabaseInterface::class);
 
         // Register the runtime class (PlgOsmapJ2commerce). It overrides
@@ -38,10 +36,9 @@ return new class implements ServiceProviderInterface
         // loads via its own require_once + class-name mechanism.
         $container->set(
             PluginInterface::class,
-            function () use ($dispatcher, $pluginData, $db) {
-                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+            function () use ($pluginData, $db) {
+                // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
                 $plugin = new \PlgOsmapJ2commerce($pluginData);
-                $plugin->setDispatcher($dispatcher);
                 // Resolve the application inside the factory closure so plugin
                 // registration does not throw in a console context.
                 $plugin->setApplication(Factory::getApplication());
