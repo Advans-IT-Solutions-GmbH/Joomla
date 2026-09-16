@@ -90,6 +90,52 @@ function sh_read_package_manifest(string $package): ?array
     ];
 }
 
+/**
+ * The next version above $version for test packages: the last numeric part is
+ * raised by one, a pre-release suffix is dropped (1.2.3 -> 1.2.4,
+ * 1.2.3-rc1 -> 1.2.4).
+ */
+function sh_bump_version(string $version): string
+{
+    if (!preg_match('/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/', trim($version), $m)) {
+        return '999.0.0';
+    }
+
+    return sprintf('%d.%d.%d', (int) $m[1], (int) ($m[2] ?? 0), (int) ($m[3] ?? 0) + 1);
+}
+
+/**
+ * Set <version> in the root manifest of a package copy. Returns the new
+ * manifest content, or null when the file could not be changed.
+ */
+function sh_set_package_version(string $package, string $manifestFile, string $version): ?string
+{
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        return null;
+    }
+
+    $content = $zip->getFromName($manifestFile);
+    $updated = is_string($content)
+        ? preg_replace('#<version>[^<]*</version>#', '<version>' . htmlspecialchars($version, ENT_XML1) . '</version>', $content, 1, $count)
+        : null;
+
+    if (!is_string($updated) || $count !== 1 || !$zip->addFromString($manifestFile, $updated)) {
+        $zip->close();
+
+        return null;
+    }
+
+    if (!$zip->close()) {
+        return null;
+    }
+
+    $check = sh_read_package_manifest($package);
+
+    return $check !== null && $check['version'] === $version ? $updated : null;
+}
+
 function sh_db(): mysqli
 {
     static $db = null;
@@ -156,7 +202,7 @@ function sh_cli(string $root, string $arguments): array
 {
     $output = [];
     $code   = 0;
-    exec('cd ' . escapeshellarg($root) . ' && php cli/joomla.php ' . $arguments . ' 2>&1', $output, $code);
+    exec('cd ' . escapeshellarg($root) . ' && HTTP_HOST=localhost php cli/joomla.php ' . $arguments . ' 2>&1', $output, $code);
 
     return [$code, implode("\n", $output)];
 }
@@ -306,13 +352,63 @@ function sh_set_extension_enabled(int $extensionId, int $enabled): void
 }
 
 /**
+ * Untranslated language keys in a text. Two segments are enough
+ * (PLG_EXAMPLE); the part after the prefix must start with a letter or digit.
+ * Table and element names in installer output are lower case and do not match.
+ *
  * @return string[]
  */
 function sh_find_raw_language_keys(string $text): array
 {
-    preg_match_all('/\b(?:PLG|COM|MOD|PKG|TPL|LIB|JLIB|FILES)_[A-Z0-9]+(?:_[A-Z0-9]+){1,}\b/', $text, $m);
+    preg_match_all('/\b(?:PLG|COM|MOD|PKG|TPL|LIB|JLIB|FILES)_[A-Z0-9][A-Z0-9_]*\b/', $text, $m);
 
     return array_values(array_unique($m[0]));
+}
+
+/**
+ * A distinctive piece of a language string for searching it in (plain) CLI
+ * output: the longest literal part between sprintf placeholders, at most
+ * 60 characters. Null when the string has no literal part of 15 characters.
+ */
+function sh_language_fragment(string $value): ?string
+{
+    $parts = preg_split('/%(?:\d+\$)?[sdfu%]/', sh_plain_text($value)) ?: [];
+    usort($parts, static fn (string $a, string $b): int => mb_strlen(trim($b)) <=> mb_strlen(trim($a)));
+    $best = trim((string) ($parts[0] ?? ''));
+
+    return mb_strlen($best) >= 15 ? mb_substr($best, 0, 60) : null;
+}
+
+/**
+ * Keys of the language strings of $tag that appear in $plain (see
+ * sh_plain_text). With $reference (the en-GB strings of the same package) only
+ * strings whose text differs from the reference count, so a match proves that
+ * the $tag language file was used and not the English fallback.
+ *
+ * @param array<string, string>      $strings
+ * @param array<string, string>|null $reference
+ *
+ * @return string[]
+ */
+function sh_shown_language_keys(string $plain, array $strings, ?array $reference = null): array
+{
+    $shown = [];
+
+    foreach ($strings as $key => $value) {
+        $fragment = sh_language_fragment($value);
+
+        if ($fragment === null || !str_contains($plain, $fragment)) {
+            continue;
+        }
+
+        if ($reference !== null && isset($reference[$key]) && sh_language_fragment($reference[$key]) === $fragment) {
+            continue;
+        }
+
+        $shown[] = $key;
+    }
+
+    return $shown;
 }
 
 /**
