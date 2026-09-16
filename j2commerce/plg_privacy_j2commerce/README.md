@@ -58,12 +58,12 @@ Organizations with subscription-based business models should contact Advans IT S
 
 ### Install Steps
 
-1. Download `plg_privacy_j2commerce_<version>.zip` (e.g. `plg_privacy_j2commerce_1.5.5.zip`) from the latest release
+1. Download `plg_privacy_j2commerce_<version>.zip` from the latest release
 2. **System → Install → Extensions**
 3. Upload and install
 4. **Enable via System → Manage → Plugins → Privacy - J2Commerce**
 
-The installer also installs and enables the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`). On install and on every update it re-enables that task plugin and migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup`.
+The installer also installs the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`) and enables it on the first installation. Updates install the new version of the task plugin but leave its enabled/disabled state unchanged. On install and on every update the installer also migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup` and removes update sites of this plugin that still point to the repository's former path (`advansit/Joomla`), so Joomla only queries the current update server.
 
 ### Updating
 
@@ -110,7 +110,7 @@ Joomla's `com_privacy` component requires a frontend menu item to generate valid
 6. Under **Link Type**, set **Display in Menu** to **No** (hidden menu item)
 7. Save
 
-This menu item is required for the "Data Export" and "Data Deletion" buttons in the J2Commerce profile privacy tab to work for logged-in users. Guest users see mailto links instead (see below).
+This menu item is required for any link to the `com_privacy` request form (for example from your own `default_privacy.php` layout, see [Profile Privacy Tab](#profile-privacy-tab)) to resolve for logged-in users. Guests cannot use `com_privacy` (Joomla redirects them to the login).
 
 ---
 
@@ -151,34 +151,15 @@ The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: S
 
 ### Consent Recording
 
-| User Type | When | Where | Identifier |
-|-----------|------|-------|------------|
-| Logged-in | Checkout confirm step | `#__privacy_consents` | `user_id` |
-| Guest | First profile view after checkout | `#__privacy_consents` | `user_id=0`, email in `body` field |
-
-**Logged-in users:** Consent is written to `#__privacy_consents` when the user reaches the checkout confirm step (step 5). The plugin params are read directly from `#__extensions` because the privacy plugin group is not imported during checkout AJAX requests.
-
-**Guest users:** At checkout, `Factory::getApplication()->getIdentity()` returns `user_id=0`. The consent entry is created retroactively when the guest views the profile privacy tab (accessed via order token). The guest email is read from the J2Store session (`guest_order_email`), and orders are matched by email address.
+The checkout consent is **not stored**. The checkbox is only displayed (and, on J2Commerce 4, required before the step can be submitted). The plugin does not write to `#__privacy_consents`, does not add the consent to the order, and does not evaluate the submitted `j2commerce_privacy_consent` value on the server. Joomla's own consent tracking (`#__privacy_consents`, e.g. via the core *System - Privacy Consent* plugin) is independent of this checkbox.
 
 ### Profile Privacy Tab
 
-The privacy tab in J2Commerce's "My Profile" shows consent status and privacy request buttons.
+The bundled MyProfile override (`default.php`) adds a **Privacy** tab (tab id `j2commerce-privacy-tab`) whenever the plugin is installed and enabled.
 
 > **Template override required.** The privacy tab is only rendered when the MyProfile template override (`default.php`) is in place. The override is deployed automatically on first install. See [Template Integration](#template-integration) for details.
 
-**Consent status lookup** checks three sources in order:
-1. `#__privacy_consents` table (by `user_id` for logged-in, not available for guests)
-2. `#__j2store_orders` / `#__j2commerce_orders` by `user_id` (logged-in users)
-3. `#__j2store_orders` / `#__j2commerce_orders` by `user_email` (guest users)
-
-If an order is found but no `#__privacy_consents` entry exists, one is auto-created.
-
-**Privacy request buttons** (Data Export, Data Deletion):
-
-| User Type | Button Behavior |
-|-----------|----------------|
-| Logged-in | Links to `com_privacy` request form (requires menu item, see above) |
-| Guest | `mailto:` link to site admin email (guests cannot use `com_privacy` — Joomla's Dispatcher redirects them to login) |
+The tab content is loaded with `$this->loadTemplate('privacy')`, i.e. from a `myprofile/default_privacy.php` layout. **The plugin does not ship this layout.** Your site template must provide `templates/{template}/html/com_j2store/myprofile/default_privacy.php` (J2Commerce 4) or `templates/{template}/html/com_j2commerce/myprofile/default_privacy.php` (J2Commerce 6). The plugin itself provides no consent status display and no privacy request buttons; links to Joomla's `com_privacy` request form (see [Required: Privacy Request Menu Item](#required-privacy-request-menu-item)) have to be part of that layout.
 
 ---
 
@@ -318,19 +299,16 @@ No AcyMailing PHP classes are loaded. All queries use Joomla's `DatabaseDriver` 
 `default.php` checks for the plugin at runtime:
 
 ```php
-$privacyPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
-if ($privacyPlugin) {
-    $privacyParams = new \Joomla\Registry\Registry($privacyPlugin->params);
-    $showPrivacyTab = (bool) $privacyParams->get('show_privacy_section', 1);
-    Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
-}
+$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
+$_privacyEnabled = !empty($_privacyPlugin);
+$_privacyTabId   = 'j2commerce-privacy-tab';
 ```
 
-If the plugin is not installed or disabled, `$showPrivacyTab` stays `false` and the tab is not rendered — no errors.
+If the plugin is not installed or disabled, `$_privacyEnabled` is `false` and the tab is not rendered. The plugin parameter *Show Privacy Section* (`show_privacy_section`) is **not evaluated** by the bundled overrides; the tab depends only on whether the plugin is enabled.
 
-### Language file must be loaded manually
+### Language file
 
-Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the explicit `Factory::getLanguage()->load(...)` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys render as raw strings in the tab. This call is already included in the provided `default.php` — do not remove it.
+Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend, so its language file is not loaded automatically. The bundled `default.php` does not load it. Only the bundled `default_addresses.php` loads `plg_privacy_j2commerce` (from `JPATH_ADMINISTRATOR`) when the plugin is enabled. If a `PLG_PRIVACY_J2COMMERCE_*` key renders as a raw string, load the language file in your override before it is used.
 
 ### Updating overrides after plugin updates
 
@@ -339,10 +317,6 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 1. Compare your deployed override with the new source file.
 2. Merge any changes relevant to your customisation.
 3. The postflight message on update will remind you of this.
-
-### Licenses tab (optional)
-
-`default.php` also conditionally renders a **Licenses** tab if a site-specific license table exists and contains rows for the current user. This tab is unrelated to the privacy plugin. If your site has no such table, the tab simply does not appear (the query is wrapped in a `try/catch`).
 
 ---
 
@@ -922,7 +896,7 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Show Consent Checkbox | Yes | Display privacy consent checkbox in checkout step 4 |
-| Consent Required | Yes | Make consent mandatory — blocks checkout if unchecked |
+| Consent Required | Yes | Make consent mandatory: blocks the checkout step if unchecked on J2Commerce 4; on J2Commerce 6 the checkbox is displayed but does not block the step (see [Checkout Consent Checkbox](#checkout-consent-checkbox)) |
 | Privacy Policy Article | (none) | Joomla article containing your privacy policy — linked in the consent text |
 | Consent Text | (default) | Checkbox label text. Use `{privacy_policy}` as placeholder for the policy link |
 
@@ -930,10 +904,10 @@ This plugin does not store or have access to complete payment details. Users mus
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Show Privacy Section | Yes | Render the Privacy tab in the J2Commerce MyProfile page |
-| Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab |
-| Show Delete All Data | Yes | Show data deletion request button in the Privacy tab |
-| Show Export Data | Yes | Show data export request button in the Privacy tab |
+| Show Privacy Section | Yes | Intended to toggle the Privacy tab in the J2Commerce MyProfile page. Currently not evaluated: the bundled overrides show the tab whenever the plugin is enabled |
+| Show Delete Address Buttons | Yes | Intended to toggle the per-address delete buttons in the Addresses tab. Currently not evaluated: the bundled `default_addresses.php` shows them whenever the plugin is enabled |
+| Show Delete All Data | Yes | Intended for a data deletion request button in the Privacy tab. Currently not evaluated by the plugin or the bundled overrides |
+| Show Export Data | Yes | Intended for a data export request button in the Privacy tab. Currently not evaluated by the plugin or the bundled overrides |
 
 #### Notifications & Logging
 
@@ -1192,7 +1166,7 @@ Order as in `tests/test.env`:
 9. **Template Overrides** — override source files and deployment verification
 10. **Consent UI Render** — renders the deployed checkout and MyProfile overrides for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon) actually appear in the produced HTML. Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
 11. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`
-12. **AcyMailing Integration** — newsletter consent sync
+12. **AcyMailing Integration** — detects AcyMailing via a minimal AcyMailing table structure created by the test environment (no AcyMailing installation), checks the export queries against a test subscriber, and triggers the plugin's own AcyMailing removal path against that structure to confirm that the subscriber and all related rows are deleted; also checks that detection does not fail when AcyMailing is absent
 13. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 14. **Uninstall** — clean removal from database and filesystem
 
