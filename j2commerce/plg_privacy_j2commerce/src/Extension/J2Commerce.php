@@ -11,7 +11,11 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
+use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
@@ -63,7 +67,48 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     {
         self::loadHelperClasses();
 
-        return RetentionPeriod::cutoff((int) $this->params->get('retention_years', 10), (string) $this->params->get('fiscal_year_end', RetentionPeriod::DEFAULT_FISCAL_YEAR_END));
+        return RetentionPeriod::cutoff(
+            (int) $this->params->get('retention_years', 10),
+            (string) $this->params->get('fiscal_year_end', RetentionPeriod::DEFAULT_FISCAL_YEAR_END),
+            null,
+            $this->siteTimeZone()
+        );
+    }
+
+    /**
+     * Site time zone (Global Configuration "Website Time Zone"); the fiscal year is determined in it.
+     */
+    protected function siteTimeZone(): \DateTimeZone
+    {
+        self::loadHelperClasses();
+
+        try {
+            $offset = (string) ($this->getApplication() ?? Factory::getApplication())->get('offset', 'UTC');
+        } catch (\Throwable $e) {
+            $offset = 'UTC';
+        }
+
+        return RetentionPeriod::timeZone($offset);
+    }
+
+    /**
+     * Order numbers with a lifetime license among $orderIds; on errors all of them (fail-closed).
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  string[]
+     */
+    protected function lifetimeOrderIds(array $orderIds): array
+    {
+        self::loadHelperClasses();
+
+        try {
+            return LifetimeLicenses::orderIds($this->getDatabase(), $this->isJ2Commerce4(), $orderIds);
+        } catch (\Throwable $e) {
+            Log::add('Lifetime license lookup failed, keeping the order e-mail addresses: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return array_values(array_map('strval', $orderIds));
+        }
     }
 
     /**
@@ -72,7 +117,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private static function loadHelperClasses(): void
     {
-        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
+        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
             if (!class_exists($class)) {
                 require_once __DIR__ . $file;
             }
@@ -397,31 +442,43 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      *
      * Deletes the subscriber record and all list associations.
      * Uses raw SQL for version-independence — no AcyMailing PHP classes required.
+     *
+     * @param   User      $user    The user of the request
+     * @param   string[]  $emails  Addresses to look up, captured before Joomla's privacy user plugin
+     *                             pseudonymised $user->email; default: $user->email
      */
-    protected function removeAcyMailingData(User $user): void
+    protected function removeAcyMailingData(User $user, ?array $emails = null): void
     {
         $prefix = $this->getAcymTablePrefix();
         if ($prefix === null) {
             return;
         }
 
-        $db    = $this->getDatabase();
-        $email = $user->email;
+        $db     = $this->getDatabase();
+        $emails = array_values(array_unique(array_filter(array_map('strval', $emails ?? [(string) $user->email]), 'strlen')));
+
+        if ($emails === []) {
+            return;
+        }
 
         try {
-            $query  = $this->createDbQuery()
+            $query   = $this->createDbQuery()
                 ->select('id')
                 ->from($db->quoteName($prefix . 'user'))
-                ->where($db->quoteName('email') . ' = :email')
-                ->bind(':email', $email);
-            $acymId = (int) $db->setQuery($query)->loadResult();
+                ->whereIn($db->quoteName('email'), $emails, ParameterType::STRING);
+            $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
         } catch (\Exception $e) {
             return;
         }
 
-        if (!$acymId) {
-            return;
+        foreach ($acymIds as $acymId) {
+            $this->removeAcyMailingSubscriber($prefix, $acymId, (int) $user->id);
         }
+    }
+
+    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId): void
+    {
+        $db = $this->getDatabase();
 
         try {
             // Tables referencing acym_user.id — delete before the subscriber record (FK constraints)
@@ -449,7 +506,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->where($db->quoteName('id') . ' = ' . $acymId)
             )->execute();
 
-            $this->logActivity('acymailing_subscriber_deleted', $user->id);
+            $this->logActivity('acymailing_subscriber_deleted', $userId);
         } catch (\Exception $e) {
             Log::add('AcyMailing subscriber deletion failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
@@ -716,16 +773,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $status;
         }
 
-        // Orders within the retention period do not block the request: everything else is removed
-        // and these orders are kept until their retention end (see processDataRemoval()). Only
-        // lifetime licenses outside the retention period block it (license reactivation).
-        $retentionCheck = $this->checkRetentionPeriod($user->id);
-
-        if (!$retentionCheck['can_delete']) {
-            $status->canRemove = false;
-            $status->reason = $this->formatRetentionMessage($retentionCheck);
-        }
-
+        // The request is always carried out: orders within the retention period are kept until
+        // their retention end, lifetime-license orders keep only their order e-mail address after
+        // it (provisional rule, pending confirmation). See processDataRemoval().
         return $status;
     }
 
@@ -776,15 +826,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Captured before any plugin of this request changes the account.
+        // Captured before any plugin of this request changes the account: Joomla's privacy user
+        // plugin pseudonymises name, username and e-mail of this same User object, and it may run
+        // before this plugin (same ordering, lower extension ID).
         $userId        = (int) $user->id;
-        $customerEmail = $requestEmail !== '' ? $requestEmail : (string) $user->email;
-        $retained      = $this->checkRetentionPeriod($userId)['orders'];
-        $summary       = $this->formatRetainedOrders($retained);
+        $username      = (string) $user->username;
+        $accountEmail  = (string) $user->email;
+        $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
+        $check         = $this->checkRetentionPeriod($userId);
+        $retained      = $check['orders'];
+        $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
 
         // Log the deletion request
         $this->logActivity('data_deletion_requested', $userId, $summary);
-        $this->sendAdminNotification('data_deletion', $user, $summary);
+        $this->sendAdminNotification('data_deletion', $user, $summary, $username);
 
         // Always delete address book entries (not order-related)
         if ($this->params->get('delete_addresses', 1)) {
@@ -793,38 +848,103 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         // Always delete cart data
-        $this->deleteCartData($user->id);
+        $this->deleteCartData($userId);
 
         // Anonymize only orders OUTSIDE retention period
         // Orders within retention period are kept intact for legal compliance
         if ($this->params->get('anonymize_orders', 1)) {
-            $this->anonymizeOrders($user->id);
-            $this->logActivity('orders_anonymized', $user->id, 'Orders outside retention period anonymized');
+            $this->anonymizeOrders($userId);
+            $this->logActivity('orders_anonymized', $userId, 'Orders outside retention period anonymized');
         }
 
-        // Remove AcyMailing subscriber data
-        $this->removeAcyMailingData($user);
+        // Remove AcyMailing subscriber data (request and account e-mail as captured above)
+        $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
 
-        $this->reportRetainedOrders($retained, $summary, $customerEmail);
+        $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $this->customerLanguage($userId));
+    }
+
+    /**
+     * Language of the customer: customer_language of the newest order, else the default site
+     * language.
+     */
+    protected function customerLanguage(int $userId): string
+    {
+        $db = $this->getDatabase();
+
+        try {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName('customer_language'))
+                    ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
+                    ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
+                    ->order($db->quoteName('created_on') . ' DESC'),
+                0,
+                1
+            );
+            $tag = trim((string) $db->loadResult());
+        } catch (\Throwable $e) {
+            $tag = '';
+        }
+
+        if (!preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
+            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        }
+
+        return $tag;
+    }
+
+    /**
+     * Language object for $tag with this plugin's strings (fallback: the current language).
+     */
+    protected function pluginLanguage(string $tag): Language
+    {
+        try {
+            $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+            $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR, $tag, true)
+                || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce', $tag, true);
+
+            return $language;
+        } catch (\Throwable $e) {
+            return Factory::getLanguage();
+        }
     }
 
     /**
      * Text block listing orders kept until the end of their retention period ('' if none).
      *
-     * @param   array  $orders  'orders' of checkRetentionPeriod()
+     * @param   array          $orders    'orders' of checkRetentionPeriod() (within the retention period)
+     * @param   array          $lifetime  'lifetime_expired' of checkRetentionPeriod() (e-mail kept)
+     * @param   Language|null  $language  Language of the text (default: current language)
      */
-    protected function formatRetainedOrders(array $orders): string
+    protected function formatRetainedOrders(array $orders, array $lifetime = [], ?Language $language = null): string
     {
-        if ($orders === []) {
-            return '';
+        $language ??= Factory::getLanguage();
+        $sprintf    = static fn (string $key, ...$args): string => vsprintf($language->_($key), $args);
+        $text       = '';
+
+        if ($orders !== []) {
+            $text .= $sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_RETAINED_HEADER', (int) $this->params->get('retention_years', 10)) . "\n\n";
+
+            foreach ($orders as $i => $order) {
+                $text .= ($i + 1) . '. ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
+                $text .= '   ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n";
+                $text .= '   ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_UNTIL', $order['retention_end']) . "\n";
+
+                if (!empty($order['lifetime'])) {
+                    $text .= '   ' . $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_NOTE') . "\n";
+                }
+
+                $text .= "\n";
+            }
         }
 
-        $text = Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_RETAINED_HEADER', (int) $this->params->get('retention_years', 10)) . "\n\n";
+        if ($lifetime !== []) {
+            $text .= $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER') . "\n\n";
 
-        foreach ($orders as $i => $order) {
-            $text .= ($i + 1) . '. ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
-            $text .= '   ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n";
-            $text .= '   ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_UNTIL', $order['retention_end']) . "\n\n";
+            foreach ($lifetime as $i => $order) {
+                $text .= ($i + 1) . '. ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
+                $text .= '   ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n\n";
+            }
         }
 
         return $text;
@@ -834,38 +954,89 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Feedback after a removal request: message for the administrator who processes the request,
      * e-mail to the customer when orders are kept.
      */
-    protected function reportRetainedOrders(array $retained, string $summary, string $customerEmail): void
+    /**
+     * @param   array   $retained       Orders within the retention period
+     * @param   array   $lifetime       Expired lifetime-license orders (order e-mail kept)
+     * @param   string  $customerEmail  Address of the request (captured before pseudonymisation)
+     * @param   string  $languageTag    Language of the customer e-mail
+     */
+    protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+    {
+        $app = $this->feedbackApplication();
+
+        if ($app === null) {
+            return;
+        }
+
+        $mailState = 'none';
+
+        if ($retained !== [] || $lifetime !== []) {
+            $mailState = $this->sendCustomerRetentionNotice($app, $retained, $lifetime, $customerEmail, $languageTag);
+        }
+
+        if (!method_exists($app, 'isClient') || !$app->isClient('administrator')) {
+            return;
+        }
+
+        if ($mailState === 'none') {
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED'), 'message');
+
+            return;
+        }
+
+        $key = [
+            'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED',
+            'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS',
+            'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED',
+        ][$mailState];
+
+        $app->enqueueMessage(
+            nl2br(htmlspecialchars(Text::sprintf($key, $customerEmail) . "\n\n" . $this->formatRetainedOrders($retained, $lifetime), ENT_QUOTES, 'UTF-8')),
+            $mailState === 'sent' ? 'message' : 'warning'
+        );
+    }
+
+    /**
+     * Application for messages and mail (null without an application, e.g. in CLI scripts).
+     *
+     * @return  object|null
+     */
+    protected function feedbackApplication(): ?object
     {
         try {
-            $app = $this->getApplication() ?? Factory::getApplication();
+            return $this->getApplication() ?? Factory::getApplication();
         } catch (\Throwable $e) {
-            return;
+            return null;
+        }
+    }
+    /**
+     * E-mail the kept orders to the customer, in the customer's language.
+     *
+     * @return  string  'sent', 'invalid' (no valid address) or 'failed'
+     */
+    protected function sendCustomerRetentionNotice($app, array $retained, array $lifetime, string $customerEmail, string $languageTag): string
+    {
+        if (!filter_var($customerEmail, FILTER_VALIDATE_EMAIL)) {
+            return 'invalid';
         }
 
-        if (method_exists($app, 'isClient') && $app->isClient('administrator')) {
-            $app->enqueueMessage(
-                $retained === []
-                    ? Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED')
-                    : nl2br(htmlspecialchars(Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED') . "\n\n" . $summary, ENT_QUOTES, 'UTF-8')),
-                'message'
-            );
-        }
-
-        if ($retained === [] || !filter_var($customerEmail, FILTER_VALIDATE_EMAIL)) {
-            return;
-        }
+        $language = $this->pluginLanguage($languageTag);
 
         try {
             $mailer = $app->getContainer()->get(MailerFactoryInterface::class)->createMailer();
             $mailer->addRecipient($customerEmail);
-            $mailer->setSubject(Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT', (string) $app->get('sitename')));
+            $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
             $mailer->setBody(
-                Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY') . "\n\n" . $summary
-                . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT', (string) $this->params->get('support_email', $app->get('mailfrom')))
+                $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY') . "\n\n"
+                . $this->formatRetainedOrders($retained, $lifetime, $language)
+                . sprintf($language->_('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT'), (string) ($this->params->get('support_email') ?: $app->get('mailfrom')))
             );
-            $mailer->send();
+
+            return $mailer->send() === false ? 'failed' : 'sent';
         } catch (\Throwable $e) {
             Log::add('Privacy removal notice to the customer failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return 'failed';
         }
     }
 
@@ -947,12 +1118,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $db->setQuery($query);
         $orders = $db->loadObjectList();
 
+        // can_delete stays true: a removal request is always carried out (orders within the
+        // retention period are kept, expired lifetime orders keep their e-mail address).
         $result = [
-            'can_delete' => true,
-            'retention_years' => $retentionYears,
-            'orders' => [],
-            'lifetime_licenses' => [],
-            'lifetime_licenses_accounting' => []
+            'can_delete'       => true,
+            'retention_years'  => $retentionYears,
+            'orders'           => [],
+            'lifetime_expired' => [],
         ];
 
         if (empty($orders)) {
@@ -963,6 +1135,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Retention starts at the end of the fiscal year of the order (OR Art. 958f).
         $cutoff          = $this->retentionCutoff();
         $fiscalYearEnd   = (string) $this->params->get('fiscal_year_end', RetentionPeriod::DEFAULT_FISCAL_YEAR_END);
+        $zone            = $this->siteTimeZone();
+        $lifetimeOrders  = array_flip($this->lifetimeOrderIds(array_map(static fn ($o) => (string) $o->order_number, $orders)));
         $processedOrders = [];
 
         $pkCol = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
@@ -972,39 +1146,35 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 continue;
             }
 
-            $orderDate  = strtotime($order->created_on);
+            $processedOrders[$order->$pkCol] = true;
+            $orderDate  = (new \DateTimeImmutable((string) $order->created_on, new \DateTimeZone('UTC')))->setTimezone($zone)->format('d.m.Y');
             $isExpired  = (string) $order->created_on <= $cutoff;
-            $isLifetime = $this->isLifetimeLicense($order->product_id ?? null);
+            $isLifetime = isset($lifetimeOrders[(string) $order->order_number]);
 
-            if ($isLifetime && $isExpired) {
-                $result['can_delete'] = false;
-                $result['lifetime_licenses_accounting'][] = [
-                    'order_number' => $order->order_number,
-                    'order_date'   => date('d.m.Y', $orderDate),
-                    'order_total'  => number_format($order->order_total, 2),
-                    'currency'     => $order->currency_code,
-                    'product_name' => 'Lifetime License',
-                ];
-                $processedOrders[$order->$pkCol] = true;
+            if ($isExpired) {
+                if ($isLifetime) {
+                    $result['lifetime_expired'][] = [
+                        'order_number' => $order->order_number,
+                        'order_date'   => $orderDate,
+                    ];
+                }
+
                 continue;
             }
 
-            if (!$isExpired) {
-                $retentionEndDate = RetentionPeriod::retentionEnd((string) $order->created_on, $retentionYears, $fiscalYearEnd);
-                $yearsRemaining   = max(0, ($retentionEndDate->getTimestamp() - $now) / (365.25 * 24 * 60 * 60));
-                $retentionEnd     = $retentionEndDate->format('d.m.Y');
+            $retentionEndDate = RetentionPeriod::retentionEnd((string) $order->created_on, $retentionYears, $fiscalYearEnd, $zone);
+            $yearsRemaining   = max(0, ($retentionEndDate->getTimestamp() - $now) / (365.25 * 24 * 60 * 60));
 
-                // Kept until the retention end; the rest of the request is still carried out.
-                $result['orders'][] = [
-                    'order_number'   => $order->order_number,
-                    'order_date'     => date('d.m.Y', $orderDate),
-                    'order_total'    => number_format($order->order_total, 2),
-                    'currency'       => $order->currency_code,
-                    'years_remaining' => round($yearsRemaining, 1),
-                    'retention_end'  => $retentionEnd,
-                ];
-                $processedOrders[$order->$pkCol] = true;
-            }
+            // Kept until the retention end; the rest of the request is still carried out.
+            $result['orders'][] = [
+                'order_number'    => $order->order_number,
+                'order_date'      => $orderDate,
+                'order_total'     => number_format((float) $order->order_total, 2),
+                'currency'        => $order->currency_code,
+                'years_remaining' => round($yearsRemaining, 1),
+                'retention_end'   => $retentionEndDate->format('d.m.Y'),
+                'lifetime'        => $isLifetime,
+            ];
         }
 
         return $result;
@@ -1072,40 +1242,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
     }
 
-    protected function formatRetentionMessage(array $retentionCheck): string
-    {
-        $retentionYears = $retentionCheck['retention_years'];
-        $supportEmail = $this->params->get('support_email', 'support@example.com');
-
-        $message = "═══════════════════════════════════════════════════════\n";
-        $message .= Text::_('PLG_PRIVACY_J2COMMERCE_DELETION_NOT_POSSIBLE') . "\n";
-        $message .= "═══════════════════════════════════════════════════════\n\n";
-
-        if (!empty($retentionCheck['lifetime_licenses_accounting'])) {
-            $message .= Text::_('PLG_PRIVACY_J2COMMERCE_RETENTION_LIFETIME_HEADER') . "\n\n";
-            foreach ($retentionCheck['lifetime_licenses_accounting'] as $i => $license) {
-                $message .= ($i + 1) . ". {$license['product_name']}\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_LINE', $license['order_number'], $license['order_date']) . "\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_AMOUNT_LINE', $license['order_total'], $license['currency']) . "\n\n";
-            }
-        }
-
-        if (!empty($retentionCheck['orders'])) {
-            $message .= Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDERS_HEADER', $retentionYears) . "\n\n";
-            foreach ($retentionCheck['orders'] as $i => $order) {
-                $message .= ($i + 1) . ". " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_AMOUNT_LINE', $order['order_total'], $order['currency']) . "\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_UNTIL', $order['retention_end']) . "\n";
-                $message .= "   " . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_REMAINING', $order['years_remaining']) . "\n\n";
-            }
-        }
-
-        $message .= Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT', $supportEmail) . "\n";
-
-        return $message;
-    }
-
     /**
      * Anonymize orders that are OUTSIDE the retention period.
      * Orders within retention period (default 10 years) are kept intact
@@ -1132,12 +1268,27 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         );
         $anonymizedOrderIds = $db->loadColumn() ?: [];
 
+        // Lifetime-license orders keep their order e-mail address (provisional rule, pending confirmation).
+        $lifetimeIds  = $this->lifetimeOrderIds($anonymizedOrderIds);
+        $emailFilter  = $lifetimeIds === []
+            ? ''
+            : ' AND ' . $db->quoteName('order_id') . ' NOT IN (' . implode(',', array_map([$db, 'quote'], $lifetimeIds)) . ')';
+        $ordersTable  = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+
+        if ($anonymizedOrderIds !== []) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName($ordersTable))
+                    ->set($db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'))
+                    ->where($db->quoteName('user_id') . ' = ' . $safeUserId . ' AND ' . $db->quoteName('created_on') . ' <= ' . $safeCutoff . $emailFilter)
+            )->execute();
+        }
+
         if ($this->isJ2Commerce4()) {
             // Anonymize orders table
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2store_orders'))
                 ->set([
-                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'),
                     $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
@@ -1192,7 +1343,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2commerce_orders'))
                 ->set([
-                    $db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'),
                     $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
@@ -1273,7 +1423,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * @param User   $user   User who performed the action
      * @param string $details Additional details
      */
-    protected function sendAdminNotification(string $action, User $user, string $details = ''): void
+    protected function sendAdminNotification(string $action, User $user, string $details = '', ?string $username = null): void
     {
         if (!$this->params->get('admin_notifications', 0)) {
             return;
@@ -1292,7 +1442,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $subject = Text::_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_SUBJECT');
         
         $langKey = 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_' . strtoupper($action);
-        $body = Text::sprintf($langKey, $user->username, $user->id);
+        // $username: captured before a pseudonymisation of the account in the same request.
+        $body = Text::sprintf($langKey, $username ?? $user->username, $user->id);
         
         if (!empty($details)) {
             $body .= "\n\n" . $details;

@@ -11,6 +11,7 @@ namespace Advans\Plugin\Task\J2CommercePrivacy\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -150,9 +151,15 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 return Status::KNOCKOUT;
             }
 
-            $cutoffDate = RetentionPeriod::cutoff($retentionYears, $fiscalYearEnd);
+            if (!RetentionPeriod::isValidFiscalYearEnd($fiscalYearEnd)) {
+                $this->logTask("Invalid fiscal year end '{$fiscalYearEnd}', using " . RetentionPeriod::DEFAULT_FISCAL_YEAR_END, 'warning');
+            }
 
-            $this->logTask("Retention period: {$retentionYears} years from the end of the fiscal year ({$fiscalYearEnd})");
+            $fiscalYearEnd = RetentionPeriod::effectiveFiscalYearEnd($fiscalYearEnd);
+            $zone          = $this->siteTimeZone();
+            $cutoffDate    = RetentionPeriod::cutoff($retentionYears, $fiscalYearEnd, null, $zone);
+
+            $this->logTask("Retention period: {$retentionYears} years from the end of the fiscal year ({$fiscalYearEnd}, time zone {$zone->getName()})");
             $this->logTask("Orders created on or before {$cutoffDate} are outside the retention period");
 
             $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
@@ -191,14 +198,16 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
             foreach ($userIds as $userId) {
                 try {
-                    if ($this->hasLifetimeLicense((int) $userId)) {
-                        $this->partialAnonymizeUserData((int) $userId);
+                    // Lifetime-license orders keep only their order e-mail address (provisional
+                    // rule, pending confirmation); all other orders are fully anonymized.
+                    $lifetimeOrders = $this->anonymizeUserData((int) $userId);
+
+                    if ($lifetimeOrders > 0) {
                         $partialCount++;
-                        $this->logTask("Partially anonymized data for user ID: {$userId} (has lifetime license)");
+                        $this->logTask("Anonymized data for user ID: {$userId}; {$lifetimeOrders} lifetime-license order(s) keep the order e-mail");
                         continue;
                     }
 
-                    $this->anonymizeUserData((int) $userId);
                     $anonymizedCount++;
                     $this->logTask("Fully anonymized data for user ID: {$userId}");
                 } catch (\Throwable $e) {
@@ -209,7 +218,7 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
             $this->logTask("Cleanup complete: {$anonymizedCount} fully anonymized, {$partialCount} partially anonymized, {$errorCount} errors");
 
-            if ($errorCount > 0 && $anonymizedCount === 0 && $partialCount === 0) {
+            if ($guestErrors > 0 || ($errorCount > 0 && $anonymizedCount === 0 && $partialCount === 0)) {
                 return Status::KNOCKOUT;
             }
 
@@ -306,7 +315,22 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Partially anonymize user data while keeping order e-mail addresses.
+     * Site time zone (Global Configuration "Website Time Zone").
+     */
+    private function siteTimeZone(): \DateTimeZone
+    {
+        try {
+            $offset = (string) $this->getApplication()->get('offset', 'UTC');
+        } catch (\Throwable $e) {
+            $offset = 'UTC';
+        }
+
+        return RetentionPeriod::timeZone($offset);
+    }
+
+    /**
+     * Anonymize user data; lifetime-license orders keep their order e-mail address.
+     * Kept for backward compatibility: same as anonymizeUserData().
      *
      * @param   int  $userId  The user ID
      *
@@ -314,37 +338,25 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
      */
     protected function partialAnonymizeUserData(int $userId): void
     {
-        $db         = $this->getDatabase();
-        $safeUserId = (int) $userId;
-
-        if ((int) $this->taskParam('anonymize_orders', 1) === 1) {
-            $this->anonymizeOrderTables($safeUserId, false);
-        }
-
-        if ((int) $this->taskParam('delete_addresses', 1) === 1) {
-            $table = $this->isJ2Commerce4() ? '#__j2store_addresses' : '#__j2commerce_addresses';
-            $query = $this->createDbQuery()
-                ->delete($db->quoteName($table))
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId);
-            $db->setQuery($query);
-            $db->execute();
-        }
+        $this->anonymizeUserData($userId);
     }
 
     /**
-     * Fully anonymize user data.
+     * Anonymize the user's orders (lifetime-license orders keep their order e-mail address) and
+     * delete the saved addresses.
      *
      * @param   int  $userId  The user ID
      *
-     * @return  void
+     * @return  int  Number of lifetime-license orders whose e-mail address was kept
      */
-    protected function anonymizeUserData(int $userId): void
+    protected function anonymizeUserData(int $userId): int
     {
         $db         = $this->getDatabase();
         $safeUserId = (int) $userId;
+        $lifetime   = 0;
 
         if ((int) $this->taskParam('anonymize_orders', 1) === 1) {
-            $this->anonymizeOrderTables($safeUserId, true);
+            $lifetime = $this->anonymizeOrderTables($safeUserId);
         }
 
         if ((int) $this->taskParam('delete_addresses', 1) === 1) {
@@ -355,20 +367,43 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             $db->setQuery($query);
             $db->execute();
         }
+
+        return $lifetime;
     }
 
     /**
-     * Anonymize order and order info tables for J2Commerce 4 or 6.
+     * Anonymize order and order info tables of a user for J2Commerce 4 or 6. Lifetime-license
+     * orders keep their order e-mail address.
      *
-     * @param   int   $userId          The user ID
-     * @param   bool  $anonymizeEmail  Whether to anonymize order e-mail addresses
+     * @param   int  $userId  The user ID
      *
-     * @return  void
+     * @return  int  Number of lifetime-license orders
      */
-    private function anonymizeOrderTables(int $userId, bool $anonymizeEmail): void
+    private function anonymizeOrderTables(int $userId): int
     {
-        $this->anonymizeOrdersWhere($this->getDatabase()->quoteName('user_id') . ' = ' . (int) $userId, $anonymizeEmail);
+        $db          = $this->getDatabase();
+        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $db->setQuery(
+            $this->createDbQuery()
+                ->select($db->quoteName('order_id'))
+                ->from($db->quoteName($ordersTable))
+                ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
+        );
+        $orderIds = array_map('strval', $db->loadColumn() ?: []);
+        $lifetime = $this->ordersWithLifetimeLicense($orderIds);
+        $userCond = $db->quoteName('user_id') . ' = ' . (int) $userId;
+
+        if ($lifetime === []) {
+            $this->anonymizeOrdersWhere($userCond, true);
+        } else {
+            $in = implode(',', array_map([$db, 'quote'], $lifetime));
+            $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' NOT IN (' . $in . ')', true);
+            $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' IN (' . $in . ')', false);
+        }
+
         $this->removeConsentEvidence($userId);
+
+        return \count($lifetime);
     }
 
     /**
@@ -438,57 +473,22 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
      */
     private function ordersWithLifetimeLicense(array $orderIds): array
     {
-        $db     = $this->getDatabase();
-        $tables = $db->getTableList();
-        $prefix = $db->getPrefix();
-        $in     = implode(',', array_map([$db, 'quote'], $orderIds));
+        if ($orderIds === []) {
+            return [];
+        }
 
         try {
-            if ($this->isJ2Commerce4()) {
-                if (!in_array($prefix . 'j2store_product_customfields', $tables, true)) {
-                    return [];
-                }
-
-                $query = $this->createDbQuery()
-                    ->select('DISTINCT ' . $db->quoteName('oi.order_id'))
-                    ->from($db->quoteName('#__j2store_orderitems', 'oi'))
-                    ->join(
-                        'INNER',
-                        $db->quoteName('#__j2store_product_customfields', 'cf')
-                        . ' ON ' . $db->quoteName('cf.product_id') . ' = ' . $db->quoteName('oi.product_id')
-                        . ' AND ' . $db->quoteName('cf.field_name') . ' = ' . $db->quote('is_lifetime_license')
-                        . ' AND LOWER(TRIM(' . $db->quoteName('cf.field_value') . ')) = ' . $db->quote('yes')
-                    )
-                    ->where($db->quoteName('oi.order_id') . ' IN (' . $in . ')');
-            } else {
-                if (!in_array($prefix . 'j2commerce_metafields', $tables, true)) {
-                    return [];
-                }
-
-                $query = $this->createDbQuery()
-                    ->select('DISTINCT ' . $db->quoteName('oi.order_id'))
-                    ->from($db->quoteName('#__j2commerce_orderitems', 'oi'))
-                    ->join(
-                        'INNER',
-                        $db->quoteName('#__j2commerce_metafields', 'mf')
-                        . ' ON ' . $db->quoteName('mf.owner_id') . ' = ' . $db->quoteName('oi.product_id')
-                        . ' AND ' . $db->quoteName('mf.owner_resource') . ' = ' . $db->quote('product')
-                        . ' AND ' . $db->quoteName('mf.metakey') . ' = ' . $db->quote('is_lifetime_license')
-                        . ' AND LOWER(TRIM(' . $db->quoteName('mf.metavalue') . ')) = ' . $db->quote('yes')
-                    )
-                    ->where($db->quoteName('oi.order_id') . ' IN (' . $in . ')');
+            if (!$this->loadPrivacyClass(LifetimeLicenses::class, '/Retention/LifetimeLicenses.php')) {
+                throw new \RuntimeException('LifetimeLicenses helper of the privacy plugin not found');
             }
 
-            $db->setQuery($query);
-
-            return array_map('strval', $db->loadColumn() ?: []);
+            return LifetimeLicenses::orderIds($this->getDatabase(), $this->isJ2Commerce4(), $orderIds);
         } catch (\Throwable $e) {
-            $this->logTask('Lifetime license lookup for guest orders failed, keeping their e-mail addresses: ' . $e->getMessage(), 'warning');
+            $this->logTask('Lifetime license lookup failed, keeping the order e-mail addresses: ' . $e->getMessage(), 'warning');
 
-            return $orderIds;
+            return array_values(array_map('strval', $orderIds));
         }
     }
-
     /**
      * Anonymize the orders matching $where (SQL condition on the orders table) and their order infos.
      *

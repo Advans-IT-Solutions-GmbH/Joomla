@@ -271,6 +271,74 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * Joomla's privacy user plugin pseudonymises name, username and e-mail of the User object of
+     * the request and can run before this plugin (same ordering, lower extension ID). The
+     * subscriber must still be found through the e-mail address of the request.
+     */
+    private function testRemovalAfterPseudonymisation(): void
+    {
+        echo "\n--- Removal request after the core user plugin ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        if ($prefix === null) {
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
+            } else {
+                echo "SKIP (AcyMailing not installed)\n";
+            }
+            return;
+        }
+
+        $classFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Extension/J2Commerce.php';
+        $class     = 'Advans\\Plugin\\Privacy\\J2Commerce\\Extension\\J2Commerce';
+
+        if (!class_exists($class) && is_file($classFile)) {
+            require_once $classFile;
+        }
+
+        if (!$this->test('Plugin class loadable for the removal flow', class_exists($class))) {
+            return;
+        }
+
+        $email  = 'acym-pseudonymised@example.com';
+        $userId = 9907;
+
+        try {
+            $this->db->setQuery(
+                "INSERT IGNORE INTO `{$prefix}user` (email, name, confirmed, creation_date) VALUES ('$email', 'Pseudo Test', 1, NOW())"
+            )->execute();
+            $subId = (int) $this->db->setQuery("SELECT id FROM `{$prefix}user` WHERE email = '$email'")->loadResult();
+            $this->db->setQuery(
+                "INSERT IGNORE INTO `{$prefix}user_has_list` (user_id, list_id, status, subscription_date) VALUES ($subId, 1, 1, NOW())"
+            )->execute();
+            $this->test('Subscriber for the pseudonymisation case inserted', $subId > 0);
+
+            // State after plg_privacy_user::onPrivacyRemoveData() on the shared User object.
+            $user           = new \Joomla\CMS\User\User();
+            $user->id       = $userId;
+            $user->name     = 'User ID ' . $userId;
+            $user->username = bin2hex(random_bytes(12));
+            $user->email    = 'UserID' . $userId . 'removed@email.invalid';
+
+            $plugin = new $class(new \Joomla\Event\Dispatcher(), ['params' => new \Joomla\Registry\Registry(['anonymize_orders' => 0, 'delete_addresses' => 0])]);
+            $plugin->setDatabase($this->db);
+
+            $method = new \ReflectionMethod($plugin, 'processDataRemoval');
+            $method->setAccessible(true);
+            $method->invoke($plugin, $user, $email);
+
+            $left = (int) $this->db->setQuery("SELECT COUNT(*) FROM `{$prefix}user` WHERE email = '$email'")->loadResult();
+            $this->test('Subscriber removed through the request e-mail although the account e-mail is pseudonymised', $left === 0, "$left left");
+            $this->test('List subscriptions of that subscriber removed',
+                (int) $this->db->setQuery("SELECT COUNT(*) FROM `{$prefix}user_has_list` WHERE user_id = $subId")->loadResult() === 0);
+        } catch (\Throwable $e) {
+            $this->test('Removal flow runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $this->db->setQuery("DELETE FROM `{$prefix}user` WHERE email = '$email'")->execute();
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Graceful Skip (no AcyMailing) ---\n";
@@ -316,6 +384,7 @@ class AcyMailingIntegrationTest
         $this->testDetection();
         $this->testExportQuery();
         $this->testDeletion();
+        $this->testRemovalAfterPseudonymisation();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";

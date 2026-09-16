@@ -434,7 +434,7 @@ Navigate to: `System → Manage → Plugins → Privacy - J2Commerce`
 - UK: `6`
 - USA: `7`
 
-**Fiscal Year End (MM-DD):** default `12-31`. The retention period starts at the **end of the fiscal year** in which the order was placed (OR Art. 958f; AO § 147 (4) likewise from the end of the calendar year), not on the order date. Example with 10 years and fiscal year end 31 December: an order of 15 March 2016 is kept until 31 December 2026 and anonymized from 1 January 2027. Invalid values (including `02-29`) count as `12-31`.
+**Fiscal Year End (MM-DD):** default `12-31`. The retention period starts at the **end of the fiscal year** in which the order was placed (OR Art. 958f; AO § 147 (4) likewise from the end of the calendar year), not on the order date. Example with 10 years and fiscal year end 31 December: an order of 15 March 2016 is kept until 31 December 2026 and anonymized from 1 January 2027. The fiscal year is determined in the website time zone (**Global Configuration → Server → Website Time Zone**); J2Commerce stores order times in UTC, so an order placed on 1 January 2017 at 00:30 in Zurich belongs to fiscal year 2017. `02-29` means the last day of February. Days that do not exist (for example `04-31`) are rejected when saving; the cleanup task logs an invalid stored value and uses `12-31`.
 
 **Legal Basis:** (Example for Switzerland)
 ```
@@ -490,10 +490,10 @@ Validate the implementation using the following test procedure:
 1. Create a test product with lifetime-license flag `is_lifetime_license = yes`
 2. Generate a test order for the configured product, dated before the end of the retention period (for example 11 years ago)
 3. Initiate a data removal request via `Users → Privacy → Requests → New Request`
-4. Attempt data deletion via `Complete Request → Delete Data`
-5. **Expected Result:** System blocks deletion and displays the lifetime-license notification
+4. Run data deletion via `Complete Request → Delete Data`
+5. **Expected Result:** the request is carried out; the order is anonymized except its e-mail address, and the administrator message lists it as a lifetime-license order whose e-mail address is kept
 
-Successful display of the notification confirms correct implementation. A removal request of a user whose orders are all within the retention period is carried out (see [Data Deletion](#data-deletion)).
+A removal request is never refused by this plugin (see [Data Deletion](#data-deletion)).
 
 ---
 
@@ -547,9 +547,10 @@ Payment data (credit card details, bank information) is stored by payment servic
 - Order amounts
 - Product information
 
-**Exception for Lifetime Licenses:**
-- Email address preserved (for license activation)
-- All other data anonymized
+**Exception for Lifetime Licenses** (provisional rule, pending confirmation by the maintainer):
+- Applies per order: only orders that contain a lifetime-license product keep their order e-mail address (for license reactivation)
+- All other data of these orders is anonymized, all other orders of the customer are handled normally
+- Same rule for removal requests and the cleanup task, for registered users and guests; a removal request is not refused because of a lifetime license
 
 ---
 
@@ -560,13 +561,11 @@ Payment data (credit card details, bank information) is stored by payment servic
 ```
 1. User requests data deletion
    ↓
-2. System checks: lifetime license outside the retention period?
-   ↓
-3a. YES → Deletion blocked, show lifetime-license message
-3b. NO  → Request carried out:
+2. Request carried out (never refused by this plugin):
           • account pseudonymised (Joomla core privacy user plugin)
           • saved addresses, carts, AcyMailing data deleted
           • orders outside the retention period anonymized
+            (lifetime-license orders keep their order e-mail)
           • orders within the retention period kept intact;
             administrator message + e-mail to the customer list
             them with their retention end
@@ -575,7 +574,8 @@ Payment data (credit card details, bank information) is stored by payment servic
    ↓
 5. Scheduled task automatically anonymizes them
    ↓
-6. Exception: Lifetime licenses keep email for activation
+6. Exception: lifetime-license orders keep their order e-mail for reactivation
+   (provisional rule, pending confirmation)
 ```
 
 ### Retention Logic
@@ -595,12 +595,12 @@ Payment data (credit card details, bank information) is stored by payment servic
 
 **Scheduled Task runs daily:**
 1. Finds registered users whose orders are all outside the retention period
-2. Checks for lifetime licenses
-3. Full anonymization: No lifetime licenses
-4. Partial anonymization: Has lifetime licenses (keep email)
+2. Anonymizes their orders; orders with a lifetime-license product keep their order e-mail address (per order)
+3. Deletes their saved addresses
+4. Logs the effective fiscal year end and time zone (an invalid stored value is logged and replaced by `12-31`)
 5. Finds guest orders (`user_id = 0`) outside the retention period that still contain personal data and anonymizes them per order (orders with a lifetime license keep the e-mail address)
 6. Removes IP address and user agent from the checkout consent records of all anonymized orders
-7. Logs all actions
+7. Logs all actions; the task ends with an error status when guest orders or all users failed
 
 ---
 
@@ -741,40 +741,21 @@ Has lifetime licenses → Partial anonymization (keep email)
 
 #### Scenario 4: User with Lifetime License
 
-**Result:** Partial anonymization
+**Result:** Request carried out, the lifetime-license order keeps its order e-mail address (provisional rule, pending confirmation by the maintainer)
 
 ```
-After 10 years:
+Removal request or cleanup task
   ↓
-Accounting retention expired
-  ↓
-Has lifetime license
-  ↓
-Partial anonymization:
-  • Email preserved (for license activation)
+Lifetime-license order within the retention period → kept intact, listed
+Lifetime-license order outside the retention period → anonymized:
+  • Order e-mail address preserved (license reactivation)
   • Name anonymized
-  • Address deleted
-  • Phone anonymized
+  • Address and phone cleared
+  ↓
+Other orders of the customer: handled normally
 ```
 
-**Error Message:**
-```
-═══════════════════════════════════════════════════════
-LIFETIME LICENSES (accounting retention expired)
-═══════════════════════════════════════════════════════
-
-WHAT IS RETAINED?
-
-Required for license activation:
-• Email address (for activation)
-• License key
-• Purchase date
-
-Already deleted/anonymized:
-• Full name
-• Billing address
-• Phone number
-```
+The administrator message and the customer e-mail list the lifetime-license orders and state that their order e-mail address is kept.
 
 ---
 
@@ -783,9 +764,10 @@ Already deleted/anonymized:
 ### Where to See Retention Messages
 
 **Location 1: Flash Message (Immediate)**
-- Appears at top of screen after clicking "Delete Data"
-- Request carried out: message listing the orders kept until the end of their retention period (the customer receives the same list by e-mail)
-- Request blocked (lifetime license outside the retention period): red error message with full details
+- Appears at top of screen after clicking "Delete Data", after the customer e-mail was attempted
+- Lists the orders kept until the end of their retention period and the lifetime-license orders that keep their e-mail address
+- Green: the list was sent to the request address. Warning: the request address is not a valid e-mail address, or sending failed (see the log); inform the customer yourself
+- The customer e-mail is written in the customer's language (`customer_language` of the newest order, else the default site language)
 
 **Location 2: Action Log (Permanent)**
 - Visible in request detail view
@@ -793,7 +775,7 @@ Already deleted/anonymized:
 - Under "Action Log" section
 
 **Location 3: Request Status**
-- Request remains in "Confirmed" status if blocked (lifetime license)
+- This plugin never blocks a removal request
 - Changes to "Complete" when deletion succeeds
 
 ---
@@ -802,7 +784,7 @@ Already deleted/anonymized:
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. Only a lifetime license outside the retention period blocks the request; it then stays in "Confirmed" status with the lifetime-license message.
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request (captured before Joomla's privacy user plugin pseudonymises the account).
 
 ---
 
@@ -867,18 +849,17 @@ Status: Complete
 
 **User Action:** Requests deletion
 
-**System Response:**
+**System Response** (provisional rule, pending confirmation):
 ```
-• Deletion blocked (partial)
-Message: "Email required for license activation"
-Status: Confirmed
+• Request carried out
+Message: lifetime-license order listed, "order e-mail address is kept"
+Status: Complete
 ```
 
 **What happens:**
-- Automatic cleanup runs
-- Name, address, phone → anonymized
-- Email → preserved
-- User can still activate license
+- Name, address, phone of the order → anonymized now
+- Order e-mail address → preserved
+- User can still reactivate the license
 
 ---
 
@@ -1227,13 +1208,13 @@ Order as in `tests/test.env`:
 4. **Data Integration** — test data setup and CRUD operations
 5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure (a recent order does not block the request and is listed with a retention end on 31.12.)
 6. **Data Export** — `onPrivacyExportRequest` output validation
-7. **Data Anonymization** — `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); `RetentionPeriod` dates and cutoff consistency
+7. **Data Anonymization** — `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); an expired lifetime-license order keeps only its e-mail and does not block the request; administrator message after the customer e-mail (sent, invalid address, failed), customer text in German; `RetentionPeriod` dates incl. site time zone (New Year CET, summer time), 02-29 and invalid values, form rule, cutoff consistency in four time zones
 8. **GDPR Compliance** — all DSGVO-relevant methods and hooks
 9. **Template Overrides** — override source files and deployment verification (no J2Commerce 6 checkout override)
 10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
 11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override (accepted steps must return J2Commerce JSON without error), and the privacy policy link with SEF URLs off and on (escaped once); `onJ2CommerceAfterSaveOrder` only for the consent's cart; Privacy tab links (`com_privacy` form vs. `mailto:`, one button per enabled request option); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component, an unchanged checkout override of 1.5.5 is renamed, a changed one is kept with a warning, custom checkout overrides without the event are reported)
-12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept)
-13. **AcyMailing Integration** — newsletter consent sync
+12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept); a lifetime-license order keeps its e-mail while the same user's other expired order loses it (J2Commerce 6)
+13. **AcyMailing Integration** — newsletter consent sync; removal request finds the subscriber through the request e-mail after Joomla's privacy user plugin pseudonymised the account
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 15. **Uninstall** — clean removal from database and filesystem
 
