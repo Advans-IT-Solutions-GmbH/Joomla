@@ -12,7 +12,8 @@ defined('_JEXEC') or die;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Table\Table;
+use Joomla\CMS\Table\Category as CategoryTable;
+use Joomla\CMS\Table\Menu as MenuTable;
 use Joomla\CMS\Application\ApplicationHelper;
 
 class ImportModel extends BaseDatabaseModel
@@ -145,7 +146,7 @@ class ImportModel extends BaseDatabaseModel
         $catId = $db->insertid();
 
         // Rebuild nested set
-        Table::getInstance('Category')->rebuild();
+        (new CategoryTable($db))->rebuild();
 
         return $catId;
     }
@@ -866,7 +867,7 @@ class ImportModel extends BaseDatabaseModel
         ];
 
         $db->insertObject('#__menu', $menu);
-        Table::getInstance('Menu')->rebuild();
+        (new MenuTable($db))->rebuild();
     }
 
     protected function getComponentId(string $element): int

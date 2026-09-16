@@ -296,11 +296,8 @@ class DataAnonymizationTest
         $pluginAvailable = file_exists($pluginClassFile);
 
         if (!$pluginAvailable) {
-            if (getenv('TEST_STRICT_SKIP') === '1') {
-                $this->test('plugin class available for anonymization round-trip', false, "not installed at $pluginClassFile");
-            } else {
-                echo "  SKIP: plugin not installed at $pluginClassFile — anonymization round-trip skipped\n";
-            }
+            // The test environment installs the plugin; a missing class is a failure.
+            $this->test('plugin class available for anonymization round-trip', false, "not installed at $pluginClassFile");
         } else {
             $anonymized = false;
             try {
@@ -313,14 +310,19 @@ class DataAnonymizationTest
                 $plugin->setDatabase($db);
                 $plugin->lifetime = [$lifetimeOrder->order_id];
 
-                $rc     = new ReflectionClass($plugin);
-                $method = $rc->getMethod('anonymizeOrders');
-                $method->setAccessible(true);
-                $method->invoke($plugin, 998);
+                // Public entry point of a privacy removal request. The Joomla 4
+                // call form (request, user) reaches the same removal code as the
+                // Joomla 5/6 event object without a privacy request record.
+                $user           = new \Joomla\CMS\User\User();
+                $user->id       = 998;
+                $user->username = 'anonymization-test-998';
+                $user->email    = 'private@example.com';
+
+                $plugin->onPrivacyRemoveData(null, $user);
                 $anonymized = true;
-                $this->test('anonymizeOrders() called via plugin', true);
+                $this->test('onPrivacyRemoveData() ran through the plugin', true);
             } catch (\Throwable $e) {
-                $this->test('anonymizeOrders() called via plugin', false, $e->getMessage());
+                $this->test('onPrivacyRemoveData() ran through the plugin', false, $e->getMessage());
             }
 
             if ($anonymized) {

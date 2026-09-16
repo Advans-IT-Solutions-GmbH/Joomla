@@ -27,8 +27,8 @@
 
 ## Commit-Konventionen
 - **Identität von Entwicklern:** Committe unter deinem **eigenen** GitHub-Account — mit deinem
-  Namen, deiner eigenen GitHub-No-Reply-Adresse und deinem eigenen Signierschlüssel (für
-  Organisationsmitglieder gemäss internem Onboarding).
+  Namen und deiner eigenen GitHub-No-Reply-Adresse (signiert, falls ein Schlüssel vorhanden ist;
+  für Organisationsmitglieder gemäss internem Onboarding).
   - `git config user.name "<Dein Name>"`
   - `git config user.email "<deine eigene GitHub-No-Reply>"`
   - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails (Option „Keep my email
@@ -39,7 +39,7 @@
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
   im Commit kann bei aktivierter „Block command line pushes that expose my email“ den Push
   ablehnen; die No-Reply-Adresse vermeidet das.)
-- **Signing:** Ist ein verifizierter **GPG-Key** vorhanden, signiere damit
+- **Signing:** Ist ein verifizierter Signierschlüssel vorhanden, signiere damit
   (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
   die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
   einem fehlenden Key scheitern
@@ -74,7 +74,7 @@ Generische Extensions in diesem Repository:
 - J2Commerce-Extensions
 
 Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
-Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) müssen als `fix(...)` oder `feat(...)` mit passendem Scope formuliert werden.
+Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus. Nur wenn ein Versionssprung gewollt ist, wird die Änderung als `fix(...)` oder `feat(...)` mit passendem Scope formuliert.
 
 Skills liegen in:
 - `.claude/skills/joomla-extensions`

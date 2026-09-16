@@ -239,7 +239,7 @@ class AutoCleanupTaskTest
 
         foreach ([
             'expired'      => [$orderId, $userId, '203.0.113.60'],
-            'other'        => ['CLEANUP-OTHER-' . time(), 9906, '203.0.113.61'],
+            'other'        => ['CLEANUP-OTHER-' . time(), 9907, '203.0.113.61'],
             'guestExpired' => [$guestExpired, 0, '203.0.113.62'],
             'guestKept'    => [$guestKept, 0, '203.0.113.63'],
         ] as $key => [$consentOrder, $consentUser, $ip]) {
@@ -264,9 +264,7 @@ class AutoCleanupTaskTest
                     ->where($this->db->quoteName('id') . ' = ' . $id)
             )->loadResult();
         };
-        $otherBefore     = $consentBody($consentIds['other']);
-        $guestKeptBefore = $consentBody($consentIds['guestKept']);
-        $guestOrder      = function (string $number) use ($table): ?object {
+        $guestOrder = function (string $number) use ($table): ?object {
             return $this->db->setQuery(
                 $this->db->getQuery(true)
                     ->select($this->db->quoteName(['user_email', 'ip_address']))
@@ -274,86 +272,17 @@ class AutoCleanupTaskTest
                     ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($number))
             )->loadObject() ?: null;
         };
-        $dropGuestOrders = function () use ($table, $guestExpired, $guestKept): void {
-            $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->delete($this->db->quoteName($table))
-                    ->where($this->db->quoteName('user_id') . ' = 0')
-                    ->whereIn($this->db->quoteName('order_id'), [$guestExpired, $guestKept], \Joomla\Database\ParameterType::STRING)
-            )->execute();
-        };
+        $otherBefore     = $consentBody($consentIds['other']);
+        $guestKeptBefore = $consentBody($consentIds['guestKept']);
 
-        $now  = date('Y-m-d H:i:s');
-        $task = (object) [
-            'title'           => 'J2Commerce privacy cleanup (test)',
-            'type'            => 'plg_task_j2commerceprivacy.autocleanup',
-            'execution_rules' => '{"rule-type":"manual"}',
-            'cron_rules'      => '{"type":"manual","exp":""}',
-            'state'           => 1,
-            'last_exit_code'  => 0,
-            'times_executed'  => 0,
-            'times_failed'    => 0,
-            'priority'        => 0,
-            'ordering'        => 0,
-            'params'          => '{"retention_years":10,"anonymize_orders":1,"delete_addresses":1}',
-            'note'            => '',
-            'created'         => $now,
-            'created_by'      => 0,
-        ];
+        $run = $this->runCleanupTask('{"retention_years":10,"fiscal_year_end":"12-31","anonymize_orders":1,"delete_addresses":1}');
 
-        try {
-            $this->db->insertObject('#__scheduler_tasks', $task, 'id');
-        } catch (\Throwable $e) {
-            $this->test('scheduled task created', false, $e->getMessage());
-            $dropGuestOrders();
-            $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->delete($this->db->quoteName('#__privacy_consents'))
-                    ->where($this->db->quoteName('id') . ' IN (' . implode(',', $consentIds) . ')')
-            )->execute();
-            $this->cleanupTestData([$userId]);
-            return;
-        }
+        $this->test('scheduled task created', $run['created'], $run['detail']);
+        $this->test('scheduler:run exits with 0', $run['exit'] === 0, 'exit code ' . $run['exit']);
+        $this->test('task was executed by the scheduler', $run['executed'], $run['detail']);
+        $this->test('task finished with exit code 0 (Status::OK)', $run['ok'], $run['detail']);
 
-        $taskId = (int) $task->id;
-        $this->test('scheduled task created', $taskId > 0);
-
-        $output = [];
-        $exit   = 0;
-        exec('cd ' . escapeshellarg(JPATH_BASE) . ' && php cli/joomla.php scheduler:run --id=' . $taskId . ' 2>&1', $output, $exit);
-        echo '  ' . implode("\n  ", $output) . "\n";
-
-        $this->test('scheduler:run exits with 0', $exit === 0, "exit code $exit");
-
-        if ($exit !== 0) {
-            // Diagnostics for a task plugin class that cannot be autoloaded.
-            $map = JPATH_BASE . '/administrator/cache/autoload_psr4.php';
-            $owner = is_file($map) && function_exists('posix_getpwuid') ? (posix_getpwuid(fileowner($map))['name'] ?? '?') : '?';
-            echo '  DIAG autoload_psr4.php exists=' . (is_file($map) ? 'yes' : 'no')
-                . ' owner=' . $owner
-                . ' contains task namespace=' . (is_file($map) && str_contains((string) file_get_contents($map), 'J2CommercePrivacy') ? 'yes' : 'no')
-                . "\n";
-        }
-
-        $row = $this->db->setQuery(
-            $this->db->getQuery(true)
-                ->select([$this->db->quoteName('last_exit_code'), $this->db->quoteName('times_executed')])
-                ->from($this->db->quoteName('#__scheduler_tasks'))
-                ->where($this->db->quoteName('id') . ' = ' . $taskId)
-        )->loadObject();
-
-        $this->test('task was executed by the scheduler', $row !== null && (int) $row->times_executed >= 1,
-            'times_executed=' . ($row->times_executed ?? 'n/a'));
-        $this->test('task finished with exit code 0 (Status::OK)', $row !== null && (int) $row->last_exit_code === 0,
-            'last_exit_code=' . ($row->last_exit_code ?? 'n/a'));
-
-        $email = $this->db->setQuery(
-            $this->db->getQuery(true)
-                ->select($this->db->quoteName('user_email'))
-                ->from($this->db->quoteName($table))
-                ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId))
-        )->loadResult();
-
+        $email = $this->orderEmail($table, $orderId);
         $this->test('expired order e-mail anonymized by the task', $email === 'anonymized@deleted.invalid',
             'user_email=' . var_export($email, true));
 
@@ -377,20 +306,105 @@ class AutoCleanupTaskTest
             $keptGuest && $keptGuest->user_email !== 'anonymized@deleted.invalid' && $keptGuest->ip_address === '127.0.0.1',
             var_export($keptGuest, true));
         $this->test('task leaves the consent of the kept guest order unchanged', $consentBody($consentIds['guestKept']) === $guestKeptBefore);
-        $dropGuestOrders();
 
         $this->db->setQuery(
             $this->db->getQuery(true)
-                ->delete($this->db->quoteName('#__privacy_consents'))
-                ->where($this->db->quoteName('id') . ' IN (' . implode(',', $consentIds) . ')')
+                ->delete($this->db->quoteName($table))
+                ->where($this->db->quoteName('user_id') . ' = 0')
+                ->whereIn($this->db->quoteName('order_id'), [$guestExpired, $guestKept], ParameterType::STRING)
         )->execute();
+        $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->delete($this->db->quoteName('#__privacy_consents'))
+                ->whereIn($this->db->quoteName('id'), array_values($consentIds))
+        )->execute();
+        $this->cleanupTestData([$userId]);
+    }
+
+    /**
+     * Create a manual cleanup task, run it through Joomla's scheduler CLI
+     * (`scheduler:run --id`) and remove it again.
+     *
+     * @return array{created:bool, exit:int, executed:bool, ok:bool, detail:string}
+     */
+    private function runCleanupTask(string $params): array
+    {
+        $result = ['created' => false, 'exit' => -1, 'executed' => false, 'ok' => false, 'detail' => ''];
+        $task   = (object) [
+            'title'           => 'J2Commerce privacy cleanup (test)',
+            'type'            => 'plg_task_j2commerceprivacy.autocleanup',
+            'execution_rules' => '{"rule-type":"manual"}',
+            'cron_rules'      => '{"type":"manual","exp":""}',
+            'state'           => 1,
+            'last_exit_code'  => 0,
+            'times_executed'  => 0,
+            'times_failed'    => 0,
+            'priority'        => 0,
+            'ordering'        => 0,
+            'params'          => $params,
+            'note'            => '',
+            'created'         => date('Y-m-d H:i:s'),
+            'created_by'      => 0,
+        ];
+
+        try {
+            $this->db->insertObject('#__scheduler_tasks', $task, 'id');
+        } catch (\Throwable $e) {
+            $result['detail'] = 'task not created: ' . $e->getMessage();
+
+            return $result;
+        }
+
+        $taskId            = (int) $task->id;
+        $result['created'] = $taskId > 0;
+
+        $output = [];
+        $exit   = 0;
+        exec('cd ' . escapeshellarg(JPATH_BASE) . ' && HTTP_HOST=localhost php cli/joomla.php scheduler:run --id=' . $taskId . ' 2>&1', $output, $exit);
+        echo '  ' . implode("\n  ", $output) . "\n";
+        $result['exit'] = $exit;
+
+        if ($exit !== 0) {
+            // Diagnostics for a task plugin class that cannot be autoloaded.
+            $map = JPATH_BASE . '/administrator/cache/autoload_psr4.php';
+            $owner = is_file($map) && function_exists('posix_getpwuid') ? (posix_getpwuid(fileowner($map))['name'] ?? '?') : '?';
+            echo '  DIAG autoload_psr4.php exists=' . (is_file($map) ? 'yes' : 'no')
+                . ' owner=' . $owner
+                . ' contains task namespace=' . (is_file($map) && str_contains((string) file_get_contents($map), 'J2CommercePrivacy') ? 'yes' : 'no')
+                . "\n";
+        }
+
+        $row = $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select([$this->db->quoteName('last_exit_code'), $this->db->quoteName('times_executed')])
+                ->from($this->db->quoteName('#__scheduler_tasks'))
+                ->where($this->db->quoteName('id') . ' = ' . $taskId)
+        )->loadObject();
+
+        $result['executed'] = $row !== null && (int) $row->times_executed >= 1;
+        $result['ok']       = $exit === 0 && $result['executed'] && (int) $row->last_exit_code === 0;
+        $result['detail']   = "exit code $exit, times_executed=" . ($row->times_executed ?? 'n/a')
+            . ', last_exit_code=' . ($row->last_exit_code ?? 'n/a');
 
         $this->db->setQuery(
             $this->db->getQuery(true)
                 ->delete($this->db->quoteName('#__scheduler_tasks'))
                 ->where($this->db->quoteName('id') . ' = ' . $taskId)
         )->execute();
-        $this->cleanupTestData([$userId]);
+
+        return $result;
+    }
+
+    private function orderEmail(string $table, string $orderId): ?string
+    {
+        $email = $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select($this->db->quoteName('user_email'))
+                ->from($this->db->quoteName($table))
+                ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId))
+        )->loadResult();
+
+        return $email === null ? null : (string) $email;
     }
 
     private function testRetentionLogic(): void
@@ -629,71 +643,80 @@ class AutoCleanupTaskTest
             }
         }
 
-        if ($metaSeeded) {
-            // Query mirrors hasLifetimeLicense() J6 path in the task plugin.
-            try {
-                $query = $this->db->getQuery(true)
-                    ->select('COUNT(*)')
-                    ->from($this->db->quoteName('#__j2commerce_orderitems', 'oi'))
-                    ->join('INNER', $this->db->quoteName('#__j2commerce_orders', 'o')
-                        . ' ON ' . $this->db->quoteName('o.order_id') . ' = ' . $this->db->quoteName('oi.order_id'))
-                    ->join('INNER', $this->db->quoteName('#__j2commerce_metafields', 'mf')
-                        . ' ON ' . $this->db->quoteName('mf.owner_id') . ' = ' . $this->db->quoteName('oi.product_id')
-                        . ' AND ' . $this->db->quoteName('mf.owner_resource') . ' = ' . $this->db->quote('product')
-                        . ' AND ' . $this->db->quoteName('mf.metakey') . ' = ' . $this->db->quote('is_lifetime_license')
-                        . ' AND LOWER(TRIM(' . $this->db->quoteName('mf.metavalue') . ')) = ' . $this->db->quote('yes'))
-                    ->where($this->db->quoteName('o.user_id') . ' = :userid')
-                    ->bind(':userid', $userId, ParameterType::INTEGER);
-                $this->db->setQuery($query);
-                $count = (int) $this->db->loadResult();
+        $plainUserId  = 9906;
+        $plainOrderId = 'CLEANUP-FAILCLOSED-' . time();
+        $this->seedTestUser($plainUserId, 'failclosed-cleanup-test@example.com');
 
-                $this->test(
-                    'J6 metafields lifetime query detects seeded lifetime product',
-                    $count > 0,
-                    'Expected COUNT > 0 for user with lifetime metafield'
-                );
-            } catch (\Exception $e) {
-                $this->test('J6 metafields lifetime query', false, $e->getMessage());
-            }
-            // Provisional rule (pending confirmation): the task anonymizes the lifetime-license order
-            // but keeps its e-mail address; the user's other expired orders lose it.
-            $plainOrder = 'CLEANUP-META-PLAIN-' . time();
-            $this->seedTestOrder($userId, $plainOrder, $oldDate);
-            [$exit, $output] = $this->runCleanupTask();
-            $this->test('cleanup task run for the lifetime-license user succeeds', $exit === 0, implode(' | ', array_slice($output, -5)));
-
-            $rows = $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->select($this->db->quoteName(['order_id', 'user_email', 'ip_address']))
-                    ->from($this->db->quoteName('#__j2commerce_orders'))
-                    ->whereIn($this->db->quoteName('order_id'), [$orderId, $plainOrder], ParameterType::STRING)
-            )->loadObjectList('order_id');
-            $this->test('task keeps the e-mail of the lifetime-license order and clears its IP address',
-                isset($rows[$orderId]) && $rows[$orderId]->user_email !== 'anonymized@deleted.invalid' && $rows[$orderId]->ip_address === '',
-                json_encode($rows));
-            $this->test('task anonymizes the e-mail of the same user\'s other expired order',
-                isset($rows[$plainOrder]) && $rows[$plainOrder]->user_email === 'anonymized@deleted.invalid', json_encode($rows));
-        } else {
+        if (!$metaSeeded) {
             $this->test('J6 metafields lifetime test data seeded', false, 'order item or metafield could not be inserted');
-        }
-
-        if (file_exists(JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php')) {
-            $src = (string) file_get_contents(JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php');
-            $this->test('Task status is KNOCKOUT when guest orders failed, also if users were processed',
-                str_contains($src, 'if ($guestErrors > 0 || ($errorCount > 0'));
-            $this->test('Task logs an invalid fiscal year end and uses the effective value',
-                str_contains($src, "Invalid fiscal year end") && str_contains($src, 'RetentionPeriod::effectiveFiscalYearEnd('));
-        }
-
-        // Verify fail-closed behaviour is in the task plugin source
-        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
-        if (file_exists($taskFile)) {
-            $src = file_get_contents($taskFile);
+        } else {
+            // 1. The task detects the lifetime license through the metafield. Provisional rule
+            //    (pending confirmation): only the lifetime-license order keeps its e-mail address;
+            //    the same user's other expired order is fully anonymized.
+            $lifetimeUserPlain = 'CLEANUP-META-PLAIN-' . time();
+            $this->seedTestOrder($userId, $lifetimeUserPlain, $oldDate);
+            $run = $this->runCleanupTask('{"retention_years":10,"anonymize_orders":1,"delete_addresses":1}');
+            $this->test('cleanup task run (lifetime metafield) finished with Status::OK', $run['ok'], $run['detail']);
+            $email = $this->orderEmail('#__j2commerce_orders', $orderId);
             $this->test(
-                'Task plugin hasLifetimeLicense J6 catch returns true (fail-closed)',
-                (bool) preg_match('/catch\s*\(\s*\\\\Throwable[^}]+return\s+true\s*;/s', $src),
-                'catch block must return true to prevent accidental anonymization on DB error'
+                'lifetime-license order keeps the order e-mail (partial anonymization)',
+                $email === 'cleanup-test-' . $userId . '@example.com',
+                'user_email=' . var_export($email, true)
             );
+            $plainEmail = $this->orderEmail('#__j2commerce_orders', $lifetimeUserPlain);
+            $this->test(
+                'the same user\'s other expired order loses the e-mail (lifetime rule applies per order)',
+                $plainEmail === 'anonymized@deleted.invalid',
+                'user_email=' . var_export($plainEmail, true)
+            );
+
+            // 2. Fail-closed: when the J6 lifetime query fails, the task treats
+            //    the user as a lifetime license holder. A user without a
+            //    lifetime license keeps the order e-mail while the metafields
+            //    table cannot be queried.
+            $plainSeeded = $this->seedTestOrder($plainUserId, $plainOrderId, $oldDate) !== null;
+            $this->test('expired order without lifetime license seeded', $plainSeeded);
+
+            $metaTable = $prefix . 'j2commerce_metafields';
+            $broken    = false;
+
+            if ($plainSeeded) {
+                try {
+                    $this->db->setQuery(
+                        'ALTER TABLE ' . $this->db->quoteName($metaTable)
+                        . ' RENAME COLUMN ' . $this->db->quoteName('metavalue') . ' TO ' . $this->db->quoteName('metavalue_parked_by_test')
+                    )->execute();
+                    $broken = true;
+
+                    $run = $this->runCleanupTask('{"retention_years":10,"anonymize_orders":1,"delete_addresses":1}');
+                    $this->test('cleanup task run (lifetime query failing) finished with Status::OK', $run['ok'], $run['detail']);
+                    $email = $this->orderEmail('#__j2commerce_orders', $plainOrderId);
+                    $this->test(
+                        'failing lifetime query keeps the order e-mail (fail-closed)',
+                        $email === 'cleanup-test-' . $plainUserId . '@example.com',
+                        'user_email=' . var_export($email, true)
+                    );
+                } catch (\Throwable $e) {
+                    $this->test('fail-closed check executes', false, $e->getMessage());
+                } finally {
+                    if ($broken) {
+                        $this->db->setQuery(
+                            'ALTER TABLE ' . $this->db->quoteName($metaTable)
+                            . ' RENAME COLUMN ' . $this->db->quoteName('metavalue_parked_by_test') . ' TO ' . $this->db->quoteName('metavalue')
+                        )->execute();
+                    }
+                }
+
+                // 3. With the table intact again, the same user is fully anonymized.
+                $run = $this->runCleanupTask('{"retention_years":10,"anonymize_orders":1,"delete_addresses":1}');
+                $this->test('cleanup task run (lifetime query restored) finished with Status::OK', $run['ok'], $run['detail']);
+                $email = $this->orderEmail('#__j2commerce_orders', $plainOrderId);
+                $this->test(
+                    'user without lifetime license is fully anonymized once the query works',
+                    $email === 'anonymized@deleted.invalid',
+                    'user_email=' . var_export($email, true)
+                );
+            }
         }
 
         // Cleanup
@@ -716,51 +739,22 @@ class AutoCleanupTaskTest
         } catch (\Exception $e) {
             // non-fatal
         }
-        $this->cleanupTestData([$userId]);
+        $this->cleanupTestData([$userId, $plainUserId]);
+
+        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
+
+        if (file_exists($taskFile)) {
+            $src = (string) file_get_contents($taskFile);
+            $this->test('Task status is KNOCKOUT when guest orders failed, also if users were processed',
+                str_contains($src, 'if ($guestErrors > 0 || ($errorCount > 0'));
+            $this->test('Task logs an invalid fiscal year end and uses the effective value',
+                str_contains($src, 'Invalid fiscal year end') && str_contains($src, 'RetentionPeriod::effectiveFiscalYearEnd('));
+        }
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    /**
-     * Create a manual cleanup task, run it through `scheduler:run` and delete it again.
-     *
-     * @return  array{0: int, 1: string[]}  exit code and output
-     */
-    private function runCleanupTask(): array
-    {
-        $now  = date('Y-m-d H:i:s');
-        $task = (object) [
-            'title'           => 'J2Commerce privacy cleanup (lifetime test)',
-            'type'            => 'plg_task_j2commerceprivacy.autocleanup',
-            'execution_rules' => '{"rule-type":"manual"}',
-            'cron_rules'      => '{"type":"manual","exp":""}',
-            'state'           => 1,
-            'last_exit_code'  => 0,
-            'times_executed'  => 0,
-            'times_failed'    => 0,
-            'priority'        => 0,
-            'ordering'        => 0,
-            'params'          => '{"retention_years":10,"fiscal_year_end":"12-31","anonymize_orders":1,"delete_addresses":1}',
-            'note'            => '',
-            'created'         => $now,
-            'created_by'      => 0,
-        ];
-        $this->db->insertObject('#__scheduler_tasks', $task, 'id');
-
-        $output = [];
-        $exit   = 0;
-        exec('cd ' . escapeshellarg(JPATH_BASE) . ' && php cli/joomla.php scheduler:run --id=' . (int) $task->id . ' 2>&1', $output, $exit);
-
-        $this->db->setQuery(
-            $this->db->getQuery(true)
-                ->delete($this->db->quoteName('#__scheduler_tasks'))
-                ->where($this->db->quoteName('id') . ' = ' . (int) $task->id)
-        )->execute();
-
-        return [$exit, $output];
-    }
 
     private function seedTestUser(int $userId, string $email): void
     {

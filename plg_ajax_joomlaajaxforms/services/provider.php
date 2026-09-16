@@ -16,7 +16,6 @@ use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
-use Joomla\Event\DispatcherInterface;
 use Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms;
 
 return new class () implements ServiceProviderInterface {
@@ -32,10 +31,8 @@ return new class () implements ServiceProviderInterface {
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new JoomlaAjaxForms(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('ajax', 'joomlaajaxforms')
-                );
+                // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
+                $plugin = new JoomlaAjaxForms((array) PluginHelper::getPlugin('ajax', 'joomlaajaxforms'));
                 $plugin->setApplication(Factory::getApplication());
                 $plugin->setDatabase($container->get(DatabaseInterface::class));
 

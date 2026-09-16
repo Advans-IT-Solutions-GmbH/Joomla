@@ -212,7 +212,7 @@ if ($strictMessages) {
             $problems[] = "unexpected {$message['type']} message: " . mb_substr($message['text'], 0, 300);
         }
 
-        if (preg_match_all('/\b(?:PLG|COM|MOD|PKG|TPL|LIB|JLIB|FILES)_[A-Z0-9]+(?:_[A-Z0-9]+)+\b/', $message['text'], $keys)) {
+        if (preg_match_all('/\b(?:PLG|COM|MOD|PKG|TPL|LIB|JLIB|FILES)_[A-Z0-9][A-Z0-9_]*\b/', $message['text'], $keys)) {
             $problems[] = 'untranslated language key(s): ' . implode(', ', array_unique($keys[0]));
         }
     }

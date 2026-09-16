@@ -28,7 +28,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /** @var string[] Files that could not be copied */
     private array $_overridesFailed = [];
 
-    /** Whether the bundled task plugin was installed and enabled in this run */
+    /** Whether the bundled task plugin was installed in this run (enabled on first installation) */
     private bool $taskPluginReady = false;
 
     /**
@@ -102,7 +102,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->retireBundledCheckoutOverrides();
             $this->warnOutdatedCheckoutOverrides();
 
-            $this->installTaskPlugin($packageSource);
+            $this->installTaskPlugin($packageSource, $type);
             $this->installConsentSystemPlugin($packageSource);
             $this->migrateLegacySchedulerTasks();
 
@@ -916,7 +916,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * through that same singleton from inside postflight() would replace its
      * manifest and state while the outer installation is still running.
      */
-    private function installTaskPlugin(string $packageSource): void
+    private function installTaskPlugin(string $packageSource, string $type): void
     {
         $source = $packageSource . '/plugins/task/j2commerceprivacy';
         $app    = Factory::getApplication();
@@ -933,13 +933,20 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $installer->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
         }
 
+        // An update keeps the state the administrator chose for the task plugin.
+        // It is enabled only on the first installation or when it was missing.
+        $existed = $this->getTaskPluginExtensionId() > 0;
+
         if (!$installer->install($source)) {
             $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_TASK_PLUGIN_INSTALL_FAILED'), 'warning');
 
             return;
         }
 
-        $this->setTaskPluginEnabled(true);
+        if ($type === 'install' || !$existed) {
+            $this->setTaskPluginEnabled(true);
+        }
+
         $this->taskPluginReady = $this->getTaskPluginExtensionId() > 0;
     }
 
@@ -976,9 +983,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // The task plugin is removed directly (database rows and files) because
         // running Joomla's installer from inside uninstall() would reset the
         // state of the installation that is currently in progress.
-        if ($extensionId) {
-            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASK_PLUGIN_REMOVED'), 'message');
+        $taskDir = JPATH_PLUGINS . '/task/j2commerceprivacy';
 
+        if ($extensionId) {
             $query = $this->dbQuery($db)
                 ->delete($db->quoteName('#__schemas'))
                 ->where($db->quoteName('extension_id') . ' = :extensionId')
@@ -1001,7 +1008,12 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $db->execute();
         }
 
-        $this->deleteDirectory(JPATH_PLUGINS . '/task/j2commerceprivacy');
+        $this->deleteDirectory($taskDir);
+
+        // Confirm the removal only when the task plugin is really gone.
+        if ($extensionId && $this->getTaskPluginExtensionId() === 0 && !is_dir($taskDir)) {
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASK_PLUGIN_REMOVED'), 'message');
+        }
     }
 
     /**

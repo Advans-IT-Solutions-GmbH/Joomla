@@ -23,7 +23,7 @@ if [ -f /var/www/html/configuration.php ]; then
 
     echo "Installing extension via Joomla CLI..."
     cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
         echo "✅ Extension installed via Joomla CLI"
     else
         echo "❌ Extension installation FAILED via Joomla CLI"

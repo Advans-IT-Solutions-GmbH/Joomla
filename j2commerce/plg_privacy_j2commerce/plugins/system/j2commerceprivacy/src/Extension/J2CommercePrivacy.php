@@ -11,7 +11,10 @@ namespace Advans\Plugin\System\J2CommercePrivacy\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Plugin\PluginHelper;
@@ -129,7 +132,7 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
      */
     public static function renderConsentCheckbox(Registry $privacyParams): string
     {
-        $language = Factory::getLanguage();
+        $language = self::currentLanguage();
         $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR)
             || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
 
@@ -449,7 +452,7 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
     private static function requiredMessage(): string
     {
-        $language = Factory::getLanguage();
+        $language = self::currentLanguage();
 
         $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR)
             || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
@@ -470,5 +473,36 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
         echo $body;
         $this->getApplication()->close();
+    }
+
+    /**
+     * Current language: the application's, or (CLI without application) a language object of the
+     * default site language. Factory::getLanguage() is deprecated.
+     */
+    private static function currentLanguage(): Language
+    {
+        try {
+            $app = Factory::getApplication();
+
+            if (method_exists($app, 'getLanguage')) {
+                return $app->getLanguage();
+            }
+        } catch (\Throwable $e) {
+            // No application (CLI script).
+        }
+
+        static $fallback = null;
+
+        if ($fallback === null) {
+            try {
+                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            } catch (\Throwable $e) {
+                $tag = 'en-GB';
+            }
+
+            $fallback = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+        }
+
+        return $fallback;
     }
 }

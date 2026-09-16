@@ -10,9 +10,12 @@
  * The suite
  *   1. registers an update site that still uses the repository's former
  *      organisation name for the installed extension,
- *   2. installs the new package over the previous version through the CLI,
- *   3. verifies: the installed manifest and installer script are the new ones,
- *      the manifest version matches the package, exactly one update site is
+ *   2. installs a copy of the new package whose root manifest declares a
+ *      version above the installed one (the PR version often equals the last
+ *      release) over the previous version through the CLI,
+ *   3. verifies: the installed manifest changed and is the one from that copy,
+ *      the installer script is the new one, manifest_cache carries the raised
+ *      version, exactly one update site is
  *      linked and it uses the current organisation name, bundled plugins are
  *      installed and enabled, and the installer output contains no untranslated
  *      language key and no error.
@@ -80,7 +83,52 @@ if ($extensionId === 0) {
 $row             = $db->query("SELECT manifest_cache FROM $extensions WHERE extension_id = $extensionId")->fetch_row();
 $previousVersion = (string) (json_decode((string) ($row[0] ?? ''), true)['version'] ?? '');
 echo "Installed (previous) version: $previousVersion\n";
-echo "Package version: {$manifest['version']}\n\n";
+echo "Package version: {$manifest['version']}\n";
+
+$installDir = match ($manifest['type']) {
+    'plugin'    => JOOMLA_ROOT . '/plugins/' . $manifest['folder'] . '/' . $manifest['element'],
+    'component' => JOOMLA_ROOT . '/administrator/components/' . $manifest['element'],
+    default     => '',
+};
+up_check('install directory is known for the extension type', $installDir !== '', "type {$manifest['type']}");
+
+$installedManifestPath = $installDir . '/' . basename($manifest['xmlfile']);
+$manifestHashBefore    = is_file($installedManifestPath) ? hash_file('sha256', $installedManifestPath) : '';
+up_check('previous manifest is installed', $manifestHashBefore !== '', $installedManifestPath);
+
+// The previous release and the package under test often carry the same
+// version (a PR without a release commit). Installing that package would only
+// reinstall the same version, so the test installs a copy of it whose root
+// manifest declares a higher version. Only this copy is changed.
+$updateVersion = sh_bump_version($previousVersion !== '' ? $previousVersion : $manifest['version']);
+
+if (version_compare($manifest['version'], $updateVersion, '>')) {
+    $updateVersion = $manifest['version'];
+}
+
+$updatePackage = sys_get_temp_dir() . '/shared-update-' . bin2hex(random_bytes(4)) . '.zip';
+register_shutdown_function(static function () use ($updatePackage): void {
+    @unlink($updatePackage);
+});
+
+$packagedManifest = null;
+
+if (copy($newPackage, $updatePackage)) {
+    $packagedManifest = sh_set_package_version($updatePackage, $manifest['xmlfile'], $updateVersion);
+}
+
+up_check('test package with a higher version built', $packagedManifest !== null, $updatePackage);
+
+if ($packagedManifest === null) {
+    exit(1);
+}
+
+up_check(
+    'update raises the version',
+    $previousVersion !== '' && version_compare($updateVersion, $previousVersion, '>'),
+    "previous '$previousVersion', update '$updateVersion'"
+);
+echo "Update version (test package): $updateVersion\n\n";
 
 // 1. Update site with the former organisation name.
 if ($manifest['updateserver'] === '') {
@@ -99,7 +147,7 @@ $db->query("INSERT INTO $sitesMap (update_site_id, extension_id) VALUES ($legacy
 echo "Inserted legacy update site #$legacySiteId: $legacyUrl\n\n";
 
 // 2. Install the new package over the previous version.
-[$code, $output] = sh_cli_install(JOOMLA_ROOT, $newPackage);
+[$code, $output] = sh_cli_install(JOOMLA_ROOT, $updatePackage);
 $clean = sh_strip_ansi($output);
 echo $clean . "\n\n";
 
@@ -114,33 +162,34 @@ up_check('extension keeps its extension_id', $extensionIdAfter === $extensionId,
 
 $row          = $db->query("SELECT manifest_cache FROM $extensions WHERE extension_id = $extensionId")->fetch_row();
 $cachedVersion = (string) (json_decode((string) ($row[0] ?? ''), true)['version'] ?? '');
-up_check('manifest version matches the new package', $cachedVersion === $manifest['version'], "installed $cachedVersion, package {$manifest['version']}");
+up_check('manifest_cache version is the update version', $cachedVersion === $updateVersion, "installed '$cachedVersion', update '$updateVersion'");
 
-$installDir = match ($manifest['type']) {
-    'plugin'    => JOOMLA_ROOT . '/plugins/' . $manifest['folder'] . '/' . $manifest['element'],
-    'component' => JOOMLA_ROOT . '/administrator/components/' . $manifest['element'],
-    default     => '',
-};
+$manifestHashAfter = is_file($installedManifestPath) ? hash_file('sha256', $installedManifestPath) : '';
+up_check('installed manifest file changed', $manifestHashAfter !== '' && $manifestHashAfter !== $manifestHashBefore, $installedManifestPath);
+up_check(
+    'installed manifest is the one from the update package',
+    $manifestHashAfter === hash('sha256', $packagedManifest),
+    $installedManifestPath
+);
 
 $zip = new ZipArchive();
-$zip->open($newPackage);
 
-foreach ([$manifest['xmlfile'], 'script.php'] as $file) {
-    $packaged = $zip->getFromName($file);
+if ($zip->open($newPackage) !== true) {
+    up_check('open new package', false, $newPackage);
+} else {
+    $script = $zip->getFromName('script.php');
 
-    if ($packaged === false || $installDir === '') {
-        continue;
+    if ($script !== false) {
+        $installedPath = $installDir . '/script.php';
+        up_check(
+            'installed script.php is the one from the new package',
+            is_file($installedPath) && hash_file('sha256', $installedPath) === hash('sha256', $script),
+            $installedPath
+        );
     }
 
-    $installedPath = $installDir . '/' . basename($file);
-    up_check(
-        "installed $file is the one from the new package",
-        is_file($installedPath) && hash('sha256', (string) file_get_contents($installedPath)) === hash('sha256', $packaged),
-        $installedPath
-    );
+    $zip->close();
 }
-
-$zip->close();
 
 $result = $db->query(
     "SELECT s.update_site_id, s.location FROM $sites s INNER JOIN $sitesMap m ON m.update_site_id = s.update_site_id"

@@ -49,7 +49,7 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 ## Usage
 
 ### Access
-Navigate to: **Components → J2Store Cleanup**
+Navigate to: **Components → J2Store Extension Cleanup**
 
 URL: `administrator/index.php?option=com_j2store_cleanup`
 
@@ -140,7 +140,7 @@ Order as in `tests/test.env`:
 ### Running Tests Locally
 
 Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`,
-built from the J2Commerce 6 commit pinned in the workflow (`2dd491e8e1b129a8754065937f85769d97ca76fa`).
+built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`).
 Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash

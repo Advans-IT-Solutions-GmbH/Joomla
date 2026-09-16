@@ -2,9 +2,10 @@
 /**
  * AcyMailing Integration Tests
  *
- * Validates the plugin's AcyMailing detection, export, and deletion logic
- * against real AcyMailing tables. Also verifies graceful skip when AcyMailing
- * is not installed.
+ * Validates the AcyMailing schema the plugin relies on, the export queries,
+ * the removal of a subscriber through the plugin's privacy removal handler
+ * (onPrivacyRemoveData) and that the handler leaves AcyMailing data alone when
+ * AcyMailing is not installed.
  *
  * Requires AcyMailing schema and test data inserted by docker-entrypoint.sh.
  */
@@ -16,6 +17,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\User\User;
 
 class AcyMailingIntegrationTest
 {
@@ -25,6 +27,20 @@ class AcyMailingIntegrationTest
 
     /** Email of the test subscriber inserted by docker-entrypoint.sh */
     private const TEST_EMAIL = 'acym-test@example.com';
+
+    /** Joomla user ids without J2Commerce data, used for the removal handler */
+    private const DELETE_USER_ID = 999101;
+    private const KEEP_USER_ID   = 999102;
+
+    /** Tables the plugin clears for a subscriber before deleting the subscriber record */
+    private const RELATED_TABLES = [
+        'user_has_list',
+        'user_has_field',
+        'user_stat',
+        'url_click',
+        'history',
+        'queue',
+    ];
 
     public function __construct()
     {
@@ -45,7 +61,7 @@ class AcyMailingIntegrationTest
     }
 
     // -------------------------------------------------------------------------
-    // Detection
+    // Helpers
     // -------------------------------------------------------------------------
 
     private function getAcymPrefix(): ?string
@@ -70,6 +86,91 @@ class AcyMailingIntegrationTest
         }
 
         return null;
+    }
+
+    /**
+     * The installed privacy plugin, created the way 05-data-anonymization.php
+     * does it. A missing plugin is a failure: the test environment installs it.
+     */
+    private function createPlugin(): ?object
+    {
+        $classFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Extension/J2Commerce.php';
+
+        if (!is_file($classFile)) {
+            $this->test('privacy plugin is installed', false, "missing $classFile");
+
+            return null;
+        }
+
+        try {
+            if (!class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, false)) {
+                require_once $classFile;
+            }
+
+            $plugin = new \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce(
+                new \Joomla\Event\Dispatcher(),
+                ['params' => new \Joomla\Registry\Registry([])]
+            );
+            $plugin->setDatabase(Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class));
+
+            return $plugin;
+        } catch (\Throwable $e) {
+            $this->test('privacy plugin can be created', false, $e->getMessage());
+
+            return null;
+        }
+    }
+
+    /**
+     * Run the plugin's privacy removal handler for a user. The Joomla 4 call
+     * form (request, user) is used: it reaches the same removal code as the
+     * Joomla 5/6 event object without needing a privacy request record.
+     */
+    private function removeThroughPlugin(object $plugin, int $userId, string $email): ?string
+    {
+        $user           = new User();
+        $user->id       = $userId;
+        $user->username = 'acym-privacy-test-' . $userId;
+        $user->email    = $email;
+
+        try {
+            $plugin->onPrivacyRemoveData(null, $user);
+        } catch (\Throwable $e) {
+            return get_class($e) . ': ' . $e->getMessage();
+        }
+
+        return null;
+    }
+
+    private function insertSubscriber(string $prefix, string $email, string $name): int
+    {
+        $this->db->setQuery(
+            'INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user')
+            . ' (email, name, confirmed, creation_date) VALUES ('
+            . $this->db->quote($email) . ', ' . $this->db->quote($name) . ', 1, NOW())'
+        )->execute();
+
+        return (int) $this->db->setQuery(
+            'SELECT id FROM ' . $this->db->quoteName($prefix . 'user')
+            . ' WHERE email = ' . $this->db->quote($email)
+        )->loadResult();
+    }
+
+    private function countRows(string $table, string $column, int $id): int
+    {
+        return (int) $this->db->setQuery(
+            'SELECT COUNT(*) FROM ' . $this->db->quoteName($table)
+            . ' WHERE ' . $this->db->quoteName($column) . ' = ' . $id
+        )->loadResult();
+    }
+
+    private function strictSkip(string $name, string $reason): void
+    {
+        if (getenv('TEST_STRICT_SKIP') === '1') {
+            $this->test($name, false, $reason);
+        } else {
+            echo "SKIP $name ($reason)\n";
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -106,11 +207,7 @@ class AcyMailingIntegrationTest
 
         $prefix = $this->getAcymPrefix();
         if ($prefix === null) {
-            if (getenv('TEST_STRICT_SKIP') === '1') {
-                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
-            } else {
-                echo "SKIP (AcyMailing not installed)\n";
-            }
+            $this->strictSkip('AcyMailing schema available', 'the test environment installs it; getAcymPrefix() returned null');
             return;
         }
 
@@ -178,96 +275,90 @@ class AcyMailingIntegrationTest
 
     private function testDeletion(): void
     {
-        echo "\n--- Deletion ---\n";
+        echo "\n--- Deletion through onPrivacyRemoveData ---\n";
 
         $prefix = $this->getAcymPrefix();
         if ($prefix === null) {
-            if (getenv('TEST_STRICT_SKIP') === '1') {
-                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
-            } else {
-                echo "SKIP (AcyMailing not installed)\n";
-            }
+            $this->strictSkip('AcyMailing schema available', 'the test environment installs it; getAcymPrefix() returned null');
             return;
         }
 
-        // Insert a dedicated subscriber for deletion so the export test data is untouched
-        $deleteEmail = 'acym-delete@example.com';
+        $plugin = $this->createPlugin();
+        if ($plugin === null) {
+            return;
+        }
 
-        // All tables the plugin deletes from (mirrors removeAcyMailingData)
-        $relatedTables = [
-            'user_has_list',
-            'user_has_field',
-            'user_stat',
-            'url_click',
-            'history',
-            'queue',
-        ];
+        // A real AcyMailing installation has every related table. The test
+        // schema only has user_has_list, so the others are created here with
+        // the column the plugin uses (user_id) and dropped afterwards.
+        $created     = [];
+        $deleteEmail = 'acym-delete@example.com';
+        $subId       = 0;
 
         try {
-            // Insert subscriber
-            $this->db->setQuery(
-                "INSERT IGNORE INTO `{$prefix}user` (email, name, confirmed, creation_date)
-                 VALUES ('$deleteEmail', 'Delete Me', 1, NOW())"
-            )->execute();
-            $subId = (int) $this->db->setQuery(
-                "SELECT id FROM `{$prefix}user` WHERE email = '$deleteEmail'"
-            )->loadResult();
+            $tables = $this->db->getTableList();
+
+            foreach (self::RELATED_TABLES as $table) {
+                if (!in_array($prefix . $table, $tables, true)) {
+                    $this->db->setQuery(
+                        'CREATE TABLE ' . $this->db->quoteName($prefix . $table)
+                        . ' (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL) ENGINE=InnoDB'
+                    )->execute();
+                    $created[] = $prefix . $table;
+                }
+            }
+
+            $subId = $this->insertSubscriber($prefix, $deleteEmail, 'Delete Me');
             $this->test('Deletion test subscriber inserted', $subId > 0);
 
-            // Insert list association
-            $this->db->setQuery(
-                "INSERT IGNORE INTO `{$prefix}user_has_list` (user_id, list_id, status, subscription_date)
-                 VALUES ($subId, 1, 1, NOW())"
-            )->execute();
-            $assocCount = (int) $this->db->setQuery(
-                "SELECT COUNT(*) FROM `{$prefix}user_has_list` WHERE user_id = $subId"
-            )->loadResult();
-            $this->test('List association inserted', $assocCount >= 1);
-
-            // Run deletion (mirrors plugin's removeAcyMailingData)
-            foreach ($relatedTables as $table) {
-                $fullTable = $prefix . $table;
-                $tables = $this->db->getTableList();
-                if (!in_array($fullTable, $tables, true)) {
-                    continue; // table may not exist in minimal test schema
-                }
-
-                $this->db->setQuery(
-                    $this->db->getQuery(true)
-                        ->delete($this->db->quoteName($fullTable))
-                        ->where($this->db->quoteName('user_id') . ' = ' . $subId)
-                )->execute();
+            if ($subId <= 0) {
+                return;
             }
 
-            $this->db->setQuery(
-                $this->db->getQuery(true)
-                    ->delete($this->db->quoteName($prefix . 'user'))
-                    ->where($this->db->quoteName('id') . ' = ' . $subId)
-            )->execute();
-
-            // Verify all related tables are clean
-            foreach ($relatedTables as $table) {
-                $fullTable = $prefix . $table;
-                $tables = $this->db->getTableList();
-                if (!in_array($fullTable, $tables, true)) {
-                    continue;
-                }
-
-                $remaining = (int) $this->db->setQuery(
-                    "SELECT COUNT(*) FROM `{$fullTable}` WHERE user_id = $subId"
-                )->loadResult();
-                $this->test("$table rows deleted", $remaining === 0,
-                    "Got $remaining remaining");
+            foreach (self::RELATED_TABLES as $table) {
+                $sql = $table === 'user_has_list'
+                    ? 'INSERT IGNORE INTO ' . $this->db->quoteName($prefix . $table)
+                        . " (user_id, list_id, status, subscription_date) VALUES ($subId, 1, 1, NOW())"
+                    : 'INSERT INTO ' . $this->db->quoteName($prefix . $table) . " (user_id) VALUES ($subId)";
+                $this->db->setQuery($sql)->execute();
+                $this->test("$table row inserted", $this->countRows($prefix . $table, 'user_id', $subId) >= 1);
             }
 
-            $remainingSub = (int) $this->db->setQuery(
-                "SELECT COUNT(*) FROM `{$prefix}user` WHERE id = $subId"
-            )->loadResult();
-            $this->test('Subscriber record deleted', $remainingSub === 0,
-                "Got $remainingSub remaining");
+            $error = $this->removeThroughPlugin($plugin, self::DELETE_USER_ID, $deleteEmail);
+            $this->test('onPrivacyRemoveData runs without error', $error === null, (string) $error);
 
+            foreach (self::RELATED_TABLES as $table) {
+                $remaining = $this->countRows($prefix . $table, 'user_id', $subId);
+                $this->test("$table rows deleted by the plugin", $remaining === 0, "Got $remaining remaining");
+            }
+
+            $remainingSub = $this->countRows($prefix . 'user', 'id', $subId);
+            $this->test('Subscriber record deleted by the plugin', $remainingSub === 0, "Got $remainingSub remaining");
+
+            $otherSub = (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user')
+                . ' WHERE email = ' . $this->db->quote(self::TEST_EMAIL)
+            )->loadResult();
+            $this->test('Other subscribers are kept', $otherSub === 1, "Got $otherSub rows for " . self::TEST_EMAIL);
         } catch (\Exception $e) {
-            $this->test('Deletion executes without error', false, $e->getMessage());
+            $this->test('Deletion test executes without error', false, $e->getMessage());
+        } finally {
+            if ($subId > 0) {
+                foreach (self::RELATED_TABLES as $table) {
+                    try {
+                        $this->db->setQuery(
+                            'DELETE FROM ' . $this->db->quoteName($prefix . $table) . ' WHERE user_id = ' . $subId
+                        )->execute();
+                    } catch (\Exception $e) {
+                        // table may already be gone
+                    }
+                }
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $subId)->execute();
+            }
+
+            foreach ($created as $table) {
+                $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
+            }
         }
     }
 
@@ -341,36 +432,58 @@ class AcyMailingIntegrationTest
 
     private function testGracefulSkip(): void
     {
-        echo "\n--- Graceful Skip (no AcyMailing) ---\n";
+        echo "\n--- Without AcyMailing ---\n";
 
-        // Simulate getAcymTablePrefix() against a DB with no acym_configuration table
-        // by checking that the method returns null when the table is absent.
-        // We verify this indirectly: if AcyMailing IS installed, we confirm the prefix
-        // is non-null; if it is NOT installed, we confirm null is returned without exception.
-        $exceptionThrown = false;
-        $prefix          = null;
+        $prefix = $this->getAcymPrefix();
+        if ($prefix === null) {
+            $this->strictSkip('AcyMailing schema available', 'the test environment installs it; getAcymPrefix() returned null');
+            return;
+        }
+
+        $plugin = $this->createPlugin();
+        if ($plugin === null) {
+            return;
+        }
+
+        // AcyMailing counts as installed only while <prefix>acym_configuration
+        // exists. With that table renamed, the removal handler must not touch
+        // the subscriber tables and must not fail.
+        $keepEmail = 'acym-keep@example.com';
+        $config    = $prefix . 'configuration';
+        $parked    = $prefix . 'cfg_parked_by_test';
+        $renamed   = false;
+        $subId     = 0;
 
         try {
-            $prefix = $this->getAcymPrefix();
+            $subId = $this->insertSubscriber($prefix, $keepEmail, 'Keep Me');
+            $this->test('Subscriber for the no-AcyMailing case inserted', $subId > 0);
+
+            $this->db->setQuery(
+                'RENAME TABLE ' . $this->db->quoteName($config) . ' TO ' . $this->db->quoteName($parked)
+            )->execute();
+            $renamed = true;
+            $this->test('AcyMailing no longer detected', $this->getAcymPrefix() === null);
+
+            $error = $this->removeThroughPlugin($plugin, self::KEEP_USER_ID, $keepEmail);
+            $this->test('onPrivacyRemoveData runs without error when AcyMailing is missing', $error === null, (string) $error);
+
+            $kept = $this->countRows($prefix . 'user', 'id', $subId);
+            $this->test('Subscriber data untouched when AcyMailing is missing', $kept === 1, "Got $kept rows");
         } catch (\Exception $e) {
-            $exceptionThrown = true;
-        }
+            $this->test('No-AcyMailing test executes without error', false, $e->getMessage());
+        } finally {
+            if ($renamed) {
+                $this->db->setQuery(
+                    'RENAME TABLE ' . $this->db->quoteName($parked) . ' TO ' . $this->db->quoteName($config)
+                )->execute();
+            }
 
-        $this->test('getAcymPrefix() does not throw', !$exceptionThrown);
-        $this->test('getAcymPrefix() returns string or null',
-            $prefix === null || is_string($prefix));
-
-        // Verify plugin class has the required methods
-        $classFile = JPATH_BASE . '/plugins/privacy/j2commerce/src/Extension/J2Commerce.php';
-        if (file_exists($classFile)) {
-            require_once $classFile;
-            if (class_exists('Advans\\Plugin\\Privacy\\J2Commerce\\Extension\\J2Commerce')) {
-                $ref = new \ReflectionClass('Advans\\Plugin\\Privacy\\J2Commerce\\Extension\\J2Commerce');
-                $this->test('getAcymTablePrefix() method exists',  $ref->hasMethod('getAcymTablePrefix'));
-                $this->test('createAcyMailingDomain() method exists', $ref->hasMethod('createAcyMailingDomain'));
-                $this->test('removeAcyMailingData() method exists', $ref->hasMethod('removeAcyMailingData'));
+            if ($subId > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $subId)->execute();
             }
         }
+
+        $this->test('AcyMailing detected again after the test', $this->getAcymPrefix() === $prefix);
     }
 
     // -------------------------------------------------------------------------

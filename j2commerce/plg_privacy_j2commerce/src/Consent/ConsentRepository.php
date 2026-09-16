@@ -10,8 +10,10 @@ namespace Advans\Plugin\Privacy\J2Commerce\Consent;
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Language\Text;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 
@@ -87,11 +89,11 @@ final class ConsentRepository
      */
     public function buildBody(string $orderId, string $ipAddress, string $userAgent): string
     {
-        self::loadBodyLanguage();
+        $language = self::loadBodyLanguage();
 
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
-        return Text::sprintf(self::BODY_KEY, $escape($orderId), $escape($ipAddress), $escape($userAgent))
+        return sprintf($language->_(self::BODY_KEY), $escape($orderId), $escape($ipAddress), $escape($userAgent))
             . self::orderMarker($orderId);
     }
 
@@ -101,9 +103,9 @@ final class ConsentRepository
      */
     public function buildEvidenceRemovedBody(string $orderId): string
     {
-        self::loadBodyLanguage();
+        $language = self::loadBodyLanguage();
 
-        return Text::sprintf(self::BODY_REMOVED_KEY, htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
+        return sprintf($language->_(self::BODY_REMOVED_KEY), htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
             . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER;
     }
 
@@ -154,11 +156,13 @@ final class ConsentRepository
         return $changed;
     }
 
-    private static function loadBodyLanguage(): void
+    private static function loadBodyLanguage(): Language
     {
-        $language = Factory::getLanguage();
+        $language = self::currentLanguage();
         $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
             || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
+
+        return $language;
     }
 
     /**
@@ -176,9 +180,10 @@ final class ConsentRepository
             ->where($this->db->quoteName('state') . ' = 1')
             ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
             ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId))
-            ->order($this->db->quoteName('id') . ' ASC');
+            ->order($this->db->quoteName('id') . ' ASC')
+            ->setLimit(1);
 
-        $this->db->setQuery($query, 0, 1);
+        $this->db->setQuery($query);
 
         return $this->db->loadObject() ?: null;
     }
@@ -284,9 +289,10 @@ final class ConsentRepository
             ->where($this->db->quoteName('token') . ' = :token')
             ->where($this->db->quoteName('user_email') . ' = :email')
             ->bind(':token', $guestToken)
-            ->bind(':email', $guestEmail);
+            ->bind(':email', $guestEmail)
+            ->setLimit(1);
 
-        $this->db->setQuery($query, 0, 1);
+        $this->db->setQuery($query);
         $orderId = (string) $this->db->loadResult();
 
         if (!self::isValidOrderId($orderId)) {
@@ -318,5 +324,36 @@ final class ConsentRepository
     private function createQuery()
     {
         return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+    }
+
+    /**
+     * Current language: the application's, or (CLI without application) a language object of the
+     * default site language. Factory::getLanguage() is deprecated.
+     */
+    private static function currentLanguage(): Language
+    {
+        try {
+            $app = Factory::getApplication();
+
+            if (method_exists($app, 'getLanguage')) {
+                return $app->getLanguage();
+            }
+        } catch (\Throwable $e) {
+            // No application (CLI script).
+        }
+
+        static $fallback = null;
+
+        if ($fallback === null) {
+            try {
+                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            } catch (\Throwable $e) {
+                $tag = 'en-GB';
+            }
+
+            $fallback = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+        }
+
+        return $fallback;
     }
 }

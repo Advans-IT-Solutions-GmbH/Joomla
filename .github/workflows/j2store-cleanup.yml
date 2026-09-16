@@ -74,6 +74,8 @@ jobs:
         run: php shared/tests/lang-lint.php j2commerce/com_j2store_cleanup
       - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
         run: php shared/tests/requirements-check.php j2commerce/com_j2store_cleanup
+      - name: Scan for deprecated Joomla APIs
+        run: php shared/tests/deprecated-api-scan.php j2commerce/com_j2store_cleanup
 
   test-j5:
     name: ${{ matrix.name }} (J5)
@@ -162,15 +164,18 @@ jobs:
           extensions: zip
       - name: Build J2Commerce 6 from source
         run: |
-          # j2commerce/j2commerce publishes no release tags, so pin the source to a
-          # specific main commit for deterministic, reproducible builds.
-          J2C6_COMMIT=2dd491e8e1b129a8754065937f85769d97ca76fa # pinned (main)
+          # j2commerce/j2commerce publishes no release tags, so pin the source to the
+          # commit used in production (default branch as of 2026-08-28), the same
+          # pin as the other extension workflows.
+          J2C6_COMMIT=7edb6e11ae9148bf996b06c47a0d8266865af7b2 # pinned (main)
           git init /tmp/j2commerce6-src
           git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_COMMIT"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
           echo "J2Commerce 6 source commit: $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
-          cd /tmp/j2commerce6-src && php build/build_package.php
+          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # the tests only need the PHP package, so the unminified build is used.
+          cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           # Robust, deterministic ZIP selection: nullglob so a non-matching glob
           # expands to nothing (instead of aborting the step under pipefail), and a
           # fixed glob order (pkg_ preferred over com_) for reproducibility.

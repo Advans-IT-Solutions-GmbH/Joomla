@@ -14,6 +14,10 @@
  *   - /component/ blocking without an exception    → component warning only
  *   - index.php?option= blocking without exception → option warning only
  *   - exception attached to a different rule        → component warning
+ *   - exceptions joined with [OR]                   → both warnings
+ *   - exceptions that do not match the rule's type  → both warnings
+ *   - components/ hardening, option=com_users rule  → no warning
+ *   - R=permanent and absolute redirect target      → both warnings
  *
  * The original .htaccess (if any) is restored afterwards.
  */
@@ -111,6 +115,39 @@ RewriteRule ^legacy-page$ / [R=301,L]
 RewriteCond %{REQUEST_URI} ^/component/ [NC]
 RewriteRule ^component/.*$ / [R=301,L]
 HTACCESS, true, false);
+
+            $this->runCase('exceptions joined with [OR]', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} !plugin= [NC,OR]
+RewriteCond %{HTTP_HOST} ^www\. [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ / [R=301,L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC,OR]
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, true, true);
+
+            $this->runCase('exception that does not match the blocked request', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ / [R=301,L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteCond %{REQUEST_URI} !component/ajax [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, true, true);
+
+            $this->runCase('components/ hardening and option=com_users rule', <<<'HTACCESS'
+RewriteEngine On
+RewriteRule ^components/.*\.php$ - [F,L]
+RewriteCond %{QUERY_STRING} ^option=com_users [NC]
+RewriteRule ^index\.php$ /login [R=301,L]
+HTACCESS, false, false);
+
+            $this->runCase('R=permanent and absolute redirect target', <<<'HTACCESS'
+RewriteEngine On
+RewriteRule ^component/(.*)$ https://example.org/$1 [L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteRule ^index\.php$ / [R=permanent,L]
+HTACCESS, true, true);
         } finally {
             if ($original === null) {
                 @unlink(self::HTACCESS);

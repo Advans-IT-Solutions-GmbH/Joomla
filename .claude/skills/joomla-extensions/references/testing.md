@@ -85,12 +85,12 @@ docker build \
 ### 2. J2Commerce 6 package as `j2commerce6.zip` (Joomla 6 stacks only)
 
 J2Commerce 6 publishes no release ZIP. CI builds it from a pinned commit of
-`j2commerce/j2commerce` (PHP 8.3 with the `zip` extension). Use the pin of the job you reproduce:
-
-| Workflow / job | `J2C6_REF` |
-|---|---|
-| Privacy, AJAX Forms, Import/Export, Product Compare (all Joomla 6 jobs); OSMap production-like lane | `7edb6e11ae9148bf996b06c47a0d8266865af7b2` |
-| OSMap Joomla 6, Joomla 6 SEF and update jobs; Cleanup `Build J2Commerce 6` | `2dd491e8e1b129a8754065937f85769d97ca76fa` |
+`j2commerce/j2commerce` (PHP 8.3 with the `zip` extension). All workflows and all Joomla 6 jobs use
+the same pin, `7edb6e11ae9148bf996b06c47a0d8266865af7b2` (the commit used in production), and build
+it with `--no-minify` (without it, `build_package.php` of this commit requires esbuild). OSMap reads
+the pin from `J2C6_REF`, which a manual run can override with the `j2commerce6_ref` input; its
+production-like lane uses `J2C6_PROD_REF` and ignores that input. Cleanup sets it as `J2C6_COMMIT`
+in the job `Build J2Commerce 6`.
 
 Commands from the workflow step `Build J2Commerce 6 from source`; only `$GITHUB_WORKSPACE` is
 replaced by the repository root. Run from the repository root; `/tmp/j2commerce6-src` must not exist
@@ -103,7 +103,7 @@ git init /tmp/j2commerce6-src
 git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
 git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
 git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-cd /tmp/j2commerce6-src && php build/build_package.php --no-minify   # needed for 7edb6e11 (esbuild otherwise required); omit for 2dd491e8
+cd /tmp/j2commerce6-src && php build/build_package.php --no-minify   # without it, esbuild is required
 ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
 cp "$ZIP" "$REPO_ROOT/j2commerce/plg_privacy_j2commerce/tests/j2commerce6.zip"
 ```
@@ -139,8 +139,8 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 `all` runs every entry of `TEST_SCRIPTS`. For OSMap this includes `sitemap-http-sef`, which CI runs
 only against the SEF stack; run suites by name to mirror the CI matrix.
 
-Production-like lane (Privacy, OSMap; `tests/docker-compose.production.yml`, needs `j2commerce6.zip`
-from the production pin `7edb6e11…`), commands from the workflow:
+Production-like lane for Privacy and OSMap (`tests/docker-compose.production.yml`, needs
+`tests/j2commerce6.zip` from the pin `7edb6e11…`), commands from the workflow:
 
 ```bash
 docker compose -f docker-compose.production.yml up -d
@@ -150,7 +150,29 @@ docker exec -e TEST_STRICT_SKIP=1 plg_osmap_j2commerce_prod_test \
 docker compose -f docker-compose.production.yml down -v
 ```
 
-(Privacy: container `plg_privacy_j2commerce_prod_test`.)
+(Privacy: container `plg_privacy_j2commerce_prod_test`, `./run-tests.sh all`.)
+
+Production-like lane for AJAX Forms: no separate compose file. The workflow builds the `tests-j2c6/`
+image with PHP 8.4 and logged deprecations and starts the normal `tests-j2c6/` stack (needs
+`tests-j2c6/extension.zip` and `tests-j2c6/j2commerce6.zip`). From the repository root:
+
+```bash
+docker build \
+  -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
+  --build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache \
+  --build-arg PHP_STRICT_DEPRECATIONS=1 \
+  -t plg_ajax_j2c6_test \
+  .
+cd plg_ajax_joomlaajaxforms/tests-j2c6
+docker compose up -d
+TEST_STRICT_SKIP=1 ./run-tests.sh all
+docker exec -e TEST_STRICT_SKIP=1 plg_ajax_j2c6_test \
+  php /var/www/html/tests/scripts/shared-deprecations.php
+docker compose down -v
+```
+
+The image uses the same tag `plg_ajax_j2c6_test` as the regular `tests-j2c6/` lane; rebuild it
+without the build arguments before running that lane again.
 
 ## Test Suites
 
@@ -201,9 +223,9 @@ Notable test details:
     `tests/docker-compose.production.yml`; AJAX Forms via `tests-j2c6/Dockerfile` built with
     `--build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
     Runs all suites (`./run-tests.sh all`; OSMap runs each suite by name without the SEF-only `sitemap-http-sef`), then `shared-deprecations.php`.
-- **J2Commerce 6 pins:** Privacy, AJAX Forms, Import/Export and Product Compare build J2Commerce 6
-  from `7edb6e11ae9148bf996b06c47a0d8266865af7b2`; OSMap standard lanes and Cleanup stay on
-  `2dd491e8e1b129a8754065937f85769d97ca76fa`; the OSMap production-like lane uses `7edb6e11…`.
+- **J2Commerce 6 pin:** every workflow builds J2Commerce 6 from
+  `7edb6e11ae9148bf996b06c47a0d8266865af7b2` with `build_package.php --no-minify` (see
+  "J2Commerce 6 package" above).
 - **Required check:** only `collect-results.yml` produces the required status check
   `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every
   workflow, matches them against the files changed by the pull request, waits for those workflow runs

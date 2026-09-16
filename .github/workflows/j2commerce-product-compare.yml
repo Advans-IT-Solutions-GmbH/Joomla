@@ -80,6 +80,8 @@ jobs:
         run: php shared/tests/lang-lint.php j2commerce/plg_j2commerce_productcompare
       - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
         run: php shared/tests/requirements-check.php j2commerce/plg_j2commerce_productcompare
+      - name: Scan for deprecated Joomla APIs
+        run: php shared/tests/deprecated-api-scan.php j2commerce/plg_j2commerce_productcompare
 
   test-j5:
     name: ${{ matrix.name }} (J5)

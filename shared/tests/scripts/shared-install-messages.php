@@ -11,6 +11,8 @@
  * the installer script, so the output is checked for:
  *
  *   - untranslated language keys (PLG_/COM_/MOD_/PKG_/TPL_/LIB_/JLIB_ ...)
+ *   - at least one installer message from the language file of the active
+ *     language (for de-DE/fr-FR a text that differs from en-GB)
  *   - [ERROR], [WARNING] or [CAUTION] messages
  *   - PHP warnings, notices or fatal errors
  *   - a non-zero exit code
@@ -80,6 +82,34 @@ $checkOutput = static function (string $label, int $exitCode, string $output): v
     }
 };
 
+// The language switch must show: every installation prints at least one
+// installer message taken from the language file of the active language. For
+// de-DE and fr-FR only strings whose text differs from en-GB count, so the
+// English fallback cannot pass the check.
+$englishStrings = sh_read_package_language($package, 'en-GB');
+
+$checkTranslated = static function (string $tag, string $label, string $output) use ($package, $englishStrings): void {
+    $strings = sh_read_package_language($package, $tag);
+
+    if (!$strings) {
+        im_fail("$label: the package has no $tag language file");
+
+        return;
+    }
+
+    $shown = sh_shown_language_keys(
+        sh_plain_text(sh_strip_ansi($output)),
+        $strings,
+        $tag === 'en-GB' ? null : $englishStrings
+    );
+
+    if ($shown) {
+        im_pass("$label: installer message in $tag shown (" . implode(', ', array_slice($shown, 0, 3)) . ')');
+    } else {
+        im_fail("$label: no installer message from the $tag language file in the output");
+    }
+};
+
 foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
     echo "\n--- $tag ---\n";
 
@@ -97,6 +127,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
         [$code, $out] = sh_cli_install(JOOMLA_ROOT, $package);
         echo $out . "\n";
         $checkOutput("$tag install", $code, $out);
+        $checkTranslated($tag, "$tag install", $out);
 
         if (sh_find_extension_id($manifest) > 0) {
             im_pass("$tag install: extension registered");
@@ -178,6 +209,81 @@ $checkUpdate = static function (string $tag, string $label, string $plain, bool 
     }
 };
 
+// After an update the extension keeps its row: same ID, no second row, and no
+// update-site link or update site left pointing at a row that no longer exists.
+$checkRegistration = static function (string $label, int $expectedId) use ($manifest): void {
+    $db    = sh_db();
+    $table = sh_table('extensions');
+    $type  = $db->real_escape_string($manifest['type']);
+    $elem  = $db->real_escape_string($manifest['element']);
+    $sql   = "SELECT extension_id FROM $table WHERE type = '$type' AND element = '$elem'";
+
+    if ($manifest['type'] === 'plugin') {
+        $folders = [$manifest['folder']];
+
+        foreach (explode(',', (string) getenv('INSTALLED_PLUGIN_FOLDERS')) as $alias) {
+            if (trim($alias) !== '') {
+                $folders[] = trim($alias);
+            }
+        }
+
+        $folders = array_map([$db, 'real_escape_string'], array_unique($folders));
+        $sql    .= " AND folder IN ('" . implode("','", $folders) . "')";
+    }
+
+    $ids = [];
+    $res = $db->query($sql);
+
+    while ($res && ($row = $res->fetch_row())) {
+        $ids[] = (int) $row[0];
+    }
+
+    if ($ids === [$expectedId]) {
+        im_pass("$label: extension keeps its row (ID $expectedId, no duplicate)");
+    } else {
+        im_fail("$label: expected exactly the row $expectedId, found: " . ($ids ? implode(', ', $ids) : 'none'));
+    }
+
+    $links = sh_table('update_sites_extensions');
+    $res   = $db->query(
+        "SELECT l.update_site_id, l.extension_id FROM $links l"
+        . " LEFT JOIN $table e ON e.extension_id = l.extension_id WHERE e.extension_id IS NULL"
+    );
+    $orphans = [];
+
+    while ($res && ($row = $res->fetch_row())) {
+        $orphans[] = "site {$row[0]} → extension {$row[1]}";
+    }
+
+    if ($orphans) {
+        im_fail("$label: update-site links to missing extensions: " . implode('; ', $orphans));
+    } else {
+        im_pass("$label: no update-site link to a missing extension");
+    }
+
+    if ($manifest['updateserver'] === '') {
+        return;
+    }
+
+    $sites    = sh_table('update_sites');
+    $location = $db->real_escape_string($manifest['updateserver']);
+    $res      = $db->query(
+        "SELECT s.update_site_id FROM $sites s LEFT JOIN $links l ON l.update_site_id = s.update_site_id"
+        . " WHERE s.location = '$location' AND l.update_site_id IS NULL"
+    );
+    $unused = [];
+
+    while ($res && ($row = $res->fetch_row())) {
+        $unused[] = (int) $row[0];
+    }
+
+    if ($unused) {
+        im_fail("$label: update site of the extension without any link: " . implode(', ', $unused));
+    } else {
+        im_pass("$label: no unused update site for the extension's update server");
+    }
+};
+
 $extensionId = sh_find_extension_id($manifest);
 $isPlugin    = $manifest['type'] === 'plugin';
 
@@ -194,12 +300,14 @@ if ($extensionId <= 0) {
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $label = "$tag update" . ($isPlugin ? ' (plugin enabled)' : '');
             $checkUpdate($tag, $label, $runUpdate($tag, $label), false);
+            $checkRegistration($label, $extensionId);
         }
 
         if ($isPlugin) {
             sh_set_extension_enabled($extensionId, 0);
             $label = 'en-GB update (plugin disabled)';
             $checkUpdate('en-GB', $label, $runUpdate('en-GB', $label), true);
+            $checkRegistration($label, $extensionId);
         }
     } finally {
         if ($enabledBefore !== null) {

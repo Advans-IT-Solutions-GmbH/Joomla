@@ -6,7 +6,7 @@ on:
       j2commerce6_ref:
         description: 'J2Commerce 6 git ref (commit SHA) to build from'
         required: false
-        default: '2dd491e8e1b129a8754065937f85769d97ca76fa'
+        default: '7edb6e11ae9148bf996b06c47a0d8266865af7b2'
   push:
     branches: [main]
     paths:
@@ -25,11 +25,13 @@ permissions: {}
 env:
   # Pinned J2Commerce 6 source ref for reproducible/deterministic builds.
   # The j2commerce/j2commerce repo publishes no release tags, so we pin to an
-  # explicit commit SHA (default branch HEAD as of 2026-06-24). Override via the
+  # explicit commit SHA (the commit used in production, default branch as of
+  # 2026-08-28; same pin as the other extension workflows). Override via the
   # workflow_dispatch "j2commerce6_ref" input when a newer build is needed.
-  J2C6_REF: ${{ github.event.inputs.j2commerce6_ref || '2dd491e8e1b129a8754065937f85769d97ca76fa' }}
+  J2C6_REF: ${{ github.event.inputs.j2commerce6_ref || '7edb6e11ae9148bf996b06c47a0d8266865af7b2' }}
   # Production-like lane: the J2Commerce 6 commit used in production
-  # (default branch as of 2026-08-28).
+  # (default branch as of 2026-08-28). Kept separate so the workflow_dispatch
+  # input never changes this lane.
   J2C6_PROD_REF: '7edb6e11ae9148bf996b06c47a0d8266865af7b2'
 
 jobs:
@@ -90,6 +92,8 @@ jobs:
         run: php shared/tests/lang-lint.php j2commerce/plg_osmap_j2commerce
       - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
         run: php shared/tests/requirements-check.php j2commerce/plg_osmap_j2commerce
+      - name: Scan for deprecated Joomla APIs
+        run: php shared/tests/deprecated-api-scan.php j2commerce/plg_osmap_j2commerce
 
   test-j5:
     name: ${{ matrix.name }} (J5)
@@ -226,7 +230,9 @@ jobs:
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
           echo "J2Commerce 6 source commit (pinned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
-          cd /tmp/j2commerce6-src && php build/build_package.php
+          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # the tests only need the PHP package, so the unminified build is used.
+          cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
           sha256sum "$ZIP"
@@ -302,7 +308,9 @@ jobs:
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
           echo "J2Commerce 6 source commit (pinned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
-          cd /tmp/j2commerce6-src && php build/build_package.php
+          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # the tests only need the PHP package, so the unminified build is used.
+          cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && ls docs/packages/ && exit 1
           sha256sum "$ZIP"
@@ -393,6 +401,13 @@ jobs:
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose -f docker-compose.production.yml logs joomla 2>&1 | tail -100 || true
+      - name: Arm deprecation tracing
+        run: |
+          docker exec plg_osmap_j2commerce_prod_test mkdir -p /var/www/html/tests/scripts
+          for f in shared-test-helpers.php shared-deprecation-tracer.php shared-deprecations.php; do
+            docker cp shared/tests/scripts/$f plg_osmap_j2commerce_prod_test:/var/www/html/tests/scripts/
+          done
+          docker exec plg_osmap_j2commerce_prod_test php /var/www/html/tests/scripts/shared-deprecations.php --arm
       - name: Run all suites (except the SEF suite, which needs the SEF stack)
         env:
           TEST_STRICT_SKIP: '1'
@@ -460,7 +475,9 @@ jobs:
           git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-          cd /tmp/j2commerce6-src && php build/build_package.php
+          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # the tests only need the PHP package, so the unminified build is used.
+          cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
           [ -z "$ZIP" ] && echo "ERROR: No J2Commerce 6 ZIP found" && exit 1
           cp "$ZIP" "$GITHUB_WORKSPACE/j2commerce/plg_osmap_j2commerce/tests/j2commerce6.zip"

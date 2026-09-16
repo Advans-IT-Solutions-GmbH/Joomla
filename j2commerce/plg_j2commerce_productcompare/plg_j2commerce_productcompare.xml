@@ -14,6 +14,7 @@
     <description>PLG_J2COMMERCE_PRODUCTCOMPARE_XML_DESCRIPTION</description>
     
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
 
     <namespace path="src">Advans\Plugin\J2Commerce\ProductCompare</namespace>
 

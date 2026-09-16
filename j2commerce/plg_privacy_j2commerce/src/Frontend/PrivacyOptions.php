@@ -10,7 +10,10 @@ namespace Advans\Plugin\Privacy\J2Commerce\Frontend;
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\Registry\Registry;
 
@@ -59,11 +62,7 @@ final class PrivacyOptions
      */
     public static function loadLanguage(): void
     {
-        try {
-            $language = Factory::getApplication()->getLanguage();
-        } catch (\Throwable $e) {
-            $language = Factory::getLanguage();
-        }
+        $language = self::currentLanguage();
 
         $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce')
             || $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
@@ -74,5 +73,36 @@ final class PrivacyOptions
         $params = self::params();
 
         return $params !== null && (bool) (int) $params->get($name, 1);
+    }
+
+    /**
+     * Current language: the application's, or (CLI without application) a language object of the
+     * default site language. Factory::getLanguage() is deprecated.
+     */
+    private static function currentLanguage(): Language
+    {
+        try {
+            $app = Factory::getApplication();
+
+            if (method_exists($app, 'getLanguage')) {
+                return $app->getLanguage();
+            }
+        } catch (\Throwable $e) {
+            // No application (CLI script).
+        }
+
+        static $fallback = null;
+
+        if ($fallback === null) {
+            try {
+                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            } catch (\Throwable $e) {
+                $tag = 'en-GB';
+            }
+
+            $fallback = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+        }
+
+        return $fallback;
     }
 }

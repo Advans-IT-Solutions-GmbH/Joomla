@@ -14,18 +14,18 @@ use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Joomla\CMS\Component\ComponentHelper;
-use Joomla\CMS\Language\Language;
-use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
-use Joomla\CMS\Session\Session;
 use Joomla\CMS\Mail\MailerFactoryInterface;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
 use Joomla\Component\Privacy\Administrator\Export\Domain;
@@ -877,9 +877,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->select($db->quoteName('customer_language'))
                     ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
                     ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
-                    ->order($db->quoteName('created_on') . ' DESC'),
-                0,
-                1
+                    ->order($db->quoteName('created_on') . ' DESC')
+                    ->setLimit(1)
             );
             $tag = trim((string) $db->loadResult());
         } catch (\Throwable $e) {
@@ -905,8 +904,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             return $language;
         } catch (\Throwable $e) {
-            return Factory::getLanguage();
+            return $this->pluginStrings(self::currentLanguage());
         }
+    }
+
+    private function pluginStrings(Language $language): Language
+    {
+        $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR)
+            || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+
+        return $language;
     }
 
     /**
@@ -918,7 +925,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function formatRetainedOrders(array $orders, array $lifetime = [], ?Language $language = null): string
     {
-        $language ??= Factory::getLanguage();
+        $language ??= $this->pluginStrings(self::currentLanguage());
         $sprintf    = static fn (string $key, ...$args): string => vsprintf($language->_($key), $args);
         $text       = '';
 
@@ -1576,5 +1583,36 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         } catch (\Exception $e) {
             return ['success' => false, 'message' => Text::_('PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_ERROR')];
         }
+    }
+
+    /**
+     * Current language: the application's, or (CLI without application) a language object of the
+     * default site language. Factory::getLanguage() is deprecated.
+     */
+    private static function currentLanguage(): Language
+    {
+        try {
+            $app = Factory::getApplication();
+
+            if (method_exists($app, 'getLanguage')) {
+                return $app->getLanguage();
+            }
+        } catch (\Throwable $e) {
+            // No application (CLI script).
+        }
+
+        static $fallback = null;
+
+        if ($fallback === null) {
+            try {
+                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            } catch (\Throwable $e) {
+                $tag = 'en-GB';
+            }
+
+            $fallback = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+        }
+
+        return $fallback;
     }
 }

@@ -21,7 +21,7 @@ use Joomla\Database\DatabaseInterface;
 if (!defined('J2STORE_CLEANUP_FUNCTIONS_ONLY')) {
     $app  = Factory::getApplication();
     $db   = Factory::getContainer()->get(DatabaseInterface::class);
-    $task = $app->input->get('task', 'display');
+    $task = $app->getInput()->get('task', 'display');
 }
 
 /**
@@ -307,7 +307,7 @@ if ($task === 'cleanup' && Session::checkToken()) {
         $app->redirect('index.php?option=com_j2store_cleanup');
         return;
     }
-    $cids = $app->input->get('cid', [], 'array');
+    $cids = $app->getInput()->get('cid', [], 'array');
     $cids = array_map('intval', $cids);
     $cids = array_filter($cids); // Remove zeros
     

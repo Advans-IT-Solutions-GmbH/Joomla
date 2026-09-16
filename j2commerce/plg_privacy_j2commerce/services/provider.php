@@ -14,7 +14,6 @@ use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
-use Joomla\Event\DispatcherInterface;
 use Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce;
 
 return new class implements ServiceProviderInterface
@@ -24,10 +23,8 @@ return new class implements ServiceProviderInterface
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new J2Commerce(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('privacy', 'j2commerce')
-                );
+                // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
+                $plugin = new J2Commerce((array) PluginHelper::getPlugin('privacy', 'j2commerce'));
                 $plugin->setApplication(Factory::getApplication());
                 $plugin->setDatabase($container->get(DatabaseInterface::class));
 

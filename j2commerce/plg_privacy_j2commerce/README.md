@@ -59,12 +59,12 @@ Organizations with subscription-based business models should contact Advans IT S
 
 ### Install Steps
 
-1. Download `plg_privacy_j2commerce_<version>.zip` (e.g. `plg_privacy_j2commerce_1.5.5.zip`) from the latest release
+1. Download `plg_privacy_j2commerce_<version>.zip` from the latest release
 2. **System → Install → Extensions**
 3. Upload and install
 4. **Enable via System → Manage → Plugins → Privacy - J2Commerce**
 
-The installer also installs and enables the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`). On install and on every update it re-enables that task plugin and migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup`.
+The installer also installs the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`) and enables it on the first installation. Updates install the new version of the task plugin but leave its enabled/disabled state unchanged. On install and on every update the installer also migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup` and removes update sites of this plugin that still point to the repository's former path (`advansit/Joomla`), so Joomla only queries the current update server.
 
 ### Updating
 
@@ -360,7 +360,7 @@ if ($_privacyEnabled) {
 
 If the plugin is not installed or disabled, or the option is off, `$_privacyEnabled` is `false` and the tab is not rendered — no errors. `default_addresses.php` uses `PrivacyOptions::showDeleteAddress()` the same way.
 
-### Language file must be loaded manually
+### Language file
 
 Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the `PrivacyOptions::loadLanguage()` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys (including the tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`) render as raw strings. This call is already included in the provided `default.php` — do not remove it. The consent system plugin also loads this language file for MyProfile pages.
 
@@ -941,7 +941,7 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Show Consent Checkbox | Yes | Display privacy consent checkbox in checkout step 4 |
-| Consent Required | Yes | Make consent mandatory — blocks checkout if unchecked |
+| Consent Required | Yes | Make consent mandatory: blocks the checkout step if unchecked on J2Commerce 4; on J2Commerce 6 the checkbox is displayed but does not block the step (see [Checkout Consent Checkbox](#checkout-consent-checkbox)) |
 | Privacy Policy Article | (none) | Joomla article containing your privacy policy — linked in the consent text |
 | Consent Text | (default) | Checkbox label text. Use `{privacy_policy}` as placeholder for the policy link |
 
@@ -1214,7 +1214,7 @@ Order as in `tests/test.env`:
 10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
 11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override (accepted steps must return J2Commerce JSON without error), and the privacy policy link with SEF URLs off and on (escaped once); `onJ2CommerceAfterSaveOrder` only for the consent's cart; Privacy tab links (`com_privacy` form vs. `mailto:`, one button per enabled request option); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component, an unchanged checkout override of 1.5.5 is renamed, a changed one is kept with a warning, custom checkout overrides without the event are reported)
 12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept); a lifetime-license order keeps its e-mail while the same user's other expired order loses it (J2Commerce 6)
-13. **AcyMailing Integration** — newsletter consent sync; removal request finds the subscriber through the request e-mail after Joomla's privacy user plugin pseudonymised the account
+13. **AcyMailing Integration** — detects AcyMailing via a minimal AcyMailing table structure created by the test environment (no AcyMailing installation), checks the export queries against a test subscriber, and triggers the plugin's own AcyMailing removal path against that structure to confirm that the subscriber and all related rows are deleted, also when Joomla's privacy user plugin pseudonymised the account first (lookup through the request e-mail); also checks that detection does not fail when AcyMailing is absent
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 15. **Uninstall** — clean removal from database and filesystem
 
