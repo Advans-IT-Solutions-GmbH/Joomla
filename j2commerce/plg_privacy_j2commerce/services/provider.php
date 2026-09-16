@@ -24,10 +24,9 @@ return new class implements ServiceProviderInterface
         $container->set(
             PluginInterface::class,
             function (Container $container) {
-                $plugin = new J2Commerce(
-                    $container->get(DispatcherInterface::class),
-                    (array) PluginHelper::getPlugin('privacy', 'j2commerce')
-                );
+                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+                $plugin = new J2Commerce((array) PluginHelper::getPlugin('privacy', 'j2commerce'));
+                $plugin->setDispatcher($container->get(DispatcherInterface::class));
                 $plugin->setApplication(Factory::getApplication());
                 $plugin->setDatabase($container->get(DatabaseInterface::class));
 

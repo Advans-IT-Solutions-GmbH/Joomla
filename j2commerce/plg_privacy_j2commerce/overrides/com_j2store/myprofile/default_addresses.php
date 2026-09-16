@@ -51,7 +51,7 @@ if ($_privacyEnabled) {
 <div class="j2store-myprofile-addresses">
 
     <?php if (empty($addresses)) : ?>
-        <p><?php echo JText::_('J2STORE_NO_ADDRESSES_FOUND'); ?></p>
+        <p><?php echo Text::_('J2STORE_NO_ADDRESSES_FOUND'); ?></p>
     <?php else : ?>
         <div class="<?php echo $J2gridCol; ?>12">
             <?php foreach ($addresses as $address) : ?>
@@ -73,7 +73,7 @@ if ($_privacyEnabled) {
 
                     <div class="j2store-address-actions">
                         <a href="<?php echo $this->escape($address->edit_url ?? '#'); ?>" class="btn btn-sm btn-secondary">
-                            <?php echo JText::_('J2STORE_EDIT'); ?>
+                            <?php echo Text::_('J2STORE_EDIT'); ?>
                         </a>
 
                         <?php if ($_privacyEnabled) : ?>

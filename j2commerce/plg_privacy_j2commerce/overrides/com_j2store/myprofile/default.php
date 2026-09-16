@@ -25,8 +25,11 @@
  */
 defined('_JEXEC') or die;
 
-use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\CMS\Factory;
+use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\CMS\Router\Route;
 
 $platform = J2Store::platform();
 $platform->loadExtra('behavior.modal');
@@ -62,16 +65,16 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
     $return_url = $platform->getMyprofileUrl([], false, true);
     $return     = base64_encode($return_url);
     ?>
-    <?php $user = JFactory::getUser(); ?>
-    <?php if ($user->id > 0) : ?>
+    <?php $user = Factory::getApplication()->getIdentity(); ?>
+    <?php if ($user && $user->id > 0) : ?>
         <div class="pull-right">
-            <form action="<?php echo JRoute::_('index.php'); ?>" method="post" id="login-form" class="form-vertical">
+            <form action="<?php echo Route::_('index.php'); ?>" method="post" id="login-form" class="form-vertical">
                 <div class="logout-button">
-                    <input type="submit" name="Submit" class="btn btn-primary" value="<?php echo JText::_('JLOGOUT'); ?>" />
+                    <input type="submit" name="Submit" class="btn btn-primary" value="<?php echo Text::_('JLOGOUT'); ?>" />
                     <input type="hidden" name="option" value="com_users" />
                     <input type="hidden" name="task" value="user.logout" />
                     <input type="hidden" name="return" value="<?php echo $return; ?>" />
-                    <?php echo JHtml::_('form.token'); ?>
+                    <?php echo HTMLHelper::_('form.token'); ?>
                 </div>
             </form>
         </div>
@@ -82,7 +85,7 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
 
 <div class="j2store">
     <div class="j2store-order j2store-myprofile">
-        <h3><?php echo JText::_('J2STORE_MYPROFILE'); ?></h3>
+        <h3><?php echo Text::_('J2STORE_MYPROFILE'); ?></h3>
 
         <?php if ($messages_above_profile_html !== '') : ?>
             <div class="j2store-myprofile-addtional_messages">
@@ -97,20 +100,20 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
                 <ul class="nav nav-tabs">
                     <li class="active">
                         <a href="#orders-tab" data-toggle="tab">
-                            <i class="fa fa-th-large"></i> <?php echo JText::_('J2STORE_MYPROFILE_ORDERS'); ?>
+                            <i class="fa fa-th-large"></i> <?php echo Text::_('J2STORE_MYPROFILE_ORDERS'); ?>
                         </a>
                     </li>
                     <?php if ($this->params->get('download_area', 1)) : ?>
                         <li>
                             <a href="#downloads-tab" data-toggle="tab">
-                                <i class="fa fa-cloud-download"></i> <?php echo JText::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
+                                <i class="fa fa-cloud-download"></i> <?php echo Text::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
                     <?php if ($this->user->id) : ?>
                         <li>
                             <a href="#address-tab" data-toggle="tab">
-                                <i class="fa fa-globe"></i> <?php echo JText::_('J2STORE_MYPROFILE_ADDRESS'); ?>
+                                <i class="fa fa-globe"></i> <?php echo Text::_('J2STORE_MYPROFILE_ADDRESS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
@@ -161,20 +164,20 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
                 <ul class="nav nav-tabs" id="myProfileTab" role="tablist">
                     <li class="nav-item">
                         <a class="nav-link active" data-toggle="tab" href="#orders-tab" role="tab">
-                            <i class="fa fa-th-large"></i> <?php echo JText::_('J2STORE_MYPROFILE_ORDERS'); ?>
+                            <i class="fa fa-th-large"></i> <?php echo Text::_('J2STORE_MYPROFILE_ORDERS'); ?>
                         </a>
                     </li>
                     <?php if ($this->params->get('download_area', 1)) : ?>
                         <li class="nav-item">
                             <a class="nav-link" data-toggle="tab" href="#downloads-tab" role="tab">
-                                <i class="fa fa-cloud-download"></i> <?php echo JText::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
+                                <i class="fa fa-cloud-download"></i> <?php echo Text::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
                     <?php if ($this->user->id) : ?>
                         <li class="nav-item">
                             <a class="nav-link" data-toggle="tab" href="#address-tab" role="tab">
-                                <i class="fa fa-globe"></i> <?php echo JText::_('J2STORE_MYPROFILE_ADDRESS'); ?>
+                                <i class="fa fa-globe"></i> <?php echo Text::_('J2STORE_MYPROFILE_ADDRESS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
@@ -225,20 +228,20 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
                 <ul class="nav nav-tabs" id="myProfileTab" role="tablist">
                     <li class="nav-item" role="presentation">
                         <a class="nav-link active" data-bs-toggle="tab" data-bs-target="#orders-tab" type="button" role="tab">
-                            <i class="fa fa-th-large"></i> <?php echo JText::_('J2STORE_MYPROFILE_ORDERS'); ?>
+                            <i class="fa fa-th-large"></i> <?php echo Text::_('J2STORE_MYPROFILE_ORDERS'); ?>
                         </a>
                     </li>
                     <?php if ($this->params->get('download_area', 1)) : ?>
                         <li class="nav-item" role="presentation">
                             <a class="nav-link" data-bs-toggle="tab" data-bs-target="#downloads-tab" type="button" role="tab">
-                                <i class="fa fa-cloud-download"></i> <?php echo JText::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
+                                <i class="fa fa-cloud-download"></i> <?php echo Text::_('J2STORE_MYPROFILE_DOWNLOADS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
                     <?php if ($this->user->id) : ?>
                         <li class="nav-item" role="presentation">
                             <a class="nav-link" data-bs-toggle="tab" data-bs-target="#address-tab" type="button" role="tab">
-                                <i class="fa fa-globe"></i> <?php echo JText::_('J2STORE_MYPROFILE_ADDRESS'); ?>
+                                <i class="fa fa-globe"></i> <?php echo Text::_('J2STORE_MYPROFILE_ADDRESS'); ?>
                             </a>
                         </li>
                     <?php endif; ?>
