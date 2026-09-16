@@ -12,6 +12,7 @@
     <description>COM_J2STORE_CLEANUP_XML_DESCRIPTION</description>
     
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
 
     <namespace path="administrator/components/com_j2store_cleanup">Advans\Component\J2StoreCleanup\Administrator</namespace>
 
