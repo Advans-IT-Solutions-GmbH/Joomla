@@ -51,6 +51,7 @@ class AutoCleanupTaskTest
         $this->testRetentionLogic();
         $this->testLifetimeLicenseExemption();
         $this->testLifetimeLicenseMetafieldsPath();
+        $this->testTaskLogAndGuestErrors();
 
         echo "\n=== J2Commerce Privacy Cleanup Task Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
@@ -740,15 +741,81 @@ class AutoCleanupTaskTest
             // non-fatal
         }
         $this->cleanupTestData([$userId, $plainUserId]);
+    }
 
-        $taskFile = JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php';
+    /**
+     * Real task runs with the task's own log file: an invalid fiscal year end is logged and
+     * replaced by 12-31; a failing guest order ends the task with KNOCKOUT although a registered
+     * user was anonymized in the same run.
+     */
+    private function testTaskLogAndGuestErrors(): void
+    {
+        echo "\n--- Task log and guest-order errors (scheduler:run) ---\n";
 
-        if (file_exists($taskFile)) {
-            $src = (string) file_get_contents($taskFile);
-            $this->test('Task status is KNOCKOUT when guest orders failed, also if users were processed',
-                str_contains($src, 'if ($guestErrors > 0 || ($errorCount > 0'));
-            $this->test('Task logs an invalid fiscal year end and uses the effective value',
-                str_contains($src, 'Invalid fiscal year end') && str_contains($src, 'RetentionPeriod::effectiveFiscalYearEnd('));
+        require_once JPATH_BASE . '/configuration.php';
+        $logName = 'j2cprivacy-task-test.log.php';
+        $logFile = rtrim((string) (new \JConfig())->log_path, '/') . '/' . $logName;
+        $params  = static fn (string $fiscalYearEnd): string => json_encode([
+            'retention_years'  => 10,
+            'fiscal_year_end'  => $fiscalYearEnd,
+            'anonymize_orders' => 1,
+            'delete_addresses' => 1,
+            'individual_log'   => 1,
+            'log_file'         => $logName,
+        ]);
+
+        @unlink($logFile);
+        $run = $this->runCleanupTask($params('04-31'));
+        $log = (string) @file_get_contents($logFile);
+        $this->test('task run with fiscal year end 04-31 finished with Status::OK', $run['ok'], $run['detail']);
+        $this->test('task log warns about the invalid fiscal year end', str_contains($log, "Invalid fiscal year end '04-31', using 12-31"), mb_substr($log, -600));
+        $this->test('task log names the effective fiscal year end and the time zone', str_contains($log, 'from the end of the fiscal year (12-31, time zone '), mb_substr($log, -600));
+
+        // A CHECK constraint lets only the update of one guest order fail.
+        $isJ6       = $this->isJ6Stack();
+        $table      = $isJ6 ? '#__j2commerce_orders' : '#__j2store_orders';
+        $userId     = 9909;
+        $userOrder  = 'CLEANUP-USER-OK-' . time();
+        $guestOrder = 'CLEANUP-GUEST-ERR-' . time();
+        $oldDate    = date('Y-m-d H:i:s', strtotime('-11 years'));
+        $constraint = 'chk_j2cprivacy_task_test';
+
+        $this->seedTestUser($userId, 'guest-error-cleanup-test@example.com');
+        $this->test('expired user order seeded', $this->seedTestOrder($userId, $userOrder, $oldDate) !== null);
+        $this->test('expired guest order seeded', $this->seedTestOrder(0, $guestOrder, $oldDate) !== null);
+        $added = false;
+
+        try {
+            $this->db->setQuery(
+                'ALTER TABLE ' . $this->db->quoteName($table) . ' ADD CONSTRAINT ' . $this->db->quoteName($constraint)
+                . ' CHECK (' . $this->db->quoteName('order_id') . ' NOT LIKE ' . $this->db->quote('CLEANUP-GUEST-ERR-%')
+                . ' OR ' . $this->db->quoteName('ip_address') . ' <> ' . $this->db->quote('') . ')'
+            )->execute();
+            $added = true;
+
+            @unlink($logFile);
+            $run = $this->runCleanupTask($params('12-31'));
+            $log = (string) @file_get_contents($logFile);
+
+            $this->test('task with a failing guest order was executed', $run['executed'], $run['detail']);
+            $this->test('task with a failing guest order ends with an error status (KNOCKOUT)', !$run['ok'], $run['detail']);
+            $this->test('task log reports the guest-order error', str_contains($log, 'Error anonymizing guest orders'), mb_substr($log, -600));
+            $this->test('registered user was anonymized in the same run', $this->orderEmail($table, $userOrder) === 'anonymized@deleted.invalid',
+                'user_email=' . var_export($this->orderEmail($table, $userOrder), true));
+        } catch (\Throwable $e) {
+            $this->test('guest-error check executes', false, $e->getMessage());
+        } finally {
+            if ($added) {
+                $this->db->setQuery('ALTER TABLE ' . $this->db->quoteName($table) . ' DROP CONSTRAINT ' . $this->db->quoteName($constraint))->execute();
+            }
+
+            $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->delete($this->db->quoteName($table))
+                    ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($guestOrder))
+            )->execute();
+            $this->cleanupTestData([$userId]);
+            @unlink($logFile);
         }
     }
 

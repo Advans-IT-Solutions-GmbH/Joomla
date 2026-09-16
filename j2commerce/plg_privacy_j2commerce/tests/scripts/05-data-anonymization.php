@@ -31,6 +31,7 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
         public array $lifetime = [];
         public ?object $stubApp = null;
         public string $mailState = 'sent';
+        public bool $realMail = false;
 
         protected function lifetimeOrderIds(array $orderIds): array
         {
@@ -44,6 +45,10 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
 
         protected function sendCustomerRetentionNotice($app, array $retained, array $lifetime, string $customerEmail, string $languageTag): string
         {
+            if ($this->realMail) {
+                return parent::sendCustomerRetentionNotice($app, $retained, $lifetime, $customerEmail, $languageTag);
+            }
+
             FeedbackTestApp::$log[] = ['mail', $customerEmail, $languageTag];
 
             return $this->mailState;
@@ -53,6 +58,83 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
         {
             return $this->$method(...$args);
         }
+    }
+}
+
+/** Mail doubles: application with configuration and container, factory and recording mailer. */
+class RecordingMailer
+{
+    public array $to = [];
+    public string $subject = '';
+    public string $body = '';
+    public bool $result = true;
+
+    public function addRecipient($recipient)
+    {
+        $this->to[] = $recipient;
+
+        return $this;
+    }
+
+    public function setSubject($subject)
+    {
+        $this->subject = (string) $subject;
+
+        return $this;
+    }
+
+    public function setBody($body)
+    {
+        $this->body = (string) $body;
+
+        return $this;
+    }
+
+    public function send()
+    {
+        return $this->result;
+    }
+}
+
+class RecordingMailerFactory
+{
+    public ?RecordingMailer $last = null;
+    public bool $result = true;
+
+    public function createMailer()
+    {
+        $this->last         = new RecordingMailer();
+        $this->last->result = $this->result;
+
+        return $this->last;
+    }
+}
+
+class MailTestApp
+{
+    public $container;
+    public int $mailonline = 0;
+
+    public function get($key, $default = null)
+    {
+        return ['mailonline' => $this->mailonline, 'sitename' => 'Test Shop', 'mailfrom' => 'shop@example.invalid'][$key] ?? $default;
+    }
+
+    public function getContainer()
+    {
+        return $this->container;
+    }
+}
+
+class RecordingContainer
+{
+    public function __construct(private object $factory)
+    {
+    }
+
+    public function get($id)
+    {
+        return $this->factory;
     }
 }
 
@@ -519,20 +601,25 @@ class DataAnonymizationTest
         }
 
         $mismatch = 0;
+        $first    = '';
         $zones    = [$utc, $zurich, new \DateTimeZone('America/New_York'), new \DateTimeZone('Pacific/Auckland')];
 
+        // Fixed seed: a failure can be reproduced.
+        mt_srand(20260916);
+
         for ($i = 0; $i < 2000; $i++) {
-            $order = (new \DateTimeImmutable('2010-01-01', $utc))->modify('+' . random_int(0, 6000) . ' days +' . random_int(0, 86399) . ' seconds')->format('Y-m-d H:i:s');
-            $at    = (new \DateTimeImmutable('2024-01-01', $utc))->modify('+' . random_int(0, 1500) . ' days +' . random_int(0, 86399) . ' seconds');
-            $years = random_int(0, 12);
+            $order = (new \DateTimeImmutable('2010-01-01', $utc))->modify('+' . mt_rand(0, 6000) . ' days +' . mt_rand(0, 86399) . ' seconds')->format('Y-m-d H:i:s');
+            $at    = (new \DateTimeImmutable('2024-01-01', $utc))->modify('+' . mt_rand(0, 1500) . ' days +' . mt_rand(0, 86399) . ' seconds');
+            $years = mt_rand(0, 12);
             $fy    = ['12-31', '06-30', '03-31', '02-29'][$i % 4];
             $zone  = $zones[intdiv($i, 4) % 4];
 
             if ($class::isExpired($order, $years, $fy, $at, $zone) !== ($order <= $class::cutoff($years, $fy, $at, $zone))) {
                 $mismatch++;
+                $first = $first ?: sprintf('order %s, now %s, %d years, fiscal year end %s, zone %s', $order, $at->format('Y-m-d H:i:s'), $years, $fy, $zone->getName());
             }
         }
-        $this->test('Cutoff query and per-order check agree (2000 random cases, 4 time zones)', $mismatch === 0, "$mismatch mismatches");
+        $this->test('Cutoff query and per-order check agree (2000 random cases, 4 time zones)', $mismatch === 0, "$mismatch mismatches, first: $first");
     }
 
     /**
@@ -581,6 +668,43 @@ class DataAnonymizationTest
         $this->test('customer language falls back to a valid site language tag',
             (bool) preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', (string) $plugin->call('customerLanguage', 998)));
         $plugin->stubApp = null;
+
+        // The real sendCustomerRetentionNotice(): address check, customer language, mail result.
+        $plugin->realMail = true;
+        $factory          = new RecordingMailerFactory();
+        $app              = new MailTestApp();
+        $app->container   = new RecordingContainer($factory);
+        $lifetime         = [['order_number' => 'FB-2', 'order_date' => '01.02.2010']];
+
+        $this->test('real mail path: invalid request address is reported as invalid, no mailer created',
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, 'not-an-address', 'de-DE') === 'invalid' && $factory->last === null);
+
+        $state  = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+        $mailer = $factory->last;
+        $this->test('real mail path: sent to the request address', $state === 'sent' && $mailer && $mailer->to === [$email], $state);
+        $this->test('real mail path: subject and body in the customer language (German)',
+            $mailer && str_contains($mailer->subject, 'Test Shop') && str_contains($mailer->subject, 'Anfrage')
+            && str_contains($mailer->body, 'Aufbewahrungsfrist') && str_contains($mailer->body, 'Unbefristete Lizenz')
+            && str_contains($mailer->body, 'FB-1') && str_contains($mailer->body, 'FB-2') && !str_contains($mailer->body, 'PLG_PRIVACY_J2COMMERCE_'),
+            $mailer ? $mailer->subject . ' | ' . mb_substr($mailer->body, 0, 300) : 'no mailer');
+
+        $factory->result = false;
+        $this->test('real mail path: send() returning false is reported as failed',
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE') === 'failed');
+
+        // Joomla's own mailer with "Send Mail" off (mailonline = 0) throws MailDisabledException.
+        $joomlaApp            = new MailTestApp();
+        $joomlaApp->container = Factory::getContainer();
+        $previous             = Factory::$application;
+        Factory::$application = $joomlaApp;
+
+        try {
+            $this->test('real Joomla mailer with mail disabled is reported as failed',
+                $plugin->call('sendCustomerRetentionNotice', $joomlaApp, $retained, $lifetime, $email, 'de-DE') === 'failed');
+        } finally {
+            Factory::$application = $previous;
+            $plugin->realMail     = false;
+        }
     }
 
     private function isJ6Stack(): bool

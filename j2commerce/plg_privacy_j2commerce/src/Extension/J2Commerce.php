@@ -44,6 +44,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     /**
+     * Username and e-mail of the accounts of the current removal request, captured in
+     * onPrivacyCanRemoveData(): com_privacy dispatches that event to all privacy plugins before
+     * any onPrivacyRemoveData(), and Joomla's privacy user plugin pseudonymises the shared User
+     * object in onPrivacyRemoveData(), possibly before this plugin runs.
+     *
+     * @var array<int, array{username: string, email: string}>
+     */
+    private array $accountsBeforeRemoval = [];
+
+    /**
      * Returns true if J2Commerce 4.x is installed (#__j2store_* tables).
      * Returns false for J2Commerce 6.x (#__j2commerce_* tables).
      */
@@ -773,6 +783,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $status;
         }
 
+        $this->accountsBeforeRemoval[(int) $user->id] = [
+            'username' => (string) $user->username,
+            'email'    => (string) $user->email,
+        ];
+
         // The request is always carried out: orders within the retention period are kept until
         // their retention end, lifetime-license orders keep only their order e-mail address after
         // it (provisional rule, pending confirmation). See processDataRemoval().
@@ -802,9 +817,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Process data removal for user
-     */
-    /**
      * Process data removal request.
      * 
      * Per Swiss law (OR Art. 958f, MWSTG Art. 70):
@@ -826,12 +838,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Captured before any plugin of this request changes the account: Joomla's privacy user
-        // plugin pseudonymises name, username and e-mail of this same User object, and it may run
-        // before this plugin (same ordering, lower extension ID).
+        // Username and account e-mail as captured in onPrivacyCanRemoveData(): Joomla's privacy
+        // user plugin may already have pseudonymised this User object (same ordering, lower
+        // extension ID). Without that capture (direct call) the current values are used.
         $userId        = (int) $user->id;
-        $username      = (string) $user->username;
-        $accountEmail  = (string) $user->email;
+        $account       = $this->accountsBeforeRemoval[$userId] ?? ['username' => (string) $user->username, 'email' => (string) $user->email];
+        unset($this->accountsBeforeRemoval[$userId]);
+        $username      = $account['username'];
+        $accountEmail  = $account['email'];
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
         $check         = $this->checkRetentionPeriod($userId);
         $retained      = $check['orders'];
@@ -886,7 +900,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         if (!preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
-            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            try {
+                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            } catch (\Throwable $e) {
+                // No application (CLI script): the component cache cannot be used.
+                $tag = 'en-GB';
+            }
         }
 
         return $tag;
@@ -958,10 +977,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Feedback after a removal request: message for the administrator who processes the request,
-     * e-mail to the customer when orders are kept.
-     */
-    /**
+     * Feedback after a removal request: the customer e-mail when orders are kept, then the
+     * message for the administrator who processes the request.
+     *
      * @param   array   $retained       Orders within the retention period
      * @param   array   $lifetime       Expired lifetime-license orders (order e-mail kept)
      * @param   string  $customerEmail  Address of the request (captured before pseudonymisation)
@@ -1016,6 +1034,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return null;
         }
     }
+
     /**
      * E-mail the kept orders to the customer, in the customer's language.
      *

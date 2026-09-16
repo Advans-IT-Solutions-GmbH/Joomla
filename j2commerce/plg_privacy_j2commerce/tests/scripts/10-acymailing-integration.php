@@ -16,6 +16,10 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+// Extension namespaces (com_privacy Status) as the application would load them.
+JLoader::register('JNamespacePsr4Map', JPATH_LIBRARIES . '/namespacemap.php');
+(new JNamespacePsr4Map())->load();
+
 use Joomla\CMS\Factory;
 use Joomla\CMS\User\User;
 
@@ -364,8 +368,11 @@ class AcyMailingIntegrationTest
 
     /**
      * Joomla's privacy user plugin pseudonymises name, username and e-mail of the User object of
-     * the request and can run before this plugin (same ordering, lower extension ID). The
-     * subscriber must still be found through the e-mail address of the request.
+     * the request in onPrivacyRemoveData() and can run before this plugin (same ordering, lower
+     * extension ID). com_privacy dispatches onPrivacyCanRemoveData() to all plugins first.
+     * Both cases are run in that order: the subscriber is found (request e-mail, or the account
+     * e-mail captured in onPrivacyCanRemoveData()) and the administrator notification gets the
+     * original username.
      */
     private function testRemovalAfterPseudonymisation(): void
     {
@@ -373,11 +380,7 @@ class AcyMailingIntegrationTest
 
         $prefix = $this->getAcymPrefix();
         if ($prefix === null) {
-            if (getenv('TEST_STRICT_SKIP') === '1') {
-                $this->test('AcyMailing schema available', false, 'the test environment installs it; getAcymPrefix() returned null');
-            } else {
-                echo "SKIP (AcyMailing not installed)\n";
-            }
+            $this->strictSkip('AcyMailing schema available', 'the test environment installs it; getAcymPrefix() returned null');
             return;
         }
 
@@ -388,48 +391,76 @@ class AcyMailingIntegrationTest
             require_once $classFile;
         }
 
-        if (!$this->test('Plugin class loadable for the removal flow', class_exists($class))) {
+        if (!$this->test('Plugin class loadable for the removal flow', class_exists($class))
+            || !$this->test('com_privacy Status class loadable', class_exists('Joomla\\Component\\Privacy\\Administrator\\Removal\\Status'))) {
             return;
         }
 
-        $email  = 'acym-pseudonymised@example.com';
-        $userId = 9907;
+        foreach (['request e-mail' => true, 'account e-mail captured before the removal' => false] as $label => $withRequestEmail) {
+            $userId   = $withRequestEmail ? 9907 : 9908;
+            $email    = 'acym-pseudonymised-' . $userId . '@example.com';
+            $username = 'acym-original-' . $userId;
 
-        try {
-            $this->db->setQuery(
-                "INSERT IGNORE INTO `{$prefix}user` (email, name, confirmed, creation_date) VALUES ('$email', 'Pseudo Test', 1, NOW())"
-            )->execute();
-            $subId = (int) $this->db->setQuery("SELECT id FROM `{$prefix}user` WHERE email = '$email'")->loadResult();
-            $this->db->setQuery(
-                "INSERT IGNORE INTO `{$prefix}user_has_list` (user_id, list_id, status, subscription_date) VALUES ($subId, 1, 1, NOW())"
-            )->execute();
-            $this->test('Subscriber for the pseudonymisation case inserted', $subId > 0);
+            try {
+                $subId = $this->insertSubscriber($prefix, $email, 'Pseudo Test');
+                $this->db->setQuery(
+                    'INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                    . " (user_id, list_id, status, subscription_date) VALUES ($subId, 1, 1, NOW())"
+                )->execute();
+                $this->test("[$label] subscriber inserted", $subId > 0);
 
-            // State after plg_privacy_user::onPrivacyRemoveData() on the shared User object.
-            $user           = new \Joomla\CMS\User\User();
-            $user->id       = $userId;
-            $user->name     = 'User ID ' . $userId;
-            $user->username = bin2hex(random_bytes(12));
-            $user->email    = 'UserID' . $userId . 'removed@email.invalid';
+                $plugin = new class (new \Joomla\Event\Dispatcher(), ['params' => new \Joomla\Registry\Registry(['anonymize_orders' => 0, 'delete_addresses' => 0])]) extends \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce {
+                    public array $notifiedUsernames = [];
 
-            $plugin = new $class(new \Joomla\Event\Dispatcher(), ['params' => new \Joomla\Registry\Registry(['anonymize_orders' => 0, 'delete_addresses' => 0])]);
-            $plugin->setDatabase($this->db);
+                    protected function sendAdminNotification(string $action, User $user, string $details = '', ?string $username = null): void
+                    {
+                        $this->notifiedUsernames[] = $username ?? $user->username;
+                    }
+                };
+                $plugin->setDatabase($this->db);
 
-            $method = new \ReflectionMethod($plugin, 'processDataRemoval');
-            $method->setAccessible(true);
-            $method->invoke($plugin, $user, $email);
+                // One User object for both events, as RemoveModel::removeDataForRequest() does.
+                $user           = new User();
+                $user->id       = $userId;
+                $user->name     = 'Original Name';
+                $user->username = $username;
+                $user->email    = $email;
 
-            $left = (int) $this->db->setQuery("SELECT COUNT(*) FROM `{$prefix}user` WHERE email = '$email'")->loadResult();
-            $this->test('Subscriber removed through the request e-mail although the account e-mail is pseudonymised', $left === 0, "$left left");
-            $this->test('List subscriptions of that subscriber removed',
-                (int) $this->db->setQuery("SELECT COUNT(*) FROM `{$prefix}user_has_list` WHERE user_id = $subId")->loadResult() === 0);
-        } catch (\Throwable $e) {
-            $this->test('Removal flow runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
-        } finally {
-            $this->db->setQuery("DELETE FROM `{$prefix}user` WHERE email = '$email'")->execute();
+                $status = $plugin->onPrivacyCanRemoveData(null, $user);
+                $this->test("[$label] removal request allowed", $status->canRemove === true);
+
+                // plg_privacy_user::onPrivacyRemoveData() runs first and binds pseudonymised values.
+                $user->name     = 'User ID ' . $userId;
+                $user->username = bin2hex(random_bytes(12));
+                $user->email    = 'UserID' . $userId . 'removed@email.invalid';
+
+                if ($withRequestEmail) {
+                    $method = new \ReflectionMethod($plugin, 'processDataRemoval');
+                    $method->setAccessible(true);
+                    $method->invoke($plugin, $user, $email);
+                } else {
+                    $plugin->onPrivacyRemoveData(null, $user);
+                }
+
+                $this->test("[$label] subscriber removed although the account is pseudonymised",
+                    $this->countRows($prefix . 'user', 'id', $subId) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $subId) === 0);
+                $this->test("[$label] administrator notification uses the original username",
+                    $plugin->notifiedUsernames === [$username], json_encode($plugin->notifiedUsernames));
+
+                // The capture is removed after the request: a second removal uses the current values.
+                $plugin->notifiedUsernames = [];
+                $plugin->onPrivacyRemoveData(null, $user);
+                $this->test("[$label] capture is not kept after the request",
+                    $plugin->notifiedUsernames === [$user->username], json_encode($plugin->notifiedUsernames));
+            } catch (\Throwable $e) {
+                $this->test("[$label] removal flow runs without error", false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            } finally {
+                $this->db->setQuery(
+                    'DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote($email)
+                )->execute();
+            }
         }
     }
-
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
