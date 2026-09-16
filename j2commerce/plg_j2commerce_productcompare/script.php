@@ -28,12 +28,37 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             $lang->load('plg_j2commerce_productcompare', JPATH_ADMINISTRATOR);
             $lang->load('plg_j2commerce_productcompare', $parent->getParent()->getPath('source'));
 
+            $enabled = $this->isPluginEnabled();
+
+            // Updates only get a short confirmation, plus a hint while the plugin
+            // is disabled; the first installation shows the setup notes and asks
+            // to enable the plugin only while it is disabled.
+            if ($type === 'update') {
+                $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+                $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+                $app->enqueueMessage(
+                    Text::sprintf('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                    'message'
+                );
+
+                if (!$enabled) {
+                    $app->enqueueMessage(Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_ENABLE_HINT'), 'message');
+                }
+
+                return;
+            }
+
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid;background:#eff6ff;border-color:#2563eb';
 
             $message = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:860px">';
             $message .= '<h2 style="margin-bottom:16px">' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_TITLE') . '</h2>';
             $message .= '<div style="' . $sBox . '">';
-            $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_ENABLE') . '</p>';
+
+            if (!$enabled) {
+                $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_ENABLE') . '</p>';
+            }
+
             $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_SEARCH') . '</p>';
             $message .= '</div>';
             $message .= '<p style="margin-top:12px;color:#6b7280;font-size:13px">' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_DOCS') . '</p>';
@@ -167,6 +192,27 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             $item->isDir() ? rmdir($item->getRealPath()) : unlink($item->getRealPath());
         }
         rmdir($dir);
+    }
+
+    /**
+     * Whether this plugin is enabled in #__extensions. The group is j2commerce
+     * on Joomla 6 and j2store on Joomla 5, so only type and element are matched.
+     */
+    private function isPluginEnabled(): bool
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->createDbQuery($db)
+                ->select('MAX(' . $db->quoteName('enabled') . ')')
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
+                ->whereIn($db->quoteName('folder'), ['j2commerce', 'j2store'], ParameterType::STRING);
+
+            return (int) $db->setQuery($query)->loadResult() === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private function ensureUpdateSite(): void

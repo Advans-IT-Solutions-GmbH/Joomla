@@ -9,6 +9,8 @@
 #   J2COMMERCE_STACK     "j6" for the Joomla 6 + J2Commerce 6 stack
 #   PREVIOUS_PACKAGE     container path of the previous release package
 #                        (update-from-previous suite)
+#   INSTALLED_PLUGIN_FOLDERS  comma-separated plugin groups the extension may
+#                        be registered in (may also be set in test.env)
 #
 
 set -e
@@ -41,7 +43,7 @@ RESULTS_DIR="${RESULTS_DIR:-./test-results}"
 mkdir -p "$RESULTS_DIR"
 
 EXEC_ENV=()
-for var in TEST_STRICT_SKIP J2COMMERCE_STACK PREVIOUS_PACKAGE; do
+for var in TEST_STRICT_SKIP J2COMMERCE_STACK PREVIOUS_PACKAGE INSTALLED_PLUGIN_FOLDERS; do
     if [ -n "${!var:-}" ]; then
         EXEC_ENV+=(-e "${var}=${!var}")
     fi

@@ -123,7 +123,22 @@ function sh_find_extension_id(array $manifest, ?string $folder = null, ?string $
         . " WHERE type = '$type' AND element = '$element'";
 
     if ($type === 'plugin') {
-        $sql .= " AND folder = '$folder'";
+        // An installer script may move a plugin to another group on some stacks
+        // (product compare registers folder=j2store on Joomla 5 with J2Store 4).
+        // INSTALLED_PLUGIN_FOLDERS lists every group the extension may use.
+        $folders = [$folder];
+
+        if (func_num_args() < 2 && getenv('INSTALLED_PLUGIN_FOLDERS')) {
+            foreach (explode(',', (string) getenv('INSTALLED_PLUGIN_FOLDERS')) as $alias) {
+                $alias = trim($alias);
+
+                if ($alias !== '') {
+                    $folders[] = $db->real_escape_string($alias);
+                }
+            }
+        }
+
+        $sql .= " AND folder IN ('" . implode("','", array_unique($folders)) . "')";
     }
 
     $result = $db->query($sql);
@@ -225,6 +240,69 @@ function sh_use_cli_language(string $root, string $tag): callable
 function sh_strip_ansi(string $text): string
 {
     return preg_replace('/\e\[[0-9;]*[A-Za-z]/', '', $text);
+}
+
+/**
+ * Text without HTML tags, entities and line wrapping, for comparing CLI output
+ * (which wraps long messages) with language strings.
+ */
+function sh_plain_text(string $text): string
+{
+    $text = html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    return trim((string) preg_replace('/\s+/u', ' ', $text));
+}
+
+/**
+ * All language strings of one language in an installation package
+ * (every <tag>/*.ini except *.sys.ini).
+ *
+ * @return array<string, string>
+ */
+function sh_read_package_language(string $package, string $tag): array
+{
+    $strings = [];
+
+    if (!is_file($package) || !class_exists('ZipArchive')) {
+        return $strings;
+    }
+
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        return $strings;
+    }
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = (string) $zip->getNameIndex($i);
+
+        if (!preg_match('#(^|/)' . preg_quote($tag, '#') . '/[^/]+\.ini$#', $name) || str_ends_with($name, '.sys.ini')) {
+            continue;
+        }
+
+        $parsed = @parse_ini_string((string) $zip->getFromIndex($i), false, INI_SCANNER_RAW);
+
+        foreach (is_array($parsed) ? $parsed : [] as $key => $value) {
+            $strings[(string) $key] = str_replace('"_QQ_"', '"', (string) $value);
+        }
+    }
+
+    $zip->close();
+
+    return $strings;
+}
+
+function sh_extension_enabled(int $extensionId): ?int
+{
+    $result = sh_db()->query('SELECT enabled FROM ' . sh_table('extensions') . ' WHERE extension_id = ' . $extensionId);
+    $row    = $result ? $result->fetch_row() : null;
+
+    return $row ? (int) $row[0] : null;
+}
+
+function sh_set_extension_enabled(int $extensionId, int $enabled): void
+{
+    sh_db()->query('UPDATE ' . sh_table('extensions') . ' SET enabled = ' . ($enabled ? 1 : 0) . ' WHERE extension_id = ' . $extensionId);
 }
 
 /**

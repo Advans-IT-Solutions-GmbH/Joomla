@@ -262,7 +262,7 @@ jobs:
           docker compose -f docker-compose.joomla6.yml down -v
 
   test-production:
-    name: Production-like (J6.1, PHP 8.4, MariaDB 10.6, J2C6 production pin)
+    name: Production-like (newest J6, PHP 8.4, MariaDB 10.6, J2C6 production pin)
     runs-on: ubuntu-latest
     needs: build
     permissions:

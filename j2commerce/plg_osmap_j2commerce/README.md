@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -10,7 +10,7 @@ Adds all publicly visible J2Store / J2Commerce products to the OSMap sitemap aut
 
 ### Compatibility Test Scope
 
-The CI installs full Joomla packages, the real OSMap 5.1.6 runtime, and real
+The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x), the real OSMap 5.1.6 runtime, and real
 J2Commerce/J2Store components, then exercises the plugin against them on both
 stacks (Joomla 5 + J2Store/J2Commerce 4 and Joomla 6 + J2Commerce 6):
 
@@ -64,7 +64,7 @@ New or re-enabled products are picked up on the next sitemap request.
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce (formerly J2Store) 4.x or later
 - [OSMap Free or Pro](https://extensions.joomla.org/extension/osmap/) 5.x or later
@@ -238,7 +238,7 @@ Installed path: `plugins/osmap/j2commerce/`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6 and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (Joomla 6.1, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6 and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 

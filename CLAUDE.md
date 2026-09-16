@@ -29,7 +29,7 @@ Joomla/
 ├── j2commerce/                 # J2Commerce-bezogene Extensions
 │   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension
 │   ├── plg_osmap_j2commerce/           # OSMap-Sitemap-Plugin (Gruppe: osmap)
-│   ├── plg_j2commerce_productcompare/  # Produktvergleich (Gruppe: j2commerce; auf Joomla 4/5 zusätzlich als `j2store` gespiegelt)
+│   ├── plg_j2commerce_productcompare/  # Produktvergleich (Gruppe: j2commerce; auf Joomla 5 zusätzlich als `j2store` gespiegelt)
 │   ├── com_j2commerce_importexport/    # Komponente: Bulk-Import/Export
 │   └── com_j2store_cleanup/            # Komponente: Migrationsbereinigung J2Store→J2Commerce
 ├── shared/                     # gemeinsame Build- und Test-Skripte (Single Source of Truth)
@@ -108,7 +108,7 @@ docker compose -f docker-compose.joomla6.yml down -v
 - Cleanup (Workflow setzt nur den Container): `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all`
 - AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
 
-Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
+Alle Extensions verlangen Joomla 5.4 oder neuer (5.4.x, 6.x) und PHP 8.1 oder neuer; `shared/tests/requirements-check.php` prüft das im CI-Job „Language Files". Die Test-Images nutzen mitlaufende offizielle Tags (`joomla:5.4-php8.3-apache` = neuestes 5.4.x, `joomla:6-php8.4-apache` = neuestes 6.x), keine gepinnte Joomla-Patch-Version. Jeder Job gibt `Tested versions: Joomla X.Y.Z, PHP A.B.C` aus; ein roter Lauf kann daher von einem neuen Joomla-Release kommen, erst die ausgegebene Version prüfen. Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
 
 ## Release-Workflow
 

@@ -2,8 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml)
-[![Joomla 4](https://img.shields.io/badge/Joomla-4.x-blue.svg)](https://www.joomla.org/)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -24,14 +23,14 @@ Until now, there was no automated way to remove old J2Store extensions that are 
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 4.x, 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - Administrator access
 - ⚠️ Backup recommended before use
 
 ## Joomla 6 Compatibility
 
-On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The component uses `Factory::getContainer()->get(DatabaseInterface::class)` and a `createDbQuery()` helper that calls `$db->createQuery()` on Joomla 6 and `$db->getQuery(true)` on Joomla 4/5. No configuration required — the correct API is selected at runtime.
+On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The component uses `Factory::getContainer()->get(DatabaseInterface::class)` and a `createDbQuery()` helper that calls `$db->getQuery(true)` on Joomla 5 (Joomla 5.4 has no `createQuery()` on `DatabaseInterface`) and `$db->createQuery()` on Joomla 6. No configuration required — the correct API is selected at runtime.
 
 ## Installation
 1. Download `com_j2store_cleanup_<version>.zip` from the latest release
@@ -285,10 +284,10 @@ All PHP files in the extension folder are scanned recursively (with `/* */` and 
 
 | Running Joomla | Flagged APIs |
 |----------------|--------------|
-| 4 and 5 | J3 legacy classes: `JPlugin`, `JModel`/`JModelLegacy`, `JTable`, `JView`/`JViewLegacy`, `JController`/`JControllerLegacy`, `JForm` |
+| 5 | J3 legacy classes: `JPlugin`, `JModel`/`JModelLegacy`, `JTable`, `JView`/`JViewLegacy`, `JController`/`JControllerLegacy`, `JForm` |
 | 6 | All of the above, plus `JFactory`, `JText`, `JHtml`, `JRoute`, `JUri`, `JSession`, `Factory::getUser()`, `Factory::getDbo()`, `Factory::getSession()`, `Factory::getDocument()` and `$this->app` |
 
-The result therefore depends on the Joomla version: an extension that still uses `JFactory` or `JText` is shown as *Compatible* on Joomla 4/5, where these classes still work, but as *Incompatible* on Joomla 6. On Joomla versions below 6 the scan box shows a note about this. Version numbers, author data and the enabled status are not evaluated, and there are currently no J2Store-specific patterns.
+The result therefore depends on the Joomla version: an extension that still uses `JFactory` or `JText` is shown as *Compatible* on Joomla 5, where these classes still work, but as *Incompatible* on Joomla 6. On Joomla versions below 6 the scan box shows a note about this. Version numbers, author data and the enabled status are not evaluated, and there are currently no J2Store-specific patterns.
 
 ### False Positives
 The scan is a text pattern match, so a class name inside a string, for example, is also flagged. If a working extension is flagged:

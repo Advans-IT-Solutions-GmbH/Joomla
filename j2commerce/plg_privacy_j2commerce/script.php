@@ -87,8 +87,11 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 );
             }
 
-            // Updates only get a short confirmation; the full setup guide is
-            // shown on the first installation.
+            $enabled = $this->isPluginEnabled();
+
+            // Updates only get a short confirmation, plus a hint while the plugin
+            // is disabled; the full setup guide is shown on the first installation
+            // and lists only the steps that are still open.
             if ($type === 'update') {
                 $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
                 $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
@@ -97,6 +100,10 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                     Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_UPDATED', htmlspecialchars($version)),
                     'message'
                 );
+
+                if (!$enabled) {
+                    $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_ENABLE_HINT'), 'message');
+                }
 
                 return;
             }
@@ -117,20 +124,26 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:860px">';
             $message .= '<h2 style="margin-bottom:16px">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TITLE') . '</h2>';
 
-            // Step 1
-            $message .= '<div style="' . $sInfo . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_LABEL') . '</div>';
-            $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_TITLE') . '</h3>';
-            $message .= '<p>' . Text::_(
-                $this->taskPluginReady
-                    ? 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC'
-                    : 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC_TASK_FAILED'
-            ) . '</p>';
-            $message .= '</div>';
+            // Steps are numbered in the order shown; enabling the plugin is left
+            // out when it is already enabled.
+            $step = 0;
+
+            // Enable plugin
+            if (!$enabled) {
+                $message .= '<div style="' . $sInfo . '">';
+                $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
+                $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_TITLE') . '</h3>';
+                $message .= '<p>' . Text::_(
+                    $this->taskPluginReady
+                        ? 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC'
+                        : 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC_TASK_FAILED'
+                ) . '</p>';
+                $message .= '</div>';
+            }
 
             // Step 2
             $message .= '<div style="' . $sInfo . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP2_LABEL') . '</div>';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP2_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP2_NAV') . '</p>';
             $message .= '<table style="' . $sTbl . '">';
@@ -143,7 +156,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             // Step 3 — Advans IT Solutions GmbH Licensing Configuration
             $message .= '<div style="' . $sAdvans . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP3_LABEL') . '</div>';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_OPTIONAL_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP3_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP3_DESC') . '</p>';
 
@@ -197,7 +210,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             // Step 4
             $message .= '<div style="' . $sInfo . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_LABEL') . '</div>';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_NAV') . '</p>';
             $message .= '<ol style="line-height:1.8">';
@@ -211,7 +224,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             // Step 5 — Privacy Request Menu Item
             $message .= '<div style="' . $sWarn . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP5_LABEL') . '</div>';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_REQUIRED_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP5_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP5_DESC') . '</p>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP5_NAV') . '</p>';
@@ -260,7 +273,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '<div style="' . $sWarn . '">';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECKLIST_TITLE') . '</h3>';
             $message .= '<ul style="list-style:none;padding-left:0;line-height:1.8">';
-            $message .= '<li>&#9744; ' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECK_ENABLED') . '</li>';
+            if (!$enabled) {
+                $message .= '<li>&#9744; ' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECK_ENABLED') . '</li>';
+            }
             $message .= '<li>&#9744; ' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECK_EMAIL') . '</li>';
             $message .= '<li>&#9744; ' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECK_RETENTION') . '</li>';
             $message .= '<li>&#9744; ' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_CHECK_CONSENT') . '</li>';
@@ -534,6 +549,27 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             }
         } catch (\Throwable $e) {
             // Detection is advisory only; never block the installation.
+        }
+    }
+
+    /**
+     * Whether this plugin is enabled in #__extensions (Joomla installs plugins
+     * disabled; an update keeps the current state).
+     */
+    private function isPluginEnabled(): bool
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->dbQuery($db)
+                ->select($db->quoteName('enabled'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('privacy'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('j2commerce'));
+
+            return (int) $db->setQuery($query)->loadResult() === 1;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

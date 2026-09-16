@@ -36,7 +36,7 @@ Both tables are populated via SQL (see the post-installation message); there is 
 
 ## Minimum Requirements
 
-- Joomla 5.0+ (uses DI container, `Factory::getContainer()`)
+- Joomla 5.4+ (5.4.x and 6.x; uses DI container, `Factory::getContainer()`)
 - PHP 8.1+
 - J2Commerce 4.0+
 

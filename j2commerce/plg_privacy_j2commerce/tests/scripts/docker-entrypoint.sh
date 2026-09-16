@@ -25,6 +25,22 @@ while [ ! -f /var/www/html/configuration.php ] && [ $ELAPSED -lt $TIMEOUT ]; do
     echo "  Waiting... ($ELAPSED/$TIMEOUT seconds)"
 done
 
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window lost the J2Store registration
+# now and then, so wait until the installation folder is gone and Apache answers.
+if [ -f /var/www/html/configuration.php ]; then
+    READY_ELAPSED=0
+    until [ ! -d /var/www/html/installation ] && curl -fs -o /dev/null http://localhost/; do
+        if [ $READY_ELAPSED -ge 120 ]; then
+            echo "ERROR: Joomla setup did not finish within 120 seconds"
+            exit 1
+        fi
+        sleep 2
+        READY_ELAPSED=$((READY_ELAPSED + 2))
+    done
+    echo "Joomla setup finished"
+fi
+
 if [ ! -f /var/www/html/configuration.php ]; then
         echo "Creating configuration.php manually..."
         cat > /var/www/html/configuration.php << 'EOFCONFIG'
@@ -103,6 +119,12 @@ if [ -f /tmp/j2commerce4.zip ]; then
     cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
     if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip 2>&1; then
         echo "J2Store/J2Commerce 4 installed via Joomla CLI"
+        J2STORE_ROWS=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -N -s \
+            -e "SELECT COUNT(*) FROM ${DB_PREFIX}extensions WHERE type='component' AND element='com_j2store';" 2>/dev/null || echo 0)
+        if [ "${J2STORE_ROWS:-0}" -lt 1 ]; then
+            echo "ERROR: com_j2store is not registered after the J2Store/J2Commerce 4 installation"
+            exit 1
+        fi
     else
         echo "ERROR: J2Store/J2Commerce 4 installation FAILED"
         exit 1

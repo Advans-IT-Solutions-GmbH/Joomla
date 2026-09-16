@@ -21,6 +21,20 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
             $lang = $app->getLanguage();
             $lang->load('com_j2commerce_importexport', JPATH_ADMINISTRATOR);
 
+            // Updates only get a short confirmation; the first installation shows
+            // where the component is found.
+            if ($type === 'update') {
+                $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+                $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+                $app->enqueueMessage(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                    'message'
+                );
+
+                return;
+            }
+
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid;background:#eff6ff;border-color:#2563eb';
 
             $message = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:860px">';

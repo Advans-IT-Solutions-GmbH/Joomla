@@ -19,10 +19,16 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 ## PHP
 
 - PHP 8.1+ minimum (all extensions)
-- Joomla 5.0+ minimum; exception: `com_j2store_cleanup` still supports Joomla 4.0 (`minimumJoomla '4.0'`,
-  release `targetplatform` includes 4.x; its README states Joomla 4 support)
-- Release workflows write `targetplatform` `(5\.[0-9]|6\.[0-9])` into `update.xml` (Cleanup: 4.x–6.x);
-  keep it in line with `minimumJoomla` in `script.php`
+- Joomla 5.4+ minimum (all extensions, Cleanup included): Joomla 5.4.x and 6.x. `script.php` sets
+  `$minimumJoomla = '5.4'` and `$minimumPhp = '8.1'`; `preflight()` must call the parent, so Joomla's
+  `InstallerScript::preflight()` rejects older versions with the translated core message
+- Manifests, `updates/update.xml` and the release workflows use `targetplatform` `(5\.[4-9]|6\.[0-9])`
+  (accepts 5.4.x and 6.x, rejects 4.x and 5.0 to 5.3); keep it in line with `minimumJoomla`
+- The `Language Files` CI job runs `php shared/tests/requirements-check.php <extension dir>`, which
+  fails if `minimumJoomla`/`minimumPhp`, the parent `preflight()` call, a manifest or `update.xml`
+  `targetplatform`/`php_minimum`, or the release workflow `targetplatform` deviates from this rule
+- Database queries: `$db->getQuery(true)` on Joomla 5 (Joomla 5.4's `DatabaseInterface` has no
+  `createQuery()`), `$db->createQuery()` on Joomla 6; select at runtime
 - Namespaces: Plugins `Advans\Plugin\{Group}\{Name}` (e.g. `Advans\Plugin\Privacy\J2Commerce`); Components: `Advans\Component\{Name}`
 - Follow Joomla Coding Standards
 - No direct `$_GET`/`$_POST` — use `$app->getInput()`

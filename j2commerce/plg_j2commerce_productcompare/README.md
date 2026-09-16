@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -24,7 +24,7 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
 
@@ -32,9 +32,9 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 The plugin detects the installed J2Commerce version at runtime by checking for `#__j2commerce_products` in the database.
 
-The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 4/5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
+The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
 
-**J2Commerce 4.x (Joomla 4/5)**:
+**J2Commerce 4.x (Joomla 5)**:
 - Events received via legacy method-name convention (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`)
 - DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
 - AJAX URL: `group=j2store`
@@ -48,7 +48,7 @@ No configuration required — table names and event handlers are selected automa
 
 ### Compatibility Test Scope
 
-The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
+The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x, printed as `Tested versions: …` in each job log) plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
 
 ## Installation
 1. Download `plg_j2commerce_productcompare_<version>.zip` from the latest release
@@ -62,7 +62,7 @@ The manifest registers this repository's `updates/update.xml` as update server (
 
 ## Uninstall
 
-Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. On Joomla 4/5 the uninstall script removes both `plugins/j2commerce/productcompare/` and the `plugins/j2store/productcompare/` mirror; on Joomla 6 Joomla removes `plugins/j2commerce/productcompare/`. Media and language files are removed by Joomla. Template overrides in your template folder are not removed.
+Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. On Joomla 5 the uninstall script removes both `plugins/j2commerce/productcompare/` and the `plugins/j2store/productcompare/` mirror; on Joomla 6 Joomla removes `plugins/j2commerce/productcompare/`. Media and language files are removed by Joomla. Template overrides in your template folder are not removed.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ plg_j2commerce_productcompare/
 └── tests/
 ```
 
-Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2store/productcompare/` (Joomla 4/5 mirror)
+Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2store/productcompare/` (Joomla 5 mirror)
 
 ### Building
 ```bash
@@ -202,7 +202,7 @@ The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution ord
 
 1. `templates/{your-template}/html/plg_j2commerce_productcompare/{layout}.php`
 2. `plugins/j2commerce/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 6)
-3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 4/5 mirror)
+3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 5 mirror)
 
 ### Available layouts
 
