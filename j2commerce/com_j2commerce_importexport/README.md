@@ -56,7 +56,11 @@ Products are matched and updated (instead of duplicated) using three methods:
 
 ### J2Commerce Version Compatibility
 
-All models use `J2CommerceAwareTrait` for runtime version detection. The trait checks for `#__j2commerce_products` in the database to determine whether J2Commerce 6 is installed:
+All models use `J2CommerceAwareTrait` for runtime version detection. The active shop component decides, not the mere presence of tables (after a migration both table sets exist):
+
+1. `com_j2commerce` enabled and `#__j2commerce_products` present → J2Commerce 6
+2. otherwise `com_j2store` enabled and `#__j2store_products` present → J2Store/J2Commerce 4
+3. otherwise (no shop component enabled) → J2Commerce 6 if `#__j2commerce_products` exists, else J2Store/J2Commerce 4
 
 - **J2Commerce 4.x** — tables prefixed `#__j2store_*`, primary key columns named `j2store_*_id`
 - **J2Commerce 6.x** — tables prefixed `#__j2commerce_*`, primary key columns named `j2commerce_*_id`
@@ -268,8 +272,9 @@ Order as in `tests/test.env`:
 6. **Export Controller** — `core.manage` access check and structure (reflection)
 7. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
 8. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
-9. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-10. **Uninstall** — clean removal from database and filesystem
+9. **Active Shop Detection** (`09-active-shop-detection.php`) — adds the other shop's tables with different test data next to the installed shop and asserts via `exportData('variants')` that the enabled shop component decides which data is exported, including the fallback when no shop component is enabled (J2Commerce 4 and 6)
+10. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+11. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 

@@ -9,34 +9,90 @@ namespace Advans\Component\J2CommerceImportExport\Administrator\Model;
 
 defined('_JEXEC') or die;
 
+use Joomla\Database\DatabaseInterface;
+use Joomla\Database\ParameterType;
+use Joomla\Database\QueryInterface;
+
 /**
  * Shared J2Commerce version detection and table/column name helpers.
  *
- * Detects J2Commerce 6 by checking for #__j2commerce_products in the
- * database. All table and column names are resolved at runtime so the
- * same code runs on both J2Commerce 4 (#__j2store_*) and J2Commerce 6
- * (#__j2commerce_*).
+ * The active shop component decides which table set is used, not the mere
+ * presence of tables: after a migration both #__j2store_* and
+ * #__j2commerce_* exist, and a J2Store site may still carry j2commerce
+ * tables from an aborted installation. All table and column names are
+ * resolved at runtime so the same code runs on both J2Store/J2Commerce 4
+ * (#__j2store_*) and J2Commerce 6 (#__j2commerce_*).
  *
  * Requires the using class to implement getDatabase().
  */
 trait J2CommerceAwareTrait
 {
-    /** @var bool|null Cached detection result */
-    private ?bool $isJ6Cache = null;
+    /** @var string|null Cached active shop: 'j2commerce', 'j2store' or '' (none active) */
+    private ?string $activeShopCache = null;
 
     /**
-     * Returns true when J2Commerce 6 tables are present.
-     * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
+     * Returns true when J2Commerce 6 is the shop to work with.
+     *
+     * Order: com_j2commerce enabled with its product table → J2Commerce 6;
+     * otherwise com_j2store enabled with its product table → J2Store/J2Commerce 4;
+     * otherwise (no active shop) fall back to the former table check.
      */
     private function isJ2Commerce6(): bool
     {
-        if ($this->isJ6Cache === null) {
-            $db             = $this->getDatabase();
-            $result         = $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . 'j2commerce_products'))->loadResult();
-            $this->isJ6Cache = !empty($result);
+        $shop = $this->getActiveShop();
+
+        if ($shop !== null) {
+            return $shop === 'j2commerce';
         }
 
-        return $this->isJ6Cache;
+        // No active shop component: keep the former behaviour so that exports
+        // and imports on a site whose shop is temporarily disabled (or whose
+        // extension rows are missing) still address the existing tables.
+        // J2Commerce 6 wins when its product table exists, as before.
+        return $this->shopTableExists('j2commerce_products');
+    }
+
+    /**
+     * Determines the active shop component ('j2commerce' or 'j2store'), or
+     * null when neither is enabled together with its product table.
+     * The result is cached per instance.
+     */
+    private function getActiveShop(): ?string
+    {
+        if ($this->activeShopCache === null) {
+            /** @var DatabaseInterface $db */
+            $db    = $this->getDatabase();
+            $query = $this->createDbQuery()
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+            $this->activeShopCache = '';
+
+            if (in_array('com_j2commerce', $enabled, true) && $this->shopTableExists('j2commerce_products')) {
+                $this->activeShopCache = 'j2commerce';
+            } elseif (in_array('com_j2store', $enabled, true) && $this->shopTableExists('j2store_products')) {
+                $this->activeShopCache = 'j2store';
+            }
+        }
+
+        return $this->activeShopCache === '' ? null : $this->activeShopCache;
+    }
+
+    /**
+     * Checks whether a table (name without prefix) exists.
+     * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
+     */
+    private function shopTableExists(string $table): bool
+    {
+        /** @var DatabaseInterface $db */
+        $db = $this->getDatabase();
+
+        return !empty($db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . $table))->loadResult());
     }
 
     /**
@@ -72,7 +128,7 @@ trait J2CommerceAwareTrait
     /**
      * Creates a query object compatible with Joomla 5 (getQuery) and 6 (createQuery).
      */
-    private function createDbQuery(): \Joomla\Database\QueryInterface
+    private function createDbQuery(): QueryInterface
     {
         $db = $this->getDatabase();
 
