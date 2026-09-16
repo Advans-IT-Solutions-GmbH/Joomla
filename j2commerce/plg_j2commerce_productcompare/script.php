@@ -19,7 +19,32 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
     public function postflight($type, $parent)
     {
+        $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
+
+        if ($type === 'uninstall') {
+            // Joomla has removed the registered plugin folder by now. On Joomla 5
+            // the files Joomla installed under the manifest group (j2commerce/)
+            // are not registered anywhere and are removed here.
+            if (!$isJ6) {
+                $this->removePath(JPATH_PLUGINS . '/j2commerce/productcompare');
+            }
+
+            return;
+        }
+
         if ($type === 'install' || $type === 'update') {
+            // Joomla 5 looks for an existing plugin in the manifest group
+            // (j2commerce) and does not find the row that was moved to j2store,
+            // so every update arrives here as a new installation with a second
+            // row. The rows are merged back into the existing one first.
+            $keptId   = $isJ6 ? 0 : $this->mergeDuplicateExtensionRows();
+            $merged   = $keptId > 0;
+            $isUpdate = $type === 'update' || $merged;
+
+            if ($merged) {
+                $this->reportExtensionId($parent, $keptId);
+            }
+
             $this->setGroupForInstalledStack();
             $this->ensureUpdateSite();
 
@@ -33,7 +58,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             // Updates only get a short confirmation, plus a hint while the plugin
             // is disabled; the first installation shows the setup notes and asks
             // to enable the plugin only while it is disabled.
-            if ($type === 'update') {
+            if ($isUpdate) {
                 $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
                 $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
 
@@ -70,49 +95,189 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
     public function uninstall($parent)
     {
-        // On J4/J5 the installer mirrors files to plugins/j2store/productcompare/
-        // and registers folder=j2store. Joomla's uninstaller removes the registered
-        // path (j2store/), but the canonical files under j2commerce/ remain.
-        // Remove both paths explicitly so no orphaned files are left behind.
-        $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
-
-        if (!$isJ6) {
-            // Remove canonical j2commerce/ directory (Joomla uninstaller won't touch it
-            // because folder=j2store was set in #__extensions on J4/J5).
-            $j2commerceDir = JPATH_PLUGINS . '/j2commerce/productcompare';
-            if (is_link($j2commerceDir)) {
-                unlink($j2commerceDir);
-            } elseif (is_dir($j2commerceDir)) {
-                $this->removeDir($j2commerceDir);
-            }
-
-            // Remove the j2store/ mirror (symlink or copy).
-            $j5mirror = JPATH_PLUGINS . '/j2store/productcompare';
-            if (is_link($j5mirror)) {
-                unlink($j5mirror);
-            } elseif (is_dir($j5mirror)) {
-                $this->removeDir($j5mirror);
-            }
+        // Joomla removes the registered plugin folder itself after this method
+        // and fails when that folder is missing or is a symlink, so nothing is
+        // deleted here. Installations from older versions may still have
+        // plugins/j2store/productcompare as a symlink; it is replaced by a real
+        // copy so Joomla can remove it. The unregistered j2commerce/ copy on
+        // Joomla 5 is removed in postflight('uninstall').
+        if ((int) \Joomla\CMS\Version::MAJOR_VERSION >= 6) {
+            return;
         }
+
+        $mirror = JPATH_PLUGINS . '/j2store/productcompare';
+
+        if (!is_link($mirror)) {
+            return;
+        }
+
+        $target = realpath($mirror);
+        $tmp    = $mirror . '.tmp-' . getmypid();
+
+        if ($target !== false && is_dir($target)) {
+            $this->copyDir($target, $tmp);
+        } else {
+            @mkdir($tmp, 0755, true);
+        }
+
+        if (@unlink($mirror) && !@rename($tmp, $mirror)) {
+            // Keep a folder in place so Joomla's removal does not fail.
+            @mkdir($mirror, 0755, true);
+        }
+
+        $this->removePath($tmp);
     }
 
     /**
-     * Mirror plugin files to plugins/j2store/productcompare/ on J4/J5 installs.
+     * Merge a second #__extensions row of this plugin on Joomla 5.
+     *
+     * The installer stores a new row with folder=j2commerce when the existing
+     * row was moved to folder=j2store. The existing row is kept (ID, params,
+     * enabled state, ordering) and receives the manifest data of the new row;
+     * the new row and its update-site links, schema entries and pending
+     * updates are removed, and update sites that no extension uses any more
+     * afterwards are removed as well. Duplicate rows left by earlier versions
+     * are removed the same way.
+     *
+     * @return int ID of the kept row when rows were merged (this run was an
+     *             update), otherwise 0.
+     */
+    private function mergeDuplicateExtensionRows(): int
+    {
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName(['extension_id', 'folder', 'name', 'manifest_cache']))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
+            ->whereIn($db->quoteName('folder'), ['j2commerce', 'j2store'], ParameterType::STRING)
+            ->order($db->quoteName('extension_id') . ' ASC');
+        $rows = $db->setQuery($query)->loadObjectList() ?: [];
+
+        $keep = null;
+        $new  = null;
+
+        foreach ($rows as $row) {
+            if ($row->folder === 'j2store' && $keep === null) {
+                $keep = $row;
+            }
+
+            if ($row->folder === 'j2commerce') {
+                $new = $row;
+            }
+        }
+
+        if ($keep === null || count($rows) < 2) {
+            return 0;
+        }
+
+        $source = $new ?? end($rows);
+        $keepId = (int) $keep->extension_id;
+
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__extensions'))
+            ->set($db->quoteName('manifest_cache') . ' = :cache')
+            ->set($db->quoteName('name') . ' = :name')
+            ->where($db->quoteName('extension_id') . ' = :id')
+            ->bind(':cache', $source->manifest_cache)
+            ->bind(':name', $source->name)
+            ->bind(':id', $keepId, ParameterType::INTEGER);
+        $db->setQuery($query)->execute();
+
+        $removedIds = [];
+
+        foreach ($rows as $row) {
+            if ((int) $row->extension_id !== $keepId) {
+                $removedIds[] = (int) $row->extension_id;
+            }
+        }
+
+        // Update sites linked to the removed rows; checked again afterwards.
+        $query = $this->createDbQuery($db)
+            ->select('DISTINCT ' . $db->quoteName('update_site_id'))
+            ->from($db->quoteName('#__update_sites_extensions'))
+            ->whereIn($db->quoteName('extension_id'), $removedIds);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach (['#__update_sites_extensions', '#__updates', '#__schemas', '#__extensions'] as $table) {
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName($table))
+                ->whereIn($db->quoteName('extension_id'), $removedIds);
+            $db->setQuery($query)->execute();
+        }
+
+        // Remove update sites (and their pending updates) that no extension
+        // uses any more; sites still linked to another extension stay.
+        foreach ($siteIds as $siteId) {
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :site')
+                ->bind(':site', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :site')
+                    ->bind(':site', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
+
+        return $keepId;
+    }
+
+    /**
+     * Make the installer report the kept row as the installed extension.
+     *
+     * Joomla returns the ID of the row it stored in this run and passes it to
+     * onExtensionAfterInstall, where the core extension plugin links the
+     * manifest's update server to that ID. After a merge that row no longer
+     * exists, so the installer's extension record is pointed at the kept row;
+     * the update server is then linked to the kept row and no link to a deleted
+     * row is created. The record is a protected property of the installer
+     * adapter and is only reachable from the adapter's class scope.
+     */
+    private function reportExtensionId(object $adapter, int $extensionId): void
+    {
+        if (!$adapter instanceof \Joomla\CMS\Installer\InstallerAdapter) {
+            return;
+        }
+
+        $setId = \Closure::bind(
+            static function (\Joomla\CMS\Installer\InstallerAdapter $adapter, int $id): void {
+                if (isset($adapter->extension) && \is_object($adapter->extension)) {
+                    $adapter->extension->extension_id = $id;
+                }
+            },
+            null,
+            \Joomla\CMS\Installer\InstallerAdapter::class
+        );
+
+        $setId($adapter, $extensionId);
+    }
+
+    /**
+     * Copy plugin files to plugins/j2store/productcompare/ on Joomla 5 installs.
      *
      * Joomla installs plugin files to plugins/{manifest-group}/ — always j2commerce
      * here. J2Store 4's eventWithHtml() only imports the j2store group, so the
      * plugin must also be reachable under plugins/j2store/productcompare/.
      *
-     * Strategy: keep the canonical files under j2commerce/, create a symlink (or
-     * recursive copy as fallback) at j2store/productcompare/ pointing there, and
-     * update #__extensions.folder to j2store so Joomla's plugin loader finds it.
+     * The files are copied (no symlink: Joomla's uninstaller cannot remove a
+     * symlinked plugin folder) and #__extensions.folder is set to j2store so
+     * Joomla's plugin loader and uninstaller use that folder.
      *
      * On J6 (no com_j2store): nothing to do, folder stays j2commerce.
      */
     private function setGroupForInstalledStack(): void
     {
         // Detect Joomla major version. Joomla 6+ ships with J2Commerce 6 which
-        // imports the j2commerce plugin group. Joomla 4/5 uses J2Store 4 which
+        // imports the j2commerce plugin group. Joomla 5 uses J2Store 4 which
         // imports the j2store group. Using the Joomla version is more reliable
         // than checking for com_j2commerce in #__extensions, because J2Commerce
         // may not yet be installed when postflight() runs.
@@ -123,11 +288,10 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             return;
         }
 
-        // J4/J5: mirror files to plugins/j2store/productcompare/ and update DB.
         $src  = JPATH_PLUGINS . '/j2commerce/productcompare';
         $dest = JPATH_PLUGINS . '/j2store/productcompare';
 
-        if (!is_dir($src)) {
+        if (!is_dir($src) || is_link($src)) {
             return;
         }
 
@@ -138,17 +302,9 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             mkdir($destParent, 0755, true);
         }
 
-        // Remove stale destination if it exists (e.g. from a previous install).
-        if (is_link($dest)) {
-            unlink($dest);
-        } elseif (is_dir($dest)) {
-            $this->removeDir($dest);
-        }
-
-        // Prefer symlink (atomic, no duplication); fall back to recursive copy.
-        if (!@symlink($src, $dest)) {
-            $this->copyDir($src, $dest);
-        }
+        // Replace the previous copy (or a symlink from older versions).
+        $this->removePath($dest);
+        $this->copyDir($src, $dest);
 
         // Update #__extensions so Joomla's plugin loader resolves the correct path.
         $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -156,9 +312,22 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             ->update($db->quoteName('#__extensions'))
             ->set($db->quoteName('folder') . ' = ' . $db->quote('j2store'))
             ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
+            ->where($db->quoteName('folder') . ' = ' . $db->quote('j2commerce'))
             ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'));
         $db->setQuery($q);
         $db->execute();
+    }
+
+    /**
+     * Remove a symlink or a directory tree; missing paths are ignored.
+     */
+    private function removePath(string $path): void
+    {
+        if (is_link($path)) {
+            @unlink($path);
+        } elseif (is_dir($path)) {
+            $this->removeDir($path);
+        }
     }
 
     /**
@@ -245,6 +414,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             return;
         }
 
+        $this->removeLegacyUpdateSites($db, $extensionId);
+
         $query = $this->createDbQuery($db)
             ->select($db->quoteName('update_site_id'))
             ->from($db->quoteName('#__update_sites'))
@@ -254,6 +425,20 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $siteId = (int) $db->loadResult();
 
         if ($siteId) {
+            // On Joomla 5 an update briefly creates a second plugin row, and
+            // Joomla links the update site to it after this script has run.
+            // Links to rows that no longer exist are removed here.
+            $existing = $this->createDbQuery($db)
+                ->select($db->quoteName('e.extension_id'))
+                ->from($db->quoteName('#__extensions', 'e'));
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' NOT IN (' . $existing . ')')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+            $db->setQuery($query);
+            $db->execute();
+
             $query = $this->createDbQuery($db)
                 ->select('COUNT(*)')
                 ->from($db->quoteName('#__update_sites_extensions'))
@@ -294,6 +479,58 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             ->bind(':extId', $extensionId, ParameterType::INTEGER);
         $db->setQuery($query);
         $db->execute();
+    }
+
+    /**
+     * Remove update sites of this extension that still point to the repository's
+     * former organisation name. Joomla would otherwise keep querying both the
+     * old and the new update URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
     }
 
     /**

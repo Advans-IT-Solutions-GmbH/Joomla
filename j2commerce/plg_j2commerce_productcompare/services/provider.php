@@ -35,10 +35,9 @@ return new class implements ServiceProviderInterface
                 // set dynamically by the installer script.
                 $pluginData = PluginHelper::getPlugin('j2commerce', 'productcompare')
                     ?: PluginHelper::getPlugin('j2store', 'productcompare');
-                $plugin = new ProductCompare(
-                    $container->get(DispatcherInterface::class),
-                    (array) $pluginData
-                );
+                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+                $plugin = new ProductCompare((array) $pluginData);
+                $plugin->setDispatcher($container->get(DispatcherInterface::class));
                 $plugin->setApplication(Factory::getApplication());
 
                 return $plugin;
