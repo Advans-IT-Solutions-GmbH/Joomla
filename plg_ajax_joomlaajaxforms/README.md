@@ -75,9 +75,15 @@ removed.
 
 ### J2Commerce Cart Compatibility
 
-The cart features support both J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The version is detected at runtime by checking whether `#__j2store_carts` exists in the database.
+The cart features support both J2Store / J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The active shop is decided by the enabled component, once per request:
 
-If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
+1. `com_j2commerce` is enabled → J2Commerce 6.x (`#__j2commerce_*` tables)
+2. otherwise `com_j2store` is enabled → J2Store / J2Commerce 4.x (`#__j2store_*` tables)
+3. otherwise → no shop
+
+The tables alone never decide: after a migration from J2Store to J2Commerce 6 the `#__j2store_*` tables remain in the database and are ignored. The cart table of the selected shop (`#__j2commerce_carts` or `#__j2store_carts`) must exist as well; otherwise no shop is used.
+
+Without an active shop, `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. After a login without a `return` URL, the plugin redirects to the `myprofile` page of the active shop (its menu item if one exists); without an active shop it redirects to the Joomla user profile (`com_users`). Other plugin functionality is not affected.
 
 **Schema differences handled automatically:**
 
@@ -198,7 +204,7 @@ That misleading step has been removed; see issue #98.)
 11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 12. **Uninstall** — clean removal from database and filesystem
 
-The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart`).
+The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart` and `shop-detection`).
 
 ### Full-Install Tests (J2Commerce) — authoritative cart coverage
 
@@ -216,6 +222,8 @@ each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 - Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
 **`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the commit pinned in the workflow (`J2C6_REF`, `7edb6e11ae9148bf996b06c47a0d8266865af7b2`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
+
+**Shop detection (`13-shop-detection.php`, both full-install lanes)** — the script lives in `tests-j2c6/scripts/`; `tests-j2c4/run-tests.sh` copies it. A dedicated test user gets a cart in both table sets with different quantities (5 in `#__j2commerce_*`, 7 in `#__j2store_*`), so the `cartCount` returned by the HTTP endpoint shows which tables the plugin used. In the J2C6 lane the suite adds stale `#__j2store_*` tables and a disabled `com_j2store` row (migration): the AJAX login redirects to `com_j2commerce`, `getCartCount` returns 5 and `removeCartItem` deletes only from `#__j2commerce_cartitems`; with `com_j2commerce` disabled and `com_j2store` enabled it returns 7. In the J2C4 lane it adds `#__j2commerce_*` tables and a disabled `com_j2commerce` row: the login redirects to `com_j2store` and `getCartCount` returns 7; with `com_j2commerce` enabled it returns 5. In both lanes, with both components disabled, `getCartCount` returns 0 and `removeCartItem` reports that no shop is installed. All changes are reverted at the end of the suite.
 
 ### Running Tests Locally
 

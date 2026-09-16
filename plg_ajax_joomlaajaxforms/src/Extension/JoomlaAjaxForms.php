@@ -272,9 +272,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             if (empty($redirect)) {
                 $profileItemId = $this->getMyProfileMenuItemId();
-                $redirect = $profileItemId
-                    ? Route::_('index.php?Itemid=' . $profileItemId, false)
-                    : Route::_('index.php?option=' . ($this->isJ2Commerce4($this->getDatabase()) ? 'com_j2store' : 'com_j2commerce') . '&view=myprofile', false);
+                $shop          = $this->getActiveShop($this->getDatabase());
+
+                if ($profileItemId) {
+                    $redirect = Route::_('index.php?Itemid=' . $profileItemId, false);
+                } elseif ($shop !== null) {
+                    $redirect = Route::_('index.php?option=com_' . $shop . '&view=myprofile', false);
+                } else {
+                    // No active shop: the Joomla user profile is the only profile page.
+                    $redirect = Route::_('index.php?option=com_users&view=profile', false);
+                }
             }
 
             // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
@@ -577,7 +584,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             }
 
             if ($this->isJ2Commerce4($db)) {
-                // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                // J2Store / J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
                 // $userId is (int) — safe to inline in subquery; bind() on subquery objects is lost
                 // when the subquery is cast to string and embedded in the outer query's WHERE clause.
@@ -662,24 +669,25 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Returns true if any supported version of J2Commerce is installed.
-     */
-    /**
-     * Returns the menu item ID for the J2Store/J2Commerce "myprofile" view,
-     * or null if no such menu item exists.
+     * Returns the menu item ID for the "myprofile" view of the active shop
+     * (see getActiveShop()), or null if no shop is active or no such menu
+     * item exists.
      *
      * Uses a direct DB query instead of Menu::getItems() to avoid loading
      * the full menu tree. Works on J4/J5/J6.
      */
     private function getMyProfileMenuItemId(): ?int
     {
-        $db = $this->getDatabase();
-        $j4 = $this->isJ2Commerce4($db);
+        $db   = $this->getDatabase();
+        $shop = $this->getActiveShop($db);
 
-        $option = $j4 ? 'com_j2store' : 'com_j2commerce';
-        $link   = 'index.php?option=' . $option . '&view=myprofile';
+        if ($shop === null) {
+            return null;
+        }
 
-        $q = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        $link = 'index.php?option=com_' . $shop . '&view=myprofile';
+
+        $q = $this->createDbQuery($db)
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('link') . ' = :link')
@@ -694,37 +702,82 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         return $id ? (int) $id : null;
     }
 
-    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    /**
+     * Result of getActiveShop() for this request.
+     *
+     * @var  string|null
+     */
+    private ?string $activeShop = null;
+
+    /**
+     * Whether getActiveShop() has already been resolved for this request.
+     *
+     * @var  bool
+     */
+    private bool $activeShopResolved = false;
+
+    /**
+     * Active shop: 'j2commerce' when com_j2commerce is enabled and its tables exist,
+     * otherwise 'j2store' when com_j2store is enabled and its tables exist, otherwise null.
+     * Tables alone do not decide: after a migration the #__j2store_* tables remain.
+     */
+    private function getActiveShop(DatabaseInterface $db): ?string
     {
-        static $installed = null;
-        if ($installed === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix    = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $j4 = $db->loadResult() !== null;
-            if (!$j4) {
-                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2commerce_carts'));
-                $j6 = $db->loadResult() !== null;
-            }
-            $installed = $j4 || (!$j4 && ($j6 ?? false));
+        if ($this->activeShopResolved) {
+            return $this->activeShop;
         }
-        return $installed;
+
+        $this->activeShopResolved = true;
+        $this->activeShop         = null;
+
+        try {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+            $enabled = $db->setQuery($query)->loadColumn();
+
+            // Priority order: J2Commerce 6 first, then J2Store / J2Commerce 4.
+            foreach (['j2commerce', 'j2store'] as $shop) {
+                if (!in_array('com_' . $shop, $enabled, true)) {
+                    continue;
+                }
+
+                // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
+                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . $shop . '_carts'));
+
+                if ($db->loadResult() !== null) {
+                    $this->activeShop = $shop;
+                }
+
+                // The enabled component decides; without its tables no shop is used.
+                break;
+            }
+        } catch (\Throwable $e) {
+            Log::add('Shop detection error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+        }
+
+        return $this->activeShop;
     }
 
     /**
-     * Returns true if J2Commerce 4.x is installed (uses #__j2store_* tables).
-     * Returns false for J2Commerce 6.x (uses #__j2commerce_* tables).
+     * Returns true if a supported shop is active (see getActiveShop()).
+     */
+    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    {
+        return $this->getActiveShop($db) !== null;
+    }
+
+    /**
+     * Returns true if J2Store / J2Commerce 4.x is the active shop (#__j2store_* tables),
+     * false for J2Commerce 6.x (#__j2commerce_* tables) or when no shop is active.
+     * Decided by the enabled component, not by the tables (see getActiveShop()).
      */
     private function isJ2Commerce4(DatabaseInterface $db): bool
     {
-        static $result = null;
-        if ($result === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $result = $db->loadResult() !== null;
-        }
-        return $result;
+        return $this->getActiveShop($db) === 'j2store';
     }
 
     /**
