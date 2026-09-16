@@ -12,6 +12,22 @@ until [ -f /var/www/html/configuration.php ] && [ ! -d /var/www/html/installatio
     sleep 3
 done
 
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window could lose registrations, so wait
+# until the installation folder is gone and the site answers.
+if [ -f /var/www/html/configuration.php ]; then
+    READY_ELAPSED=0
+    until [ ! -d /var/www/html/installation ] && php -r 'exit(@file_get_contents("http://localhost/") === false ? 1 : 0);'; do
+        if [ $READY_ELAPSED -ge 120 ]; then
+            echo "ERROR: Joomla setup did not finish within 120 seconds"
+            exit 1
+        fi
+        sleep 2
+        READY_ELAPSED=$((READY_ELAPSED + 2))
+    done
+    echo "Joomla setup finished"
+fi
+
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; \$c=new JConfig; echo \$c->dbprefix;" 2>/dev/null || echo "joom_")
 echo "DB prefix: ${DB_PREFIX}"
 
