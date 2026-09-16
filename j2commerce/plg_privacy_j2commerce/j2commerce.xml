@@ -83,6 +83,15 @@
                 />
 
                 <field
+                    name="fiscal_year_end"
+                    type="text"
+                    label="PLG_PRIVACY_J2COMMERCE_FISCAL_YEAR_END_LABEL"
+                    description="PLG_PRIVACY_J2COMMERCE_FISCAL_YEAR_END_DESC"
+                    default="12-31"
+                    pattern="(0?[1-9]|1[0-2])-(0?[1-9]|[12][0-9]|3[01])"
+                    filter="string"
+                />
+                <field
                     name="legal_basis"
                     type="textarea"
                     label="PLG_PRIVACY_J2COMMERCE_LEGAL_BASIS_LABEL"

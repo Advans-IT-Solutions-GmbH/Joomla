@@ -312,11 +312,18 @@ class DataIsolationTest
             'Got: ' . ($result['retention_years'] ?? 'missing')
         );
 
-        // User 100 has a recent order → can_delete must be false
+        // User 100 has a recent order: the removal request is carried out (can_delete = true), the
+        // order is listed as kept until the end of its retention period.
         $this->test(
-            'User with recent order: can_delete = false',
-            $result['can_delete'] === false,
-            'Expected false (recent order within retention window), got: ' . var_export($result['can_delete'], true)
+            'User with recent order: removal allowed, order listed as retained',
+            $result['can_delete'] === true && count($result['orders'] ?? []) > 0,
+            'can_delete=' . var_export($result['can_delete'], true) . ', retained orders=' . count($result['orders'] ?? [])
+        );
+        $first = $result['orders'][0] ?? [];
+        $this->test(
+            'Retained order ends on a fiscal year end (31.12.)',
+            isset($first['retention_end']) && str_starts_with((string) $first['retention_end'], '31.12.'),
+            'retention_end=' . ($first['retention_end'] ?? 'missing')
         );
 
         // User 9999 (no orders) → can_delete must be true

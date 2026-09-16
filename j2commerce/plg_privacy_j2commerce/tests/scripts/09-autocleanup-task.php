@@ -224,11 +224,25 @@ class AutoCleanupTaskTest
             return;
         }
 
-        // Checkout consent of the expired order (IP/UA must be removed by the task) and of an
-        // order of another user (must stay unchanged).
+        // Guest orders (user_id = 0): the retention period starts at the end of the fiscal year
+        // (31.12.). An order of 31.12. eleven years ago is expired; an order of 1 January ten years
+        // ago is kept until 31.12. of this year, although it is older than "now - 10 years".
+        $year         = (int) date('Y');
+        $guestExpired = 'CLEANUP-GUEST-OLD-' . time();
+        $guestKept    = 'CLEANUP-GUEST-FY-' . time();
+        $this->test('expired guest order seeded', $this->seedTestOrder(0, $guestExpired, sprintf('%04d-12-31 12:00:00', $year - 11)) !== null);
+        $this->test('guest order of the fiscal year ten years ago seeded', $this->seedTestOrder(0, $guestKept, sprintf('%04d-01-01 00:00:01', $year - 10)) !== null);
+
+        // Checkout consent of the expired orders (IP/UA must be removed by the task) and of an
+        // order of another user and of the kept guest order (must stay unchanged).
         $consentIds = [];
 
-        foreach (['expired' => [$orderId, $userId, '203.0.113.60'], 'other' => ['CLEANUP-OTHER-' . time(), 9906, '203.0.113.61']] as $key => [$consentOrder, $consentUser, $ip]) {
+        foreach ([
+            'expired'      => [$orderId, $userId, '203.0.113.60'],
+            'other'        => ['CLEANUP-OTHER-' . time(), 9906, '203.0.113.61'],
+            'guestExpired' => [$guestExpired, 0, '203.0.113.62'],
+            'guestKept'    => [$guestKept, 0, '203.0.113.63'],
+        ] as $key => [$consentOrder, $consentUser, $ip]) {
             $consent = (object) [
                 'user_id' => $consentUser,
                 'state'   => 1,
@@ -250,7 +264,24 @@ class AutoCleanupTaskTest
                     ->where($this->db->quoteName('id') . ' = ' . $id)
             )->loadResult();
         };
-        $otherBefore = $consentBody($consentIds['other']);
+        $otherBefore     = $consentBody($consentIds['other']);
+        $guestKeptBefore = $consentBody($consentIds['guestKept']);
+        $guestOrder      = function (string $number) use ($table): ?object {
+            return $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->select($this->db->quoteName(['user_email', 'ip_address']))
+                    ->from($this->db->quoteName($table))
+                    ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($number))
+            )->loadObject() ?: null;
+        };
+        $dropGuestOrders = function () use ($table, $guestExpired, $guestKept): void {
+            $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->delete($this->db->quoteName($table))
+                    ->where($this->db->quoteName('user_id') . ' = 0')
+                    ->whereIn($this->db->quoteName('order_id'), [$guestExpired, $guestKept], \Joomla\Database\ParameterType::STRING)
+            )->execute();
+        };
 
         $now  = date('Y-m-d H:i:s');
         $task = (object) [
@@ -274,6 +305,7 @@ class AutoCleanupTaskTest
             $this->db->insertObject('#__scheduler_tasks', $task, 'id');
         } catch (\Throwable $e) {
             $this->test('scheduled task created', false, $e->getMessage());
+            $dropGuestOrders();
             $this->db->setQuery(
                 $this->db->getQuery(true)
                     ->delete($this->db->quoteName('#__privacy_consents'))
@@ -331,6 +363,21 @@ class AutoCleanupTaskTest
             && str_contains($expiredBody, "<!-- j2commerce-order:$orderId -->"),
             'body=' . $expiredBody);
         $this->test('task leaves the consent of another user unchanged', $consentBody($consentIds['other']) === $otherBefore);
+
+        $expiredGuest = $guestOrder($guestExpired);
+        $keptGuest    = $guestOrder($guestKept);
+        $this->test('task anonymizes an expired guest order (e-mail and IP address)',
+            $expiredGuest && $expiredGuest->user_email === 'anonymized@deleted.invalid' && $expiredGuest->ip_address === '',
+            var_export($expiredGuest, true));
+        $guestBody = $consentBody($consentIds['guestExpired']);
+        $this->test('task removes IP address and user agent from the consent of the expired guest order',
+            $guestBody !== '' && !str_contains($guestBody, '203.0.113.62') && str_contains($guestBody, "<!-- j2commerce-order:$guestExpired -->"),
+            'body=' . $guestBody);
+        $this->test('task keeps a guest order until the end of its fiscal year plus 10 years',
+            $keptGuest && $keptGuest->user_email !== 'anonymized@deleted.invalid' && $keptGuest->ip_address === '127.0.0.1',
+            var_export($keptGuest, true));
+        $this->test('task leaves the consent of the kept guest order unchanged', $consentBody($consentIds['guestKept']) === $guestKeptBefore);
+        $dropGuestOrders();
 
         $this->db->setQuery(
             $this->db->getQuery(true)

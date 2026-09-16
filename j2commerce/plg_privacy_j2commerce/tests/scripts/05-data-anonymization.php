@@ -160,12 +160,24 @@ class DataAnonymizationTest
         // recent order of the same user and one of another user (both must stay unchanged).
         $recentOrderId = 'ANON-RECENT-' . time();
         $recentOrder   = clone $testOrder;
+        unset($recentOrder->$orderPkCol); // insertObject() stored the primary key in $testOrder
         $recentOrder->order_id       = $recentOrderId;
         $recentOrder->invoice_number = 5002;
         $recentOrder->created_on     = date('Y-m-d H:i:s', strtotime('-1 year'));
         $recentOrder->modified_on    = $recentOrder->created_on;
         $this->db->insertObject($ordersTable, $recentOrder, $orderPkCol);
         $recentPk = $this->db->insertid();
+
+        // Placed on 1 January ten years ago: older than "now - 10 years", but the retention period
+        // starts at the end of that fiscal year (OR Art. 958f), so the order is kept until 31.12. of this year.
+        $fiscalOrder = clone $testOrder;
+        unset($fiscalOrder->$orderPkCol);
+        $fiscalOrder->order_id       = 'ANON-FY-' . time();
+        $fiscalOrder->invoice_number = 5003;
+        $fiscalOrder->created_on     = sprintf('%04d-01-01 00:00:01', (int) date('Y') - 10);
+        $fiscalOrder->modified_on    = $fiscalOrder->created_on;
+        $this->db->insertObject($ordersTable, $fiscalOrder, $orderPkCol);
+        $fiscalPk = $this->db->insertid();
 
         $consentIds = [];
         $consents   = [
@@ -279,6 +291,15 @@ class DataAnonymizationTest
                 $this->test('order_total preserved after anonymization',
                     (float) $this->db->setQuery($query)->loadResult() === 50.0);
 
+                $query = $this->createDbQuery()
+                    ->select('user_email, ip_address')
+                    ->from($this->db->quoteName($ordersTable))
+                    ->where($this->db->quoteName($orderPkCol) . ' = ' . (int) $fiscalPk);
+                $fiscal = $this->db->setQuery($query)->loadObject();
+                $this->test('order of 1 January ten years ago kept (retention from the end of the fiscal year)',
+                    $fiscal && $fiscal->user_email === 'private@example.com' && $fiscal->ip_address === '192.168.1.100',
+                    var_export($fiscal, true));
+
                 // Consent records of the anonymized order lose IP address and user agent only.
                 echo "\n--- Consent evidence of anonymized orders ---\n";
                 $expired = $loadConsent($consentIds['expired']);
@@ -312,7 +333,9 @@ class DataAnonymizationTest
 
         // Cleanup
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE ' . $this->db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $consentIds)) . ')')->execute();
-        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $recentPk)->execute();
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' IN (' . (int) $recentPk . ',' . (int) $fiscalPk . ')')->execute();
+
+        $this->testRetentionPeriod();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
 
@@ -321,6 +344,51 @@ class DataAnonymizationTest
         echo "Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Retention period from the end of the fiscal year (OR Art. 958f), fixed dates.
+     */
+    private function testRetentionPeriod(): void
+    {
+        echo "\n--- Retention period from the end of the fiscal year ---\n";
+
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Retention/RetentionPeriod.php';
+        $class = \Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod::class;
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        if (!$this->test('RetentionPeriod class available', class_exists($class), $file)) {
+            return;
+        }
+
+        $utc = new \DateTimeZone('UTC');
+        $now = new \DateTimeImmutable('2026-09-16 10:00:00', $utc);
+
+        $this->test('10 years, fiscal year end 31.12.: cutoff 2015-12-31 23:59:59', $class::cutoff(10, '12-31', $now) === '2015-12-31 23:59:59');
+        $this->test('10 years, fiscal year end 30.06.: cutoff 2016-06-30 23:59:59', $class::cutoff(10, '06-30', $now) === '2016-06-30 23:59:59');
+        $this->test('Order of 15.03.2016 is kept until 31.12.2026', $class::retentionEnd('2016-03-15 08:00:00', 10)->format('Y-m-d H:i:s') === '2026-12-31 23:59:59');
+        $this->test('Order of 15.03.2016 is not expired on 16.09.2026', !$class::isExpired('2016-03-15 08:00:00', 10, '12-31', $now));
+        $this->test('Order of 15.03.2016 is expired on 01.01.2027', $class::isExpired('2016-03-15 08:00:00', 10, '12-31', new \DateTimeImmutable('2027-01-01 00:00:00', $utc)));
+        $this->test('Order of 01.07.2016 with fiscal year end 30.06. is kept until 30.06.2027', $class::retentionEnd('2016-07-01 00:00:00', 10, '06-30')->format('Y-m-d') === '2027-06-30');
+        $this->test('Invalid fiscal year end (02-29) counts as 12-31', $class::parseFiscalYearEnd('02-29') === [12, 31]);
+
+        $mismatch = 0;
+
+        for ($i = 0; $i < 2000; $i++) {
+            $order = (new \DateTimeImmutable('2010-01-01', $utc))->modify('+' . random_int(0, 6000) . ' days +' . random_int(0, 86399) . ' seconds')->format('Y-m-d H:i:s');
+            $at    = (new \DateTimeImmutable('2024-01-01', $utc))->modify('+' . random_int(0, 1500) . ' days +' . random_int(0, 86399) . ' seconds');
+            $years = random_int(1, 12);
+            $fy    = ['12-31', '06-30', '03-31'][$i % 3];
+
+            if ($class::isExpired($order, $years, $fy, $at) !== ($order <= $class::cutoff($years, $fy, $at))) {
+                $mismatch++;
+            }
+        }
+
+        $this->test('Cutoff query and per-order check agree (2000 random cases)', $mismatch === 0, "$mismatch mismatches");
     }
 
     private function isJ6Stack(): bool

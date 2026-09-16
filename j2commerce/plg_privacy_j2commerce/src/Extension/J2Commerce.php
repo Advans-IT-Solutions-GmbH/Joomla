@@ -11,6 +11,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
@@ -52,6 +53,30 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $result = in_array($prefix . 'j2store_orders', $tables, true);
         }
         return $result;
+    }
+
+    /**
+     * Cutoff of the retention period: orders with created_on <= this value (UTC) are outside it.
+     * The period starts at the end of the fiscal year of the order (OR Art. 958f).
+     */
+    protected function retentionCutoff(): string
+    {
+        self::loadHelperClasses();
+
+        return RetentionPeriod::cutoff((int) $this->params->get('retention_years', 10), (string) $this->params->get('fiscal_year_end', RetentionPeriod::DEFAULT_FISCAL_YEAR_END));
+    }
+
+    /**
+     * The helper classes live in this plugin's namespace; scripts that include only this class file
+     * (CLI tests) load them here.
+     */
+    private static function loadHelperClasses(): void
+    {
+        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
+            if (!class_exists($class)) {
+                require_once __DIR__ . $file;
+            }
+        }
     }
 
     /**
@@ -691,6 +716,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $status;
         }
 
+        // Orders within the retention period do not block the request: everything else is removed
+        // and these orders are kept until their retention end (see processDataRemoval()). Only
+        // lifetime licenses outside the retention period block it (license reactivation).
         $retentionCheck = $this->checkRetentionPeriod($user->id);
 
         if (!$retentionCheck['can_delete']) {
@@ -715,12 +743,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Joomla 5: Event object
         if ($eventOrRequest instanceof RemoveDataEvent) {
             $user = $eventOrRequest->getUser();
-            $this->processDataRemoval($user);
+            $this->processDataRemoval($user, (string) ($eventOrRequest->getRequest()->email ?? ''));
             return;
         }
 
         // Joomla 4: Direct parameters
-        $this->processDataRemoval($user);
+        $this->processDataRemoval($user, $eventOrRequest instanceof RequestTable ? (string) $eventOrRequest->email : '');
     }
 
     /**
@@ -735,22 +763,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * - Address book entries are always deleted
      * - Cart data is always deleted
      *
-     * @param User|null $user User object
+     * Joomla's own privacy user plugin pseudonymises the account in the same request. Orders
+     * within the retention period are listed to the administrator (message, notification, log)
+     * and to the customer (e-mail to the request address).
+     *
+     * @param User|null $user          User object
+     * @param string    $requestEmail  E-mail address of the privacy request
      */
-    protected function processDataRemoval(?User $user): void
+    protected function processDataRemoval(?User $user, string $requestEmail = ''): void
     {
         if (!$user) {
             return;
         }
 
+        // Captured before any plugin of this request changes the account.
+        $userId        = (int) $user->id;
+        $customerEmail = $requestEmail !== '' ? $requestEmail : (string) $user->email;
+        $retained      = $this->checkRetentionPeriod($userId)['orders'];
+        $summary       = $this->formatRetainedOrders($retained);
+
         // Log the deletion request
-        $this->logActivity('data_deletion_requested', $user->id);
-        $this->sendAdminNotification('data_deletion', $user);
+        $this->logActivity('data_deletion_requested', $userId, $summary);
+        $this->sendAdminNotification('data_deletion', $user, $summary);
 
         // Always delete address book entries (not order-related)
         if ($this->params->get('delete_addresses', 1)) {
-            $this->deleteAddresses($user->id);
-            $this->logActivity('all_addresses_deleted', $user->id);
+            $this->deleteAddresses($userId);
+            $this->logActivity('all_addresses_deleted', $userId);
         }
 
         // Always delete cart data
@@ -765,6 +804,69 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Remove AcyMailing subscriber data
         $this->removeAcyMailingData($user);
+
+        $this->reportRetainedOrders($retained, $summary, $customerEmail);
+    }
+
+    /**
+     * Text block listing orders kept until the end of their retention period ('' if none).
+     *
+     * @param   array  $orders  'orders' of checkRetentionPeriod()
+     */
+    protected function formatRetainedOrders(array $orders): string
+    {
+        if ($orders === []) {
+            return '';
+        }
+
+        $text = Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_RETAINED_HEADER', (int) $this->params->get('retention_years', 10)) . "\n\n";
+
+        foreach ($orders as $i => $order) {
+            $text .= ($i + 1) . '. ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
+            $text .= '   ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_DATE', $order['order_date']) . "\n";
+            $text .= '   ' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_UNTIL', $order['retention_end']) . "\n\n";
+        }
+
+        return $text;
+    }
+
+    /**
+     * Feedback after a removal request: message for the administrator who processes the request,
+     * e-mail to the customer when orders are kept.
+     */
+    protected function reportRetainedOrders(array $retained, string $summary, string $customerEmail): void
+    {
+        try {
+            $app = $this->getApplication() ?? Factory::getApplication();
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        if (method_exists($app, 'isClient') && $app->isClient('administrator')) {
+            $app->enqueueMessage(
+                $retained === []
+                    ? Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED')
+                    : nl2br(htmlspecialchars(Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED') . "\n\n" . $summary, ENT_QUOTES, 'UTF-8')),
+                'message'
+            );
+        }
+
+        if ($retained === [] || !filter_var($customerEmail, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+
+        try {
+            $mailer = $app->getContainer()->get(MailerFactoryInterface::class)->createMailer();
+            $mailer->addRecipient($customerEmail);
+            $mailer->setSubject(Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT', (string) $app->get('sitename')));
+            $mailer->setBody(
+                Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY') . "\n\n" . $summary
+                . Text::sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT', (string) $this->params->get('support_email', $app->get('mailfrom')))
+            );
+            $mailer->send();
+        } catch (\Throwable $e) {
+            Log::add('Privacy removal notice to the customer failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
     }
 
     /**
@@ -858,7 +960,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         $now = time();
-        $cutoffDate = strtotime("-{$retentionYears} years");
+        // Retention starts at the end of the fiscal year of the order (OR Art. 958f).
+        $cutoff          = $this->retentionCutoff();
+        $fiscalYearEnd   = (string) $this->params->get('fiscal_year_end', RetentionPeriod::DEFAULT_FISCAL_YEAR_END);
         $processedOrders = [];
 
         $pkCol = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
@@ -869,9 +973,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
 
             $orderDate  = strtotime($order->created_on);
+            $isExpired  = (string) $order->created_on <= $cutoff;
             $isLifetime = $this->isLifetimeLicense($order->product_id ?? null);
 
-            if ($isLifetime && $orderDate <= $cutoffDate) {
+            if ($isLifetime && $isExpired) {
                 $result['can_delete'] = false;
                 $result['lifetime_licenses_accounting'][] = [
                     'order_number' => $order->order_number,
@@ -884,12 +989,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 continue;
             }
 
-            if ($orderDate > $cutoffDate) {
-                $orderAge       = ($now - $orderDate) / (365 * 24 * 60 * 60);
-                $yearsRemaining = $retentionYears - $orderAge;
-                $retentionEnd   = date('d.m.Y', strtotime($order->created_on . " +{$retentionYears} years"));
+            if (!$isExpired) {
+                $retentionEndDate = RetentionPeriod::retentionEnd((string) $order->created_on, $retentionYears, $fiscalYearEnd);
+                $yearsRemaining   = max(0, ($retentionEndDate->getTimestamp() - $now) / (365.25 * 24 * 60 * 60));
+                $retentionEnd     = $retentionEndDate->format('d.m.Y');
 
-                $result['can_delete'] = false;
+                // Kept until the retention end; the rest of the request is still carried out.
                 $result['orders'][] = [
                     'order_number'   => $order->order_number,
                     'order_date'     => date('d.m.Y', $orderDate),
@@ -1011,10 +1116,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected function anonymizeOrders(int $userId): void
     {
         $db = $this->getDatabase();
-        $retentionYears = (int) $this->params->get('retention_years', 10);
-        
-        // Calculate cutoff date - only anonymize orders OLDER than retention period
-        $cutoffDate = date('Y-m-d H:i:s', strtotime("-{$retentionYears} years"));
+        // Only orders whose retention period (from the end of their fiscal year) has ended
+        $cutoffDate = $this->retentionCutoff();
 
         $safeUserId = (int) $userId;
         $safeCutoff = $db->quote($cutoffDate);
@@ -1025,7 +1128,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->select($db->quoteName('order_id'))
                 ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
                 ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff)
+                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff)
         );
         $anonymizedOrderIds = $db->loadColumn() ?: [];
 
@@ -1039,7 +1142,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
                 ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
             $db->setQuery($query);
             $db->execute();
 
@@ -1048,7 +1151,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->select($db->quoteName('order_id'))
                 ->from($db->quoteName('#__j2store_orders'))
                 ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
 
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2store_orderinfos'))
@@ -1094,7 +1197,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                 ])
                 ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
             $db->setQuery($query);
             $db->execute();
 
@@ -1103,7 +1206,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->select($db->quoteName('order_id'))
                 ->from($db->quoteName('#__j2commerce_orders'))
                 ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' < ' . $safeCutoff);
+                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
 
             $query = $this->createDbQuery()
                 ->update($db->quoteName('#__j2commerce_orderinfos'))

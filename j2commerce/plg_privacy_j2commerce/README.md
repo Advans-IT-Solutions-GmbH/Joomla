@@ -179,11 +179,11 @@ Consent is stored in Joomla's core table `#__privacy_consents`. No table of its 
 
 **What is stored and why:** the time of the consent (`created`), the order number, the IP address and the browser user agent (`body`), and the `user_id` of the order. IP address and user agent are stored as proof of the consent and for the security of the shop (legitimate interest).
 
-**How long:** IP address and user agent are kept as long as the order they belong to has to be kept (accounting retention period). When this plugin anonymizes an order, they are removed from the checkout consent records of that order. This applies only to orders outside the retention period (**Retention Period**), anonymized either through a removal request or through the cleanup task. The record itself stays as evidence without these personal data: `user_id`, `state`, `created`, `subject` and the order number are kept, and `body` then says that IP address and user agent were removed (marker `<!-- j2commerce-evidence-removed -->`). Consent records of other orders are not changed. With **Anonymize Orders** (plugin) or `anonymize_orders` (task) off, orders are not anonymized and their consent records keep IP address and user agent. Guest orders (`user_id = 0`) are not anonymized by this plugin, so their consent records keep them too.
+**How long:** IP address and user agent are kept as long as the order they belong to has to be kept (accounting retention period). When this plugin anonymizes an order, they are removed from the checkout consent records of that order. This applies only to orders outside the retention period (**Retention Period**, counted from the end of the fiscal year of the order), anonymized either through a removal request or through the cleanup task. The record itself stays as evidence without these personal data: `user_id`, `state`, `created`, `subject` and the order number are kept, and `body` then says that IP address and user agent were removed (marker `<!-- j2commerce-evidence-removed -->`). Consent records of other orders are not changed. With **Anonymize Orders** (plugin) or `anonymize_orders` (task) off, orders are not anonymized and their consent records keep IP address and user agent. Guest orders (`user_id = 0`) are anonymized by the cleanup task only (there is no removal request for guests).
 
 **Export and deletion:** Joomla's privacy export (`plg_privacy_consents`) only includes consent records with the requesting user's `user_id`, and Joomla deletes consent records only when a user account is deleted. Checkout consents of guest orders (`user_id = 0`) are therefore not covered by com_privacy export or deletion requests, and this plugin does not export or delete checkout consent records itself (it only removes IP address and user agent when it anonymizes the order, see above). Handle requests of guest customers manually in **Users → Privacy → Consents**.
 
-**Operator responsibilities:** describe the stored data (IP address, user agent, order number, time), its purpose (proof of consent, shop security) and its storage period (the retention period of the order) in your privacy policy. Schedule the cleanup task (or process removal requests) so that expired orders are anonymized, and handle guest orders manually. The consent records themselves, without IP address and user agent, are not deleted automatically; decide how long you keep them.
+**Operator responsibilities:** describe the stored data (IP address, user agent, order number, time), its purpose (proof of consent, shop security) and its storage period (the retention period of the order) in your privacy policy. Schedule the cleanup task (or process removal requests) so that expired orders are anonymized; guest orders are anonymized by the cleanup task. The consent records themselves, without IP address and user agent, are not deleted automatically; decide how long you keep them.
 
 **Not recorded:** consents are never created retroactively from the mere existence of an order, because an order is no evidence that the checkbox was ticked. Orders placed before this version, and checkouts on J2Commerce 4 / J2Store, have no checkout consent record.
 
@@ -434,6 +434,8 @@ Navigate to: `System → Manage → Plugins → Privacy - J2Commerce`
 - UK: `6`
 - USA: `7`
 
+**Fiscal Year End (MM-DD):** default `12-31`. The retention period starts at the **end of the fiscal year** in which the order was placed (OR Art. 958f; AO § 147 (4) likewise from the end of the calendar year), not on the order date. Example with 10 years and fiscal year end 31 December: an order of 15 March 2016 is kept until 31 December 2026 and anonymized from 1 January 2027. Invalid values (including `02-29`) count as `12-31`.
+
 **Legal Basis:** (Example for Switzerland)
 ```
 • Switzerland: OR Art. 958f (10 years)
@@ -474,7 +476,8 @@ Navigate to: `System → Manage → Scheduled Tasks → New`
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `retention_years` | 10 | Retention period in years (required, integer 1–30). Users whose most recent order is older than this are processed. |
+| `retention_years` | 10 | Retention period in years (required, integer 1–30), counted from the end of the fiscal year of the order. Registered users whose most recent order is outside the retention period are processed, and guest orders (`user_id = 0`) outside it are processed per order. |
+| `fiscal_year_end` | 12-31 | Fiscal year end (MM-DD) from which the retention period is counted. |
 | `anonymize_orders` | Yes | Anonymize the users' orders and order billing/shipping data; also removes IP address and user agent from the checkout consent records of these orders. |
 | `delete_addresses` | Yes | Delete the users' saved addresses. |
 
@@ -485,12 +488,12 @@ Navigate to: `System → Manage → Scheduled Tasks → New`
 Validate the implementation using the following test procedure:
 
 1. Create a test product with lifetime-license flag `is_lifetime_license = yes`
-2. Generate a test order for the configured product
+2. Generate a test order for the configured product, dated before the end of the retention period (for example 11 years ago)
 3. Initiate a data removal request via `Users → Privacy → Requests → New Request`
 4. Attempt data deletion via `Complete Request → Delete Data`
-5. **Expected Result:** System blocks deletion and displays retention notification
+5. **Expected Result:** System blocks deletion and displays the lifetime-license notification
 
-Successful display of the retention notification confirms correct implementation.
+Successful display of the notification confirms correct implementation. A removal request of a user whose orders are all within the retention period is carried out (see [Data Deletion](#data-deletion)).
 
 ---
 
@@ -536,7 +539,7 @@ Payment data (credit card details, bank information) is stored by payment servic
 
 **What stays intact (for orders WITHIN retention period):**
 - Complete order data including addresses
-- Required by Swiss law: OR Art. 958f, MWSTG Art. 70 (10 years)
+- Required by Swiss law: OR Art. 958f, MWSTG Art. 70 (10 years from the end of the fiscal year of the order)
 
 **What stays (anonymized orders):**
 - Order numbers
@@ -557,14 +560,20 @@ Payment data (credit card details, bank information) is stored by payment servic
 ```
 1. User requests data deletion
    ↓
-2. System checks: Has orders within retention period?
+2. System checks: lifetime license outside the retention period?
    ↓
-3a. NO → Immediate deletion/anonymization
-3b. YES → Deletion blocked, show retention message
+3a. YES → Deletion blocked, show lifetime-license message
+3b. NO  → Request carried out:
+          • account pseudonymised (Joomla core privacy user plugin)
+          • saved addresses, carts, AcyMailing data deleted
+          • orders outside the retention period anonymized
+          • orders within the retention period kept intact;
+            administrator message + e-mail to the customer list
+            them with their retention end
    ↓
-4. After retention period expires
+4. After the retention period of the kept orders ends
    ↓
-5. Scheduled task automatically anonymizes data
+5. Scheduled task automatically anonymizes them
    ↓
 6. Exception: Lifetime licenses keep email for activation
 ```
@@ -572,8 +581,8 @@ Payment data (credit card details, bank information) is stored by payment servic
 ### Retention Logic
 
 **For ALL orders:**
-- Retention period: Configurable (default 10 years)
-- Applies to: ALL orders, not just licenses
+- Retention period: Configurable (default 10 years), counted from the end of the fiscal year of the order (**Fiscal Year End**, default 31 December)
+- Applies to: ALL orders, not just licenses, of registered users and guests
 - Legal basis: Accounting requirements (e.g., Swiss OR Art. 958f)
 
 **For Lifetime Licenses:**
@@ -585,11 +594,13 @@ Payment data (credit card details, bank information) is stored by payment servic
 ### Automatic Cleanup
 
 **Scheduled Task runs daily:**
-1. Finds users with all orders older than retention period
+1. Finds registered users whose orders are all outside the retention period
 2. Checks for lifetime licenses
 3. Full anonymization: No lifetime licenses
 4. Partial anonymization: Has lifetime licenses (keep email)
-5. Logs all actions
+5. Finds guest orders (`user_id = 0`) outside the retention period that still contain personal data and anonymizes them per order (orders with a lifetime license keep the e-mail address)
+6. Removes IP address and user agent from the checkout consent records of all anonymized orders
+7. Logs all actions
 
 ---
 
@@ -680,39 +691,34 @@ Data immediately anonymized
 
 #### Scenario 2: User with recent orders
 
-**Result:** • Deletion blocked
+**Result:** • Request carried out, orders within the retention period kept
 
 ```
 User requests deletion
   ↓
-Orders found (e.g., 3 years old)
+Orders found (e.g., order of 15.03.2020)
   ↓
-Retention: 10 years → 7 years remaining
+Retention: 10 years from the end of 2020 → kept until 31.12.2030
   ↓
-Deletion blocked with message
+Account pseudonymised, addresses/carts/newsletter data deleted,
+expired orders anonymized; the recent order stays intact
+  ↓
+Administrator message and e-mail to the customer (request address)
 ```
 
-**Error Message:**
+**Customer e-mail (excerpt):**
 ```
-═══════════════════════════════════════════════════════
-DATA DELETION NOT POSSIBLE
-═══════════════════════════════════════════════════════
+Your data deletion request has been carried out. [...]
 
-Your data cannot be deleted at this time because you
-have placed orders subject to a statutory retention
-obligation.
+Orders kept for accounting until the end of the retention period
+(10 years from the end of the fiscal year of the order), then anonymized:
 
-YOUR ORDERS:
-1. Order #123
+1. Order 123
    Date: 15.03.2020
-   Amount: 99.00 CHF
-   Retained until: 15.03.2030
-   Remaining: 7.0 years
-
-AUTOMATIC DELETION:
-• Your data will be AUTOMATICALLY deleted from: 15.03.2030
-• You do NOT need to take any further action
+   Retained until: 31.12.2030
 ```
+
+The cleanup task anonymizes the order after 31.12.2030 (the user_id of the pseudonymised account stays on the order).
 
 ---
 
@@ -723,7 +729,7 @@ AUTOMATIC DELETION:
 ```
 Scheduled task runs daily (02:00)
   ↓
-Finds users with orders older than 10 years
+Finds users and guest orders outside the retention period
   ↓
 Checks for lifetime licenses
   ↓
@@ -778,8 +784,8 @@ Already deleted/anonymized:
 
 **Location 1: Flash Message (Immediate)**
 - Appears at top of screen after clicking "Delete Data"
-- Red error message with full details
-- Shows retention period, orders, automatic deletion date
+- Request carried out: message listing the orders kept until the end of their retention period (the customer receives the same list by e-mail)
+- Request blocked (lifetime license outside the retention period): red error message with full details
 
 **Location 2: Action Log (Permanent)**
 - Visible in request detail view
@@ -787,7 +793,7 @@ Already deleted/anonymized:
 - Under "Action Log" section
 
 **Location 3: Request Status**
-- Request remains in "Confirmed" status if blocked
+- Request remains in "Confirmed" status if blocked (lifetime license)
 - Changes to "Complete" when deletion succeeds
 
 ---
@@ -796,7 +802,7 @@ Already deleted/anonymized:
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin intercepts the deletion step to apply retention logic before any data is removed. If retention blocks deletion, the request stays in "Confirmed" status and the user receives a retention message.
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. Only a lifetime license outside the retention period blocks the request; it then stays in "Confirmed" status with the lifetime-license message.
 
 ---
 
@@ -815,7 +821,9 @@ System → Manage → Scheduled Tasks → [Task] → View Logs
 **Example log:**
 ```
 [2025-01-15 02:00:15] Starting automatic data cleanup...
-[2025-01-15 02:00:15] Retention period: 10 years
+[2025-01-15 02:00:15] Retention period: 10 years from the end of the fiscal year (12-31)
+[2025-01-15 02:00:15] Orders created on or before 2014-12-31 23:59:59 are outside the retention period
+[2025-01-15 02:00:15] Anonymized 3 guest order(s), 0 of them with lifetime license (e-mail kept)
 [2025-01-15 02:00:16] Found 10 users with expired retention
 [2025-01-15 02:00:16] Fully anonymized: 8 users
 [2025-01-15 02:00:16] Partially anonymized: 2 users (lifetime licenses)
@@ -837,14 +845,15 @@ System → Manage → Scheduled Tasks → [Task] → View Logs
 
 **System Response:**
 ```
-• Deletion blocked
-Message: "Automatic deletion from: 15.03.2030"
-Status: Confirmed (not Complete)
+• Request carried out
+Message: "Order ... Retained until: 31.12.2033" (administrator and customer e-mail)
+Status: Complete
 ```
 
 **What happens:**
-- Data stays until 2030
-- Automatic cleanup deletes in 2030
+- Account, addresses, carts and newsletter data are removed or pseudonymised now
+- The order stays intact until the end of its retention period (end of the order's fiscal year + 10 years)
+- Automatic cleanup anonymizes it afterwards
 - User doesn't need to do anything
 
 ---
@@ -907,8 +916,9 @@ This plugin complies with Swiss legal requirements:
 | **DSG Art. 32 para. 2 lit. c** | Right to have personal data deleted or destroyed; statutory retention obligations (OR, MWSTG) still apply |
 
 **Implementation:**
-- Orders within 10-year retention period: **Kept intact** (not anonymized)
-- Orders outside retention period: **Anonymized** on deletion request
+- Retention period: 10 years from the **end of the fiscal year** of the order (OR Art. 958f)
+- Orders within the retention period: **Kept intact** (not anonymized); a removal request is still carried out for all other data
+- Orders outside retention period: **Anonymized** on deletion request and by the cleanup task (registered users and guest orders)
 - Address book entries: **Deleted** immediately on request
 - Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
@@ -1215,14 +1225,14 @@ Order as in `tests/test.env`:
 2. **Configuration** — plugin params, language files, XML manifest
 3. **Privacy Plugin Base** — method existence and class structure
 4. **Data Integration** — test data setup and CRUD operations
-5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure
+5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure (a recent order does not block the request and is listed with a retention end on 31.12.)
 6. **Data Export** — `onPrivacyExportRequest` output validation
-7. **Data Anonymization** — `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged
+7. **Data Anonymization** — `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); `RetentionPeriod` dates and cutoff consistency
 8. **GDPR Compliance** — all DSGVO-relevant methods and hooks
 9. **Template Overrides** — override source files and deployment verification (no J2Commerce 6 checkout override)
 10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
 11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override (accepted steps must return J2Commerce JSON without error), and the privacy policy link with SEF URLs off and on (escaped once); `onJ2CommerceAfterSaveOrder` only for the consent's cart; Privacy tab links (`com_privacy` form vs. `mailto:`, one button per enabled request option); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component, an unchanged checkout override of 1.5.5 is renamed, a changed one is kept with a warning, custom checkout overrides without the event are reported)
-12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order
+12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept)
 13. **AcyMailing Integration** — newsletter consent sync
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 15. **Uninstall** — clean removal from database and filesystem

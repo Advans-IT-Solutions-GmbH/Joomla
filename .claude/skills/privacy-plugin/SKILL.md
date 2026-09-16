@@ -59,7 +59,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | Event | Purpose |
 |-------|---------|
 | `onPrivacyExportRequest` | Collect J2Commerce data for export |
-| `onPrivacyCanRemoveData` | Check if retention blocks deletion |
+| `onPrivacyCanRemoveData` | Blocks deletion only for lifetime licenses outside the retention period; orders within it are kept and reported |
 | `onPrivacyRemoveData` | Anonymize/delete data |
 | `onAjaxJ2commercePrivacy` | Handle address deletion AJAX requests |
 

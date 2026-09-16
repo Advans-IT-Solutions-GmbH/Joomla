@@ -11,6 +11,7 @@ namespace Advans\Plugin\Task\J2CommercePrivacy\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
 use Joomla\Component\Scheduler\Administrator\Task\Status;
@@ -140,10 +141,19 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         try {
             $db             = $this->getDatabase();
             $retentionYears = (int) $this->taskParam('retention_years', 10);
-            $cutoffDate     = date('Y-m-d H:i:s', strtotime("-{$retentionYears} years"));
+            $fiscalYearEnd  = (string) $this->taskParam('fiscal_year_end', '12-31');
 
-            $this->logTask("Retention period: {$retentionYears} years");
-            $this->logTask("Cutoff date: {$cutoffDate}");
+            // The retention period starts at the end of the fiscal year of the order (OR Art. 958f).
+            if (!$this->loadPrivacyClass(RetentionPeriod::class, '/Retention/RetentionPeriod.php')) {
+                $this->logTask('Retention helper of the privacy plugin not found; nothing anonymized', 'error');
+
+                return Status::KNOCKOUT;
+            }
+
+            $cutoffDate = RetentionPeriod::cutoff($retentionYears, $fiscalYearEnd);
+
+            $this->logTask("Retention period: {$retentionYears} years from the end of the fiscal year ({$fiscalYearEnd})");
+            $this->logTask("Orders created on or before {$cutoffDate} are outside the retention period");
 
             $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
             $query = $this->createDbQuery()
@@ -151,15 +161,26 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 ->from($db->quoteName($ordersTable, 'o'))
                 ->where($db->quoteName('o.user_id') . ' > 0')
                 ->group($db->quoteName('o.user_id'))
-                ->having('MAX(' . $db->quoteName('o.created_on') . ') < ' . $db->quote($cutoffDate));
+                ->having('MAX(' . $db->quoteName('o.created_on') . ') <= ' . $db->quote($cutoffDate));
 
             $db->setQuery($query);
             $userIds = $db->loadColumn();
 
+            $guestErrors = 0;
+
+            if ((int) $this->taskParam('anonymize_orders', 1) === 1) {
+                try {
+                    $this->anonymizeExpiredGuestOrders($cutoffDate);
+                } catch (\Throwable $e) {
+                    $guestErrors++;
+                    $this->logTask('Error anonymizing guest orders: ' . $e->getMessage(), 'error');
+                }
+            }
+
             if (empty($userIds)) {
                 $this->logTask('No users found with expired retention periods');
 
-                return Status::OK;
+                return $guestErrors > 0 ? Status::KNOCKOUT : Status::OK;
             }
 
             $this->logTask('Found ' . count($userIds) . ' users with expired retention periods');
@@ -346,6 +367,138 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
      */
     private function anonymizeOrderTables(int $userId, bool $anonymizeEmail): void
     {
+        $this->anonymizeOrdersWhere($this->getDatabase()->quoteName('user_id') . ' = ' . (int) $userId, $anonymizeEmail);
+        $this->removeConsentEvidence($userId);
+    }
+
+    /**
+     * Anonymize guest orders (user_id = 0) outside the retention period. Guest orders have no user
+     * account, so they are handled per order. Orders with a lifetime license keep their e-mail
+     * address (license reactivation), like the partial anonymization of registered users.
+     *
+     * @param   string  $cutoffDate  Orders created on or before this date are processed
+     *
+     * @return  void
+     */
+    private function anonymizeExpiredGuestOrders(string $cutoffDate): void
+    {
+        $db          = $this->getDatabase();
+        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $infosTable  = $this->isJ2Commerce4() ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+
+        // Only orders that still contain personal data (repeated runs skip finished orders).
+        $query = $this->createDbQuery()
+            ->select('DISTINCT ' . $db->quoteName('o.order_id'))
+            ->from($db->quoteName($ordersTable, 'o'))
+            ->join('LEFT', $db->quoteName($infosTable, 'oi') . ' ON ' . $db->quoteName('oi.order_id') . ' = ' . $db->quoteName('o.order_id'))
+            ->where($db->quoteName('o.user_id') . ' = 0')
+            ->where($db->quoteName('o.created_on') . ' <= ' . $db->quote($cutoffDate))
+            ->where('(' . $db->quoteName('o.ip_address') . ' <> ' . $db->quote('')
+                . ' OR ' . $db->quoteName('o.customer_note') . ' <> ' . $db->quote('')
+                . ' OR ' . $db->quoteName('oi.billing_first_name') . ' <> ' . $db->quote('Anonymized') . ')');
+        $db->setQuery($query);
+        $orderIds = array_values(array_filter(array_map('strval', $db->loadColumn() ?: [])));
+
+        if ($orderIds === []) {
+            $this->logTask('No guest orders with expired retention periods');
+
+            return;
+        }
+
+        $lifetime = $this->ordersWithLifetimeLicense($orderIds);
+
+        foreach (array_chunk($orderIds, 200) as $chunk) {
+            $full    = array_values(array_diff($chunk, $lifetime));
+            $partial = array_values(array_intersect($chunk, $lifetime));
+
+            foreach ([[$full, true], [$partial, false]] as [$ids, $anonymizeEmail]) {
+                if ($ids === []) {
+                    continue;
+                }
+
+                $this->anonymizeOrdersWhere(
+                    $db->quoteName('user_id') . ' = 0 AND ' . $db->quoteName('order_id') . ' IN (' . implode(',', array_map([$db, 'quote'], $ids)) . ')',
+                    $anonymizeEmail
+                );
+            }
+
+            $this->removeConsentEvidenceForOrders($chunk);
+        }
+
+        $this->logTask('Anonymized ' . count($orderIds) . ' guest order(s), ' . count($lifetime) . ' of them with lifetime license (e-mail kept)');
+    }
+
+    /**
+     * Order numbers among $orderIds that contain a product flagged as lifetime license.
+     * Fail-closed: if the lookup fails, every order counts as lifetime license (e-mail kept).
+     *
+     * @param   string[]  $orderIds  Order numbers
+     *
+     * @return  string[]
+     */
+    private function ordersWithLifetimeLicense(array $orderIds): array
+    {
+        $db     = $this->getDatabase();
+        $tables = $db->getTableList();
+        $prefix = $db->getPrefix();
+        $in     = implode(',', array_map([$db, 'quote'], $orderIds));
+
+        try {
+            if ($this->isJ2Commerce4()) {
+                if (!in_array($prefix . 'j2store_product_customfields', $tables, true)) {
+                    return [];
+                }
+
+                $query = $this->createDbQuery()
+                    ->select('DISTINCT ' . $db->quoteName('oi.order_id'))
+                    ->from($db->quoteName('#__j2store_orderitems', 'oi'))
+                    ->join(
+                        'INNER',
+                        $db->quoteName('#__j2store_product_customfields', 'cf')
+                        . ' ON ' . $db->quoteName('cf.product_id') . ' = ' . $db->quoteName('oi.product_id')
+                        . ' AND ' . $db->quoteName('cf.field_name') . ' = ' . $db->quote('is_lifetime_license')
+                        . ' AND LOWER(TRIM(' . $db->quoteName('cf.field_value') . ')) = ' . $db->quote('yes')
+                    )
+                    ->where($db->quoteName('oi.order_id') . ' IN (' . $in . ')');
+            } else {
+                if (!in_array($prefix . 'j2commerce_metafields', $tables, true)) {
+                    return [];
+                }
+
+                $query = $this->createDbQuery()
+                    ->select('DISTINCT ' . $db->quoteName('oi.order_id'))
+                    ->from($db->quoteName('#__j2commerce_orderitems', 'oi'))
+                    ->join(
+                        'INNER',
+                        $db->quoteName('#__j2commerce_metafields', 'mf')
+                        . ' ON ' . $db->quoteName('mf.owner_id') . ' = ' . $db->quoteName('oi.product_id')
+                        . ' AND ' . $db->quoteName('mf.owner_resource') . ' = ' . $db->quote('product')
+                        . ' AND ' . $db->quoteName('mf.metakey') . ' = ' . $db->quote('is_lifetime_license')
+                        . ' AND LOWER(TRIM(' . $db->quoteName('mf.metavalue') . ')) = ' . $db->quote('yes')
+                    )
+                    ->where($db->quoteName('oi.order_id') . ' IN (' . $in . ')');
+            }
+
+            $db->setQuery($query);
+
+            return array_map('strval', $db->loadColumn() ?: []);
+        } catch (\Throwable $e) {
+            $this->logTask('Lifetime license lookup for guest orders failed, keeping their e-mail addresses: ' . $e->getMessage(), 'warning');
+
+            return $orderIds;
+        }
+    }
+
+    /**
+     * Anonymize the orders matching $where (SQL condition on the orders table) and their order infos.
+     *
+     * @param   string  $where           Condition on the orders table (already quoted)
+     * @param   bool    $anonymizeEmail  Whether to anonymize order e-mail addresses
+     *
+     * @return  void
+     */
+    private function anonymizeOrdersWhere(string $where, bool $anonymizeEmail): void
+    {
         $db          = $this->getDatabase();
         $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
         $infosTable  = $this->isJ2Commerce4() ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
@@ -362,14 +515,14 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $query = $this->createDbQuery()
             ->update($db->quoteName($ordersTable))
             ->set($sets)
-            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
+            ->where($where);
         $db->setQuery($query);
         $db->execute();
 
         $subQuery = $this->createDbQuery()
             ->select($db->quoteName('order_id'))
             ->from($db->quoteName($ordersTable))
-            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
+            ->where($where);
 
         $query = $this->createDbQuery()
             ->update($db->quoteName($infosTable))
@@ -405,8 +558,6 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
         $db->setQuery($query);
         $db->execute();
-
-        $this->removeConsentEvidence($userId);
     }
 
     /**
@@ -420,19 +571,6 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
      */
     private function removeConsentEvidence(int $userId): void
     {
-        $class = ConsentRepository::class;
-        $file  = JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php';
-
-        if (!class_exists($class) && is_file($file)) {
-            require_once $file;
-        }
-
-        if (!class_exists($class)) {
-            $this->logTask('Consent repository of the privacy plugin not found; consent records not changed', 'warning');
-
-            return;
-        }
-
         $db          = $this->getDatabase();
         $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
         $query       = $this->createDbQuery()
@@ -442,9 +580,42 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $db->setQuery($query);
         $orderIds = $db->loadColumn() ?: [];
 
-        if ($orderIds !== []) {
-            $changed = (new ConsentRepository($db))->removeOrderEvidence($orderIds);
-            $this->logTask("Removed IP address and user agent from {$changed} consent record(s) of user ID: {$userId}");
+        $changed = $this->removeConsentEvidenceForOrders($orderIds);
+        $this->logTask("Removed IP address and user agent from {$changed} consent record(s) of user ID: {$userId}");
+    }
+
+    /**
+     * @param   string[]  $orderIds  Anonymized order numbers
+     *
+     * @return  int  Number of consent records changed
+     */
+    private function removeConsentEvidenceForOrders(array $orderIds): int
+    {
+        if ($orderIds === []) {
+            return 0;
         }
+
+        if (!$this->loadPrivacyClass(ConsentRepository::class, '/Consent/ConsentRepository.php')) {
+            $this->logTask('Consent repository of the privacy plugin not found; consent records not changed', 'warning');
+
+            return 0;
+        }
+
+        return (new ConsentRepository($this->getDatabase()))->removeOrderEvidence($orderIds);
+    }
+
+    /**
+     * Load a class of the privacy plugin that ships this task plugin (namespace map first, then
+     * the file under plugins/privacy/j2commerce/src).
+     */
+    private function loadPrivacyClass(string $class, string $relativeFile): bool
+    {
+        $file = JPATH_PLUGINS . '/privacy/j2commerce/src' . $relativeFile;
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        return class_exists($class);
     }
 }
