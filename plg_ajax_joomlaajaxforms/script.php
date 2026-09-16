@@ -26,13 +26,39 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
             return;
         }
 
-        Factory::getApplication()->getLanguage()->load(
-            'plg_ajax_joomlaajaxforms',
-            JPATH_ADMINISTRATOR
-        );
+        $language = Factory::getApplication()->getLanguage();
+        $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR);
+        $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms');
 
         $this->removeLegacyUpdateSites();
         $this->checkHtaccess();
+
+        // Joomla installs plugins disabled and an update keeps the state. The
+        // only setup step is enabling the plugin, so it is mentioned only while
+        // the plugin is still disabled.
+        if (!$this->isPluginEnabled()) {
+            Factory::getApplication()->enqueueMessage(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_ENABLE_HINT'), 'message');
+        }
+    }
+
+    /**
+     * Whether this plugin is enabled in #__extensions.
+     */
+    private function isPluginEnabled(): bool
+    {
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('enabled'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('ajax'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('joomlaajaxforms'));
+
+            return (int) $db->setQuery($query)->loadResult() === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**
