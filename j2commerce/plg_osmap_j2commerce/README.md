@@ -91,6 +91,9 @@ On every install and update, the installer script (`script.php`):
 - disables the legacy `plg_osmap_j2store` plugin (folder `osmap`, element
   `j2store`) if it is present, because it generates wrong product URLs;
 - registers the plugin's update site if it is not registered yet;
+- removes update sites of this plugin that still point to the repository's
+  former path (`advansit/Joomla`), so Joomla only queries the current update
+  server;
 - patches OSMap ≤ 5.1.3 (see above).
 
 ### .htaccess Requirements
@@ -270,8 +273,7 @@ Order as in `tests/test.env`:
 
 Prerequisites: the package as `tests/extension.zip`; for the Joomla 6 stacks also
 `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow
-(`2dd491e8e1b129a8754065937f85769d97ca76fa`; production-like lane:
-`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands:
+(`7edb6e11ae9148bf996b06c47a0d8266865af7b2`, all lanes). Full commands:
 [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash
@@ -406,7 +408,8 @@ Verify that:
    `view=categoryalias` and the product is publicly visible (see above).
 4. If using manually created `published=-2` hidden menu items: verify the
    `path` field is correct. If paths are stale, rebuild the menu tree
-   (**System → Maintenance → Rebuild**).
+   (**Menus → All Menu Items**, toolbar button **Rebuild**; only shown to
+   users with the *Super User* permission `core.admin`).
 
 See the [.htaccess Requirements](#htaccess-requirements) section above.
 
@@ -414,8 +417,9 @@ See the [.htaccess Requirements](#htaccess-requirements) section above.
 
 The J2Store mechanism uses the `path` field of the `published=-2` menu item
 directly as the sitemap URL. If product aliases were renamed or the menu tree
-was modified without rebuilding, the stored paths may be stale. Run
-**System → Maintenance → Rebuild** to regenerate all menu item paths.
+was modified without rebuilding, the stored paths may be stale. Open
+**Menus → All Menu Items** and click **Rebuild** in the toolbar to regenerate
+all menu item paths.
 
 ## Migrating from J2Store to J2Commerce
 
