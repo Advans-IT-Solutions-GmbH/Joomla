@@ -104,6 +104,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             $this->installTaskPlugin($packageSource, $type);
             $this->installConsentSystemPlugin($packageSource);
+            $this->migrateLegacyConsents();
             $this->migrateLegacySchedulerTasks();
 
             if (!empty($this->_overridesFailed)) {
@@ -342,6 +343,45 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * consent is validated and recorded by this system plugin. It is enabled on first
      * installation only; an administrator's later choice to disable it survives updates.
      */
+    /**
+     * Consent records written by an earlier template override (subject PLG_PRIVACY_J2COMMERCE,
+     * e-mail address in the body): assigned to their order when unambiguous, otherwise
+     * anonymized. Advisory: never blocks the installation.
+     */
+    private function migrateLegacyConsents(): void
+    {
+        $base = JPATH_PLUGINS . '/privacy/j2commerce/src';
+
+        try {
+            foreach ([
+                'Advans\\Plugin\\Privacy\\J2Commerce\\Support\\J2CommerceStack' => '/Support/J2CommerceStack.php',
+                'Advans\\Plugin\\Privacy\\J2Commerce\\Consent\\ConsentRepository' => '/Consent/ConsentRepository.php',
+            ] as $class => $file) {
+                if (!class_exists($class) && is_file($base . $file)) {
+                    require_once $base . $file;
+                }
+            }
+
+            $repository = 'Advans\\Plugin\\Privacy\\J2Commerce\\Consent\\ConsentRepository';
+
+            if (!class_exists($repository) || !method_exists($repository, 'migrateLegacyConsents')) {
+                return;
+            }
+
+            $result = (new $repository(Factory::getContainer()->get(DatabaseInterface::class)))->migrateLegacyConsents();
+
+            if ($result['assigned'] + $result['anonymized'] > 0) {
+                \Joomla\CMS\Log\Log::add(
+                    sprintf('Legacy consent records: %d assigned to their order, %d anonymized', $result['assigned'], $result['anonymized']),
+                    \Joomla\CMS\Log\Log::INFO,
+                    'plg_privacy_j2commerce'
+                );
+            }
+        } catch (\Throwable $e) {
+            // Advisory only; the cleanup task and removal requests process the records as well.
+        }
+    }
+
     private function installConsentSystemPlugin(string $packageSource): void
     {
         $source = $packageSource . '/plugins/system/j2commerceprivacy';

@@ -15,7 +15,9 @@
  *     bypass routes: skipped step 4, cart change, template/templateStyle/Itemid request
  *     parameters, and a checkout without any template override; accepted steps must return
  *     J2Commerce JSON without error; privacy policy link escaped once with SEF off and on
- *   - onJ2CommerceAfterSaveOrder records consent only for the cart the consent was given for
+ *   - the consent is recorded when the order is placed (checkout.confirmPayment POST), only for the
+ *     order in the user state whose cart the consent was given for; not for incomplete orders
+ *   - legacy records of an earlier template override are assigned to their order or anonymized
  *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest), one button per
  *     enabled request type (Show Export Data / Show Delete All Data)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
@@ -185,7 +187,7 @@ class ConsentLoggingTest
     }
 
     /** Insert a test order by cloning the fixture order of user 100 (keeps all NOT NULL columns valid). */
-    private function createOrder(string $orderId, int $userId, string $email): bool
+    private function createOrder(string $orderId, int $userId, string $email, ?string $createdOn = null, int $cartId = 0): bool
     {
         $query = $this->query()
             ->select('*')
@@ -203,7 +205,7 @@ class ConsentLoggingTest
         $row['order_id']   = $orderId;
         $row['user_id']    = $userId;
         $row['user_email'] = $email;
-        $row['created_on'] = Factory::getDate()->toSql();
+        $row['created_on'] = $createdOn ?? Factory::getDate()->toSql();
 
         if (array_key_exists('token', $row)) {
             $row['token'] = self::tokenFor($orderId);
@@ -215,7 +217,7 @@ class ConsentLoggingTest
         }
 
         if (array_key_exists('cart_id', $row)) {
-            $row['cart_id'] = 0;
+            $row['cart_id'] = $cartId;
         }
 
         $object = (object) $row;
@@ -408,18 +410,21 @@ class ConsentLoggingTest
 
         if (class_exists(J2CommercePrivacy::class)) {
             $events = J2CommercePrivacy::getSubscribedEvents();
-            // J2Commerce 6 dispatches 'onJ2Commerce' . 'AfterDisplayShippingPayment' / 'AfterSaveOrder'.
+            // J2Commerce 6 dispatches 'onJ2Commerce' . 'AfterDisplayShippingPayment'. The consent is
+            // recorded when the order is placed, not on AfterSaveOrder (the confirmation step saves
+            // an incomplete order already when it is rendered).
             $this->test('Subscribes to onJ2CommerceAfterDisplayShippingPayment', isset($events['onJ2CommerceAfterDisplayShippingPayment']));
-            $this->test('Subscribes to onJ2CommerceAfterSaveOrder', isset($events['onJ2CommerceAfterSaveOrder']));
+            $this->test('Does not record on onJ2CommerceAfterSaveOrder', !isset($events['onJ2CommerceAfterSaveOrder']));
             $this->test('Subscribes to onAfterRoute', isset($events['onAfterRoute']));
             $this->test('Subscribes to onJ2CommerceCheckoutCleanup', isset($events['onJ2CommerceCheckoutCleanup']));
 
             $this->runCheckboxRenderTests();
             $this->runCheckoutRequestTests();
-            $this->runAfterSaveOrderTests($repository);
+            $this->runPlacedOrderTests($repository);
             $this->runHttpCheckoutTests();
         }
 
+        $this->runLegacyConsentTests($repository);
         $this->runLayoutTests($orderGuest);
 
         $this->cleanup();
@@ -551,53 +556,158 @@ class ConsentLoggingTest
         $this->test('resolveTask keeps dotted tasks', J2CommercePrivacy::resolveTask($this->request($validate)) === J2CommercePrivacy::TASK_VALIDATE);
     }
 
-    private function runAfterSaveOrderTests(ConsentRepository $repository): void
+    private function runPlacedOrderTests(ConsentRepository $repository): void
     {
-        echo "\n-- onJ2CommerceAfterSaveOrder dispatch --\n";
+        echo "\n-- Consent recorded when the order is placed (checkout.confirmPayment) --\n";
 
-        $orderEvent     = self::PREFIX . 'EVENT-1';
-        $orderNoFlag    = self::PREFIX . 'EVENT-2';
-        $orderWrongCart = self::PREFIX . 'EVENT-3';
+        if ($this->ordersTable !== '#__j2commerce_orders') {
+            echo "  (J2Commerce 6 only; the system plugin does not record consent on J2Store)\n";
 
-        foreach ([$orderEvent, $orderNoFlag, $orderWrongCart] as $orderId) {
-            $this->createOrder($orderId, 0, self::GUEST_EMAIL);
+            return;
         }
+
+        $placed     = self::PREFIX . 'PLACED-1';
+        $otherCart  = self::PREFIX . 'PLACED-2';
+        $notTicked  = self::PREFIX . 'PLACED-3';
+        $incomplete = self::PREFIX . 'PLACED-4';
+
+        $this->createOrder($placed, 0, self::GUEST_EMAIL, null, 21);
+        $this->createOrder($otherCart, 0, self::GUEST_EMAIL, null, 22);
+        $this->createOrder($notTicked, 0, self::GUEST_EMAIL, null, 21);
+        $this->createOrder($incomplete, 0, self::GUEST_EMAIL, null, 21);
+
+        $token   = [self::FORM_TOKEN => '1'];
+        $payment = ['option' => 'com_j2commerce', 'task' => 'checkout.confirmPayment'];
+        $confirm = ['option' => 'com_j2commerce', 'task' => 'checkout.confirm'];
 
         try {
             $plugin = new ConsentLoggingTestPlugin(['name' => 'j2commerceprivacy', 'type' => 'system', 'params' => '{}']);
             $plugin->setDatabase($this->db);
 
-            $dispatcher = new Dispatcher();
-            $dispatcher->addSubscriber($plugin);
+            // Rendering the confirmation step saves an incomplete order: nothing is recorded.
+            $this->test('Confirmation step (order saved, not placed) records nothing',
+                $plugin->recordPlacedOrderConsent($this->request($confirm, $token), 21, $incomplete) === null
+                && $this->countOrderConsents($incomplete) === 0);
 
-            $eventClass = 'J2Commerce\\Component\\J2commerce\\Administrator\\Event\\PluginEvent';
-            $makeEvent  = static function (object $order) use ($eventClass) {
-                // Same event object J2CommerceHelper::plugin()->event('AfterSaveOrder', [$this]) builds.
-                return class_exists($eventClass)
-                    ? new $eventClass('onJ2CommerceAfterSaveOrder', [$order])
-                    : new Event('onJ2CommerceAfterSaveOrder', [$order]);
-            };
+            $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $placed);
+            $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $placed);
+            $this->test('Placed order: consent recorded once', $this->countOrderConsents($placed) === 1, 'Got ' . $this->countOrderConsents($placed));
 
-            $plugin->consentCart = 21;
-            $saved = (object) ['order_id' => $orderEvent, 'user_id' => 0, 'cart_id' => 21];
-            $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', $makeEvent($saved));
-            $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', $makeEvent($saved));
-            $this->test('Consent for the order cart is recorded once', $this->countOrderConsents($orderEvent) === 1, 'Got ' . $this->countOrderConsents($orderEvent));
-
-            $record = $repository->findOrderConsent($orderEvent);
+            $record = $repository->findOrderConsent($placed);
             $this->test('Recorded body contains request IP and user agent', $record && str_contains($record->body, '203.0.113.7') && str_contains($record->body, 'ConsentLoggingTest/1.0'));
 
-            $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', $makeEvent((object) ['order_id' => $orderWrongCart, 'user_id' => 0, 'cart_id' => 22]));
-            $this->test('Consent of another cart is not applied to the order', $this->countOrderConsents($orderWrongCart) === 0);
+            $this->test('Order of another cart: nothing recorded',
+                $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $otherCart) === null && $this->countOrderConsents($otherCart) === 0);
+            $this->test('No ticked consent: nothing recorded',
+                $plugin->recordPlacedOrderConsent($this->request($payment, $token), null, $notTicked) === null && $this->countOrderConsents($notTicked) === 0);
+            $this->test('Gateway return (GET): nothing recorded',
+                $plugin->recordPlacedOrderConsent($this->request($payment, [], 'GET'), 21, $notTicked) === null && $this->countOrderConsents($notTicked) === 0);
+            $this->test('Unknown order number: nothing recorded',
+                $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, self::PREFIX . 'MISSING') === null);
 
-            $plugin->consentCart = null;
-            $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', $makeEvent((object) ['order_id' => $orderNoFlag, 'user_id' => 0, 'cart_id' => 21]));
-            $this->test('No consent recorded without ticked checkbox', $this->countOrderConsents($orderNoFlag) === 0);
+            // The AfterSaveOrder event no longer writes anything.
+            $dispatcher = new Dispatcher();
+            $dispatcher->addSubscriber($plugin);
+            $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', new Event('onJ2CommerceAfterSaveOrder', [(object) ['order_id' => $incomplete, 'user_id' => 0, 'cart_id' => 21]]));
+            $this->test('onJ2CommerceAfterSaveOrder records nothing', $this->countOrderConsents($incomplete) === 0);
         } catch (\Throwable $e) {
-            $this->test('System plugin dispatch runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            $this->test('Placed-order recording runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         }
     }
 
+    /**
+     * Records of an earlier template override (subject PLG_PRIVACY_J2COMMERCE, e-mail address,
+     * IP address and user agent in the body, no order reference).
+     */
+    private function runLegacyConsentTests(ConsentRepository $repository): void
+    {
+        echo "\n-- Legacy consent records (earlier template override) --\n";
+
+        $userOrder   = self::PREFIX . 'LEGACY-USER';
+        $guestOrder  = self::PREFIX . 'LEGACY-GUEST';
+        $guestEmail  = 'legacy-guest@example.invalid';
+        $ambiguousA  = self::PREFIX . 'LEGACY-AMB-A';
+        $ambiguousB  = self::PREFIX . 'LEGACY-AMB-B';
+        $ambiguousId = 102;
+        $time        = static fn (string $modify): string => Factory::getDate($modify)->toSql();
+
+        $this->createOrder($userOrder, self::USER_ID, 'test@example.com', $time('-3 days'));
+        $this->createOrder($guestOrder, 0, $guestEmail, $time('-4 days'));
+        $this->createOrder($ambiguousA, $ambiguousId, 'amb@example.invalid', $time('-5 days'));
+        $this->createOrder($ambiguousB, $ambiguousId, 'amb@example.invalid', $time('-5 days'));
+
+        $body = static fn (string $email, string $ip, string $ua): string =>
+            '<p>Einwilligung zur Datenschutzerklärung während des J2Commerce-Checkouts. E-Mail: <strong>' . htmlspecialchars($email) . '</strong></p>'
+            . '<p>IP-Adresse: <strong>' . $ip . '</strong></p><p>User-Agent:<br/>' . htmlspecialchars($ua) . '</p>';
+        $ids    = [];
+        $insert = function (string $key, int $userId, string $created, string $text) use (&$ids): void {
+            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $created, 'subject' => ConsentRepository::LEGACY_SUBJECT, 'body' => $text, 'remind' => 0, 'token' => ''];
+            $this->db->insertObject('#__privacy_consents', $row, 'id');
+            $ids[$key] = (int) $row->id;
+        };
+
+        $insert('user', self::USER_ID, $time('-3 days +10 minutes'), $body('test@example.com', '198.51.100.40', 'LegacyAgent/1.0'));
+        $insert('guest', 0, $time('-4 days +5 minutes'), $body($guestEmail, '198.51.100.41', 'LegacyAgent/1.1'));
+        $insert('unknown', 0, $time('-4 days'), $body('nobody@example.invalid', '198.51.100.42', 'LegacyAgent/1.2'));
+        $insert('ambiguous', $ambiguousId, $time('-5 days'), $body('amb@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
+        $insert('noorder', self::USER_ID, $time('-30 days'), $body('test@example.com', '198.51.100.44', 'LegacyAgent/1.4'));
+
+        $load = fn (string $key): ?object => $this->loadConsent($ids[$key]);
+
+        try {
+            $scoped = $repository->migrateLegacyConsents($ambiguousId);
+            $this->test('Migration limited to one user touches only that user', $scoped === ['assigned' => 0, 'anonymized' => 1]
+                && $load('user')->subject === ConsentRepository::LEGACY_SUBJECT, json_encode($scoped));
+
+            $result = $repository->migrateLegacyConsents();
+            $this->test('Migration assigns 2 records and anonymizes 2 more', $result === ['assigned' => 2, 'anonymized' => 2], json_encode($result));
+
+            foreach (['user' => [$userOrder, 'test@example.com', '198.51.100.40', 'LegacyAgent/1.0'], 'guest' => [$guestOrder, $guestEmail, '198.51.100.41', 'LegacyAgent/1.1']] as $key => [$order, $email, $ip, $ua]) {
+                $row = $load($key);
+                $this->test("[$key] legacy record assigned to its order (checkout subject, order marker)",
+                    $row && $row->subject === ConsentRepository::SUBJECT && str_contains($row->body, ConsentRepository::orderMarker($order)), $row->body ?? '');
+                $this->test("[$key] assigned record keeps IP address and user agent, not the e-mail address",
+                    $row && str_contains($row->body, $ip) && str_contains($row->body, $ua) && !str_contains($row->body, $email), $row->body ?? '');
+                $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1 && (int) $row->user_id === ($key === 'user' ? self::USER_ID : 0));
+            }
+
+            foreach (['unknown' => ['nobody@example.invalid', '198.51.100.42'], 'ambiguous' => ['amb@example.invalid', '198.51.100.43'], 'noorder' => ['test@example.com', '198.51.100.44']] as $key => [$email, $ip]) {
+                $row = $load($key);
+                $this->test("[$key] unassignable record anonymized (no e-mail, IP address, user agent)",
+                    $row && $row->subject === ConsentRepository::LEGACY_SUBJECT
+                    && !str_contains($row->body, $email) && !str_contains($row->body, $ip) && !str_contains($row->body, 'LegacyAgent')
+                    && str_contains($row->body, ConsentRepository::LEGACY_MARKER) && str_contains($row->body, ConsentRepository::EVIDENCE_REMOVED_MARKER)
+                    && !str_contains($row->body, 'PLG_SYSTEM_J2COMMERCEPRIVACY_'),
+                    $row->body ?? '');
+            }
+
+            $this->test('Second migration changes nothing', $repository->migrateLegacyConsents() === ['assigned' => 0, 'anonymized' => 0]);
+
+            $status  = $repository->getStatus(self::USER_ID);
+            $sources = array_column(array_map(static fn ($r) => (array) $r, $status['records']), 'source', 'id');
+            $this->test('Status shows the assigned record with its order', ($sources[$ids['user']] ?? '') === 'checkout'
+                && in_array($userOrder, self::orderIds($status), true));
+            $this->test('Status shows the anonymized record as earlier checkout consent', ($sources[$ids['noorder']] ?? '') === 'checkout_legacy');
+
+            if (array_key_exists('token', $this->db->getTableColumns($this->ordersTable))) {
+                $this->test('Guest session of the assigned order sees the migrated consent',
+                    self::orderIds($repository->getStatus(0, $guestEmail, self::tokenFor($guestOrder))) === [$guestOrder]);
+            }
+
+            // IP address and user agent of the assigned record go with the order.
+            $repository->removeOrderEvidence([$userOrder]);
+            $this->test('Assigned record loses IP address and user agent when its order is anonymized',
+                !str_contains((string) $load('user')->body, '198.51.100.40'));
+        } catch (\Throwable $e) {
+            $this->test('Legacy migration runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $this->db->setQuery(
+                $this->query()
+                    ->delete($this->db->quoteName('#__privacy_consents'))
+                    ->where($this->db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')')
+            )->execute();
+        }
+    }
     /**
      * Real site requests against this container: real Joomla session (database handler), real
      * J2Commerce cart lookup, the real onAfterRoute() of the enabled system plugin and the real

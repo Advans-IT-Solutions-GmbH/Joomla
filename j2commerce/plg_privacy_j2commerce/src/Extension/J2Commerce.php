@@ -13,6 +13,7 @@ defined('_JEXEC') or die;
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
+use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
@@ -59,14 +60,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function isJ2Commerce4(): bool
     {
-        static $result = null;
-        if ($result === null) {
-            $db     = $this->getDatabase();
-            $tables = $db->getTableList();
-            $prefix = $db->getPrefix();
-            $result = in_array($prefix . 'j2store_orders', $tables, true);
-        }
-        return $result;
+        // The enabled component decides; migrated sites keep the #__j2store_* tables.
+        self::loadHelperClasses();
+
+        return J2CommerceStack::isJ2Commerce4($this->getDatabase());
     }
 
     /**
@@ -127,7 +124,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private static function loadHelperClasses(): void
     {
-        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
+        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php', J2CommerceStack::class => '/../Support/J2CommerceStack.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
             if (!class_exists($class)) {
                 require_once __DIR__ . $file;
             }
@@ -863,6 +860,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Always delete cart data
         $this->deleteCartData($userId);
+
+        // Consent records of an earlier template override: assign to their order or anonymize.
+        try {
+            self::loadHelperClasses();
+            (new ConsentRepository($this->getDatabase()))->migrateLegacyConsents($userId);
+        } catch (\Throwable $e) {
+            Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
 
         // Anonymize only orders OUTSIDE retention period
         // Orders within retention period are kept intact for legal compliance

@@ -13,6 +13,7 @@ defined('_JEXEC') or die;
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
+use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
 use Joomla\Component\Scheduler\Administrator\Task\Status;
@@ -91,16 +92,12 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
     protected function isJ2Commerce4(): bool
     {
-        static $result = null;
-
-        if ($result === null) {
-            $db     = $this->getDatabase();
-            $tables = $db->getTableList();
-            $prefix = $db->getPrefix();
-            $result = in_array($prefix . 'j2store_orders', $tables, true);
+        // The enabled component decides; migrated sites keep the #__j2store_* tables.
+        if (!$this->loadPrivacyClass(J2CommerceStack::class, '/Support/J2CommerceStack.php')) {
+            throw new \RuntimeException('J2CommerceStack helper of the privacy plugin not found');
         }
 
-        return $result;
+        return J2CommerceStack::isJ2Commerce4($this->getDatabase());
     }
 
     /**
@@ -161,6 +158,12 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
             $this->logTask("Retention period: {$retentionYears} years from the end of the fiscal year ({$fiscalYearEnd}, time zone {$zone->getName()})");
             $this->logTask("Orders created on or before {$cutoffDate} are outside the retention period");
+
+            // Consent records of an earlier template override: assign to their order or anonymize.
+            if ($this->loadPrivacyClass(ConsentRepository::class, '/Consent/ConsentRepository.php')) {
+                $legacy = (new ConsentRepository($db))->migrateLegacyConsents();
+                $this->logTask("Legacy consent records: {$legacy['assigned']} assigned to their order, {$legacy['anonymized']} anonymized");
+            }
 
             $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
             $query = $this->createDbQuery()

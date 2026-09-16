@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Consent;
 
 defined('_JEXEC') or die;
 
+use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Language;
@@ -27,6 +28,8 @@ use Joomla\Database\ParameterType;
  *   No e-mail address is copied; guests are traced through the order (token + user_email).
  *   IP address and user agent are removed when the plugin anonymizes the order (removeOrderEvidence).
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
+ * - Legacy records of an earlier template override (LEGACY_SUBJECT) are converted or anonymized
+ *   by migrateLegacyConsents() (installer, removal request, cleanup task).
  */
 final class ConsentRepository
 {
@@ -44,6 +47,22 @@ final class ConsentRepository
 
     /** Marks a body whose IP address and user agent were removed. */
     public const EVIDENCE_REMOVED_MARKER = '<!-- j2commerce-evidence-removed -->';
+
+    /**
+     * Subject of consent records written by an earlier advans template override (checkout confirm
+     * step and MyProfile tab). Their body holds the e-mail address, IP address and user agent but
+     * no order reference; migrateLegacyConsents() converts or anonymizes them.
+     */
+    public const LEGACY_SUBJECT = 'PLG_PRIVACY_J2COMMERCE';
+
+    /** Body language key of an anonymized legacy record. */
+    public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
+
+    /** Marks an anonymized legacy record. */
+    public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
+
+    /** A legacy record belongs to an order created within this many seconds of the record. */
+    public const LEGACY_MATCH_WINDOW = 3600;
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
@@ -221,6 +240,120 @@ final class ConsentRepository
     }
 
     /**
+     * Convert or anonymize legacy consent records (LEGACY_SUBJECT) that have not been processed yet.
+     *
+     * - Exactly one order of the same user (guests: user_id 0 and the e-mail address from the body)
+     *   created within LEGACY_MATCH_WINDOW of the record, and that order has no checkout consent
+     *   yet: the record becomes a regular checkout consent of that order (SUBJECT, order number,
+     *   IP address and user agent; no e-mail address). IP address and user agent are then removed
+     *   together with the order, like for every checkout consent.
+     * - Otherwise: e-mail address, IP address and user agent are removed; the record (created,
+     *   subject, user_id, state) stays as evidence.
+     *
+     * @param   int|null  $userId  Only the records of this user (null: all)
+     *
+     * @return  array{assigned: int, anonymized: int}
+     */
+    public function migrateLegacyConsents(?int $userId = null): array
+    {
+        $result = ['assigned' => 0, 'anonymized' => 0];
+        $query  = $this->createQuery()
+            ->select($this->db->quoteName(['id', 'user_id', 'created', 'body']))
+            ->from($this->db->quoteName('#__privacy_consents'))
+            ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
+            ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->db->quote('%' . $this->db->escape(self::EVIDENCE_REMOVED_MARKER, true) . '%', false));
+
+        if ($userId !== null) {
+            $query->where($this->db->quoteName('user_id') . ' = ' . (int) $userId);
+        }
+
+        $this->db->setQuery($query);
+
+        foreach ($this->db->loadObjectList() ?: [] as $record) {
+            $body    = (string) $record->body;
+            $email   = self::legacyField('/E-Mail:\s*<strong>(.*?)<\/strong>/is', $body);
+            $orderId = $this->findLegacyOrder((int) $record->user_id, $email, (string) $record->created);
+
+            if ($orderId !== null && $this->findOrderConsent($orderId) === null) {
+                $newBody = $this->buildBody(
+                    $orderId,
+                    self::legacyField('/IP-Adresse:\s*<strong>(.*?)<\/strong>/is', $body),
+                    self::legacyField('/User-Agent:\s*<br\s*\/?>(.*?)<\/p>/is', $body)
+                );
+                $this->updateRecord((int) $record->id, self::SUBJECT, $newBody);
+                $result['assigned']++;
+                continue;
+            }
+
+            $this->updateRecord(
+                (int) $record->id,
+                self::LEGACY_SUBJECT,
+                self::loadBodyLanguage()->_(self::LEGACY_BODY_KEY) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER
+            );
+            $result['anonymized']++;
+        }
+
+        return $result;
+    }
+
+    /**
+     * The one order a legacy record belongs to, or null if there is none or more than one.
+     */
+    private function findLegacyOrder(int $userId, string $email, string $created): ?string
+    {
+        if ($userId <= 0 && $email === '') {
+            return null;
+        }
+
+        try {
+            $time = new \DateTimeImmutable($created, new \DateTimeZone('UTC'));
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        $from  = $time->modify('-' . self::LEGACY_MATCH_WINDOW . ' seconds')->format('Y-m-d H:i:s');
+        $to    = $time->modify('+' . self::LEGACY_MATCH_WINDOW . ' seconds')->format('Y-m-d H:i:s');
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('order_id'))
+            ->from($this->db->quoteName($this->ordersTable()))
+            ->where($this->db->quoteName('user_id') . ' = ' . max(0, $userId))
+            ->where($this->db->quoteName('created_on') . ' BETWEEN :from AND :to')
+            ->bind(':from', $from)
+            ->bind(':to', $to)
+            ->setLimit(2);
+
+        if ($userId <= 0) {
+            $query->where($this->db->quoteName('user_email') . ' = :email')
+                ->bind(':email', $email);
+        }
+
+        $this->db->setQuery($query);
+        $orders = array_values(array_filter(array_map('strval', $this->db->loadColumn() ?: []), [self::class, 'isValidOrderId']));
+
+        return \count($orders) === 1 ? $orders[0] : null;
+    }
+
+    private function updateRecord(int $id, string $subject, string $body): void
+    {
+        $query = $this->createQuery()
+            ->update($this->db->quoteName('#__privacy_consents'))
+            ->set($this->db->quoteName('subject') . ' = :subject')
+            ->set($this->db->quoteName('body') . ' = :body')
+            ->where($this->db->quoteName('id') . ' = :id')
+            ->bind(':subject', $subject)
+            ->bind(':body', $body)
+            ->bind(':id', $id, ParameterType::INTEGER);
+        $this->db->setQuery($query)->execute();
+    }
+
+    private static function legacyField(string $pattern, string $body): string
+    {
+        return preg_match($pattern, $body, $match) === 1
+            ? trim(html_entity_decode(strip_tags($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'))
+            : '';
+    }
+
+    /**
      * Consent status for the MyProfile privacy tab.
      *
      * - Logged-in user: valid records with the user's user_id and either the checkout subject or
@@ -239,7 +372,7 @@ final class ConsentRepository
         foreach ($records as $record) {
             $isCheckout       = $record->subject === self::SUBJECT;
             $record->order_id = $isCheckout ? self::extractOrderId((string) $record->body) : null;
-            $record->source   = $isCheckout ? 'checkout' : 'account';
+            $record->source   = $isCheckout ? 'checkout' : ($record->subject === self::LEGACY_SUBJECT ? 'checkout_legacy' : 'account');
             unset($record->body);
         }
 
@@ -258,7 +391,7 @@ final class ConsentRepository
             ->from($this->db->quoteName('#__privacy_consents'))
             ->where($this->db->quoteName('state') . ' = 1')
             ->where($this->db->quoteName('user_id') . ' = :userid')
-            ->where($this->db->quoteName('subject') . ' IN (' . $this->db->quote(self::SUBJECT) . ', ' . $this->db->quote(self::CORE_SUBJECT) . ')')
+            ->where($this->db->quoteName('subject') . ' IN (' . $this->db->quote(self::SUBJECT) . ', ' . $this->db->quote(self::LEGACY_SUBJECT) . ', ' . $this->db->quote(self::CORE_SUBJECT) . ')')
             ->bind(':userid', $userId, ParameterType::INTEGER);
 
         $this->db->setQuery($query);
@@ -312,7 +445,12 @@ final class ConsentRepository
     private function ordersTable(): string
     {
         if ($this->isJ2Commerce4 === null) {
-            $this->isJ2Commerce4 = \in_array($this->db->getPrefix() . 'j2store_orders', $this->db->getTableList(), true);
+            if (!class_exists(J2CommerceStack::class)) {
+                require_once \dirname(__DIR__) . '/Support/J2CommerceStack.php';
+            }
+
+            // The enabled component decides; migrated sites keep the #__j2store_* tables.
+            $this->isJ2Commerce4 = J2CommerceStack::isJ2Commerce4($this->db);
         }
 
         return $this->isJ2Commerce4 ? '#__j2store_orders' : '#__j2commerce_orders';

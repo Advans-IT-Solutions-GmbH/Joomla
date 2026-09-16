@@ -72,7 +72,7 @@ Do not use `Factory::getLanguage()` (deprecated, flagged by `shared/tests/deprec
 
 ## Database Tables Used
 
-J2Commerce 4 (`#__j2store_*`) or J2Commerce 6 (`#__j2commerce_*`), detected at runtime via the presence of `#__j2store_orders`:
+J2Commerce 4 (`#__j2store_*`) or J2Commerce 6 (`#__j2commerce_*`), decided by `Support\J2CommerceStack` (plugin, task, `ConsentRepository`): enabled `com_j2commerce` with `#__j2commerce_orders` → J2Commerce 6; otherwise enabled `com_j2store` with `#__j2store_orders` → J2Store; without an enabled component the J2Commerce 6 tables win. Never decide by table presence alone: the official migration keeps the `#__j2store_*` tables.
 
 | J2Commerce 4 | J2Commerce 6 | Purpose |
 |--------------|--------------|---------|

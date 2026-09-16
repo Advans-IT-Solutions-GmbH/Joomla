@@ -303,6 +303,10 @@ class DataAnonymizationTest
         $this->db->insertObject($orderinfosTable, $testInfo, $orderinfoPkCol);
         $infoPk = $this->db->insertid();
 
+        // Migrated site: the #__j2store_* source tables stay after the official migration and
+        // com_j2store is disabled. The enabled component decides which tables are used.
+        $stack = $this->prepareMigratedStack($isJ6, $ordersTable, $testOrder, $orderPkCol);
+
         // Checkout consent records: one for the expired order (IP/UA must be removed), one for a
         // recent order of the same user and one of another user (both must stay unchanged).
         $recentOrderId = 'ANON-RECENT-' . time();
@@ -487,6 +491,14 @@ class DataAnonymizationTest
 
                 $this->testRemovalFeedback($plugin);
 
+                if ($isJ6 && $stack['copy']) {
+                    $copyEmail = $this->db->setQuery(
+                        'SELECT user_email FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE order_id = ' . $this->db->quote($orderId)
+                    )->loadResult();
+                    $this->test('migrated site: the J2Commerce 6 order was anonymized, the #__j2store_orders copy was not touched',
+                        $order->user_email === 'anonymized@deleted.invalid' && $copyEmail === 'private@example.com', var_export($copyEmail, true));
+                }
+
                 // Consent records of the anonymized order lose IP address and user agent only.
                 echo "\n--- Consent evidence of anonymized orders ---\n";
                 $expired = $loadConsent($consentIds['expired']);
@@ -523,6 +535,7 @@ class DataAnonymizationTest
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' IN (' . (int) $recentPk . ',' . (int) $fiscalPk . ',' . (int) $lifetimePk . ')')->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $lifetimeInfoPk)->execute();
 
+        $this->cleanupMigratedStack($stack);
         $this->testRetentionPeriod();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
@@ -532,6 +545,95 @@ class DataAnonymizationTest
         echo "Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * J2Commerce 6 stack: create the J2Store tables a migration leaves behind (if missing), a copy of
+     * the test order in #__j2store_orders and a disabled com_j2store component, then check the
+     * detection. J2Store stack: the enabled com_j2store is detected.
+     *
+     * @return  array{tables: string[], extension: int, copy: bool}
+     */
+    private function prepareMigratedStack(bool $isJ6, string $ordersTable, object $testOrder, string $orderPkCol): array
+    {
+        $state = ['tables' => [], 'extension' => 0, 'copy' => false];
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Support/J2CommerceStack.php';
+        $class = \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class;
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        if (!$this->test('J2CommerceStack class available', class_exists($class), $file)) {
+            return $state;
+        }
+
+        if (!$isJ6) {
+            $class::reset();
+            $this->test('J2Store stack detected through the enabled com_j2store', $class::isJ2Commerce4($this->db) === true);
+
+            return $state;
+        }
+
+        echo "\n--- Migrated site: J2Store tables present, com_j2store disabled ---\n";
+        $prefix = $this->db->getPrefix();
+        $tables = $this->db->getTableList();
+
+        try {
+            foreach (['orders', 'orderinfos', 'orderitems', 'carts', 'cartitems', 'addresses'] as $name) {
+                if (!in_array($prefix . 'j2store_' . $name, $tables, true) && in_array($prefix . 'j2commerce_' . $name, $tables, true)) {
+                    $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' LIKE ' . $this->db->quoteName($prefix . 'j2commerce_' . $name))->execute();
+                    $state['tables'][] = $prefix . 'j2store_' . $name;
+                }
+            }
+
+            $copy = clone $testOrder;
+            unset($copy->$orderPkCol);
+            $this->db->insertObject('#__j2store_orders', $copy);
+            $state['copy'] = true;
+
+            $existing = (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
+            )->loadResult();
+
+            if ($existing === 0) {
+                $extension = (object) [
+                    'package_id' => 0, 'name' => 'com_j2store', 'type' => 'component', 'element' => 'com_j2store',
+                    'changelogurl' => '', 'folder' => '', 'client_id' => 1, 'enabled' => 0, 'access' => 1, 'protected' => 0,
+                    'locked' => 0, 'manifest_cache' => '{}', 'params' => '{}', 'custom_data' => '', 'ordering' => 0,
+                    'state' => 0, 'note' => '',
+                ];
+                $this->db->insertObject('#__extensions', $extension, 'extension_id');
+                $state['extension'] = (int) $extension->extension_id;
+            }
+
+            \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
+            $this->test('both table sets present, com_j2store disabled: J2Commerce 6 tables are used',
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
+        } catch (\Throwable $e) {
+            $this->test('migrated-site setup', false, $e->getMessage());
+        }
+
+        return $state;
+    }
+
+    private function cleanupMigratedStack(array $state): void
+    {
+        foreach ($state['tables'] as $table) {
+            $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
+        }
+
+        if ($state['copy'] && !in_array($this->db->getPrefix() . 'j2store_orders', $state['tables'], true)) {
+            $this->db->setQuery("DELETE FROM " . $this->db->quoteName('#__j2store_orders') . " WHERE order_id LIKE 'ANON-TEST-%'")->execute();
+        }
+
+        if ($state['extension'] > 0) {
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__extensions') . ' WHERE extension_id = ' . (int) $state['extension'])->execute();
+        }
+
+        if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class)) {
+            \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
+        }
     }
 
     /**

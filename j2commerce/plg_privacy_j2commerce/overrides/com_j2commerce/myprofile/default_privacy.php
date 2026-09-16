@@ -56,8 +56,8 @@ $_userId  = (int) ($this->user->id ?? 0);
 
 // A guest session is valid only with both values J2Commerce sets for a guest order. The token
 // identifies exactly one order; the tab shows nothing beyond that order.
-$_guestEmail = $_userId === 0 ? (string) $_session->get('guest_order_email', '', 'j2commerce') : '';
-$_guestToken = $_userId === 0 ? (string) $_session->get('guest_order_token', '', 'j2commerce') : '';
+$_guestEmail = $_userId === 0 ? (string) $_session->get('j2commerce.guest_order_email', '') : '';
+$_guestToken = $_userId === 0 ? (string) $_session->get('j2commerce.guest_order_token', '') : '';
 $_isGuest    = $_guestEmail !== '' && $_guestToken !== '';
 
 $_status = ['consented' => false, 'records' => []];

@@ -58,7 +58,7 @@ Flow:
 1. `onAfterRoute` calls `handleCheckoutRequest()`; the task is resolved like `ComponentDispatcher` (`controller` + `task` without dot).
    - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the current cart; unticked while required, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
    - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused while required and no consent exists for the current cart (skipped step 4, cart change). GET gateway returns pass.
-2. `onJ2CommerceAfterSaveOrder` (dispatched by `CartOrder::saveOrder()`, argument 0 = saved order): consent cart equals `order->cart_id`, then `ConsentRepository::ensureOrderConsent()`.
+2. `checkout.confirmPayment` (POST, order placed): `recordPlacedOrderConsent()` loads the order of the user state `j2commerce.order_id`; its `cart_id` must equal the consent cart, then `ConsentRepository::ensureOrderConsent()`. Not on `onJ2CommerceAfterSaveOrder`: the confirm step saves an incomplete order (state 5) on every render and a new one after cart changes. Legacy records (`PLG_PRIVACY_J2COMMERCE`, e-mail in the body) are assigned (exactly one order of the user / guest e-mail within one hour, no consent yet) or anonymized by `migrateLegacyConsents()` (installer, removal request per user, task).
 3. `onJ2CommerceCheckoutCleanup` removes the consent.
 
 Consent is never created retroactively from an existing order. IP address and user agent are removed (`ConsentRepository::removeOrderEvidence()`) when the plugin or the cleanup task anonymizes the order; guest rows (`user_id = 0`) are outside com_privacy export and deletion.
