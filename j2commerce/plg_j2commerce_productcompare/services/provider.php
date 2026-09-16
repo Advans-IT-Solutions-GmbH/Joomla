@@ -13,7 +13,6 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
-use Joomla\Event\DispatcherInterface;
 use Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare;
 
 \JLoader::registerNamespace(
@@ -35,9 +34,8 @@ return new class implements ServiceProviderInterface
                 // set dynamically by the installer script.
                 $pluginData = PluginHelper::getPlugin('j2commerce', 'productcompare')
                     ?: PluginHelper::getPlugin('j2store', 'productcompare');
-                // Joomla 5.4+ deprecates passing the dispatcher to the plugin constructor.
+                // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
                 $plugin = new ProductCompare((array) $pluginData);
-                $plugin->setDispatcher($container->get(DispatcherInterface::class));
                 $plugin->setApplication(Factory::getApplication());
 
                 return $plugin;
