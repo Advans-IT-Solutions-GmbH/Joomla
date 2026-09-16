@@ -95,7 +95,7 @@ class ExportController extends BaseController
         $this->checkAccess();
 
         $app = Factory::getApplication();
-        $input = $app->input;
+        $input = $app->getInput();
 
         $allowedTypes   = ['products_full', 'products', 'categories', 'variants', 'prices'];
         $allowedFormats = ['csv', 'xml', 'json'];

@@ -32,7 +32,7 @@ class ImportController extends BaseController
         $this->checkAccess();
         
         $app = Factory::getApplication();
-        $input = $app->input;
+        $input = $app->getInput();
 
         $file = $input->files->get('import_file');
 
@@ -117,7 +117,7 @@ class ImportController extends BaseController
         
         $app = Factory::getApplication();
         $session = $app->getSession();
-        $input = $app->input;
+        $input = $app->getInput();
         
         $filePath = $session->get('import_file', '', 'j2commerce_import');
         $mapping = $input->get('mapping', [], 'array');

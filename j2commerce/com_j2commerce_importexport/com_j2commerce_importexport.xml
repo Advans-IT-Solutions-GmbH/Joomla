@@ -12,6 +12,7 @@
     <description>COM_J2COMMERCE_IMPORTEXPORT_XML_DESCRIPTION</description>
     
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
 
     <namespace path="src">Advans\Component\J2CommerceImportExport</namespace>
     <scriptfile>script.php</scriptfile>

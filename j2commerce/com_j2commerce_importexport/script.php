@@ -66,6 +66,8 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
 
         if (!$extensionId) { return; }
 
+        $this->removeLegacyUpdateSites($db, $extensionId);
+
         $query = $this->createDbQuery($db)
             ->select($db->quoteName('update_site_id'))
             ->from($db->quoteName('#__update_sites'))
@@ -106,6 +108,58 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
             ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
         $db->setQuery($query);
         $db->execute();
+    }
+
+    /**
+     * Remove update sites of this extension that still point to the repository's
+     * former organisation name. Joomla would otherwise keep querying both the
+     * old and the new update URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
     }
 
     /**
