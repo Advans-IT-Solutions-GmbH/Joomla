@@ -25,14 +25,14 @@ JOOMLA_ROOT="/var/www/html"
 
     # Install J2Commerce 4
     echo "[j2c4] Installing J2Commerce 4..."
-    php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
+    HTTP_HOST=localhost php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
         --path=/tmp/j2commerce4.zip \
         --no-interaction
     echo "[j2c4] J2Commerce 4 installed."
 
     # Install our plugin
     echo "[j2c4] Installing plg_ajax_joomlaajaxforms..."
-    php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
+    HTTP_HOST=localhost php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
         --path=/tmp/extension.zip \
         --no-interaction
     echo "[j2c4] Plugin installed."
