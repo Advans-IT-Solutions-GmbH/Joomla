@@ -53,8 +53,8 @@
   (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
   die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
   einem fehlenden Key scheitern
-  (siehe „Repo-spezifisch (Joomla)“). Startet GPG lokal nicht (auf der Windows-Arbeitsstation des
-  Maintainers ist das der Fall), wird es nicht repariert: unsigniert committen und pushen.
+  (siehe „Repo-spezifisch (Joomla)“). Startet GPG in der Umgebung nicht, nicht reparieren, sondern
+  unsigniert committen und pushen.
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
