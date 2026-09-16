@@ -19,11 +19,11 @@ Joomla/
 
 ## Available Extensions
 
-### Joomla Core Extensions
+### Joomla Extensions
 
 | Extension | Description | Joomla |
 |-----------|-------------|--------|
-| [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder, J2Store cart operations | 5.4 – 6.x |
+| [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
