@@ -32,7 +32,7 @@ class UninstallTest
 
         $output = [];
         $exitCode = 0;
-        exec("php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
 
         $this->test('Uninstall command executed', function () use ($exitCode) {
             return $exitCode === 0;

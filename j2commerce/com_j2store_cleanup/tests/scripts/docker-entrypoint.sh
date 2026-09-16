@@ -25,7 +25,7 @@ if [ -f /var/www/html/configuration.php ]; then
     if [ -f /tmp/j2commerce6.zip ]; then
         echo "Installing J2Commerce 6 via Joomla CLI..."
         cp /tmp/j2commerce6.zip /var/www/html/tmp/j2commerce6.zip
-        if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce6.zip; then
+        if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce6.zip; then
             echo "✅ J2Commerce 6 installed via Joomla CLI"
         else
             echo "❌ J2Commerce 6 installation FAILED via Joomla CLI"
@@ -34,7 +34,7 @@ if [ -f /var/www/html/configuration.php ]; then
     elif [ -f /tmp/j2commerce4.zip ]; then
         echo "Installing J2Commerce 4 via Joomla CLI..."
         cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
-        if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip; then
+        if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip; then
             echo "✅ J2Commerce 4 installed via Joomla CLI"
         else
             echo "❌ J2Commerce 4 installation FAILED via Joomla CLI"
@@ -44,7 +44,7 @@ if [ -f /var/www/html/configuration.php ]; then
     
     echo "Installing extension via Joomla CLI..."
     cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-    if php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+    if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
         echo "✅ Extension installed via Joomla CLI"
     else
         echo "❌ Extension installation FAILED via Joomla CLI"
