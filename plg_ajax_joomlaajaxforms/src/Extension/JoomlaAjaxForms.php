@@ -781,7 +781,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 }
 
                 // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . $shop . '_carts'));
+                // escape(..., true) escapes the LIKE wildcards ('_' and '%') so the
+                // pattern matches the exact table name and not a similarly named table.
+                $like = $db->quote($db->escape($db->getPrefix() . $shop . '_carts', true), false);
+                $db->setQuery('SHOW TABLES LIKE ' . $like);
 
                 if ($db->loadResult() !== null) {
                     $this->activeShop = $shop;
