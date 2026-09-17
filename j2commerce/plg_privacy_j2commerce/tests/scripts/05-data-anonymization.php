@@ -30,6 +30,7 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
     {
         public array $lifetime = [];
         public ?object $stubApp = null;
+        public ?RecordingMailerFactory $mailerFactory = null;
         public string $mailState = 'sent';
         public bool $realMail = false;
 
@@ -52,6 +53,15 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
             FeedbackTestApp::$log[] = ['mail', $customerEmail, $languageTag];
 
             return $this->mailState;
+        }
+
+        protected function createMailer()
+        {
+            if ($this->mailerFactory !== null) {
+                return $this->mailerFactory->createMailer();
+            }
+
+            return parent::createMailer();
         }
 
         public function call(string $method, ...$args)
@@ -123,18 +133,6 @@ class MailTestApp
     public function getContainer()
     {
         return $this->container;
-    }
-}
-
-class RecordingContainer
-{
-    public function __construct(private object $factory)
-    {
-    }
-
-    public function get($id)
-    {
-        return $this->factory;
     }
 }
 
@@ -392,7 +390,7 @@ class DataAnonymizationTest
             try {
                 $db         = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
                 $plugin     = new AnonymizationTestPlugin(
-                    ['params' => new \Joomla\Registry\Registry([])]
+                    ['params' => new \Joomla\Registry\Registry(['admin_notifications' => 1, 'admin_email' => 'admin@example.invalid'])]
                 );
                 $plugin->setDatabase($db);
                 $plugin->lifetime = [$lifetimeOrder->order_id];
@@ -407,9 +405,9 @@ class DataAnonymizationTest
 
                 $plugin->onPrivacyRemoveData(null, $user);
                 $anonymized = true;
-                $this->test('onPrivacyRemoveData() ran through the plugin', true);
+                $this->test('onPrivacyRemoveData() ran through the plugin with admin notifications enabled', true);
             } catch (\Throwable $e) {
-                $this->test('onPrivacyRemoveData() ran through the plugin', false, $e->getMessage());
+                $this->test('onPrivacyRemoveData() ran through the plugin with admin notifications enabled', false, $e->getMessage());
             }
 
             if ($anonymized) {
@@ -895,8 +893,8 @@ class DataAnonymizationTest
         // The real sendCustomerRetentionNotice(): address check, customer language, mail result.
         $plugin->realMail = true;
         $factory          = new RecordingMailerFactory();
+        $plugin->mailerFactory = $factory;
         $app              = new MailTestApp();
-        $app->container   = new RecordingContainer($factory);
         $lifetime         = [['order_number' => 'FB-2', 'order_date' => '01.02.2010']];
 
         $this->test('real mail path: invalid request address is reported as invalid, no mailer created',
@@ -920,6 +918,7 @@ class DataAnonymizationTest
         $joomlaApp->container = Factory::getContainer();
         $previous             = Factory::$application;
         Factory::$application = $joomlaApp;
+        $plugin->mailerFactory = null;
 
         try {
             $this->test('real Joomla mailer with mail disabled is reported as failed',
@@ -927,6 +926,7 @@ class DataAnonymizationTest
         } finally {
             Factory::$application = $previous;
             $plugin->realMail     = false;
+            $plugin->mailerFactory = null;
         }
     }
 

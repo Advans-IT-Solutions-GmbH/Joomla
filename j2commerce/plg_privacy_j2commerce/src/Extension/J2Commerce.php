@@ -157,7 +157,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private static function loadHelperClasses(): void
     {
-        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php', J2CommerceStack::class => '/../Support/J2CommerceStack.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
+        $classes = [
+            RetentionPeriod::class => '/../Retention/RetentionPeriod.php',
+            LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php',
+            J2CommerceStack::class => '/../Support/J2CommerceStack.php',
+            ConsentRepository::class => '/../Consent/ConsentRepository.php',
+        ];
+
+        foreach ($classes as $class => $file) {
             if (!class_exists($class)) {
                 require_once __DIR__ . $file;
             }
@@ -1117,7 +1124,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $language = $this->pluginLanguage($languageTag);
 
         try {
-            $mailer = $app->getContainer()->get(MailerFactoryInterface::class)->createMailer();
+            $mailer = $this->createMailer();
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
             $mailer->setBody(
@@ -1544,15 +1551,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            $mailer = $this->getApplication()->getContainer()->get(MailerFactoryInterface::class)->createMailer();
+            $mailer = $this->createMailer();
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
             $mailer->send();
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Log error but don't fail the operation
             Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
+    }
+
+    protected function createMailer()
+    {
+        return Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
     }
 
     // =========================================================================

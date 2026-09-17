@@ -210,6 +210,7 @@ final class ConsentRepository
                 $this->createQuery()
                     ->update($this->db->quoteName('#__privacy_consents'))
                     ->set($this->db->quoteName('body') . ' = :body')
+                    ->set($this->db->quoteName('state') . ' = -1')
                     ->whereIn($this->db->quoteName('id'), $ids)
                     ->bind(':body', $body)
             )->execute();
@@ -219,6 +220,31 @@ final class ConsentRepository
         } while (\count($ids) === self::BATCH_SIZE);
 
         return $changed;
+    }
+
+    private static function loadLegacyBodyLanguage(): Language
+    {
+        $tag      = self::defaultSiteLanguageTag();
+        $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+
+        $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $tag)
+            || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $tag);
+
+        if (!$language->hasKey(self::LEGACY_BODY_KEY)) {
+            $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $tag, true)
+                || $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $tag, true);
+        }
+
+        return $language;
+    }
+
+    private static function defaultSiteLanguageTag(): string
+    {
+        try {
+            return (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            return 'en-GB';
+        }
     }
 
     private static function loadBodyLanguage(): Language
@@ -350,7 +376,7 @@ final class ConsentRepository
      * created afterwards (when the MyProfile tab was opened, dated with the newest order), so they
      * are no evidence of a checkout consent and are never assigned to an order. The e-mail address,
      * IP address and user agent are removed; the body gets a neutral note and the subject
-     * LEGACY_DONE_SUBJECT. Such records are not counted as consent.
+     * LEGACY_DONE_SUBJECT and state -1 (invalid). Such records are not counted as consent.
      *
      * @param   int|null  $userId  Only this user's records (null: all)
      * @param   string[]  $emails  With $userId: also guest records (user_id 0) mentioning one of these addresses
@@ -359,7 +385,7 @@ final class ConsentRepository
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
-        $body    = self::legacyBodyText(self::loadBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        $body    = self::legacyBodyText(self::loadLegacyBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
         $changed = $this->repairLegacyAnonymizedBodies($body);
         $lastId  = 0;
@@ -395,6 +421,7 @@ final class ConsentRepository
                 ->update($this->db->quoteName('#__privacy_consents'))
                 ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
                 ->set($this->db->quoteName('body') . ' = :body')
+                ->set($this->db->quoteName('state') . ' = -1')
                 ->whereIn($this->db->quoteName('id'), $ids)
                 ->bind(':body', $body);
             $this->db->setQuery($update)->execute();

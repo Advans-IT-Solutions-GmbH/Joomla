@@ -37,7 +37,9 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Language\Text;
 use Joomla\Event\Dispatcher;
 use Joomla\Event\Event;
@@ -739,6 +741,11 @@ class ConsentLoggingTest
         $legacyDir  = $legacyRoot . '/' . $tag;
         $legacyFile = $legacyDir . '/plg_system_j2commerceprivacy.ini';
         $loadedOld  = false;
+        $siteTag    = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        $siteLang   = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($siteTag);
+        $siteLang->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $siteTag)
+            || $siteLang->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $siteTag);
+        $expectedBodyPrefix = (string) $siteLang->_(ConsentRepository::LEGACY_BODY_KEY);
 
         try {
             if (@mkdir($legacyDir, 0755, true) && @file_put_contents(
@@ -774,10 +781,12 @@ class ConsentLoggingTest
             foreach (['profile' => ['test@example.com', '198.51.100.40', 'LegacyAgent'], 'checkout' => ['198.51.100.41'], 'guestOwn' => ['legacy-own@', '198.51.100.42'], 'guestOther' => ['legacy-other@', '198.51.100.43'], 'oldBody' => ['Consent given during']] as $key => $gone) {
                 $row = $load($key);
                 $this->test("[$key] anonymized, never assigned to an order, neutral text", $isAnonymized($row, $gone), $row->body ?? '');
-                $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1);
+                $this->test("[$key] created and invalidated for com_privacy lists", $row && (int) $row->state === -1);
+                $this->test("[$key] body uses the default site language", $row && str_starts_with((string) $row->body, $expectedBodyPrefix), $row->body ?? '');
             }
             $rawKey = $load('rawKey');
             $this->test('[rawKey] already anonymized key-based legacy body is repaired', $isAnonymized($rawKey, [ConsentRepository::LEGACY_BODY_KEY]), $rawKey->body ?? '');
+            $this->test('[rawKey] repaired legacy row is invalidated for com_privacy lists', $rawKey && (int) $rawKey->state === -1);
 
             $this->test('Legacy anonymization never creates a checkout consent for the order', $this->countOrderConsents($userOrder) === 0);
             $this->test('Second run changes nothing', $repository->anonymizeLegacyConsents() === 0);
