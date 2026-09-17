@@ -22,7 +22,7 @@ use Joomla\Registry\Registry;
  */
 class FiscalyearendRule extends FormRule
 {
-    public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null)
+    public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null): bool
     {
         if (!class_exists(RetentionPeriod::class)) {
             require_once \dirname(__DIR__) . '/Retention/RetentionPeriod.php';
