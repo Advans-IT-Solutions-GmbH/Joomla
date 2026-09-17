@@ -17,11 +17,13 @@ use Joomla\Database\DatabaseInterface;
  * (#__j2store_*). The official migration to J2Commerce 6 keeps the #__j2store_* source tables, so
  * both sets can exist.
  *
- * - isJ2Commerce4(): the set the shop works with (display, recording consent, address actions).
- *   com_j2commerce installed (enabled or not) and #__j2commerce_orders exists -> J2Commerce 6;
- *   otherwise com_j2store enabled and #__j2store_orders exists -> J2Store; otherwise
- *   #__j2commerce_orders exists -> J2Commerce 6, else J2Store. A temporarily disabled
- *   com_j2commerce never switches the shop to the old copies.
+ * - isJ2Commerce4(): the shop that is active (display, recording consent, address actions); the
+ *   same rule in all Advans J2Commerce extensions:
+ *   1. com_j2commerce enabled and #__j2commerce_orders exists -> J2Commerce 6;
+ *   2. otherwise com_j2store enabled and #__j2store_orders exists -> J2Store;
+ *   3. otherwise (no enabled component with tables): #__j2commerce_orders exists -> J2Commerce 6,
+ *      else J2Store.
+ *   An enabled component without tables is skipped; an installed but disabled one does not count.
  * - dataSets(): every set that exists. Removal, anonymization, retention cleanup and export work on
  *   all of them, so no personal data survives in copies left behind by a migration and nothing is
  *   missed before the data transfer.
@@ -93,7 +95,7 @@ final class J2CommerceStack
             $components = [];
         }
 
-        if ($hasJ6 && array_key_exists('com_j2commerce', $components)) {
+        if ($hasJ6 && ($components['com_j2commerce'] ?? false)) {
             return false;
         }
 

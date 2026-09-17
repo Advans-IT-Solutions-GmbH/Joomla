@@ -583,6 +583,19 @@ class DataAnonymizationTest
             $class::reset();
             $this->test('J2Store stack detected through the enabled com_j2store', $class::isJ2Commerce4($this->db) === true);
 
+            // An enabled com_j2commerce without its tables is skipped.
+            if (!in_array($this->db->getPrefix() . 'j2commerce_orders', $this->db->getTableList(), true)) {
+                $fake = $this->insertComponent('com_j2commerce', 1);
+                $class::reset();
+                $this->test('enabled com_j2commerce without tables is skipped: J2Store stays active', $class::isJ2Commerce4($this->db) === true);
+
+                if ($fake > 0) {
+                    $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__extensions') . ' WHERE extension_id = ' . $fake)->execute();
+                }
+
+                $class::reset();
+            }
+
             return $state;
         }
 
@@ -591,6 +604,28 @@ class DataAnonymizationTest
         $tables = $this->db->getTableList();
 
         try {
+            // Enabled com_j2store without its tables is skipped (checked before the tables exist).
+            if (!in_array($prefix . 'j2store_orders', $tables, true)) {
+                $rows = $this->db->setQuery(
+                    'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
+                )->loadObjectList();
+
+                foreach ($rows as $row) {
+                    $state['restore'][(int) $row->extension_id] = (int) $row->enabled;
+                }
+
+                if ($rows === []) {
+                    $state['extension'] = $this->insertComponent('com_j2store', 1);
+                } else {
+                    $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 1 WHERE type = 'component' AND element = 'com_j2store'")->execute();
+                }
+
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
+                $this->test('enabled com_j2store without tables is skipped: J2Commerce 6 stays active',
+                    \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 0 WHERE type = 'component' AND element = 'com_j2store'")->execute();
+            }
+
             foreach (['orders', 'orderinfos', 'orderitems', 'carts', 'cartitems', 'addresses'] as $name) {
                 if (!in_array($prefix . 'j2store_' . $name, $tables, true) && in_array($prefix . 'j2commerce_' . $name, $tables, true)) {
                     $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' LIKE ' . $this->db->quoteName($prefix . 'j2commerce_' . $name))->execute();
@@ -615,7 +650,9 @@ class DataAnonymizationTest
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
             )->loadResult();
 
-            if ($existing > 0) {
+            if ($existing > 0 && $state['extension'] > 0) {
+                // Row inserted above for the check without tables; it is disabled now.
+            } elseif ($existing > 0) {
                 // Existing row: disable explicitly, restore afterwards.
                 $rows = $this->db->setQuery(
                     'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
@@ -646,8 +683,8 @@ class DataAnonymizationTest
             $this->test('both table sets present, com_j2store disabled: J2Commerce 6 tables are used',
                 \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
 
-            // A temporarily disabled com_j2commerce must not switch the shop to the old copies,
-            // even when com_j2store is enabled.
+            // Only enabled components count: com_j2commerce disabled and com_j2store enabled with
+            // tables -> J2Store is the active shop (removal and cleanup still cover both sets).
             $j6Enabled = $this->db->setQuery(
                 'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2commerce'"
             )->loadObjectList();
@@ -659,8 +696,10 @@ class DataAnonymizationTest
             $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 0 WHERE type = 'component' AND element = 'com_j2commerce'")->execute();
             $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 1 WHERE type = 'component' AND element = 'com_j2store'")->execute();
             \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
-            $this->test('com_j2commerce installed but disabled, com_j2store enabled: J2Commerce 6 tables stay active',
-                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
+            $this->test('com_j2commerce disabled, com_j2store enabled with tables: J2Store is the active shop',
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === true);
+            $this->test('data sets are still both listed, the active J2Store set first',
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::dataSets($this->db) === [true, false]);
 
             foreach ($j6Enabled as $row) {
                 $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . ' SET enabled = ' . (int) $row->enabled . ' WHERE extension_id = ' . (int) $row->extension_id)->execute();
@@ -675,6 +714,20 @@ class DataAnonymizationTest
         }
 
         return $state;
+    }
+
+    /** Insert a minimal component row; returns its ID. */
+    private function insertComponent(string $element, int $enabled): int
+    {
+        $extension = (object) [
+            'package_id' => 0, 'name' => $element, 'type' => 'component', 'element' => $element,
+            'changelogurl' => '', 'folder' => '', 'client_id' => 1, 'enabled' => $enabled, 'access' => 1, 'protected' => 0,
+            'locked' => 0, 'manifest_cache' => '{}', 'params' => '{}', 'custom_data' => '', 'ordering' => 0,
+            'state' => 0, 'note' => '',
+        ];
+        $this->db->insertObject('#__extensions', $extension, 'extension_id');
+
+        return (int) $extension->extension_id;
     }
 
     private function cleanupMigratedStack(array &$state): void
