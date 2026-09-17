@@ -85,6 +85,10 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             }
 
             $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_SEARCH') . '</p>';
+
+            if ($this->isJ2StoreActiveShop()) {
+                $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_J2STORE_NOTE') . '</p>';
+            }
             $message .= '</div>';
             $message .= '<p style="margin-top:12px;color:#6b7280;font-size:13px">' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_DOCS') . '</p>';
             $message .= '</div>';
@@ -367,6 +371,44 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
      * Whether this plugin is enabled in #__extensions. The group is j2commerce
      * on Joomla 6 and j2store on Joomla 5, so only type and element are matched.
      */
+    /**
+     * Whether J2Store / J2Commerce 4 is the active shop, by the same rule the
+     * plugin uses: com_j2commerce enabled with #__j2commerce_products wins;
+     * otherwise com_j2store enabled with #__j2store_products.
+     */
+    private function isJ2StoreActiveShop(): bool
+    {
+        try {
+            $db      = Factory::getContainer()->get(DatabaseInterface::class);
+            $query   = $this->createDbQuery($db)
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+            if (\in_array('com_j2commerce', $enabled, true) && $this->tableExists($db, 'j2commerce_products')) {
+                return false;
+            }
+
+            return \in_array('com_j2store', $enabled, true) && $this->tableExists($db, 'j2store_products');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether a table exists (name without prefix). Mirrors the runtime detector:
+     * SHOW TABLES LIKE avoids the stale getTableList() cache during installation.
+     */
+    private function tableExists(DatabaseInterface $db, string $table): bool
+    {
+        $like = $db->quote($db->escape($db->getPrefix() . $table, true), false);
+
+        return !empty($db->setQuery('SHOW TABLES LIKE ' . $like)->loadResult());
+    }
+
     private function isPluginEnabled(): bool
     {
         try {

@@ -27,8 +27,16 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 - The `Language Files` CI job runs `php shared/tests/requirements-check.php <extension dir>`, which
   fails if `minimumJoomla`/`minimumPhp`, the parent `preflight()` call, a manifest or `update.xml`
   `targetplatform`/`php_minimum`, or the release workflow `targetplatform` deviates from this rule
-- Database queries: `$db->getQuery(true)` on Joomla 5 (Joomla 5.4's `DatabaseInterface` has no
-  `createQuery()`), `$db->createQuery()` on Joomla 6; select at runtime
+- Database queries: `method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true)`.
+  `createQuery()` is not declared on `DatabaseInterface` in Joomla 5.4, but the database drivers
+  provide it; `getQuery(true)` is deprecated. The static scan only accepts `getQuery(true)` behind
+  this check.
+- Plugin service providers: `new Plugin((array) PluginHelper::getPlugin(...))`, then
+  `setApplication()`/`setDatabase()` as needed. Never pass the dispatcher to the constructor and never
+  call `setDispatcher()` (both deprecated since Joomla 5.2; `PluginHelper` sets the dispatcher).
+- Deprecated APIs are rejected by `php shared/tests/deprecated-api-scan.php <extension dir>` (tokenizer
+  based; allowlist with reasons at the top of the script). Fix the code instead of extending the
+  allowlist.
 - Namespaces: Plugins `Advans\Plugin\{Group}\{Name}` (e.g. `Advans\Plugin\Privacy\J2Commerce`); Components: `Advans\Component\{Name}`
 - Follow Joomla Coding Standards
 - No direct `$_GET`/`$_POST` — use `$app->getInput()`
