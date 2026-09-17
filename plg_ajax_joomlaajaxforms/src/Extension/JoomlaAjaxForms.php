@@ -227,14 +227,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $session = $this->getApplication()->getSession();
                 $session->set('application.queue', []);
 
-                // Find the profile page URL via a direct DB query.
-                // Direct DB query instead of Menu::getItems() to avoid loading the full menu tree.
-                $profileUrl = Uri::base();
-                $profileItemId = $this->getMyProfileMenuItemId();
-                if ($profileItemId) {
-                    $sefPath = Route::_('index.php?Itemid=' . $profileItemId, false);
-                    $profileUrl = rtrim(Uri::base(), '/') . '/' . ltrim($sefPath, '/');
-                }
+                // Same target as without MFA (see getProfileRedirect()), as an
+                // absolute URL because it is stored as the return URL of the
+                // captive page.
+                $profileUrl = $this->getProfileRedirect(true);
                 $session->set('com_users.return_url', $profileUrl);
 
                 // Pass return URL as query parameter so the captive template
@@ -271,17 +267,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $session->set('com_users.return_url', '');
 
             if (empty($redirect)) {
-                $profileItemId = $this->getMyProfileMenuItemId();
-                $shop          = $this->getActiveShop($this->getDatabase());
-
-                if ($profileItemId) {
-                    $redirect = Route::_('index.php?Itemid=' . $profileItemId, false);
-                } elseif ($shop !== null) {
-                    $redirect = Route::_('index.php?option=com_' . $shop . '&view=myprofile', false);
-                } else {
-                    // No active shop: the Joomla user profile is the only profile page.
-                    $redirect = Route::_('index.php?option=com_users&view=profile', false);
-                }
+                $redirect = $this->getProfileRedirect();
             }
 
             // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
@@ -669,6 +655,31 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Profile page to open after a login (with and without MFA):
+     * the "myprofile" menu item of the active shop, otherwise the
+     * "myprofile" view of the active shop, otherwise (no active shop)
+     * the Joomla user profile.
+     *
+     * @param   bool  $absolute  Return an absolute URL instead of a routed path.
+     */
+    private function getProfileRedirect(bool $absolute = false): string
+    {
+        $profileItemId = $this->getMyProfileMenuItemId();
+        $shop          = $this->getActiveShop($this->getDatabase());
+
+        if ($profileItemId) {
+            $url = 'index.php?Itemid=' . $profileItemId;
+        } elseif ($shop !== null) {
+            $url = 'index.php?option=com_' . $shop . '&view=myprofile';
+        } else {
+            // No active shop: the Joomla user profile is the only profile page.
+            $url = 'index.php?option=com_users&view=profile';
+        }
+
+        return Route::_($url, false, Route::TLS_IGNORE, $absolute);
+    }
+
+    /**
      * Returns the menu item ID for the "myprofile" view of the active shop
      * (see getActiveShop()), or null if no shop is active or no such menu
      * item exists.
@@ -717,9 +728,15 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     private bool $activeShopResolved = false;
 
     /**
-     * Active shop: 'j2commerce' when com_j2commerce is enabled and its tables exist,
-     * otherwise 'j2store' when com_j2store is enabled and its tables exist, otherwise null.
+     * Active shop: 'j2commerce' when com_j2commerce is enabled and #__j2commerce_carts
+     * exists, otherwise 'j2store' when com_j2store is enabled and #__j2store_carts exists,
+     * otherwise null.
+     *
      * Tables alone do not decide: after a migration the #__j2store_* tables remain.
+     * A component alone does not decide either: an enabled component without its
+     * cart table is skipped and the next candidate is checked.
+     * Without an active shop AJAX Forms does not use any shop: the cart and the
+     * profile of a disabled shop are not reachable for the user anyway.
      */
     private function getActiveShop(DatabaseInterface $db): ?string
     {
@@ -750,10 +767,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
                 if ($db->loadResult() !== null) {
                     $this->activeShop = $shop;
+                    break;
                 }
 
-                // The enabled component decides; without its tables no shop is used.
-                break;
+                // Enabled but without its cart table: try the next candidate.
             }
         } catch (\Throwable $e) {
             Log::add('Shop detection error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
