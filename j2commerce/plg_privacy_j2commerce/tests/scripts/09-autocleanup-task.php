@@ -234,13 +234,23 @@ class AutoCleanupTaskTest
         $this->test('expired guest order seeded', $this->seedTestOrder(0, $guestExpired, sprintf('%04d-12-31 12:00:00', $year - 11)) !== null);
         $this->test('guest order of the fiscal year ten years ago seeded', $this->seedTestOrder(0, $guestKept, sprintf('%04d-01-01 00:00:01', $year - 10)) !== null);
 
+        // A current order of another user, and a consent whose order was deleted.
+        $otherOrder = 'CLEANUP-OTHER-' . time();
+        $goneOrder  = 'CLEANUP-GONE-' . time();
+        $this->test('current order of another user seeded', $this->seedTestOrder(9907, $otherOrder, date('Y-m-d H:i:s', strtotime('-1 year'))) !== null);
+
+        // Migrated site (J2Commerce 6 stack): a copy of the expired order in the #__j2store_*
+        // tables the official migration leaves behind must be anonymized as well.
+        $migrated = $this->isJ6Stack() ? $this->createJ2StoreCopy($orderId) : ['tables' => [], 'copy' => false];
+
         // Checkout consent of the expired orders (IP/UA must be removed by the task) and of an
         // order of another user and of the kept guest order (must stay unchanged).
         $consentIds = [];
 
         foreach ([
             'expired'      => [$orderId, $userId, '203.0.113.60'],
-            'other'        => ['CLEANUP-OTHER-' . time(), 9907, '203.0.113.61'],
+            'other'        => [$otherOrder, 9907, '203.0.113.61'],
+            'gone'         => [$goneOrder, 9907, '203.0.113.64'],
             'guestExpired' => [$guestExpired, 0, '203.0.113.62'],
             'guestKept'    => [$guestKept, 0, '203.0.113.63'],
         ] as $key => [$consentOrder, $consentUser, $ip]) {
@@ -307,6 +317,17 @@ class AutoCleanupTaskTest
             $keptGuest && $keptGuest->user_email !== 'anonymized@deleted.invalid' && $keptGuest->ip_address === '127.0.0.1',
             var_export($keptGuest, true));
         $this->test('task leaves the consent of the kept guest order unchanged', $consentBody($consentIds['guestKept']) === $guestKeptBefore);
+        $goneBody = $consentBody($consentIds['gone']);
+        $this->test('task removes IP address and user agent from the consent of a deleted order',
+            $goneBody !== '' && !str_contains($goneBody, '203.0.113.64') && str_contains($goneBody, "<!-- j2commerce-order:$goneOrder -->"), 'body=' . $goneBody);
+
+        if ($migrated['copy']) {
+            $copyEmail = $this->orderEmail('#__j2store_orders', $orderId);
+            $this->test('task anonymizes the copy of the expired order in the #__j2store_* tables', $copyEmail === 'anonymized@deleted.invalid',
+                'user_email=' . var_export($copyEmail, true));
+        }
+
+        $this->dropJ2StoreCopy($migrated, $orderId);
 
         $this->db->setQuery(
             $this->db->getQuery(true)
@@ -319,7 +340,58 @@ class AutoCleanupTaskTest
                 ->delete($this->db->quoteName('#__privacy_consents'))
                 ->whereIn($this->db->quoteName('id'), array_values($consentIds))
         )->execute();
-        $this->cleanupTestData([$userId]);
+        $this->cleanupTestData([$userId, 9907]);
+    }
+
+    /**
+     * J2Store tables (created from the J2Commerce 6 ones if missing) with a copy of an order.
+     *
+     * @return  array{tables: string[], copy: bool}
+     */
+    private function createJ2StoreCopy(string $orderId): array
+    {
+        $state  = ['tables' => [], 'copy' => false];
+        $prefix = $this->db->getPrefix();
+        $tables = $this->db->getTableList();
+
+        try {
+            foreach (['orders', 'orderinfos', 'orderitems', 'addresses'] as $name) {
+                if (!in_array($prefix . 'j2store_' . $name, $tables, true)) {
+                    $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' LIKE ' . $this->db->quoteName($prefix . 'j2commerce_' . $name))->execute();
+                    $state['tables'][] = $prefix . 'j2store_' . $name;
+                }
+            }
+
+            $row = $this->db->setQuery(
+                'SELECT * FROM ' . $this->db->quoteName('#__j2commerce_orders') . ' WHERE order_id = ' . $this->db->quote($orderId)
+            )->loadAssoc();
+            unset($row['j2commerce_order_id']);
+            $copy = (object) $row;
+            $this->db->insertObject('#__j2store_orders', $copy);
+            $state['copy'] = true;
+        } catch (\Throwable $e) {
+            $this->test('J2Store copy of the order created', false, $e->getMessage());
+        }
+
+        $register = function () use (&$state, $orderId): void {
+            $this->dropJ2StoreCopy($state, $orderId);
+        };
+        register_shutdown_function($register);
+
+        return $state;
+    }
+
+    private function dropJ2StoreCopy(array &$state, string $orderId): void
+    {
+        foreach ($state['tables'] as $table) {
+            $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
+        }
+
+        if ($state['copy'] && !in_array($this->db->getPrefix() . 'j2store_orders', $state['tables'], true)) {
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE order_id = ' . $this->db->quote($orderId))->execute();
+        }
+
+        $state = ['tables' => [], 'copy' => false];
     }
 
     /**
@@ -858,16 +930,17 @@ class AutoCleanupTaskTest
         }
     }
 
+    /** Same decision as the plugin (installed component, not table presence). */
     private function isJ6Stack(): bool
     {
-        if (getenv('J2COMMERCE_STACK') === 'j6') {
-            return true;
+        $class = \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class;
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Support/J2CommerceStack.php';
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
         }
-        try {
-            return count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
-        } catch (\Exception $e) {
-            return false;
-        }
+
+        return class_exists($class) ? !$class::isJ2Commerce4($this->db) : getenv('J2COMMERCE_STACK') === 'j6';
     }
 
     private function seedTestOrder(int $userId, string $orderId, string $createdOn): ?string

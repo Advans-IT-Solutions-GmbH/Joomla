@@ -9,7 +9,7 @@
  *
  * @var  array  $displayData {
  *     @type  bool    $consented       A valid consent record exists.
- *     @type  array   $records         [{date: string, order_id: ?string, source: 'checkout'|'checkout_legacy'|'account'}]
+ *     @type  array   $records         [{date: string, order_id: ?string, source: 'checkout'|'account'}]
  *     @type  bool    $isGuest         Verified guest access via order token + e-mail.
  *     @type  bool    $showRequest     A logged-in user or a verified guest session is present.
  *     @type  bool    $showExport      "Show Export Data" (default true).
@@ -70,8 +70,7 @@ if ($showDelete) {
                             <td>
                                 <?php if (($record['source'] ?? '') === 'checkout') : ?>
                                     <?php echo Text::sprintf('PLG_PRIVACY_J2COMMERCE_CONSENT_SOURCE_CHECKOUT', $escape($record['order_id'] ?? '')); ?>
-                                <?php elseif (($record['source'] ?? '') === 'checkout_legacy') : ?>
-                                    <?php echo Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_SOURCE_CHECKOUT_LEGACY'); ?>
+
                                 <?php else : ?>
                                     <?php echo Text::_('PLG_PRIVACY_J2COMMERCE_CONSENT_SOURCE_ACCOUNT'); ?>
                                 <?php endif; ?>

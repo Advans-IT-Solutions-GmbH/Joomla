@@ -25,6 +25,7 @@ use Joomla\Event\EventInterface;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Input\Input;
 use Joomla\Registry\Registry;
+use Joomla\Utilities\IpHelper;
 
 /**
  * Server-side checkout consent for J2Commerce 6.
@@ -51,9 +52,11 @@ use Joomla\Registry\Registry;
  *    current cart; not ticked while required -> JSON field error.
  * 3. checkout.confirm and checkout.confirmPayment (POST): required but no consent for the current
  *    cart -> refused. Covers requests that skip step 4, zero-total orders and cart changes.
- * 4. checkout.confirmPayment (POST, order placed): consent for the cart of the order in the user
- *    state j2commerce.order_id -> one #__privacy_consents record. Not on onJ2CommerceAfterSaveOrder:
- *    J2Commerce saves an incomplete order already when the confirmation step is rendered.
+ * 4. checkout.confirmPayment (POST with form token, or GET gateway return): order, consent cart and
+ *    request data are captured; after the controller the order must exist, belong to that cart and
+ *    no longer be incomplete -> one #__privacy_consents record (capturePlacement(),
+ *    recordAcceptedOrderConsent()). Not on onJ2CommerceAfterSaveOrder: J2Commerce saves an
+ *    incomplete order already when the confirmation step is rendered.
  * 5. onJ2CommerceCheckoutCleanup: the consent is removed from the session.
  */
 class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
@@ -78,6 +81,9 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     public const TASK_VALIDATE        = 'checkout.shippingpaymentmethodvalidate';
     public const TASK_CONFIRM         = 'checkout.confirm';
     public const TASK_CONFIRM_PAYMENT = 'checkout.confirmpayment';
+
+    /** J2Commerce order state of an order saved by the confirmation step but not placed. */
+    public const ORDER_STATE_INCOMPLETE = 5;
 
     private const CART_HELPER = 'J2Commerce\\Component\\J2commerce\\Administrator\\Helper\\CartHelper';
 
@@ -225,6 +231,14 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
             $decision = self::decide($privacyParams, $input->post->getString(self::CONSENT_FIELD, '') === '1');
 
+            // Without a cart the consent cannot be bound to a purchase: nothing is stored, and a
+            // required consent is refused like an unticked one.
+            if ($decision === self::DECISION_RECORD && $cartId <= 0) {
+                $session->remove(self::SESSION_CONSENT);
+
+                return $required ? ['type' => self::RESPONSE_STEP_ERROR, 'message' => self::requiredMessage()] : null;
+            }
+
             if ($decision === self::DECISION_RECORD) {
                 $session->set(self::SESSION_CONSENT, ['cart' => $cartId, 'at' => time()]);
 
@@ -299,12 +313,25 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $response = $this->handleCheckoutRequest($input, $app->getSession(), $privacyParams, self::currentCartId(), Session::getFormToken());
 
         if ($response === null) {
-            // The shopper places the order: record the consent for exactly this order.
-            try {
-                $this->recordPlacedOrderConsent($input, $this->getSessionConsentCartId(), (string) $app->getUserState('j2commerce.order_id', ''));
-            } catch (\Throwable $e) {
-                // Never break the checkout because the consent log failed.
-                Log::add('Checkout consent could not be recorded: ' . $e->getMessage(), Log::WARNING, 'plg_system_j2commerceprivacy');
+            // Placing the order (POST) or returning from an off-site gateway (GET): remember order,
+            // consent cart and request data now (J2Commerce clears the checkout session in the
+            // controller) and record the consent after J2Commerce has handled the request.
+            $captured = $this->capturePlacement(
+                $input,
+                $this->getSessionConsentCartId(),
+                (string) $app->getUserState('j2commerce.order_id', ''),
+                Session::getFormToken()
+            );
+
+            if ($captured !== null) {
+                register_shutdown_function(function () use ($captured): void {
+                    try {
+                        $this->recordAcceptedOrderConsent($captured);
+                    } catch (\Throwable $e) {
+                        // Never break the checkout because the consent log failed.
+                        Log::add('Checkout consent could not be recorded: ' . $e->getMessage(), Log::WARNING, 'plg_system_j2commerceprivacy');
+                    }
+                });
             }
 
             return;
@@ -350,35 +377,74 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Record the consent when the shopper places the order (checkout.confirmPayment, POST).
+     * Data of a checkout.confirmPayment request that may complete an order, read before
+     * J2Commerce's controller runs.
      *
-     * J2Commerce already saves an order row (state "incomplete") whenever the confirmation step is
-     * rendered and creates a new row when the cart changed, so the save itself is no evidence that
-     * the order was placed. The order of this request is the one in the user state
-     * j2commerce.order_id; it must have been created from the cart the consent was given for.
+     * Data path in J2Commerce 6 (CheckoutController, pin 7edb6e11): confirm() stores the saved order
+     * number with setUserState('j2commerce.order_id', ...) (L1807, context orders L1659);
+     * confirmPayment() reads it with getUserState('j2commerce.order_id') (L1962), checks the form
+     * token for POST requests itself, runs AfterOrderValidate (L2047) and the payment plugins, and
+     * clears the checkout session (clearCartAndSession(), CheckoutCleanup event) and the user state
+     * (L2377) at the end. The order number and the consent are therefore captured here.
      *
-     * @param   Input     $input          Request input
-     * @param   int|null  $consentCartId  Cart of the ticked consent in the session
-     * @param   string    $orderId        Order number from the user state j2commerce.order_id
+     * - POST (the shopper places the order): only with a valid form token.
+     * - GET (return from an off-site gateway): no form token exists; the order must still pass the
+     *   checks of recordAcceptedOrderConsent().
      *
-     * @return  array{id: int, created: bool}|null
+     * @return  array{order_id: string, cart_id: int, ip: string, user_agent: string}|null
      */
-    public function recordPlacedOrderConsent(Input $input, ?int $consentCartId, string $orderId): ?array
+    public function capturePlacement(Input $input, ?int $consentCartId, string $orderId, string $formToken): ?array
     {
         if ($consentCartId === null
             || $consentCartId <= 0
             || $input->getCmd('option', '') !== 'com_j2commerce'
             || self::resolveTask($input) !== self::TASK_CONFIRM_PAYMENT
-            || $input->getMethod() !== 'POST'
             || !class_exists(ConsentRepository::class)
             || !ConsentRepository::isValidOrderId($orderId)
         ) {
             return null;
         }
 
+        $method = $input->getMethod();
+
+        if ($method === 'POST' && !self::hasValidToken($input, $formToken)) {
+            return null;
+        }
+
+        if ($method !== 'POST' && $method !== 'GET') {
+            return null;
+        }
+
+        return [
+            'order_id'   => $orderId,
+            'cart_id'    => $consentCartId,
+            'ip'         => $this->getClientIp(),
+            'user_agent' => $this->getClientUserAgent(),
+        ];
+    }
+
+    /**
+     * Record the consent once J2Commerce has accepted the order: the order exists, was created from
+     * the cart the consent was given for, and is no longer incomplete (order_state_id 5, the state
+     * of an order saved by the confirmation step; CheckoutController L1790). A rejected order
+     * (AfterOrderValidate, failed payment) stays incomplete and gets no record. Called after the
+     * controller (shutdown), so redirects and $app->close() are covered.
+     *
+     * @param   array{order_id: string, cart_id: int, ip: string, user_agent: string}  $captured
+     *
+     * @return  array{id: int, created: bool}|null
+     */
+    public function recordAcceptedOrderConsent(array $captured): ?array
+    {
+        $orderId = (string) ($captured['order_id'] ?? '');
+
+        if (!class_exists(ConsentRepository::class) || !ConsentRepository::isValidOrderId($orderId)) {
+            return null;
+        }
+
         $db    = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['order_id', 'user_id', 'cart_id']))
+        $query->select($db->quoteName(['order_id', 'user_id', 'cart_id', 'order_state_id']))
             ->from($db->quoteName('#__j2commerce_orders'))
             ->where($db->quoteName('order_id') . ' = :orderid')
             ->bind(':orderid', $orderId)
@@ -386,13 +452,16 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $db->setQuery($query);
         $order = $db->loadObject();
 
-        if (!$order || (int) $order->cart_id !== $consentCartId) {
+        if (!$order
+            || (int) $order->cart_id !== (int) ($captured['cart_id'] ?? 0)
+            || (int) $order->order_state_id === self::ORDER_STATE_INCOMPLETE
+            || (int) $order->order_state_id <= 0
+        ) {
             return null;
         }
 
-        return $this->recordConsentForOrder($order, $this->getClientIp(), $this->getClientUserAgent());
+        return $this->recordConsentForOrder($order, (string) ($captured['ip'] ?? ''), (string) ($captured['user_agent'] ?? ''));
     }
-
     public function onJ2CommerceCheckoutCleanup(EventInterface $event): void
     {
         $app = $this->getApplication();
@@ -446,7 +515,8 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 
     protected function getClientIp(): string
     {
-        return (string) $this->getApplication()->getInput()->server->getString('REMOTE_ADDR', '');
+        // Respects the "Behind Load Balancer" setting (X-Forwarded-For).
+        return (string) IpHelper::getIp();
     }
 
     protected function getClientUserAgent(): string
@@ -468,7 +538,7 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     {
         $consent = $session->get(self::SESSION_CONSENT);
 
-        return \is_array($consent) && isset($consent['cart']) && (int) $consent['cart'] === $cartId;
+        return $cartId > 0 && \is_array($consent) && isset($consent['cart']) && (int) $consent['cart'] === $cartId;
     }
 
     private static function hasValidToken(Input $input, string $formToken): bool

@@ -90,9 +90,16 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         return $db->getQuery(true);
     }
 
+    /** Data set processed in autoCleanup() (null: the active set). */
+    private ?bool $dataSetOverride = null;
+
     protected function isJ2Commerce4(): bool
     {
-        // The enabled component decides; migrated sites keep the #__j2store_* tables.
+        if ($this->dataSetOverride !== null) {
+            return $this->dataSetOverride;
+        }
+
+        // The installed component decides; migrated sites keep the #__j2store_* tables.
         if (!$this->loadPrivacyClass(J2CommerceStack::class, '/Support/J2CommerceStack.php')) {
             throw new \RuntimeException('J2CommerceStack helper of the privacy plugin not found');
         }
@@ -159,74 +166,101 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             $this->logTask("Retention period: {$retentionYears} years from the end of the fiscal year ({$fiscalYearEnd}, time zone {$zone->getName()})");
             $this->logTask("Orders created on or before {$cutoffDate} are outside the retention period");
 
-            // Consent records of an earlier template override: assign to their order or anonymize.
-            if ($this->loadPrivacyClass(ConsentRepository::class, '/Consent/ConsentRepository.php')) {
-                $legacy = (new ConsentRepository($db))->migrateLegacyConsents();
-                $this->logTask("Legacy consent records: {$legacy['assigned']} assigned to their order, {$legacy['anonymized']} anonymized");
-            }
-
-            $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
-            $query = $this->createDbQuery()
-                ->select('DISTINCT o.user_id')
-                ->from($db->quoteName($ordersTable, 'o'))
-                ->where($db->quoteName('o.user_id') . ' > 0')
-                ->group($db->quoteName('o.user_id'))
-                ->having('MAX(' . $db->quoteName('o.created_on') . ') <= ' . $db->quote($cutoffDate));
-
-            $db->setQuery($query);
-            $userIds = $db->loadColumn();
-
-            $guestErrors = 0;
-
-            if ((int) $this->taskParam('anonymize_orders', 1) === 1) {
-                try {
-                    $this->anonymizeExpiredGuestOrders($cutoffDate);
-                } catch (\Throwable $e) {
-                    $guestErrors++;
-                    $this->logTask('Error anonymizing guest orders: ' . $e->getMessage(), 'error');
-                }
-            }
-
-            if (empty($userIds)) {
-                $this->logTask('No users found with expired retention periods');
-
-                return $guestErrors > 0 ? Status::KNOCKOUT : Status::OK;
-            }
-
-            $this->logTask('Found ' . count($userIds) . ' users with expired retention periods');
-
             $anonymizedCount = 0;
             $partialCount    = 0;
             $errorCount      = 0;
+            $guestErrors     = 0;
+            $otherErrors     = 0;
 
-            foreach ($userIds as $userId) {
+            // Every J2Commerce data set: a migration keeps the #__j2store_* copies, and personal
+            // data must not survive there.
+            if (!$this->loadPrivacyClass(J2CommerceStack::class, '/Support/J2CommerceStack.php')) {
+                throw new \RuntimeException('J2CommerceStack helper of the privacy plugin not found');
+            }
+
+            $orderTables = [];
+
+            foreach (J2CommerceStack::dataSets($db) as $isJ4) {
+                $this->dataSetOverride = $isJ4;
+                $orderTables[]         = $isJ4 ? '#__j2store_orders' : '#__j2commerce_orders';
+                $setLabel              = $isJ4 ? 'J2Store tables' : 'J2Commerce 6 tables';
+
                 try {
-                    // Lifetime-license orders keep only their order e-mail address (provisional
-                    // rule, pending confirmation); all other orders are fully anonymized.
-                    $lifetimeOrders = $this->anonymizeUserData((int) $userId);
+                    $query = $this->createDbQuery()
+                        ->select('DISTINCT o.user_id')
+                        ->from($db->quoteName($isJ4 ? '#__j2store_orders' : '#__j2commerce_orders', 'o'))
+                        ->where($db->quoteName('o.user_id') . ' > 0')
+                        ->group($db->quoteName('o.user_id'))
+                        ->having('MAX(' . $db->quoteName('o.created_on') . ') <= ' . $db->quote($cutoffDate));
 
-                    if ($lifetimeOrders > 0) {
-                        $partialCount++;
-                        $this->logTask("Anonymized data for user ID: {$userId}; {$lifetimeOrders} lifetime-license order(s) keep the order e-mail");
-                        continue;
+                    $db->setQuery($query);
+                    $userIds = $db->loadColumn() ?: [];
+
+                    if ((int) $this->taskParam('anonymize_orders', 1) === 1) {
+                        try {
+                            $this->anonymizeExpiredGuestOrders($cutoffDate);
+                        } catch (\Throwable $e) {
+                            $guestErrors++;
+                            $this->logTask("Error anonymizing guest orders ({$setLabel}): " . $e->getMessage(), 'error');
+                        }
                     }
 
-                    $anonymizedCount++;
-                    $this->logTask("Fully anonymized data for user ID: {$userId}");
+                    $this->logTask('Found ' . count($userIds) . " users with expired retention periods ({$setLabel})");
+
+                    foreach ($userIds as $userId) {
+                        try {
+                            // Lifetime-license orders keep only their order e-mail address (provisional
+                            // rule, pending confirmation); all other orders are fully anonymized.
+                            $lifetimeOrders = $this->anonymizeUserData((int) $userId);
+
+                            if ($lifetimeOrders > 0) {
+                                $partialCount++;
+                                $this->logTask("Anonymized data for user ID: {$userId} ({$setLabel}); {$lifetimeOrders} lifetime-license order(s) keep the order e-mail");
+                                continue;
+                            }
+
+                            $anonymizedCount++;
+                            $this->logTask("Fully anonymized data for user ID: {$userId} ({$setLabel})");
+                        } catch (\Throwable $e) {
+                            $errorCount++;
+                            $this->logTask("Error anonymizing user ID {$userId} ({$setLabel}): " . $e->getMessage(), 'error');
+                        }
+                    }
+                } finally {
+                    $this->dataSetOverride = null;
+                }
+            }
+
+            // Consent records: legacy entries anonymized; IP address and user agent removed where
+            // the order is outside the retention period, deleted or already anonymized. Errors are
+            // logged and do not stop the cleanup of the orders above.
+            if ($this->loadPrivacyClass(ConsentRepository::class, '/Consent/ConsentRepository.php')) {
+                $repository = new ConsentRepository($db);
+
+                try {
+                    $legacy = $repository->anonymizeLegacyConsents();
+                    $this->logTask("Legacy consent records anonymized: {$legacy}");
                 } catch (\Throwable $e) {
-                    $errorCount++;
-                    $this->logTask("Error anonymizing user ID {$userId}: " . $e->getMessage(), 'error');
+                    $otherErrors++;
+                    $this->logTask('Error anonymizing legacy consent records: ' . $e->getMessage(), 'error');
+                }
+
+                try {
+                    $stale = $repository->removeStaleEvidence($cutoffDate, $orderTables);
+                    $this->logTask("IP address and user agent removed from {$stale} consent record(s) without a current order");
+                } catch (\Throwable $e) {
+                    $otherErrors++;
+                    $this->logTask('Error removing consent evidence: ' . $e->getMessage(), 'error');
                 }
             }
 
             $this->logTask("Cleanup complete: {$anonymizedCount} fully anonymized, {$partialCount} partially anonymized, {$errorCount} errors");
 
-            if ($guestErrors > 0 || ($errorCount > 0 && $anonymizedCount === 0 && $partialCount === 0)) {
+            if ($guestErrors > 0 || $otherErrors > 0 || ($errorCount > 0 && $anonymizedCount === 0 && $partialCount === 0)) {
                 return Status::KNOCKOUT;
             }
 
-            return Status::OK;
-        } catch (\Throwable $e) {
+            return Status::OK;        } catch (\Throwable $e) {
             $this->logTask('Fatal error: ' . $e->getMessage(), 'error');
 
             return Status::KNOCKOUT;

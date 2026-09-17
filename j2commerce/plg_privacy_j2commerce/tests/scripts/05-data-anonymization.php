@@ -306,6 +306,9 @@ class DataAnonymizationTest
         // Migrated site: the #__j2store_* source tables stay after the official migration and
         // com_j2store is disabled. The enabled component decides which tables are used.
         $stack = $this->prepareMigratedStack($isJ6, $ordersTable, $testOrder, $orderPkCol);
+        register_shutdown_function(fn () => $this->cleanupMigratedStack($stack));
+
+        try {
 
         // Checkout consent records: one for the expired order (IP/UA must be removed), one for a
         // recent order of the same user and one of another user (both must stay unchanged).
@@ -492,11 +495,16 @@ class DataAnonymizationTest
                 $this->testRemovalFeedback($plugin);
 
                 if ($isJ6 && $stack['copy']) {
-                    $copyEmail = $this->db->setQuery(
+                    $copyEmail = fn (): ?string => $this->db->setQuery(
                         'SELECT user_email FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE order_id = ' . $this->db->quote($orderId)
                     )->loadResult();
-                    $this->test('migrated site: the J2Commerce 6 order was anonymized, the #__j2store_orders copy was not touched',
-                        $order->user_email === 'anonymized@deleted.invalid' && $copyEmail === 'private@example.com', var_export($copyEmail, true));
+                    $this->test('migrated site: anonymizeOrders() alone works on the active J2Commerce 6 tables',
+                        $order->user_email === 'anonymized@deleted.invalid' && $copyEmail() === 'private@example.com', var_export($copyEmail(), true));
+
+                    // Removal requests and the cleanup task run on every data set.
+                    $sets = $plugin->call('forEachDataSet', fn (bool $isJ4): bool => $plugin->call('anonymizeOrders', 998) === null && $isJ4);
+                    $this->test('migrated site: both data sets are processed (J2Commerce 6 first)', $sets === [false, true], json_encode($sets));
+                    $this->test('migrated site: the #__j2store_orders copy is anonymized too', $copyEmail() === 'anonymized@deleted.invalid', var_export($copyEmail(), true));
                 }
 
                 // Consent records of the anonymized order lose IP address and user agent only.
@@ -524,7 +532,7 @@ class DataAnonymizationTest
 
                 // A second anonymization run does not rewrite the record again.
                 $bodyAfterFirstRun = $expired->body ?? '';
-                $method->invoke($plugin, 998);
+                $plugin->call('anonymizeOrders', 998);
                 $again = $loadConsent($consentIds['expired']);
                 $this->test('second anonymization leaves the consent unchanged', $again && $again->body === $bodyAfterFirstRun);
             }
@@ -537,6 +545,10 @@ class DataAnonymizationTest
 
         $this->cleanupMigratedStack($stack);
         $this->testRetentionPeriod();
+        } finally {
+            // Also after a fatal error: later suites must not run on a fake migrated site.
+            $this->cleanupMigratedStack($stack);
+        }
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
 
@@ -556,7 +568,7 @@ class DataAnonymizationTest
      */
     private function prepareMigratedStack(bool $isJ6, string $ordersTable, object $testOrder, string $orderPkCol): array
     {
-        $state = ['tables' => [], 'extension' => 0, 'copy' => false];
+        $state = ['tables' => [], 'extension' => 0, 'restore' => [], 'copy' => false, 'done' => false];
         $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Support/J2CommerceStack.php';
         $class = \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class;
 
@@ -596,7 +608,18 @@ class DataAnonymizationTest
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
             )->loadResult();
 
-            if ($existing === 0) {
+            if ($existing > 0) {
+                // Existing row: disable explicitly, restore afterwards.
+                $rows = $this->db->setQuery(
+                    'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store'"
+                )->loadObjectList();
+
+                foreach ($rows as $row) {
+                    $state['restore'][(int) $row->extension_id] = (int) $row->enabled;
+                }
+
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 0 WHERE type = 'component' AND element = 'com_j2store'")->execute();
+            } else {
                 $extension = (object) [
                     'package_id' => 0, 'name' => 'com_j2store', 'type' => 'component', 'element' => 'com_j2store',
                     'changelogurl' => '', 'folder' => '', 'client_id' => 1, 'enabled' => 0, 'access' => 1, 'protected' => 0,
@@ -607,9 +630,39 @@ class DataAnonymizationTest
                 $state['extension'] = (int) $extension->extension_id;
             }
 
+            $enabled = (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2store' AND enabled = 1"
+            )->loadResult();
+            $this->test('com_j2store is disabled for the test', $enabled === 0);
+
             \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
             $this->test('both table sets present, com_j2store disabled: J2Commerce 6 tables are used',
                 \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
+
+            // A temporarily disabled com_j2commerce must not switch the shop to the old copies,
+            // even when com_j2store is enabled.
+            $j6Enabled = $this->db->setQuery(
+                'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'component' AND element = 'com_j2commerce'"
+            )->loadObjectList();
+
+            foreach ($j6Enabled as $row) {
+                $state['restore'][(int) $row->extension_id] = $state['restore'][(int) $row->extension_id] ?? (int) $row->enabled;
+            }
+
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 0 WHERE type = 'component' AND element = 'com_j2commerce'")->execute();
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 1 WHERE type = 'component' AND element = 'com_j2store'")->execute();
+            \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
+            $this->test('com_j2commerce installed but disabled, com_j2store enabled: J2Commerce 6 tables stay active',
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db) === false);
+
+            foreach ($j6Enabled as $row) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . ' SET enabled = ' . (int) $row->enabled . ' WHERE extension_id = ' . (int) $row->extension_id)->execute();
+            }
+
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . " SET enabled = 0 WHERE type = 'component' AND element = 'com_j2store'")->execute();
+            \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::reset();
+            $this->test('both data sets are listed, J2Commerce 6 first',
+                \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::dataSets($this->db) === [false, true]);
         } catch (\Throwable $e) {
             $this->test('migrated-site setup', false, $e->getMessage());
         }
@@ -617,8 +670,18 @@ class DataAnonymizationTest
         return $state;
     }
 
-    private function cleanupMigratedStack(array $state): void
+    private function cleanupMigratedStack(array &$state): void
     {
+        if (!empty($state['done'])) {
+            return;
+        }
+
+        $state['done'] = true;
+
+        foreach ($state['restore'] ?? [] as $extensionId => $enabled) {
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . ' SET enabled = ' . (int) $enabled . ' WHERE extension_id = ' . (int) $extensionId)->execute();
+        }
+
         foreach ($state['tables'] as $table) {
             $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
         }
@@ -809,16 +872,17 @@ class DataAnonymizationTest
         }
     }
 
+    /** Same decision as the plugin (installed component, not table presence). */
     private function isJ6Stack(): bool
     {
-        if (getenv('J2COMMERCE_STACK') === 'j6') {
-            return true;
+        $class = \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class;
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Support/J2CommerceStack.php';
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
         }
-        try {
-            return count($this->db->getTableColumns('#__j2commerce_orders', false)) > 0;
-        } catch (\Exception $e) {
-            return false;
-        }
+
+        return class_exists($class) ? !$class::isJ2Commerce4($this->db) : getenv('J2COMMERCE_STACK') === 'j6';
     }
 
     private function getTableColumns(string $table): array

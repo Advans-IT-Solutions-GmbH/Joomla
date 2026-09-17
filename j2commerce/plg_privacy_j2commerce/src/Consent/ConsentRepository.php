@@ -28,8 +28,8 @@ use Joomla\Database\ParameterType;
  *   No e-mail address is copied; guests are traced through the order (token + user_email).
  *   IP address and user agent are removed when the plugin anonymizes the order (removeOrderEvidence).
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
- * - Legacy records of an earlier template override (LEGACY_SUBJECT) are converted or anonymized
- *   by migrateLegacyConsents() (installer, removal request, cleanup task).
+ * - Legacy records of an earlier template override (LEGACY_SUBJECT) are only anonymized by
+ *   anonymizeLegacyConsents() (installer, removal request, cleanup task) and never counted as consent.
  */
 final class ConsentRepository
 {
@@ -51,9 +51,12 @@ final class ConsentRepository
     /**
      * Subject of consent records written by an earlier advans template override (checkout confirm
      * step and MyProfile tab). Their body holds the e-mail address, IP address and user agent but
-     * no order reference; migrateLegacyConsents() converts or anonymizes them.
+     * no order reference; anonymizeLegacyConsents() anonymizes them.
      */
     public const LEGACY_SUBJECT = 'PLG_PRIVACY_J2COMMERCE';
+
+    /** Subject of an anonymized legacy record (translated in the system plugin language file). */
+    public const LEGACY_DONE_SUBJECT = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY';
 
     /** Body language key of an anonymized legacy record. */
     public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
@@ -61,8 +64,8 @@ final class ConsentRepository
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
 
-    /** A legacy record belongs to an order created within this many seconds of the record. */
-    public const LEGACY_MATCH_WINDOW = 3600;
+    /** Rows per batch in the bulk operations. */
+    public const BATCH_SIZE = 200;
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
@@ -208,7 +211,9 @@ final class ConsentRepository
     }
 
     /**
-     * Record consent for an order unless a valid record already exists (no duplicates).
+     * Record consent for an order unless a valid record already exists (no duplicates). Two
+     * parallel requests (double submit) can both insert; the later rows are removed again, so one
+     * record per order remains.
      *
      * @return  array{id: int, created: bool}|null  Null when the order number is not usable.
      */
@@ -235,124 +240,213 @@ final class ConsentRepository
         ];
 
         $this->db->insertObject('#__privacy_consents', $record, 'id');
+        $insertedId = (int) $record->id;
+        $keep       = $this->removeDuplicateConsents($orderId) ?? $insertedId;
 
-        return ['id' => (int) $record->id, 'created' => true];
+        return ['id' => $keep, 'created' => $keep === $insertedId];
     }
 
     /**
-     * Convert or anonymize legacy consent records (LEGACY_SUBJECT) that have not been processed yet.
+     * Keep only the oldest valid checkout consent record of an order (two parallel requests can
+     * both pass the check in ensureOrderConsent() and insert).
      *
-     * - Exactly one order of the same user (guests: user_id 0 and the e-mail address from the body)
-     *   created within LEGACY_MATCH_WINDOW of the record, and that order has no checkout consent
-     *   yet: the record becomes a regular checkout consent of that order (SUBJECT, order number,
-     *   IP address and user agent; no e-mail address). IP address and user agent are then removed
-     *   together with the order, like for every checkout consent.
-     * - Otherwise: e-mail address, IP address and user agent are removed; the record (created,
-     *   subject, user_id, state) stays as evidence.
-     *
-     * @param   int|null  $userId  Only the records of this user (null: all)
-     *
-     * @return  array{assigned: int, anonymized: int}
+     * @return  int|null  ID of the record kept, null if there is none
      */
-    public function migrateLegacyConsents(?int $userId = null): array
+    public function removeDuplicateConsents(string $orderId): ?int
     {
-        $result = ['assigned' => 0, 'anonymized' => 0];
-        $query  = $this->createQuery()
-            ->select($this->db->quoteName(['id', 'user_id', 'created', 'body']))
-            ->from($this->db->quoteName('#__privacy_consents'))
-            ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
-            ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->db->quote('%' . $this->db->escape(self::EVIDENCE_REMOVED_MARKER, true) . '%', false));
-
-        if ($userId !== null) {
-            $query->where($this->db->quoteName('user_id') . ' = ' . (int) $userId);
+        if (!self::isValidOrderId($orderId)) {
+            return null;
         }
 
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('id'))
+            ->from($this->db->quoteName('#__privacy_consents'))
+            ->where($this->db->quoteName('state') . ' = 1')
+            ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
+            ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId))
+            ->order($this->db->quoteName('id') . ' ASC');
         $this->db->setQuery($query);
+        $ids = array_map('intval', $this->db->loadColumn() ?: []);
 
-        foreach ($this->db->loadObjectList() ?: [] as $record) {
-            $body    = (string) $record->body;
-            $email   = self::legacyField('/E-Mail:\s*<strong>(.*?)<\/strong>/is', $body);
-            $orderId = $this->findLegacyOrder((int) $record->user_id, $email, (string) $record->created);
+        if ($ids === []) {
+            return null;
+        }
 
-            if ($orderId !== null && $this->findOrderConsent($orderId) === null) {
-                $newBody = $this->buildBody(
-                    $orderId,
-                    self::legacyField('/IP-Adresse:\s*<strong>(.*?)<\/strong>/is', $body),
-                    self::legacyField('/User-Agent:\s*<br\s*\/?>(.*?)<\/p>/is', $body)
-                );
-                $this->updateRecord((int) $record->id, self::SUBJECT, $newBody);
-                $result['assigned']++;
-                continue;
+        $keep  = min($ids);
+        $extra = array_values(array_filter($ids, static fn (int $id): bool => $id !== $keep));
+
+        if ($extra !== []) {
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->delete($this->db->quoteName('#__privacy_consents'))
+                    ->whereIn($this->db->quoteName('id'), $extra)
+            )->execute();
+        }
+
+        return $keep;
+    }
+
+    /**
+     * Anonymize consent records of an earlier template override (LEGACY_SUBJECT). Part of them was
+     * created afterwards (when the MyProfile tab was opened, dated with the newest order), so they
+     * are no evidence of a checkout consent and are never assigned to an order. The e-mail address,
+     * IP address and user agent are removed; the body gets a neutral note and the subject
+     * LEGACY_DONE_SUBJECT. Such records are not counted as consent.
+     *
+     * @param   int|null  $userId  Only this user's records (null: all)
+     * @param   string[]  $emails  With $userId: also guest records (user_id 0) mentioning one of these addresses
+     *
+     * @return  int  Number of records anonymized
+     */
+    public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
+    {
+        $body    = self::loadBodyLanguage()->_(self::LEGACY_BODY_KEY) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
+        $changed = 0;
+        $lastId  = 0;
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName('id'))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+
+            if ($userId !== null) {
+                $scope = [$this->db->quoteName('user_id') . ' = ' . (int) $userId];
+
+                foreach ($emails as $email) {
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->db->quoteName('body') . ' LIKE '
+                        . $this->db->quote('%' . $this->db->escape(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), true) . '%', false) . ')';
+                }
+
+                $query->where('(' . implode(' OR ', $scope) . ')');
             }
 
-            $this->updateRecord(
-                (int) $record->id,
-                self::LEGACY_SUBJECT,
-                self::loadBodyLanguage()->_(self::LEGACY_BODY_KEY) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER
-            );
-            $result['anonymized']++;
-        }
+            $this->db->setQuery($query);
+            $ids = array_map('intval', $this->db->loadColumn() ?: []);
 
-        return $result;
+            if ($ids === []) {
+                break;
+            }
+
+            $update = $this->createQuery()
+                ->update($this->db->quoteName('#__privacy_consents'))
+                ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
+                ->set($this->db->quoteName('body') . ' = :body')
+                ->whereIn($this->db->quoteName('id'), $ids)
+                ->bind(':body', $body);
+            $this->db->setQuery($update)->execute();
+
+            $changed += \count($ids);
+            $lastId   = max($ids);
+        } while (\count($ids) === self::BATCH_SIZE);
+
+        return $changed;
     }
 
     /**
-     * The one order a legacy record belongs to, or null if there is none or more than one.
+     * Remove IP address and user agent from checkout consent records whose order no longer needs
+     * them: the record is older than the retention cutoff, its order no longer exists in any
+     * J2Commerce data set, or the order was already anonymized.
+     *
+     * @param   string    $cutoff  created <= cutoff (UTC) is outside the retention period
+     * @param   string[]  $tables  Order tables to look in (for example #__j2commerce_orders, #__j2store_orders)
+     *
+     * @return  int  Number of records changed
      */
-    private function findLegacyOrder(int $userId, string $email, string $created): ?string
+    public function removeStaleEvidence(string $cutoff, array $tables): int
     {
-        if ($userId <= 0 && $email === '') {
-            return null;
-        }
+        $changed = 0;
+        $lastId  = 0;
 
-        try {
-            $time = new \DateTimeImmutable($created, new \DateTimeZone('UTC'));
-        } catch (\Throwable $e) {
-            return null;
-        }
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'created', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
+                ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->db->quote('%' . $this->db->escape(self::EVIDENCE_REMOVED_MARKER, true) . '%', false))
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+            $this->db->setQuery($query);
+            $records = $this->db->loadObjectList() ?: [];
 
-        $from  = $time->modify('-' . self::LEGACY_MATCH_WINDOW . ' seconds')->format('Y-m-d H:i:s');
-        $to    = $time->modify('+' . self::LEGACY_MATCH_WINDOW . ' seconds')->format('Y-m-d H:i:s');
-        $query = $this->createQuery()
-            ->select($this->db->quoteName('order_id'))
-            ->from($this->db->quoteName($this->ordersTable()))
-            ->where($this->db->quoteName('user_id') . ' = ' . max(0, $userId))
-            ->where($this->db->quoteName('created_on') . ' BETWEEN :from AND :to')
-            ->bind(':from', $from)
-            ->bind(':to', $to)
-            ->setLimit(2);
+            if ($records === []) {
+                break;
+            }
 
-        if ($userId <= 0) {
-            $query->where($this->db->quoteName('user_email') . ' = :email')
-                ->bind(':email', $email);
-        }
+            $orders = [];
 
-        $this->db->setQuery($query);
-        $orders = array_values(array_filter(array_map('strval', $this->db->loadColumn() ?: []), [self::class, 'isValidOrderId']));
+            foreach ($records as $record) {
+                $orderId = self::extractOrderId((string) $record->body);
 
-        return \count($orders) === 1 ? $orders[0] : null;
+                if ($orderId !== null) {
+                    $orders[$orderId] = true;
+                }
+            }
+
+            $live = $this->ordersWithPersonalData(array_keys($orders), $tables);
+            $done = [];
+
+            foreach ($records as $record) {
+                $orderId = self::extractOrderId((string) $record->body);
+
+                if ($orderId === null) {
+                    continue;
+                }
+
+                if ((string) $record->created <= $cutoff || !isset($live[$orderId])) {
+                    $done[$orderId] = true;
+                }
+            }
+
+            $changed += $this->removeOrderEvidence(array_keys($done));
+            $lastId   = (int) end($records)->id;
+        } while (\count($records) === self::BATCH_SIZE);
+
+        return $changed;
     }
 
-    private function updateRecord(int $id, string $subject, string $body): void
+    /**
+     * Order numbers among $orderIds that still exist with personal data in at least one table
+     * (an anonymized order has an empty IP address and the billing name "Anonymized").
+     *
+     * @param   string[]  $orderIds
+     * @param   string[]  $tables  Order tables (#__*_orders); the order info table is derived
+     *
+     * @return  array<string, true>
+     */
+    private function ordersWithPersonalData(array $orderIds, array $tables): array
     {
-        $query = $this->createQuery()
-            ->update($this->db->quoteName('#__privacy_consents'))
-            ->set($this->db->quoteName('subject') . ' = :subject')
-            ->set($this->db->quoteName('body') . ' = :body')
-            ->where($this->db->quoteName('id') . ' = :id')
-            ->bind(':subject', $subject)
-            ->bind(':body', $body)
-            ->bind(':id', $id, ParameterType::INTEGER);
-        $this->db->setQuery($query)->execute();
-    }
+        $orderIds = array_values(array_filter(array_map('strval', $orderIds), [self::class, 'isValidOrderId']));
+        $live     = [];
 
-    private static function legacyField(string $pattern, string $body): string
-    {
-        return preg_match($pattern, $body, $match) === 1
-            ? trim(html_entity_decode(strip_tags($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'))
-            : '';
-    }
+        if ($orderIds === []) {
+            return $live;
+        }
 
+        foreach ($tables as $table) {
+            $infos = str_replace('_orders', '_orderinfos', $table);
+            $query = $this->createQuery()
+                ->select($this->db->quoteName('o.order_id'))
+                ->from($this->db->quoteName($table, 'o'))
+                ->join('LEFT', $this->db->quoteName($infos, 'oi') . ' ON ' . $this->db->quoteName('oi.order_id') . ' = ' . $this->db->quoteName('o.order_id'))
+                ->whereIn($this->db->quoteName('o.order_id'), $orderIds, ParameterType::STRING)
+                ->where('(' . $this->db->quoteName('o.ip_address') . ' <> ' . $this->db->quote('')
+                    . ' OR ' . $this->db->quoteName('oi.billing_first_name') . ' IS NULL'
+                    . ' OR ' . $this->db->quoteName('oi.billing_first_name') . ' <> ' . $this->db->quote('Anonymized') . ')');
+            $this->db->setQuery($query);
+
+            foreach ($this->db->loadColumn() ?: [] as $orderId) {
+                $live[(string) $orderId] = true;
+            }
+        }
+
+        return $live;
+    }
     /**
      * Consent status for the MyProfile privacy tab.
      *
@@ -372,7 +466,7 @@ final class ConsentRepository
         foreach ($records as $record) {
             $isCheckout       = $record->subject === self::SUBJECT;
             $record->order_id = $isCheckout ? self::extractOrderId((string) $record->body) : null;
-            $record->source   = $isCheckout ? 'checkout' : ($record->subject === self::LEGACY_SUBJECT ? 'checkout_legacy' : 'account');
+            $record->source   = $isCheckout ? 'checkout' : 'account';
             unset($record->body);
         }
 
@@ -391,7 +485,7 @@ final class ConsentRepository
             ->from($this->db->quoteName('#__privacy_consents'))
             ->where($this->db->quoteName('state') . ' = 1')
             ->where($this->db->quoteName('user_id') . ' = :userid')
-            ->where($this->db->quoteName('subject') . ' IN (' . $this->db->quote(self::SUBJECT) . ', ' . $this->db->quote(self::LEGACY_SUBJECT) . ', ' . $this->db->quote(self::CORE_SUBJECT) . ')')
+            ->where($this->db->quoteName('subject') . ' IN (' . $this->db->quote(self::SUBJECT) . ', ' . $this->db->quote(self::CORE_SUBJECT) . ')')
             ->bind(':userid', $userId, ParameterType::INTEGER);
 
         $this->db->setQuery($query);

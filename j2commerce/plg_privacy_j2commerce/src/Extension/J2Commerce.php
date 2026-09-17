@@ -37,6 +37,7 @@ use Joomla\Component\Privacy\Administrator\Table\RequestTable;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Utilities\IpHelper;
 
 class J2Commerce extends CMSPlugin implements SubscriberInterface
 {
@@ -54,16 +55,48 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private array $accountsBeforeRemoval = [];
 
+    /** Data set used by isJ2Commerce4() inside forEachDataSet() (null: active set). */
+    private ?bool $dataSetOverride = null;
+
     /**
      * Returns true if J2Commerce 4.x is installed (#__j2store_* tables).
      * Returns false for J2Commerce 6.x (#__j2commerce_* tables).
      */
     protected function isJ2Commerce4(): bool
     {
-        // The enabled component decides; migrated sites keep the #__j2store_* tables.
+        if ($this->dataSetOverride !== null) {
+            return $this->dataSetOverride;
+        }
+
+        // The installed component decides; migrated sites keep the #__j2store_* tables.
         self::loadHelperClasses();
 
         return J2CommerceStack::isJ2Commerce4($this->getDatabase());
+    }
+
+    /**
+     * Run $callback once per existing J2Commerce data set (J2Commerce 6 and J2Store copies left by
+     * a migration), with isJ2Commerce4() answering for that set.
+     *
+     * @return  list<mixed>  Results per set, the active set first
+     */
+    protected function forEachDataSet(callable $callback): array
+    {
+        self::loadHelperClasses();
+        $results = [];
+
+        foreach (J2CommerceStack::dataSets($this->getDatabase()) as $isJ4) {
+            $previous              = $this->dataSetOverride;
+            $this->dataSetOverride = $isJ4;
+
+            try {
+                $results[] = $callback($isJ4);
+            } finally {
+                $this->dataSetOverride = $previous;
+            }
+        }
+
+        return $results;
     }
 
     /**
@@ -201,8 +234,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected function collectExportDomains(User $user): array
     {
         $domains = [];
-        $domains[] = $this->createOrdersDomain($user);
-        $domains[] = $this->createAddressesDomain($user);
+
+        // Every J2Commerce data set: a migrated site can still hold the user's data in #__j2store_*.
+        foreach ($this->forEachDataSet(fn (bool $isJ4): array => [$isJ4, $this->createOrdersDomain($user), $this->createAddressesDomain($user)]) as $index => [$isJ4, $orders, $addresses]) {
+            if ($index > 0) {
+                $orders->name         = ($isJ4 ? 'j2store_' : 'j2commerce_') . $orders->name;
+                $addresses->name      = ($isJ4 ? 'j2store_' : 'j2commerce_') . $addresses->name;
+                $orders->description .= $isJ4 ? ' (J2Store tables)' : ' (J2Commerce 6 tables)';
+                $addresses->description .= $isJ4 ? ' (J2Store tables)' : ' (J2Commerce 6 tables)';
+            }
+
+            $domains[] = $orders;
+            $domains[] = $addresses;
+        }
 
         if ($this->params->get('include_joomla_data', 1)) {
             $domains[] = $this->createJoomlaUserDomain($user);
@@ -498,7 +542,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 'queue',           // pending outbound emails
             ];
 
+            // Older AcyMailing versions do not have every table; a missing one must not stop the
+            // removal of the subscriber.
+            $existing = $db->getTableList();
+
             foreach ($relatedTables as $table) {
+                if (!\in_array($db->replacePrefix($prefix . $table), $existing, true)) {
+                    continue;
+                }
+
                 $db->setQuery(
                     $this->createDbQuery()
                         ->delete($db->quoteName($prefix . $table))
@@ -852,28 +904,39 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $this->logActivity('data_deletion_requested', $userId, $summary);
         $this->sendAdminNotification('data_deletion', $user, $summary, $username);
 
-        // Always delete address book entries (not order-related)
+        // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
+        // #__j2store_* copies; personal data must not survive there).
+        $this->forEachDataSet(function () use ($userId): void {
+            // Always delete address book entries (not order-related)
+            if ($this->params->get('delete_addresses', 1)) {
+                $this->deleteAddresses($userId);
+            }
+
+            // Always delete cart data
+            $this->deleteCartData($userId);
+
+            // Anonymize only orders OUTSIDE retention period
+            // Orders within retention period are kept intact for legal compliance
+            if ($this->params->get('anonymize_orders', 1)) {
+                $this->anonymizeOrders($userId);
+            }
+        });
+
         if ($this->params->get('delete_addresses', 1)) {
-            $this->deleteAddresses($userId);
             $this->logActivity('all_addresses_deleted', $userId);
         }
 
-        // Always delete cart data
-        $this->deleteCartData($userId);
-
-        // Consent records of an earlier template override: assign to their order or anonymize.
-        try {
-            self::loadHelperClasses();
-            (new ConsentRepository($this->getDatabase()))->migrateLegacyConsents($userId);
-        } catch (\Throwable $e) {
-            Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        if ($this->params->get('anonymize_orders', 1)) {
+            $this->logActivity('orders_anonymized', $userId, 'Orders outside retention period anonymized');
         }
 
-        // Anonymize only orders OUTSIDE retention period
-        // Orders within retention period are kept intact for legal compliance
-        if ($this->params->get('anonymize_orders', 1)) {
-            $this->anonymizeOrders($userId);
-            $this->logActivity('orders_anonymized', $userId, 'Orders outside retention period anonymized');
+        // Consent records of an earlier template override (also guest records with the user's
+        // e-mail addresses): anonymized, never assigned to an order.
+        try {
+            self::loadHelperClasses();
+            (new ConsentRepository($this->getDatabase()))->anonymizeLegacyConsents($userId, [$requestEmail, $accountEmail]);
+        } catch (\Throwable $e) {
+            Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
 
         // Remove AcyMailing subscriber data (request and account e-mail as captured above)
@@ -1539,7 +1602,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     $db->quote('plg_privacy_j2commerce') . ',' .
                     (int) $userId . ',' .
                     (int) $userId . ',' .
-                    $db->quote($this->getApplication()->getInput()->server->get('REMOTE_ADDR', '', 'string'))
+                    $db->quote((string) IpHelper::getIp())
                 );
             $db->setQuery($query);
             $db->execute();

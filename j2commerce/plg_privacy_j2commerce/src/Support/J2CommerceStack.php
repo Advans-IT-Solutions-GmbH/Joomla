@@ -13,15 +13,18 @@ defined('_JEXEC') or die;
 use Joomla\Database\DatabaseInterface;
 
 /**
- * Which J2Commerce data set this site uses: J2Commerce 6 (#__j2commerce_*) or
- * J2Store / J2Commerce 4 (#__j2store_*).
+ * J2Commerce data sets of this site: J2Commerce 6 (#__j2commerce_*) and J2Store / J2Commerce 4
+ * (#__j2store_*). The official migration to J2Commerce 6 keeps the #__j2store_* source tables, so
+ * both sets can exist.
  *
- * The enabled component decides, not the presence of tables: the official migration to
- * J2Commerce 6 keeps the #__j2store_* source tables, so both sets can exist.
- *
- * 1. com_j2commerce enabled and #__j2commerce_orders exists  -> J2Commerce 6
- * 2. com_j2store enabled and #__j2store_orders exists        -> J2Store / J2Commerce 4
- * 3. no enabled component: #__j2commerce_orders exists       -> J2Commerce 6, else J2Store
+ * - isJ2Commerce4(): the set the shop works with (display, recording consent, address actions).
+ *   com_j2commerce installed (enabled or not) and #__j2commerce_orders exists -> J2Commerce 6;
+ *   otherwise com_j2store enabled and #__j2store_orders exists -> J2Store; otherwise
+ *   #__j2commerce_orders exists -> J2Commerce 6, else J2Store. A temporarily disabled
+ *   com_j2commerce never switches the shop to the old copies.
+ * - dataSets(): every set that exists. Removal, anonymization, retention cleanup and export work on
+ *   all of them, so no personal data survives in copies left behind by a migration and nothing is
+ *   missed before the data transfer.
  */
 final class J2CommerceStack
 {
@@ -39,6 +42,27 @@ final class J2CommerceStack
         return self::$cache[$key];
     }
 
+    /**
+     * Existing data sets, the active one first.
+     *
+     * @return  list<bool>  isJ2Commerce4 value per set (false = #__j2commerce_*, true = #__j2store_*)
+     */
+    public static function dataSets(DatabaseInterface $db): array
+    {
+        $tables = $db->getTableList();
+        $prefix = $db->getPrefix();
+        $active = self::isJ2Commerce4($db);
+        $sets   = [];
+
+        foreach ([$active, !$active] as $isJ4) {
+            if (\in_array($prefix . ($isJ4 ? 'j2store_orders' : 'j2commerce_orders'), $tables, true)) {
+                $sets[] = $isJ4;
+            }
+        }
+
+        return $sets;
+    }
+
     /** Forget cached results (tests, installer). */
     public static function reset(): void
     {
@@ -47,30 +71,33 @@ final class J2CommerceStack
 
     private static function detect(DatabaseInterface $db): bool
     {
-        $tables  = $db->getTableList();
-        $prefix  = $db->getPrefix();
-        $hasJ6   = \in_array($prefix . 'j2commerce_orders', $tables, true);
-        $hasJ4   = \in_array($prefix . 'j2store_orders', $tables, true);
-        $enabled = [];
+        $tables     = $db->getTableList();
+        $prefix     = $db->getPrefix();
+        $hasJ6      = \in_array($prefix . 'j2commerce_orders', $tables, true);
+        $hasJ4      = \in_array($prefix . 'j2store_orders', $tables, true);
+        $components = [];
 
         try {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName('element'))
+            $query->select($db->quoteName(['element', 'enabled']))
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-                ->where($db->quoteName('enabled') . ' = 1')
+                ->where($db->quoteName('state') . ' >= 0')
                 ->where($db->quoteName('element') . ' IN (' . $db->quote('com_j2commerce') . ', ' . $db->quote('com_j2store') . ')');
             $db->setQuery($query);
-            $enabled = $db->loadColumn() ?: [];
+
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                $components[(string) $row->element] = (int) $row->enabled === 1;
+            }
         } catch (\Throwable $e) {
-            $enabled = [];
+            $components = [];
         }
 
-        if ($hasJ6 && \in_array('com_j2commerce', $enabled, true)) {
+        if ($hasJ6 && array_key_exists('com_j2commerce', $components)) {
             return false;
         }
 
-        if ($hasJ4 && \in_array('com_j2store', $enabled, true)) {
+        if ($hasJ4 && ($components['com_j2store'] ?? false)) {
             return true;
         }
 

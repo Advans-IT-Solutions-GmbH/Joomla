@@ -15,9 +15,10 @@
  *     bypass routes: skipped step 4, cart change, template/templateStyle/Itemid request
  *     parameters, and a checkout without any template override; accepted steps must return
  *     J2Commerce JSON without error; privacy policy link escaped once with SEF off and on
- *   - the consent is recorded when the order is placed (checkout.confirmPayment POST), only for the
- *     order in the user state whose cart the consent was given for; not for incomplete orders
- *   - legacy records of an earlier template override are assigned to their order or anonymized
+ *   - the consent is captured on checkout.confirmPayment (form token for POST, gateway return GET) and
+ *     recorded after J2Commerce accepted the order of the consent cart; once per order
+ *   - legacy records of an earlier template override are only anonymized (never assigned, not shown);
+ *     consent evidence of records outside the retention period and of deleted or anonymized orders is removed
  *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest), one button per
  *     enabled request type (Show Export Data / Show Delete All Data)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
@@ -45,6 +46,10 @@ use Joomla\Registry\Registry;
 
 if (!class_exists(ConsentRepository::class)) {
     require_once JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php';
+}
+
+if (!class_exists(\Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::class)) {
+    require_once JPATH_PLUGINS . '/privacy/j2commerce/src/Support/J2CommerceStack.php';
 }
 
 if (!class_exists(J2CommercePrivacy::class) && is_file(JPATH_PLUGINS . '/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php')) {
@@ -140,7 +145,8 @@ class ConsentLoggingTest
     {
         $this->db = Factory::getContainer()->get('DatabaseDriver');
 
-        $isJ4              = in_array($this->db->getPrefix() . 'j2store_orders', $this->db->getTableList(), true);
+        // Same decision as the plugin (installed component, not table presence).
+        $isJ4              = \Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack::isJ2Commerce4($this->db);
         $this->ordersTable = $isJ4 ? '#__j2store_orders' : '#__j2commerce_orders';
         $this->pkColumn    = $isJ4 ? 'j2store_order_id' : 'j2commerce_order_id';
     }
@@ -518,6 +524,18 @@ class ConsentLoggingTest
         $response = $call($this->request($validate, [J2CommercePrivacy::CONSENT_FIELD => '1']), $session, $required, $cart);
         $this->test('Step: invalid token stores nothing', $response === null && $session->get(J2CommercePrivacy::SESSION_CONSENT) === null);
 
+        // Without a cart (ID 0) the consent cannot be bound to a purchase.
+        $session  = new ConsentTestSession();
+        $response = $call($this->request($validate, $token + [J2CommercePrivacy::CONSENT_FIELD => '1']), $session, $required, 0);
+        $this->test('Step: no cart (ID 0) with required consent is refused and stores nothing',
+            ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_STEP_ERROR && $session->get(J2CommercePrivacy::SESSION_CONSENT) === null);
+        $response = $call($this->request($validate, $token + [J2CommercePrivacy::CONSENT_FIELD => '1']), $session, $optional, 0);
+        $this->test('Step: no cart (ID 0) with optional consent passes and stores nothing',
+            $response === null && $session->get(J2CommercePrivacy::SESSION_CONSENT) === null);
+        $session->set(J2CommercePrivacy::SESSION_CONSENT, ['cart' => 0, 'at' => time()]);
+        $response = $call($this->request($confirm), $session, $required, 0);
+        $this->test('Confirm: a consent bound to cart ID 0 does not count', ($response['type'] ?? '') === J2CommercePrivacy::RESPONSE_CONFIRM_ERROR);
+
         $response = $call($this->request($validate, $token), $session, $optional, $cart);
         $this->test('Step: optional consent is not enforced', $response === null);
 
@@ -558,7 +576,7 @@ class ConsentLoggingTest
 
     private function runPlacedOrderTests(ConsentRepository $repository): void
     {
-        echo "\n-- Consent recorded when the order is placed (checkout.confirmPayment) --\n";
+        echo "\n-- Consent recorded after J2Commerce accepted the order --\n";
 
         if ($this->ordersTable !== '#__j2commerce_orders') {
             echo "  (J2Commerce 6 only; the system plugin does not record consent on J2Store)\n";
@@ -566,15 +584,19 @@ class ConsentLoggingTest
             return;
         }
 
-        $placed     = self::PREFIX . 'PLACED-1';
+        $accepted   = self::PREFIX . 'PLACED-1';
         $otherCart  = self::PREFIX . 'PLACED-2';
-        $notTicked  = self::PREFIX . 'PLACED-3';
-        $incomplete = self::PREFIX . 'PLACED-4';
+        $incomplete = self::PREFIX . 'PLACED-3';
+        $offsite    = self::PREFIX . 'PLACED-4';
 
-        $this->createOrder($placed, 0, self::GUEST_EMAIL, null, 21);
+        $this->createOrder($accepted, 0, self::GUEST_EMAIL, null, 21);
         $this->createOrder($otherCart, 0, self::GUEST_EMAIL, null, 22);
-        $this->createOrder($notTicked, 0, self::GUEST_EMAIL, null, 21);
         $this->createOrder($incomplete, 0, self::GUEST_EMAIL, null, 21);
+        $this->createOrder($offsite, 0, self::GUEST_EMAIL, null, 23);
+        $this->setOrderState($accepted, 1);
+        $this->setOrderState($otherCart, 1);
+        $this->setOrderState($incomplete, J2CommercePrivacy::ORDER_STATE_INCOMPLETE);
+        $this->setOrderState($offsite, J2CommercePrivacy::ORDER_STATE_INCOMPLETE);
 
         $token   = [self::FORM_TOKEN => '1'];
         $payment = ['option' => 'com_j2commerce', 'task' => 'checkout.confirmPayment'];
@@ -583,128 +605,244 @@ class ConsentLoggingTest
         try {
             $plugin = new ConsentLoggingTestPlugin(['name' => 'j2commerceprivacy', 'type' => 'system', 'params' => '{}']);
             $plugin->setDatabase($this->db);
+            $capture = fn (Input $input, ?int $cart, string $order): ?array => $plugin->capturePlacement($input, $cart, $order, self::FORM_TOKEN);
 
-            // Rendering the confirmation step saves an incomplete order: nothing is recorded.
-            $this->test('Confirmation step (order saved, not placed) records nothing',
-                $plugin->recordPlacedOrderConsent($this->request($confirm, $token), 21, $incomplete) === null
+            // Capture (before J2Commerce's controller): only confirmPayment with a ticked consent.
+            $this->test('Capture: confirmation step is not captured', $capture($this->request($confirm, $token), 21, $accepted) === null);
+            $this->test('Capture: POST without a valid form token is not captured', $capture($this->request($payment, []), 21, $accepted) === null);
+            $this->test('Capture: no ticked consent is not captured', $capture($this->request($payment, $token), null, $accepted) === null);
+            $this->test('Capture: consent bound to cart ID 0 is not captured', $capture($this->request($payment, $token), 0, $accepted) === null);
+            $this->test('Capture: empty order number (no order in the user state) is not captured', $capture($this->request($payment, $token), 21, '') === null);
+
+            $posted = $capture($this->request($payment, $token), 21, $accepted);
+            $this->test('Capture: POST with form token captures order, cart and request data',
+                $posted !== null && $posted['order_id'] === $accepted && $posted['cart_id'] === 21 && $posted['ip'] === '203.0.113.7' && $posted['user_agent'] === 'ConsentLoggingTest/1.0',
+                json_encode($posted));
+            $returned = $capture($this->request($payment, [], 'GET'), 23, $offsite);
+            $this->test('Capture: GET return from an off-site gateway is captured', $returned !== null && $returned['order_id'] === $offsite, json_encode($returned));
+
+            // Recording (after the controller): order must be accepted and from the consent cart.
+            $this->test('Record: incomplete order (state 5, e.g. rejected by AfterOrderValidate) gets no record',
+                $plugin->recordAcceptedOrderConsent(['order_id' => $incomplete, 'cart_id' => 21, 'ip' => '203.0.113.7', 'user_agent' => 'x']) === null
                 && $this->countOrderConsents($incomplete) === 0);
+            $this->test('Record: order of another cart gets no record',
+                $plugin->recordAcceptedOrderConsent(['order_id' => $otherCart, 'cart_id' => 21, 'ip' => '203.0.113.7', 'user_agent' => 'x']) === null
+                && $this->countOrderConsents($otherCart) === 0);
+            $this->test('Record: unknown order number gets no record',
+                $plugin->recordAcceptedOrderConsent(['order_id' => self::PREFIX . 'MISSING', 'cart_id' => 21, 'ip' => '', 'user_agent' => '']) === null);
 
-            $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $placed);
-            $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $placed);
-            $this->test('Placed order: consent recorded once', $this->countOrderConsents($placed) === 1, 'Got ' . $this->countOrderConsents($placed));
+            $first  = $plugin->recordAcceptedOrderConsent($posted);
+            $second = $plugin->recordAcceptedOrderConsent($posted);
+            $this->test('Record: accepted order gets exactly one record (double submit)',
+                ($first['created'] ?? null) === true && ($second['created'] ?? null) === false && $this->countOrderConsents($accepted) === 1,
+                'count ' . $this->countOrderConsents($accepted));
+            $record = $repository->findOrderConsent($accepted);
+            $this->test('Record: body holds the captured IP address and user agent',
+                $record && str_contains($record->body, '203.0.113.7') && str_contains($record->body, 'ConsentLoggingTest/1.0'));
 
-            $record = $repository->findOrderConsent($placed);
-            $this->test('Recorded body contains request IP and user agent', $record && str_contains($record->body, '203.0.113.7') && str_contains($record->body, 'ConsentLoggingTest/1.0'));
+            // Off-site gateway: the order is still incomplete on the outbound POST and accepted on return.
+            $this->test('Record: off-site order still incomplete gets no record', $plugin->recordAcceptedOrderConsent($returned) === null);
+            $this->setOrderState($offsite, 4);
+            $this->test('Record: off-site order accepted on return gets its record',
+                ($plugin->recordAcceptedOrderConsent($returned)['created'] ?? null) === true && $this->countOrderConsents($offsite) === 1);
 
-            $this->test('Order of another cart: nothing recorded',
-                $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, $otherCart) === null && $this->countOrderConsents($otherCart) === 0);
-            $this->test('No ticked consent: nothing recorded',
-                $plugin->recordPlacedOrderConsent($this->request($payment, $token), null, $notTicked) === null && $this->countOrderConsents($notTicked) === 0);
-            $this->test('Gateway return (GET): nothing recorded',
-                $plugin->recordPlacedOrderConsent($this->request($payment, [], 'GET'), 21, $notTicked) === null && $this->countOrderConsents($notTicked) === 0);
-            $this->test('Unknown order number: nothing recorded',
-                $plugin->recordPlacedOrderConsent($this->request($payment, $token), 21, self::PREFIX . 'MISSING') === null);
+            // Parallel requests: a second row inserted by a concurrent request is removed again.
+            $duplicate = (object) ['user_id' => 0, 'state' => 1, 'created' => Factory::getDate()->toSql(), 'subject' => ConsentRepository::SUBJECT,
+                'body' => $repository->buildBody($accepted, '203.0.113.8', 'Parallel/1.0'), 'remind' => 0, 'token' => ''];
+            $this->db->insertObject('#__privacy_consents', $duplicate, 'id');
+            $kept = $repository->removeDuplicateConsents($accepted);
+            $this->test('Duplicate consent rows of one order are reduced to the oldest',
+                $kept === (int) ($first['id'] ?? 0) && $this->countOrderConsents($accepted) === 1);
 
             // The AfterSaveOrder event no longer writes anything.
             $dispatcher = new Dispatcher();
             $dispatcher->addSubscriber($plugin);
             $dispatcher->dispatch('onJ2CommerceAfterSaveOrder', new Event('onJ2CommerceAfterSaveOrder', [(object) ['order_id' => $incomplete, 'user_id' => 0, 'cart_id' => 21]]));
             $this->test('onJ2CommerceAfterSaveOrder records nothing', $this->countOrderConsents($incomplete) === 0);
+
+            // Source of the order number: J2Commerce 6 stores it in the user state.
+            $controller = JPATH_SITE . '/components/com_j2commerce/src/Controller/CheckoutController.php';
+
+            if (is_file($controller)) {
+                $source = (string) file_get_contents($controller);
+                $this->test('J2Commerce keeps the order number in the user state j2commerce.order_id',
+                    str_contains($source, "setUserState('j2commerce.order_id'") && str_contains($source, "getUserState('j2commerce.order_id'"));
+                $this->test('J2Commerce marks an unplaced order with order_state_id 5', (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source));
+            }
         } catch (\Throwable $e) {
             $this->test('Placed-order recording runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         }
     }
 
+    private function setOrderState(string $orderId, int $state): void
+    {
+        $this->db->setQuery(
+            $this->query()
+                ->update($this->db->quoteName($this->ordersTable))
+                ->set($this->db->quoteName('order_state_id') . ' = ' . $state)
+                ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($orderId))
+        )->execute();
+    }
+
     /**
      * Records of an earlier template override (subject PLG_PRIVACY_J2COMMERCE, e-mail address,
-     * IP address and user agent in the body, no order reference).
+     * IP address and user agent in the body, no order reference) are only anonymized.
      */
     private function runLegacyConsentTests(ConsentRepository $repository): void
     {
         echo "\n-- Legacy consent records (earlier template override) --\n";
 
-        $userOrder   = self::PREFIX . 'LEGACY-USER';
-        $guestOrder  = self::PREFIX . 'LEGACY-GUEST';
-        $guestEmail  = 'legacy-guest@example.invalid';
-        $ambiguousA  = self::PREFIX . 'LEGACY-AMB-A';
-        $ambiguousB  = self::PREFIX . 'LEGACY-AMB-B';
-        $ambiguousId = 102;
-        $time        = static fn (string $modify): string => Factory::getDate($modify)->toSql();
-
-        $this->createOrder($userOrder, self::USER_ID, 'test@example.com', $time('-3 days'));
-        $this->createOrder($guestOrder, 0, $guestEmail, $time('-4 days'));
-        $this->createOrder($ambiguousA, $ambiguousId, 'amb@example.invalid', $time('-5 days'));
-        $this->createOrder($ambiguousB, $ambiguousId, 'amb@example.invalid', $time('-5 days'));
+        $userOrder = self::PREFIX . 'LEGACY-USER';
+        $created   = Factory::getDate('-3 days')->toSql();
+        $this->createOrder($userOrder, self::USER_ID, 'test@example.com', $created);
 
         $body = static fn (string $email, string $ip, string $ua): string =>
             '<p>Einwilligung zur Datenschutzerklärung während des J2Commerce-Checkouts. E-Mail: <strong>' . htmlspecialchars($email) . '</strong></p>'
             . '<p>IP-Adresse: <strong>' . $ip . '</strong></p><p>User-Agent:<br/>' . htmlspecialchars($ua) . '</p>';
         $ids    = [];
-        $insert = function (string $key, int $userId, string $created, string $text) use (&$ids): void {
-            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $created, 'subject' => ConsentRepository::LEGACY_SUBJECT, 'body' => $text, 'remind' => 0, 'token' => ''];
+        $insert = function (string $key, int $userId, string $when, string $text) use (&$ids): void {
+            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $when, 'subject' => ConsentRepository::LEGACY_SUBJECT, 'body' => $text, 'remind' => 0, 'token' => ''];
             $this->db->insertObject('#__privacy_consents', $row, 'id');
             $ids[$key] = (int) $row->id;
         };
 
-        $insert('user', self::USER_ID, $time('-3 days +10 minutes'), $body('test@example.com', '198.51.100.40', 'LegacyAgent/1.0'));
-        $insert('guest', 0, $time('-4 days +5 minutes'), $body($guestEmail, '198.51.100.41', 'LegacyAgent/1.1'));
-        $insert('unknown', 0, $time('-4 days'), $body('nobody@example.invalid', '198.51.100.42', 'LegacyAgent/1.2'));
-        $insert('ambiguous', $ambiguousId, $time('-5 days'), $body('amb@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
-        $insert('noorder', self::USER_ID, $time('-30 days'), $body('test@example.com', '198.51.100.44', 'LegacyAgent/1.4'));
+        // Profile pattern: created exactly at the order time (written afterwards by the old template).
+        $insert('profile', self::USER_ID, $created, $body('test@example.com', '198.51.100.40', 'LegacyAgent/1.0'));
+        $insert('checkout', self::USER_ID, Factory::getDate('-3 days +2 minutes')->toSql(), $body('test@example.com', '198.51.100.41', 'LegacyAgent/1.1'));
+        $insert('guestOwn', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-own@example.invalid', '198.51.100.42', 'LegacyAgent/1.2'));
+        $insert('guestOther', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-other@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
+        $insert('oldBody', 102, Factory::getDate('-5 days')->toSql(), 'Consent given during J2Commerce checkout');
 
         $load = fn (string $key): ?object => $this->loadConsent($ids[$key]);
+        $isAnonymized = function (?object $row, array $gone): bool {
+            if (!$row || $row->subject !== ConsentRepository::LEGACY_DONE_SUBJECT
+                || !str_contains($row->body, ConsentRepository::LEGACY_MARKER)
+                || !str_contains($row->body, ConsentRepository::EVIDENCE_REMOVED_MARKER)
+                || str_contains($row->body, 'PLG_SYSTEM_J2COMMERCEPRIVACY_')
+                || str_contains($row->body, 'j2commerce-order:')
+            ) {
+                return false;
+            }
+
+            foreach ($gone as $text) {
+                if (str_contains($row->body, $text)) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
 
         try {
-            $scoped = $repository->migrateLegacyConsents($ambiguousId);
-            $this->test('Migration limited to one user touches only that user', $scoped === ['assigned' => 0, 'anonymized' => 1]
-                && $load('user')->subject === ConsentRepository::LEGACY_SUBJECT, json_encode($scoped));
+            // Removal request of user 100 (account e-mail legacy-own@...): own records and guest
+            // records with that e-mail address, nothing else.
+            $scoped = $repository->anonymizeLegacyConsents(self::USER_ID, ['legacy-own@example.invalid', '']);
+            $this->test('Removal request anonymizes the user\'s records and guest records with the user\'s e-mail', $scoped === 3, "changed $scoped");
+            $this->test('Guest record with another e-mail is not touched by that request', $load('guestOther')->subject === ConsentRepository::LEGACY_SUBJECT);
+            $this->test('Record of another user is not touched by that request', $load('oldBody')->subject === ConsentRepository::LEGACY_SUBJECT);
 
-            $result = $repository->migrateLegacyConsents();
-            $this->test('Migration assigns 2 records and anonymizes 2 more', $result === ['assigned' => 2, 'anonymized' => 2], json_encode($result));
+            $all = $repository->anonymizeLegacyConsents();
+            $this->test('Cleanup anonymizes the remaining legacy records', $all === 2, "changed $all");
 
-            foreach (['user' => [$userOrder, 'test@example.com', '198.51.100.40', 'LegacyAgent/1.0'], 'guest' => [$guestOrder, $guestEmail, '198.51.100.41', 'LegacyAgent/1.1']] as $key => [$order, $email, $ip, $ua]) {
+            foreach (['profile' => ['test@example.com', '198.51.100.40', 'LegacyAgent'], 'checkout' => ['198.51.100.41'], 'guestOwn' => ['legacy-own@', '198.51.100.42'], 'guestOther' => ['legacy-other@', '198.51.100.43'], 'oldBody' => ['Consent given during']] as $key => $gone) {
                 $row = $load($key);
-                $this->test("[$key] legacy record assigned to its order (checkout subject, order marker)",
-                    $row && $row->subject === ConsentRepository::SUBJECT && str_contains($row->body, ConsentRepository::orderMarker($order)), $row->body ?? '');
-                $this->test("[$key] assigned record keeps IP address and user agent, not the e-mail address",
-                    $row && str_contains($row->body, $ip) && str_contains($row->body, $ua) && !str_contains($row->body, $email), $row->body ?? '');
-                $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1 && (int) $row->user_id === ($key === 'user' ? self::USER_ID : 0));
+                $this->test("[$key] anonymized, never assigned to an order, neutral text", $isAnonymized($row, $gone), $row->body ?? '');
+                $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1);
             }
 
-            foreach (['unknown' => ['nobody@example.invalid', '198.51.100.42'], 'ambiguous' => ['amb@example.invalid', '198.51.100.43'], 'noorder' => ['test@example.com', '198.51.100.44']] as $key => [$email, $ip]) {
-                $row = $load($key);
-                $this->test("[$key] unassignable record anonymized (no e-mail, IP address, user agent)",
-                    $row && $row->subject === ConsentRepository::LEGACY_SUBJECT
-                    && !str_contains($row->body, $email) && !str_contains($row->body, $ip) && !str_contains($row->body, 'LegacyAgent')
-                    && str_contains($row->body, ConsentRepository::LEGACY_MARKER) && str_contains($row->body, ConsentRepository::EVIDENCE_REMOVED_MARKER)
-                    && !str_contains($row->body, 'PLG_SYSTEM_J2COMMERCEPRIVACY_'),
-                    $row->body ?? '');
-            }
+            $this->test('Legacy anonymization never creates a checkout consent for the order', $this->countOrderConsents($userOrder) === 0);
+            $this->test('Second run changes nothing', $repository->anonymizeLegacyConsents() === 0);
 
-            $this->test('Second migration changes nothing', $repository->migrateLegacyConsents() === ['assigned' => 0, 'anonymized' => 0]);
-
-            $status  = $repository->getStatus(self::USER_ID);
-            $sources = array_column(array_map(static fn ($r) => (array) $r, $status['records']), 'source', 'id');
-            $this->test('Status shows the assigned record with its order', ($sources[$ids['user']] ?? '') === 'checkout'
-                && in_array($userOrder, self::orderIds($status), true));
-            $this->test('Status shows the anonymized record as earlier checkout consent', ($sources[$ids['noorder']] ?? '') === 'checkout_legacy');
-
-            if (array_key_exists('token', $this->db->getTableColumns($this->ordersTable))) {
-                $this->test('Guest session of the assigned order sees the migrated consent',
-                    self::orderIds($repository->getStatus(0, $guestEmail, self::tokenFor($guestOrder))) === [$guestOrder]);
-            }
-
-            // IP address and user agent of the assigned record go with the order.
-            $repository->removeOrderEvidence([$userOrder]);
-            $this->test('Assigned record loses IP address and user agent when its order is anonymized',
-                !str_contains((string) $load('user')->body, '198.51.100.40'));
+            $status = $repository->getStatus(self::USER_ID);
+            $shown  = array_map(static fn ($r) => (int) $r->id, $status['records']);
+            $this->test('Legacy records are not shown and not counted as consent', !array_intersect($shown, array_values($ids)));
         } catch (\Throwable $e) {
-            $this->test('Legacy migration runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            $this->test('Legacy anonymization runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
             $this->db->setQuery(
                 $this->query()
                     ->delete($this->db->quoteName('#__privacy_consents'))
                     ->where($this->db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')')
+            )->execute();
+        }
+
+        $this->runStaleEvidenceTests($repository);
+    }
+
+    /**
+     * IP address and user agent go when the order no longer needs them: record outside the
+     * retention period, order deleted, order already anonymized.
+     */
+    private function runStaleEvidenceTests(ConsentRepository $repository): void
+    {
+        echo "\n-- Consent evidence without a current order --\n";
+
+        $live       = self::PREFIX . 'STALE-LIVE';
+        $anonymized = self::PREFIX . 'STALE-ANON';
+        $old        = self::PREFIX . 'STALE-OLD';
+        $deleted    = self::PREFIX . 'STALE-GONE';
+
+        $this->createOrder($live, self::USER_ID, 'test@example.com');
+        $this->createOrder($anonymized, self::USER_ID, 'anonymized@deleted.invalid');
+        $this->createOrder($old, self::USER_ID, 'test@example.com');
+        $this->db->setQuery(
+            $this->query()
+                ->update($this->db->quoteName($this->ordersTable))
+                ->set($this->db->quoteName('ip_address') . ' = ' . $this->db->quote(''))
+                ->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($anonymized))
+        )->execute();
+        $infos = str_replace('_orders', '_orderinfos', $this->ordersTable);
+        $info  = ['order_id' => $anonymized, 'billing_first_name' => 'Anonymized', 'billing_last_name' => 'User'];
+
+        // Every other column of the order info table: empty value (the anonymized state).
+        foreach ($this->db->getTableColumns($infos, false) as $name => $column) {
+            if (!array_key_exists($name, $info) && ($column->Key ?? '') !== 'PRI' && strtoupper((string) ($column->Null ?? 'YES')) === 'NO' && $column->Default === null) {
+                $type         = (string) $column->Type;
+                $info[$name] = preg_match('/int|decimal|float|double/i', $type) ? 0 : (preg_match('/date|time/i', $type) ? Factory::getDate()->toSql() : '');
+            }
+        }
+
+        $info = (object) $info;
+
+        try {
+            $this->db->insertObject($infos, $info);
+        } catch (\Throwable $e) {
+            $this->test('order info of the anonymized order seeded', false, $e->getMessage());
+        }
+
+        $ids = [];
+
+        foreach ([$live => 'now', $anonymized => 'now', $old => '-20 years', $deleted => 'now'] as $order => $when) {
+            $result = $repository->ensureOrderConsent($order, self::USER_ID, $repository->buildBody($order, '198.51.100.60', 'StaleAgent/1.0'));
+            $ids[$order] = (int) ($result['id'] ?? 0);
+
+            if ($when !== 'now') {
+                $this->db->setQuery(
+                    $this->query()->update($this->db->quoteName('#__privacy_consents'))
+                        ->set($this->db->quoteName('created') . ' = ' . $this->db->quote(Factory::getDate($when)->toSql()))
+                        ->where($this->db->quoteName('id') . ' = ' . $ids[$order])
+                )->execute();
+            }
+        }
+
+        try {
+            $changed = $repository->removeStaleEvidence(Factory::getDate('-10 years')->toSql(), [$this->ordersTable]);
+            $body    = fn (string $order): string => (string) ($this->loadConsent($ids[$order])->body ?? '');
+
+            $this->test('Evidence removed from 3 records (outside retention, anonymized order, deleted order)', $changed === 3, "changed $changed");
+            $this->test('Consent of a current order keeps IP address and user agent', str_contains($body($live), '198.51.100.60'));
+
+            foreach ([$anonymized => 'already anonymized order', $old => 'record outside the retention period', $deleted => 'deleted order'] as $order => $label) {
+                $this->test("Consent of a $label loses IP address and user agent",
+                    !str_contains($body($order), '198.51.100.60') && !str_contains($body($order), 'StaleAgent') && str_contains($body($order), ConsentRepository::orderMarker($order)));
+            }
+
+            $this->test('Second run changes nothing', $repository->removeStaleEvidence(Factory::getDate('-10 years')->toSql(), [$this->ordersTable]) === 0);
+        } catch (\Throwable $e) {
+            $this->test('Stale evidence cleanup runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $this->db->setQuery(
+                $this->query()->delete($this->db->quoteName($infos))->where($this->db->quoteName('order_id') . ' = ' . $this->db->quote($anonymized))
             )->execute();
         }
     }
