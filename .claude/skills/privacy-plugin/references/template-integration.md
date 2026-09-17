@@ -2,28 +2,33 @@
 
 ## Rendering Mechanism
 
-Checkout consent, the MyProfile Privacy tab and the address delete buttons are rendered only via the bundled template overrides. `onAfterRender` was removed; there is no HTML-injection fallback.
+The MyProfile Privacy tab, the address delete buttons and (J2Commerce 4) the checkout consent checkbox are rendered via the bundled template overrides. On J2Commerce 6 the checkout consent checkbox is rendered by the bundled system plugin through the J2Commerce event `AfterDisplayShippingPayment` (see below). `onAfterRender` was removed; there is no HTML-injection fallback.
 
 ## Bundled Override Files
 
 Shipped under `overrides/com_j2store/` (J2Commerce 4) **and** `overrides/com_j2commerce/` (J2Commerce 6):
 
 ```
-checkout/default_shipping_payment.php
+checkout/default_shipping_payment.php   (com_j2store only)
 myprofile/default.php
 myprofile/default_addresses.php
+myprofile/default_privacy.php
 ```
 
-`script.php` (`copyTemplateOverrides()`) copies them on **first install only** into every frontend template, for both components:
+No J2Commerce 6 checkout override ships: the core templates (J2Commerce 6.3.4 or later, `script.php` `MIN_J2COMMERCE_EVENT_VERSION`) fire `AfterDisplayShippingPayment`. The event came with J2Commerce commit `d7992c66` (PR #1109, merged 2026-05-28, after the 6.3.3 bump of 2026-05-27; 6.3.4 bump 2026-06-01). `warnIfJ2CommerceTooOld()` warns for older versions (version from the `com_j2commerce` manifest cache).
+
+`script.php` (`copyTemplateOverrides()`) copies them on **first install** into every frontend template, for both components:
 
 ```
 templates/{template}/html/com_j2store/...
 templates/{template}/html/com_j2commerce/...
 ```
 
-Existing files are never overwritten (listed as skipped in the post-installation message). On updates nothing is copied.
+Existing files are never overwritten (listed as skipped in the post-installation message). On updates only `myprofile/default_privacy.php` is added, and only where the template already has `myprofile/default.php` for an installed component and the file is missing. Install and update warn (`warnOutdatedCheckoutOverrides()`) about J2Commerce 6 checkout overrides in `checkout/`, `checkout/bootstrap5/`, `checkout/uikit/` or `checkout/uikit3/` (J2Commerce before 6.3.7) that neither fire `AfterDisplayShippingPayment` nor contain `j2commerce_privacy_consent`.
 
-`myprofile/default.php` calls `$this->loadTemplate('privacy')` for the Privacy tab; no `default_privacy.php` is shipped with the plugin.
+`retireBundledCheckoutOverrides()` (install and update) handles `html/com_j2commerce/checkout/default_shipping_payment.php` copies of earlier plugin versions (header marker `Template override for plg_privacy_j2commerce`): SHA-256 (CRLF normalised) in `BUNDLED_CHECKOUT_OVERRIDE_HASHES` and J2Commerce >= 6.3.4 → renamed with `.plg_privacy_j2commerce-disabled` (message); other hash → kept, warning `WARN_CHECKOUT_OVERRIDE_BUNDLED`; older/unknown J2Commerce → kept. Renaming, not deleting: the file stays for comparison. Test 12 uses `tests/scripts/fixture-checkout-override-1.5.5.php` (must stay byte-identical to the 1.5.5 file).
+
+`myprofile/default.php` calls `$this->loadTemplate('privacy')`; `myprofile/default_privacy.php` renders `privacy_tab` via `FileLayout` with the include paths `templates/{template}/html/layouts/plg_privacy_j2commerce/` (and the parent template) before `plugins/privacy/j2commerce/layouts/`.
 
 ## Requirements
 
@@ -33,28 +38,38 @@ Existing files are never overwritten (listed as skipped in the post-installation
 ## How `default.php` Activates the Tab
 
 ```php
-$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled = !empty($_privacyPlugin);
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showPrivacyTab();
 $_privacyTabId   = 'j2commerce-privacy-tab';
 ```
 
-The tab is rendered when the plugin is enabled. If the plugin is disabled or not installed, the tab is hidden without errors.
+The tab is rendered while the plugin is enabled and `show_privacy_section` is on; then `PrivacyOptions::loadLanguage()` loads the plugin language (tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`). `default_addresses.php` gates the delete button with `PrivacyOptions::showDeleteAddress()`, `default_privacy.php` returns early when `show_privacy_section` is off and passes `showExport`/`showDelete` (`show_export_data`/`show_delete_all`) to the layout. The system plugin's `onAfterRoute` also loads the language for `view=myprofile`.
 
 ## Checkout Consent
 
-`default_shipping_payment.php` reads plugin params via `PluginHelper::getPlugin('privacy','j2commerce')`:
+**J2Commerce 6 (verified against J2Commerce 6.6.1, `7edb6e11`):** steps are loaded via AJAX and `J2CommerceDom.adopt()` strips `<script>` tags; the privacy group is not imported during the checkout. The bundled **system** plugin `plg_system_j2commerceprivacy` handles consent.
 
-```php
-$_privacyPlugin   = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled  = !empty($_privacyPlugin);
-$_privacyParams   = $_privacyEnabled ? new \Joomla\Registry\Registry($_privacyPlugin->params) : null;
-$_showConsent     = $_privacyEnabled && $_privacyParams->get('show_consent_checkbox', 1);
-$_consentRequired = $_privacyEnabled && $_privacyParams->get('consent_required', 1);
-```
+- Checkbox: `tmpl/checkout/bootstrap5/default_shipping_payment.php` (L131) and `tmpl/checkout/uikit/default_shipping_payment.php` (L125) call `J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [$this->order])` before the Continue button. `eventWithHtml()` dispatches `onJ2CommerceAfterDisplayShippingPayment` on the application dispatcher and concatenates the string results (`PluginEvent::addResult()`) into the `html` argument. The listener adds `renderConsentCheckbox()` (id/name `j2commerce_privacy_consent`, no script) and calls `markCheckboxRendered()`, which removes a stored consent.
+- Policy link: `Route::_($url, false)` + one `htmlspecialchars()` (with xhtml `Route::_()` already escapes; escaping twice gives `&amp;amp;`). Nothing else (no template check, no request input).
+- Session key `plg_system_j2commerceprivacy_consent` = `['cart' => cart ID]` (`CartHelper::getInstance()->getCart(0, false)`).
 
-When `consent_required` is set, the checkbox gets the HTML `required` attribute and `media/plg_privacy_j2commerce/js/consent-validator.js` is loaded. The script listens to `submit` events of `form[action*="j2store"]` / `form.j2store-checkout-form` and blocks submission with an alert if the checkbox is unchecked. There is no server-side consent check.
+Flow:
 
-- **J2Commerce 4 (`com_j2store`):** the step uses a `type="submit"` button, so an unchecked required checkbox blocks submission.
-- **J2Commerce 6 (`com_j2commerce`):** the checkbox is displayed, but the "Continue" button (`#button-payment-method`) is a `type="button"` handled by J2Commerce's own JavaScript (no native form submit). Neither `consent-validator.js` nor `required` blocks the step: consent is displayed only and not enforced.
+1. `onAfterRoute` calls `handleCheckoutRequest()`; the task is resolved like `ComponentDispatcher` (`controller` + `task` without dot).
+   - `checkout.shippingPaymentMethodValidate` (POST, valid form token): ticked, consent for the current cart; unticked while required, JSON `{"error":{"j2commerce_privacy_consent": "…"}}`.
+   - `checkout.confirm` (HTML alert) and `checkout.confirmPayment` (POST; AJAX JSON error, form redirect) are refused while required and no consent exists for the current cart (skipped step 4, cart change). GET gateway returns pass.
+2. `checkout.confirmPayment`: `capturePlacement()` (before the controller) reads the order number from the user state `j2commerce.order_id` (J2C6 7edb6e11 CheckoutController: set in confirm() L1807 / context L1659, read in confirmPayment() L1962, cleared L2377), the consent cart (> 0) and IP/UA; POST needs the form token, GET (off-site gateway return) needs none. `register_shutdown_function()` then runs `recordAcceptedOrderConsent()` after the controller (redirects and `$app->close()` included): order exists, `cart_id` equals the consent cart, `order_state_id` not 5 (incomplete, L1790) → `ensureOrderConsent()` + duplicate removal. Rejected orders (AfterOrderValidate L2047, failed payment) stay incomplete and get nothing; a status set only later by a server-to-server notification is not covered. Not on `onJ2CommerceAfterSaveOrder`. Legacy records (`PLG_PRIVACY_J2COMMERCE`) are only anonymized (`anonymizeLegacyConsents()`).
+3. `onJ2CommerceCheckoutCleanup` removes the consent.
 
-This plugin does not record consent in `#__privacy_consents`.
+Consent is never created retroactively from an existing order. IP address and user agent are removed (`ConsentRepository::removeOrderEvidence()`) when the plugin or the cleanup task anonymizes the order; guest rows (`user_id = 0`) are outside com_privacy export and deletion.
+
+**J2Commerce 4 / J2Store:** `overrides/com_j2store/checkout/default_shipping_payment.php` renders the checkbox and loads `media/js/consent-validator.js` (client-side). No checkout consent record is written.
+
+## Privacy Tab Content
+
+`myprofile/default_privacy.php` (both components) calls `ConsentRepository::getStatus()`:
+
+- logged-in: valid rows with the user's `user_id` and subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT` or `PLG_SYSTEM_PRIVACYCONSENT_SUBJECT` (other subjects are not shown);
+- guest (session `guest_order_token` + `guest_order_email`): the one order with that token and e-mail (`user_id = 0`), nothing else of that address. One token = exactly one order, as in J2Commerce's own guest order view (maintainer decision).
+
+One button per enabled request type (`show_export_data` → `export`, `show_delete_all` → `remove`; none → no request section). Logged-in users: both link to `index.php?option=com_privacy&view=request` (the form offers both types, no URL preset). Verified guests: `mailto:` to `support_email` (fallback `mailfrom`) with the type as subject, because the com_privacy Dispatcher redirects guests to login.

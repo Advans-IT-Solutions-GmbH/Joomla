@@ -339,11 +339,21 @@ jobs:
         run: mv plg_ajax_joomlaajaxforms/tests-j2c4/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests-j2c4/extension.zip
       - name: Build image
         run: |
-          docker build \
-            -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
-            --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.4/com_j2store_v4-4.1.4-pro.zip \
-            -t plg_ajax_j2c4_test \
-            .
+          for attempt in 1 2 3; do
+            if docker build \
+              -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
+              --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.4/com_j2store_v4-4.1.4-pro.zip \
+              -t plg_ajax_j2c4_test \
+              .; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "docker build failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker build failed (likely a transient registry error); retrying ($attempt/3)"
+            sleep 20
+          done
       - name: Start environment
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c4
@@ -452,10 +462,20 @@ jobs:
           cp "$ZIP" "$GITHUB_WORKSPACE/plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip"
       - name: Build image
         run: |
-          docker build \
-            -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
-            -t plg_ajax_j2c6_test \
-            .
+          for attempt in 1 2 3; do
+            if docker build \
+              -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
+              -t plg_ajax_j2c6_test \
+              .; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "docker build failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker build failed (likely a transient registry error); retrying ($attempt/3)"
+            sleep 20
+          done
       - name: Start environment
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c6
@@ -529,12 +549,22 @@ jobs:
           cp "$ZIP" "$GITHUB_WORKSPACE/plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip"
       - name: Build image (PHP 8.4, deprecations logged)
         run: |
-          docker build \
-            -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
-            --build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache \
-            --build-arg PHP_STRICT_DEPRECATIONS=1 \
-            -t plg_ajax_j2c6_test \
-            .
+          for attempt in 1 2 3; do
+            if docker build \
+              -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
+              --build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache \
+              --build-arg PHP_STRICT_DEPRECATIONS=1 \
+              -t plg_ajax_j2c6_test \
+              .; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "docker build failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker build failed (likely a transient registry error); retrying ($attempt/3)"
+            sleep 20
+          done
       - name: Start environment (MariaDB 10.6)
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c6
@@ -542,9 +572,11 @@ jobs:
             if docker compose up -d; then
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
             docker compose down -v || true
             sleep 20
           done
@@ -621,9 +653,11 @@ jobs:
             if docker compose -f docker-compose.joomla6.yml up -d; then
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
             docker compose -f docker-compose.joomla6.yml down -v || true
             sleep 20
           done

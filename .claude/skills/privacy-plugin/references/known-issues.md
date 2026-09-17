@@ -16,7 +16,7 @@
 
 ## `onAfterRender` Removed
 
-`onAfterRender` was removed; checkout consent and the Privacy tab are rendered only via the bundled template overrides.
+`onAfterRender` was removed. The Privacy tab is rendered via the bundled MyProfile overrides; the checkout consent checkbox via the J2Store checkout override (J2Commerce 4) or, on J2Commerce 6, by the system plugin through the core event `AfterDisplayShippingPayment` (no J2Commerce 6 checkout override is shipped; unchanged copies of earlier versions are renamed on install/update).
 
 ## Lifetime License Detection
 
@@ -38,7 +38,7 @@ Both tables are populated via SQL (see the post-installation message); there is 
 
 - Joomla 5.4+ (5.4.x and 6.x; uses DI container, `Factory::getContainer()`)
 - PHP 8.1+
-- J2Commerce 4.0+
+- J2Commerce 4.0+; J2Commerce 6.3.4+ for the checkout consent checkbox (event `AfterDisplayShippingPayment`, commit `d7992c66`, merged 2026-05-28 after the 6.3.3 version bump; `script.php` `MIN_J2COMMERCE_EVENT_VERSION`)
 
 `script.php` enforces these via `$minimumJoomla` and `$minimumPhp`.
 

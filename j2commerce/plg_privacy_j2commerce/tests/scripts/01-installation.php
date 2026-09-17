@@ -115,6 +115,30 @@ class InstallationTest
         $this->test('Plugin was installed through the Joomla web installer', $method === 'web',
             'recorded install method: ' . ($method === '' ? 'none' : $method));
 
+        // The bundled plugins are installed from postflight(); they must not replace the state
+        // of the running privacy plugin installation (message, manifest, extension row).
+        if ($method === 'web') {
+            $messagesFile = '/tmp/test-state/install-messages.json';
+            $messages     = is_file($messagesFile) ? json_decode((string) file_get_contents($messagesFile), true) : null;
+            $this->test('Web installer messages were recorded', is_array($messages), $messagesFile . ' missing or invalid');
+
+            $texts   = implode(' | ', array_map(static fn ($m) => (string) ($m['text'] ?? ''), (array) $messages));
+            $strings = static function (string $file): array {
+                return is_file($file) ? (parse_ini_file($file, false, INI_SCANNER_RAW) ?: []) : [];
+            };
+            $privacy = $strings(JPATH_BASE . '/plugins/privacy/j2commerce/language/en-GB/plg_privacy_j2commerce.ini');
+            $system  = $strings(JPATH_BASE . '/plugins/system/j2commerceprivacy/language/en-GB/plg_system_j2commerceprivacy.sys.ini');
+            $plain   = static fn (string $value): string => trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($value))));
+
+            $guideTitle = $plain((string) ($privacy['PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TITLE'] ?? ''));
+            $systemDesc = $plain((string) ($system['PLG_SYSTEM_J2COMMERCEPRIVACY_XML_DESCRIPTION'] ?? ''));
+
+            $this->test('Installer shows the privacy plugin post-installation guide',
+                $guideTitle !== '' && str_contains($texts, $guideTitle), 'messages: ' . mb_substr($texts, 0, 300));
+            $this->test('Installer message is not the description of the bundled consent system plugin',
+                $systemDesc !== '' && !str_contains($texts, $systemDesc), 'messages: ' . mb_substr($texts, 0, 300));
+        }
+
         // Test 2: Plugin files exist
         $this->test('Main plugin file exists',
             file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/services/provider.php'));
@@ -140,6 +164,24 @@ class InstallationTest
         $this->test('Task plugin class exists',
             file_exists(JPATH_BASE . '/plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php'));
 
+        $systemPlugin = $this->extensionRow('system', 'j2commerceprivacy');
+        $this->test('Bundled consent system plugin is installed', $systemPlugin !== null, 'System plugin not found in database');
+
+        if ($state !== null) {
+            $this->test(
+                'Installer enabled the bundled consent system plugin (state before test setup)',
+                ($state['system/j2commerceprivacy'] ?? null) === 1,
+                'recorded: ' . var_export($state['system/j2commerceprivacy'] ?? null, true)
+            );
+        }
+
+        $this->test('Consent system plugin class exists',
+            file_exists(JPATH_BASE . '/plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php'));
+        $this->test('Consent repository class exists',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/src/Consent/ConsentRepository.php'));
+        $this->test('Privacy tab layout exists',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/layouts/privacy_tab.php'));
+
         // Test 3: Update server registered for the privacy plugin itself
         if ($plugin) {
             $sites = $this->linkedUpdateSites((int) $plugin->extension_id);
@@ -162,9 +204,9 @@ class InstallationTest
 
         // Test 5: Bundled override source files exist for both J2Commerce generations
         $overrideFiles = [
-            'checkout/default_shipping_payment.php',
             'myprofile/default.php',
             'myprofile/default_addresses.php',
+            'myprofile/default_privacy.php',
         ];
 
         foreach (['com_j2store', 'com_j2commerce'] as $component) {
@@ -175,6 +217,16 @@ class InstallationTest
                 $this->test("Override source: $component/$file", file_exists($overrideSrc . '/' . $file));
             }
         }
+
+        // J2Store 4 needs the checkout override; J2Commerce 6 shows the checkbox in its core
+        // templates through AfterDisplayShippingPayment, so no J2Commerce 6 checkout override ships.
+        $pluginOverrides = JPATH_BASE . '/plugins/privacy/j2commerce/overrides';
+        $this->test('Override source: com_j2store/checkout/default_shipping_payment.php',
+            file_exists($pluginOverrides . '/com_j2store/checkout/default_shipping_payment.php'));
+        $this->test('No J2Commerce 6 checkout override is shipped',
+            !file_exists($pluginOverrides . '/com_j2commerce/checkout/default_shipping_payment.php'));
+        $this->test('Frontend options class installed',
+            file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/src/Frontend/PrivacyOptions.php'));
 
         // Test 6: Overrides deployed for the component of this stack
         $component = $this->isJ6() ? 'com_j2commerce' : 'com_j2store';

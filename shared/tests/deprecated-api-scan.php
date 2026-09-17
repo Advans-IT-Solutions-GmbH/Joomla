@@ -33,11 +33,6 @@
 
 const ALLOWLIST = [
     // Each entry: file (path relative to the repository root, regex), rule, reason.
-    [
-        'file'   => '#^j2commerce/plg_privacy_j2commerce/src/Extension/J2Commerce\.php$#',
-        'rule'   => 'app-input',
-        'reason' => 'File is being reworked in a parallel change; replace $app->input with $app->getInput() there.',
-    ],
 ];
 
 const LEGACY_CLASS_EXCEPTIONS = ['JLoader', 'JConfig', 'JVERSION', 'JPATH_BASE', 'JDEBUG'];

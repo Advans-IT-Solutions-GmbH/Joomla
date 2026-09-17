@@ -33,12 +33,12 @@ use Joomla\CMS\Uri\Uri;
 
 $addresses = $this->addresses;
 
-$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled = !empty($_privacyPlugin);
+// Delete buttons only while the privacy plugin is enabled and "Show Delete Address Buttons" is on.
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showDeleteAddress();
 
 if ($_privacyEnabled) {
-    $lang = Factory::getApplication()->getLanguage();
-    $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
+    $_privacyOptions::loadLanguage();
     $_deleteUrl  = Uri::base() . 'index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=json&task=deleteAddress';
     $_token      = Session::getFormToken();
     $_confirmMsg = Text::_('PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_CONFIRM');

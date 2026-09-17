@@ -49,9 +49,15 @@ $page_heading_enabled = $page_heading->get('show_page_heading', 0);
 $page_heading_text    = $page_heading->get('page_heading', '');
 
 // Privacy plugin — tab title and content
-$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled = !empty($_privacyPlugin);
+// Only while the privacy plugin is enabled and "Show Privacy Section" is on.
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showPrivacyTab();
 $_privacyTabId   = 'j2commerce-privacy-tab';
+
+if ($_privacyEnabled) {
+    // The privacy plugin group is not imported in the frontend, so its language is loaded here.
+    $_privacyOptions::loadLanguage();
+}
 ?>
 <?php if ($page_heading_enabled) : ?>
     <div class="page-header">

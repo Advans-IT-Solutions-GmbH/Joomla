@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <form>
     <fields name="params">
-        <fieldset name="task_params">
+        <fieldset name="task_params" addruleprefix="Advans\Plugin\Privacy\J2Commerce\Rule">
             <field
                 name="retention_years"
                 type="number"
@@ -14,6 +14,17 @@
                 required="true"
                 filter="integer"
                 validate="number"
+            />
+            <field
+                name="fiscal_year_end"
+                type="text"
+                label="PLG_TASK_J2COMMERCEPRIVACY_FISCAL_YEAR_END_LABEL"
+                description="PLG_TASK_J2COMMERCEPRIVACY_FISCAL_YEAR_END_DESC"
+                default="12-31"
+                pattern="(0?[1-9]|1[0-2])-(0?[1-9]|[12][0-9]|3[01])"
+                validate="fiscalyearend"
+                message="PLG_TASK_J2COMMERCEPRIVACY_FISCAL_YEAR_END_INVALID"
+                filter="string"
             />
             <field
                 name="anonymize_orders"
