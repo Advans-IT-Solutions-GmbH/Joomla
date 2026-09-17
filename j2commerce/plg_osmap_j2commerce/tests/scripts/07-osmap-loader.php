@@ -152,8 +152,8 @@ class OsmapLoaderTest
             if (!class_exists($className)) {
                 continue;
             }
-            // Construct the plugin the way Joomla's plugin loader (PluginHelper /
-            // CMSPlugin) does: pass the dispatcher/subject plus a config array
+            // Construct the plugin the way the service provider does: pass only a config array
+            // (the dispatcher is set separately since Joomla 5.4),
             // carrying the DB-provided params, name and type from #__extensions,
             // so params/name/type are available during construction rather than
             // being attached only afterwards.
@@ -163,7 +163,7 @@ class OsmapLoaderTest
                 'type'   => $row->folder,
                 'params' => $pluginParams,
             ];
-            $instance = new $className(new \Joomla\Event\Dispatcher(), $config);
+            $instance = new $className($config);
             if (
                 method_exists($instance, 'getComponentElement')
                 && $instance->getComponentElement() === $option

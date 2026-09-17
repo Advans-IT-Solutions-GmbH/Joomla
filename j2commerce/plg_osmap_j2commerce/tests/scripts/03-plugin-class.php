@@ -62,10 +62,9 @@ class PluginClassTest
 
     private function makePlugin(string $class): object
     {
-        $db         = Factory::getContainer()->get(DatabaseInterface::class);
-        $dispatcher = new \Joomla\Event\Dispatcher();
-        $params     = new \Joomla\Registry\Registry([]);
-        $plugin     = new $class($dispatcher, ['params' => $params]);
+        $db     = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = new \Joomla\Registry\Registry([]);
+        $plugin = new $class(['params' => $params]);
         $plugin->setDatabase($db);
 
         return $plugin;
@@ -170,10 +169,9 @@ class PluginClassTest
         // --- emitSingleProduct() round-trip: real DB query, no crash ---
         $this->test('emitSingleProduct() returns null for non-existent article (no crash)', function () use ($j2cClass) {
             $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-            $dispatcher = new \Joomla\Event\Dispatcher();
             $params     = new \Joomla\Registry\Registry([]);
 
-            $plugin = new $j2cClass($dispatcher, ['params' => $params]);
+            $plugin = new $j2cClass(['params' => $params]);
             $plugin->setDatabase($db);
 
             // Recording collector — real OSMap Collector subtype.
@@ -194,10 +192,9 @@ class PluginClassTest
         // --- J2CommerceNew::emitSingleProduct() round-trip ---
         $this->test('J2CommerceNew::emitSingleProduct() queries #__j2commerce_products (no crash)', function () use ($newClass) {
             $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-            $dispatcher = new \Joomla\Event\Dispatcher();
             $params     = new \Joomla\Registry\Registry([]);
 
-            $plugin = new $newClass($dispatcher, ['params' => $params]);
+            $plugin = new $newClass(['params' => $params]);
             $plugin->setDatabase($db);
 
             // Recording collector — real OSMap Collector subtype.
@@ -237,7 +234,7 @@ class PluginClassTest
         });
 
         $this->test('Query failures in getTree(view=products) are caught without emitting nodes', function () {
-            $plugin = new class (new \Joomla\Event\Dispatcher(), ['params' => new \Joomla\Registry\Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
+            $plugin = new class (['params' => new \Joomla\Registry\Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
                 protected string $productsTable = '#__content';
             };
             $plugin->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
