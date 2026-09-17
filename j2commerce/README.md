@@ -43,4 +43,4 @@ View test results: https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions
 **Advans IT Solutions GmbH**  
 https://advans.ch
 
-Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+Copyright (C) 2026 Advans IT Solutions GmbH. Licensed under the GNU General Public License version 3 or later (`GPL-3.0-or-later`); see [LICENSE.txt](../LICENSE.txt).

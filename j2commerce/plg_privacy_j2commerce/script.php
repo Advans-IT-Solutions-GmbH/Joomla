@@ -1,8 +1,9 @@
 <?php
 /**
  * @package     J2Commerce Privacy System Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 defined('_JEXEC') or die;
@@ -382,7 +383,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * The privacy plugin group is not imported during the J2Commerce checkout, so checkout
      * consent is validated and recorded by this system plugin. It is enabled on first
      * installation only; an administrator's later choice to disable it survives updates.
-     */    private function installConsentSystemPlugin(string $packageSource): void
+     */
+    private function installConsentSystemPlugin(string $packageSource): void
     {
         $source = $packageSource . '/plugins/system/j2commerceprivacy';
 

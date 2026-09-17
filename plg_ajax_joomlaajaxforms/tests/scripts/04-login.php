@@ -15,10 +15,10 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/ajax-test-helpers.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 JLoader::registerNamespace(
@@ -129,11 +129,8 @@ class LoginTest
         $url = $this->baseUrl . $this->ajaxPath . '&task=login';
         [$code, $body] = $this->http('POST', $url, ['task' => 'login', 'username' => 'admin', 'password' => 'Admin123!'], [], false);
 
-        $data    = json_decode($body, true);
-        $isJson  = $data !== null;
-        $rejected = ($code >= 300 && $code < 400)
-            || ($isJson && isset($data['success']) && $data['success'] === false)
-            || (!$isJson && $code === 200);
+        // Always a JSON error, never a redirect (also for a new session).
+        $rejected = $code === 200 && ajaxforms_is_json_rejection($body);
 
         $this->test('No-token login POST rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }

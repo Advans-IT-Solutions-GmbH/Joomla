@@ -75,9 +75,23 @@ removed.
 
 ### J2Commerce Cart Compatibility
 
-The cart features support both J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The version is detected at runtime by checking whether `#__j2store_carts` exists in the database.
+The cart features support both J2Store / J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The active shop is decided once per request by the enabled component together with its cart table:
 
-If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
+1. `com_j2commerce` is enabled **and** `#__j2commerce_carts` exists → J2Commerce 6.x (`#__j2commerce_*` tables)
+2. otherwise `com_j2store` is enabled **and** `#__j2store_carts` exists → J2Store / J2Commerce 4.x (`#__j2store_*` tables)
+3. otherwise → no shop
+
+The tables alone never decide: after a migration from J2Store to J2Commerce 6 the `#__j2store_*` tables remain in the database and are ignored while `com_j2store` is disabled. An enabled component without its cart table does not block the next candidate: with `com_j2commerce` enabled but no `#__j2commerce_carts`, an enabled J2Store with its tables is still used.
+
+Without an active shop the plugin does not use any shop, because the cart and the profile page of a disabled shop are not reachable for the user anyway: `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
+
+After a login without a `return` URL (only internal `return` URLs are accepted), the plugin redirects to the profile page, with and without MFA:
+
+1. the published `myprofile` menu item of the active shop, if one exists
+2. otherwise the `myprofile` view of the active shop (`com_j2commerce` or `com_j2store`)
+3. without an active shop, the Joomla user profile (`com_users`, `view=profile`)
+
+With MFA the same target is passed as an absolute URL in the `return` parameter of Joomla's captive page.
 
 **Schema differences handled automatically:**
 
@@ -151,6 +165,7 @@ Error responses use J2Commerce-compatible format:
 
 ```
 plg_ajax_joomlaajaxforms/
+├── LICENSE.txt
 ├── joomlaajaxforms.xml
 ├── build.sh
 ├── script.php
@@ -198,7 +213,7 @@ That misleading step has been removed; see issue #98.)
 11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 12. **Uninstall** — clean removal from database and filesystem
 
-The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart`).
+The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart` and `shop-detection`).
 
 ### Full-Install Tests (J2Commerce) — authoritative cart coverage
 
@@ -216,6 +231,8 @@ each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 - Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
 **`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the commit pinned in the workflow (`J2C6_REF`, `7edb6e11ae9148bf996b06c47a0d8266865af7b2`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
+
+**Shop detection (`13-shop-detection.php`, both full-install lanes)** — the script lives in `tests-j2c6/scripts/`; `tests-j2c4/run-tests.sh` copies it. A dedicated test user gets a cart in both table sets with different quantities (5 in `#__j2commerce_*`, 7 in `#__j2store_*`), so the `cartCount` returned by the HTTP endpoint shows which tables the plugin used. In the J2C6 lane the suite adds stale `#__j2store_*` tables and a disabled `com_j2store` row (migration): the AJAX login redirects to `com_j2commerce`, `getCartCount` returns 5 and `removeCartItem` deletes only from `#__j2commerce_cartitems`; with `com_j2commerce` disabled and `com_j2store` enabled it returns 7. In the J2C4 lane it adds `#__j2commerce_*` tables and a disabled `com_j2commerce` row: the login redirects to `com_j2store` and `getCartCount` returns 7; with `com_j2commerce` enabled it returns 5. In both lanes, with both components disabled, `getCartCount` returns 0, `removeCartItem` reports that no shop is installed, and a login in a fresh session redirects to the Joomla user profile, which opens for the logged-in user. The same login with an MFA record for the test user must answer with Joomla's captive page whose `return` parameter is the same profile target as an absolute URL (the MFA code itself is not entered; the captive page is Joomla core). Then the cart tables of the other shop are renamed so they are missing: with both components enabled, the installed shop is still used (5 in the J2C6 lane, 7 in the J2C4 lane, where the enabled `com_j2commerce` without tables must not block J2Store); with only the component without tables enabled, `getCartCount` returns 0 and the login redirects to the Joomla user profile. The CSRF token is read again after the login; if that fails, the suite fails instead of falling back to the guest token. All changes (component states and rows, tables and renamed tables, user, carts, sessions, MFA record, remember-me keys, action log entries) are reverted at the end of the suite and checked afterwards.
 
 ### Running Tests Locally
 
@@ -331,4 +348,8 @@ https://advans.ch
 
 ## License
 
-Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+Copyright (C) 2026 Advans IT Solutions GmbH
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE.txt](LICENSE.txt) for the full license text.
+
+SPDX-License-Identifier: `GPL-3.0-or-later`

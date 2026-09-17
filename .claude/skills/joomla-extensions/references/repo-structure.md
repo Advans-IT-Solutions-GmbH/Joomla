@@ -23,7 +23,7 @@ Each plugin follows this layout:
 plg_*/
 ├── README.md
 ├── VERSION                  # Managed by release workflow — do not edit manually
-├── LICENSE.txt              # (where present)
+├── LICENSE.txt              # Full GPL-3.0 text (required)
 ├── {plugin}.xml             # Manifest — version managed by release workflow
 ├── script.php               # Install/update/uninstall script
 ├── services/

@@ -2,8 +2,9 @@
 /**
  * @package     J2Commerce Privacy Cleanup Task Plugin
  * @subpackage  Extension
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 namespace Advans\Plugin\Task\J2CommercePrivacy\Extension;
@@ -260,7 +261,8 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 return Status::KNOCKOUT;
             }
 
-            return Status::OK;        } catch (\Throwable $e) {
+            return Status::OK;
+        } catch (\Throwable $e) {
             $this->logTask('Fatal error: ' . $e->getMessage(), 'error');
 
             return Status::KNOCKOUT;

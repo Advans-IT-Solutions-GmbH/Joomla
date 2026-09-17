@@ -2,8 +2,9 @@
 /**
  * @package     J2Commerce Privacy Plugin
  * @subpackage  Consent
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 namespace Advans\Plugin\Privacy\J2Commerce\Consent;
@@ -60,6 +61,9 @@ final class ConsentRepository
 
     /** Body language key of an anonymized legacy record. */
     public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
+
+    /** Fallback body when the language key is missing during an update request. */
+    private const LEGACY_BODY_FALLBACK = '<p>Legacy consent entry from an earlier site template. Personal data (e-mail address, IP address, user agent) was removed.</p>';
 
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
@@ -121,11 +125,13 @@ final class ConsentRepository
 
     /**
      * Body of a consent record after its order was anonymized: consent and order number stay as
-     * evidence, IP address and user agent are gone.
+     * evidence, IP address and user agent are gone. Written while an administrator or the cleanup
+     * task processes the order, so it uses the website's default site language, not the language
+     * of the acting person.
      */
     public function buildEvidenceRemovedBody(string $orderId): string
     {
-        $language = self::loadBodyLanguage();
+        $language = self::loadSiteBodyLanguage();
 
         return sprintf($language->_(self::BODY_REMOVED_KEY), htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
             . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER;
@@ -178,13 +184,97 @@ final class ConsentRepository
         return $changed;
     }
 
+    /**
+     * Update already anonymized legacy records that still store the raw language key. Global data
+     * migration for the unscoped cleanup/installer path only; never called for a scoped removal
+     * request, so it does not touch records outside the request's scope.
+     */
+    private function repairLegacyAnonymizedBodies(string $body): int
+    {
+        $changed = 0;
+        $lastId  = 0;
+        $like    = $this->db->quote($this->db->escape(self::LEGACY_BODY_KEY, true) . '%', false);
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName('id'))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
+                ->where($this->db->quoteName('body') . ' LIKE ' . $like)
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+            $this->db->setQuery($query);
+            $ids = array_map('intval', $this->db->loadColumn() ?: []);
+
+            if ($ids === []) {
+                break;
+            }
+
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->set($this->db->quoteName('state') . ' = -1')
+                    ->whereIn($this->db->quoteName('id'), $ids)
+                    ->bind(':body', $body)
+            )->execute();
+
+            $changed += \count($ids);
+            $lastId   = max($ids);
+        } while (\count($ids) === self::BATCH_SIZE);
+
+        return $changed;
+    }
+
+    private static function loadSiteBodyLanguage(): Language
+    {
+        $tag      = self::defaultSiteLanguageTag();
+        $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+
+        $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $tag)
+            || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $tag);
+
+        if (!$language->hasKey(self::LEGACY_BODY_KEY)) {
+            $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $tag, true)
+                || $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $tag, true);
+        }
+
+        return $language;
+    }
+
+    private static function defaultSiteLanguageTag(): string
+    {
+        try {
+            return (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            return 'en-GB';
+        }
+    }
+
     private static function loadBodyLanguage(): Language
     {
         $language = self::currentLanguage();
         $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
             || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
 
+        if (!$language->hasKey(self::LEGACY_BODY_KEY)) {
+            $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', null, true)
+                || $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, null, true);
+        }
+
         return $language;
+    }
+
+    private static function legacyBodyText(Language $language): string
+    {
+        $text = $language->_(self::LEGACY_BODY_KEY);
+
+        if ($text === '' || $text === self::LEGACY_BODY_KEY) {
+            return self::LEGACY_BODY_FALLBACK;
+        }
+
+        return $text;
     }
 
     /**
@@ -291,7 +381,7 @@ final class ConsentRepository
      * created afterwards (when the MyProfile tab was opened, dated with the newest order), so they
      * are no evidence of a checkout consent and are never assigned to an order. The e-mail address,
      * IP address and user agent are removed; the body gets a neutral note and the subject
-     * LEGACY_DONE_SUBJECT. Such records are not counted as consent.
+     * LEGACY_DONE_SUBJECT and state -1 (invalid). Such records are not counted as consent.
      *
      * @param   int|null  $userId  Only this user's records (null: all)
      * @param   string[]  $emails  With $userId: also guest records (user_id 0) mentioning one of these addresses
@@ -300,9 +390,12 @@ final class ConsentRepository
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
-        $body    = self::loadBodyLanguage()->_(self::LEGACY_BODY_KEY) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        $body    = self::legacyBodyText(self::loadSiteBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
-        $changed = 0;
+        // The raw-key body repair is a data migration for records anonymized by an older version.
+        // It runs only in the unscoped cleanup/installer path; a scoped removal request must not
+        // touch other users' already-anonymized records or inflate the returned count.
+        $changed = $userId === null ? $this->repairLegacyAnonymizedBodies($body) : 0;
         $lastId  = 0;
 
         do {
@@ -336,6 +429,7 @@ final class ConsentRepository
                 ->update($this->db->quoteName('#__privacy_consents'))
                 ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
                 ->set($this->db->quoteName('body') . ' = :body')
+                ->set($this->db->quoteName('state') . ' = -1')
                 ->whereIn($this->db->quoteName('id'), $ids)
                 ->bind(':body', $body);
             $this->db->setQuery($update)->execute();

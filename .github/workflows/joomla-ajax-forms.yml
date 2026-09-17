@@ -318,6 +318,8 @@ jobs:
             script: 'profile'
           - name: '11 - J2Store Cart'
             script: 'j2store-cart'
+          - name: '13 - Shop Detection'
+            script: 'shop-detection'
           - name: '12 - htaccess Check'
             script: 'htaccess-check'
           - name: 'Installer Messages'
@@ -420,6 +422,8 @@ jobs:
             script: 'profile'
           - name: '11 - J2Store Cart'
             script: 'j2store-cart'
+          - name: '13 - Shop Detection'
+            script: 'shop-detection'
           - name: '12 - htaccess Check'
             script: 'htaccess-check'
           - name: 'Installer Messages'
@@ -564,7 +568,18 @@ jobs:
       - name: Start environment (MariaDB 10.6)
         run: |
           cd plg_ajax_joomlaajaxforms/tests-j2c6
-          docker compose up -d
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose down -v || true
+            sleep 20
+          done
           timeout 420 bash -c 'until docker exec plg_ajax_j2c6_test cat /var/www/html/health.txt 2>/dev/null | grep -q OK; do sleep 5; done'
           docker exec plg_ajax_j2c6_test php -v
       - name: Show container logs
@@ -634,7 +649,18 @@ jobs:
       - name: Start environment with the previous release (J6)
         run: |
           cd plg_ajax_joomlaajaxforms/tests
-          docker compose -f docker-compose.joomla6.yml up -d
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
           timeout 300 bash -c 'until docker exec plg_ajax_joomlaajaxforms_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
       - name: Update to the package under test
         run: |

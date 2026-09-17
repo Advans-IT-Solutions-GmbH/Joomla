@@ -2,8 +2,9 @@
 /**
  * J2Commerce Product Compare Plugin
  * @subpackage  Services
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 defined('_JEXEC') or die;
@@ -11,6 +12,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Extension\PluginInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
 use Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare;
@@ -37,6 +39,7 @@ return new class implements ServiceProviderInterface
                 // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
                 $plugin = new ProductCompare((array) $pluginData);
                 $plugin->setApplication(Factory::getApplication());
+                $plugin->setDatabase($container->get(DatabaseInterface::class));
 
                 return $plugin;
             }

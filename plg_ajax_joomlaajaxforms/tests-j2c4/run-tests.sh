@@ -16,4 +16,7 @@ cp "$BASE_SCRIPTS"/*.php "$LOCAL_SCRIPTS/"
 # Apply J2C4 override: replace the generic cart test with the full-install version
 cp "$LOCAL_SCRIPTS/11-j2c4-cart.php" "$LOCAL_SCRIPTS/11-j2store-cart.php"
 
+# Shop detection suite (shared with the J2C6 lane; detects the installed stack itself)
+cp "$SCRIPT_DIR/../tests-j2c6/scripts/13-shop-detection.php" "$LOCAL_SCRIPTS/"
+
 exec "$SCRIPT_DIR/../../shared/tests/run-tests.sh" "$@"
