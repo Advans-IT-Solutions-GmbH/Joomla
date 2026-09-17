@@ -336,7 +336,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     {
         $app = $this->getApplication();
 
-        if (!Session::checkToken('get') && !Session::checkToken()) {
+        if (!$this->hasValidToken()) {
             echo new JsonResponse(null, Text::_('JINVALID_TOKEN'), true);
             $app->close();
         }
@@ -385,6 +385,24 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         );
 
         return $fileLayout->render($data);
+    }
+
+    /**
+     * Whether the request carries the form token of the current session (POST
+     * field, query parameter or X-CSRF-Token header).
+     *
+     * Session::checkToken() is not used: for a new session it redirects to the
+     * home page instead of returning false, which would give the script an
+     * empty redirect response instead of the JSON error.
+     */
+    private function hasValidToken(): bool
+    {
+        $input = $this->getApplication()->getInput();
+        $token = Session::getFormToken();
+
+        return hash_equals($token, (string) $input->server->get('HTTP_X_CSRF_TOKEN', '', 'alnum'))
+            || $input->post->get($token, '', 'alnum') !== ''
+            || $input->get->get($token, '', 'alnum') !== '';
     }
 
     /**

@@ -211,6 +211,11 @@ class PageRenderTest
 
         $this->test('Compare button for the product is rendered',
             (bool) preg_match('#data-product-id="' . $productId . '"#', $body), $this->diagnose($body));
+        if (!preg_match('#media/plg_j2commerce_productcompare/#i', $body)) {
+            preg_match_all('#<(?:link|script)[^>]+(?:href|src)="([^"]+)"#i', $body, $assets);
+            echo '  DIAG assets on the page: ' . implode(', ', array_slice($assets[1], 0, 25)) . "\n";
+        }
+
         $this->test('Plugin stylesheet is included',
             (bool) preg_match('#<link[^>]+media/plg_j2commerce_productcompare/[^"]*\.css#i', $body));
         $this->test('Plugin script is included',
