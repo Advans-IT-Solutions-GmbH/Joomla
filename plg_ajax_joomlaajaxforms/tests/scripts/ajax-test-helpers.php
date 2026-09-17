@@ -36,6 +36,11 @@ function ajaxforms_decode_response(string $body): ?array
     return null;
 }
 
+/**
+ * True when ajaxforms_decode_response() finds a plugin payload whose top-level
+ * success flag is false, whether it came directly from the plugin or from the
+ * com_ajax envelope.
+ */
 function ajaxforms_is_json_rejection(string $body): bool
 {
     $data = ajaxforms_decode_response($body);
