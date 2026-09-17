@@ -379,26 +379,34 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
     private function isJ2StoreActiveShop(): bool
     {
         try {
-            $db     = Factory::getContainer()->get(DatabaseInterface::class);
-            $tables = $db->getTableList();
-            $query  = $this->createDbQuery($db)
+            $db      = Factory::getContainer()->get(DatabaseInterface::class);
+            $query   = $this->createDbQuery($db)
                 ->select($db->quoteName('element'))
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
                 ->where($db->quoteName('enabled') . ' = 1')
                 ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
             $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+            if (\in_array('com_j2commerce', $enabled, true) && $this->tableExists($db, 'j2commerce_products')) {
+                return false;
+            }
+
+            return \in_array('com_j2store', $enabled, true) && $this->tableExists($db, 'j2store_products');
         } catch (\Throwable $e) {
             return false;
         }
+    }
 
-        $prefix = $db->getPrefix();
+    /**
+     * Whether a table exists (name without prefix). Mirrors the runtime detector:
+     * SHOW TABLES LIKE avoids the stale getTableList() cache during installation.
+     */
+    private function tableExists(DatabaseInterface $db, string $table): bool
+    {
+        $like = $db->quote($db->escape($db->getPrefix() . $table, true), false);
 
-        if (\in_array('com_j2commerce', $enabled, true) && \in_array($prefix . 'j2commerce_products', $tables, true)) {
-            return false;
-        }
-
-        return \in_array('com_j2store', $enabled, true) && \in_array($prefix . 'j2store_products', $tables, true);
+        return !empty($db->setQuery('SHOW TABLES LIKE ' . $like)->loadResult());
     }
 
     private function isPluginEnabled(): bool
