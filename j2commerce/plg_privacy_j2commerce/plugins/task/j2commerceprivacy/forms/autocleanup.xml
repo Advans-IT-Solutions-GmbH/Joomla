@@ -25,7 +25,8 @@
                 validate="fiscalyearend"
                 message="PLG_TASK_J2COMMERCEPRIVACY_FISCAL_YEAR_END_INVALID"
                 filter="string"
-            />            <field
+            />
+            <field
                 name="anonymize_orders"
                 type="radio"
                 label="PLG_TASK_J2COMMERCEPRIVACY_ANONYMIZE_ORDERS_LABEL"
