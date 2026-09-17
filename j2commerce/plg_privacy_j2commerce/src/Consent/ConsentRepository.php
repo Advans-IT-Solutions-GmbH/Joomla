@@ -61,6 +61,9 @@ final class ConsentRepository
     /** Body language key of an anonymized legacy record. */
     public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
 
+    /** Fallback body when the language key is missing during an update request. */
+    private const LEGACY_BODY_FALLBACK = '<p>Legacy consent entry from an earlier site template. Personal data (e-mail address, IP address, user agent) was removed.</p>';
+
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
 
@@ -178,13 +181,69 @@ final class ConsentRepository
         return $changed;
     }
 
+    /**
+     * Update already anonymized legacy records that still store the raw language key.
+     */
+    private function repairLegacyAnonymizedBodies(string $body): int
+    {
+        $changed = 0;
+        $lastId  = 0;
+        $like    = $this->db->quote($this->db->escape(self::LEGACY_BODY_KEY, true) . '%', false);
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName('id'))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
+                ->where($this->db->quoteName('body') . ' LIKE ' . $like)
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+            $this->db->setQuery($query);
+            $ids = array_map('intval', $this->db->loadColumn() ?: []);
+
+            if ($ids === []) {
+                break;
+            }
+
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->whereIn($this->db->quoteName('id'), $ids)
+                    ->bind(':body', $body)
+            )->execute();
+
+            $changed += \count($ids);
+            $lastId   = max($ids);
+        } while (\count($ids) === self::BATCH_SIZE);
+
+        return $changed;
+    }
+
     private static function loadBodyLanguage(): Language
     {
         $language = self::currentLanguage();
         $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR)
             || $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy');
 
+        if (!$language->hasKey(self::LEGACY_BODY_KEY)) {
+            $language->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', null, true)
+                || $language->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, null, true);
+        }
+
         return $language;
+    }
+
+    private static function legacyBodyText(Language $language): string
+    {
+        $text = $language->_(self::LEGACY_BODY_KEY);
+
+        if ($text === '' || $text === self::LEGACY_BODY_KEY) {
+            return self::LEGACY_BODY_FALLBACK;
+        }
+
+        return $text;
     }
 
     /**
@@ -300,9 +359,9 @@ final class ConsentRepository
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
-        $body    = self::loadBodyLanguage()->_(self::LEGACY_BODY_KEY) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        $body    = self::legacyBodyText(self::loadBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
-        $changed = 0;
+        $changed = $this->repairLegacyAnonymizedBodies($body);
         $lastId  = 0;
 
         do {

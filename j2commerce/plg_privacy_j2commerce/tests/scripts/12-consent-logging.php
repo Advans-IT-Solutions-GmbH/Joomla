@@ -700,8 +700,8 @@ class ConsentLoggingTest
             '<p>Einwilligung zur Datenschutzerklärung während des J2Commerce-Checkouts. E-Mail: <strong>' . htmlspecialchars($email) . '</strong></p>'
             . '<p>IP-Adresse: <strong>' . $ip . '</strong></p><p>User-Agent:<br/>' . htmlspecialchars($ua) . '</p>';
         $ids    = [];
-        $insert = function (string $key, int $userId, string $when, string $text) use (&$ids): void {
-            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $when, 'subject' => ConsentRepository::LEGACY_SUBJECT, 'body' => $text, 'remind' => 0, 'token' => ''];
+        $insert = function (string $key, int $userId, string $when, string $text, string $subject = ConsentRepository::LEGACY_SUBJECT) use (&$ids): void {
+            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $when, 'subject' => $subject, 'body' => $text, 'remind' => 0, 'token' => ''];
             $this->db->insertObject('#__privacy_consents', $row, 'id');
             $ids[$key] = (int) $row->id;
         };
@@ -733,7 +733,27 @@ class ConsentLoggingTest
             return true;
         };
 
+        $language   = Factory::getLanguage();
+        $tag        = method_exists($language, 'getTag') ? (string) $language->getTag() : 'en-GB';
+        $legacyRoot = sys_get_temp_dir() . '/privacy-legacy-language-' . uniqid('', true);
+        $legacyDir  = $legacyRoot . '/' . $tag;
+        $legacyFile = $legacyDir . '/plg_system_j2commerceprivacy.ini';
+        $loadedOld  = false;
+
         try {
+            if (@mkdir($legacyDir, 0755, true) && @file_put_contents(
+                $legacyFile,
+                "PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT=\"Legacy fixture without new key\"\n"
+            ) !== false) {
+                $loadedOld = (bool) $language->load('plg_system_j2commerceprivacy', $legacyRoot, $tag, true);
+            }
+
+            $this->test(
+                'Update simulation loads an older system-plugin language without the legacy body key',
+                $loadedOld && !$language->hasKey(ConsentRepository::LEGACY_BODY_KEY),
+                "loaded=$loadedOld tag=$tag"
+            );
+
             // Removal request of user 100 (account e-mail legacy-own@...): own records and guest
             // records with that e-mail address, nothing else.
             $scoped = $repository->anonymizeLegacyConsents(self::USER_ID, ['legacy-own@example.invalid', '']);
@@ -741,14 +761,23 @@ class ConsentLoggingTest
             $this->test('Guest record with another e-mail is not touched by that request', $load('guestOther')->subject === ConsentRepository::LEGACY_SUBJECT);
             $this->test('Record of another user is not touched by that request', $load('oldBody')->subject === ConsentRepository::LEGACY_SUBJECT);
 
+            $insert(
+                'rawKey',
+                0,
+                Factory::getDate('-4 days')->toSql(),
+                ConsentRepository::LEGACY_BODY_KEY . ConsentRepository::LEGACY_MARKER . ConsentRepository::EVIDENCE_REMOVED_MARKER,
+                ConsentRepository::LEGACY_DONE_SUBJECT
+            );
             $all = $repository->anonymizeLegacyConsents();
-            $this->test('Cleanup anonymizes the remaining legacy records', $all === 2, "changed $all");
+            $this->test('Cleanup anonymizes the remaining legacy records and repairs already key-based legacy bodies', $all === 3, "changed $all");
 
             foreach (['profile' => ['test@example.com', '198.51.100.40', 'LegacyAgent'], 'checkout' => ['198.51.100.41'], 'guestOwn' => ['legacy-own@', '198.51.100.42'], 'guestOther' => ['legacy-other@', '198.51.100.43'], 'oldBody' => ['Consent given during']] as $key => $gone) {
                 $row = $load($key);
                 $this->test("[$key] anonymized, never assigned to an order, neutral text", $isAnonymized($row, $gone), $row->body ?? '');
                 $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1);
             }
+            $rawKey = $load('rawKey');
+            $this->test('[rawKey] already anonymized key-based legacy body is repaired', $isAnonymized($rawKey, [ConsentRepository::LEGACY_BODY_KEY]), $rawKey->body ?? '');
 
             $this->test('Legacy anonymization never creates a checkout consent for the order', $this->countOrderConsents($userOrder) === 0);
             $this->test('Second run changes nothing', $repository->anonymizeLegacyConsents() === 0);
@@ -759,6 +788,9 @@ class ConsentLoggingTest
         } catch (\Throwable $e) {
             $this->test('Legacy anonymization runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
+            @unlink($legacyFile);
+            @rmdir($legacyDir);
+            @rmdir($legacyRoot);
             $this->db->setQuery(
                 $this->query()
                     ->delete($this->db->quoteName('#__privacy_consents'))
