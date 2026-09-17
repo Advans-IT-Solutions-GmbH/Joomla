@@ -271,6 +271,7 @@ EOSQL
         -e "SELECT COUNT(*) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);" 2>/dev/null || echo "0")
     if [ "${LIVE_ROUTE_COUNT}" = "0" ]; then
         mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+START TRANSACTION;
 SET @live_parent_rgt = (SELECT rgt FROM ${DB_PREFIX}menu WHERE id = 9001);
 UPDATE ${DB_PREFIX}menu
 SET rgt = rgt + 4
@@ -280,18 +281,19 @@ UPDATE ${DB_PREFIX}menu
 SET lft = lft + 4
 WHERE lft > @live_parent_rgt;
 
-INSERT IGNORE INTO ${DB_PREFIX}menu
+INSERT INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
-     component_id, language, access, client_id, params, lft, rgt)
+     component_id, language, access, client_id, params, img, lft, rgt)
 VALUES
     (9011, 'mainmenu', 'Live Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9011',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '',
      @live_parent_rgt, @live_parent_rgt + 1),
     (9012, 'mainmenu', 'Live Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
      'index.php?option=com_content&view=article&id=9002&Itemid=9012',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '',
      @live_parent_rgt + 2, @live_parent_rgt + 3);
+COMMIT;
 EOSQL
     fi
     echo "Multilingual SEF fixture applied"
