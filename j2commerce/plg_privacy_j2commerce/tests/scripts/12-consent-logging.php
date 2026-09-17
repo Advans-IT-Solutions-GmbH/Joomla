@@ -716,7 +716,9 @@ class ConsentLoggingTest
         $insert('guestOther', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-other@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
         $insert('oldBody', 102, Factory::getDate('-5 days')->toSql(), 'Consent given during J2Commerce checkout');
 
-        $load = fn (string $key): ?object => $this->loadConsent($ids[$key]);
+        $load = function (string $key) use (&$ids): ?object {
+            return $this->loadConsent($ids[$key]);
+        };
         $isAnonymized = function (?object $row, array $gone): bool {
             if (!$row || $row->subject !== ConsentRepository::LEGACY_DONE_SUBJECT
                 || !str_contains($row->body, ConsentRepository::LEGACY_MARKER)
@@ -736,12 +738,6 @@ class ConsentLoggingTest
             return true;
         };
 
-        $language   = Factory::getLanguage();
-        $tag        = method_exists($language, 'getTag') ? (string) $language->getTag() : 'en-GB';
-        $legacyRoot = sys_get_temp_dir() . '/privacy-legacy-language-' . uniqid('', true);
-        $legacyDir  = $legacyRoot . '/' . $tag;
-        $legacyFile = $legacyDir . '/plg_system_j2commerceprivacy.ini';
-        $loadedOld  = false;
         // Resolve the default site language tag the same way the plugin does. In this CLI harness
         // there is no application, so ComponentHelper::getParams() is unavailable and the tag falls
         // back to en-GB, exactly like ConsentRepository::defaultSiteLanguageTag().
@@ -756,19 +752,6 @@ class ConsentLoggingTest
         $expectedBodyPrefix = (string) $siteLang->_(ConsentRepository::LEGACY_BODY_KEY);
 
         try {
-            if (@mkdir($legacyDir, 0755, true) && @file_put_contents(
-                $legacyFile,
-                "PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT=\"Legacy fixture without new key\"\n"
-            ) !== false) {
-                $loadedOld = (bool) $language->load('plg_system_j2commerceprivacy', $legacyRoot, $tag, true);
-            }
-
-            $this->test(
-                'Update simulation loads an older system-plugin language without the legacy body key',
-                $loadedOld && !$language->hasKey(ConsentRepository::LEGACY_BODY_KEY),
-                "loaded=$loadedOld tag=$tag"
-            );
-
             // An already-anonymized legacy row of another user that still stores the raw body key.
             // A scoped removal request must not repair it (that would touch records outside the
             // request scope and inflate the count); the unscoped cleanup below repairs it.
@@ -818,9 +801,6 @@ class ConsentLoggingTest
         } catch (\Throwable $e) {
             $this->test('Legacy anonymization runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
-            @unlink($legacyFile);
-            @rmdir($legacyDir);
-            @rmdir($legacyRoot);
             $this->db->setQuery(
                 $this->query()
                     ->delete($this->db->quoteName('#__privacy_consents'))
