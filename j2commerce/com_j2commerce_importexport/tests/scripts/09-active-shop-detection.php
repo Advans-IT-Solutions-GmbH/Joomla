@@ -10,20 +10,32 @@
  * On each stack this test adds the table set of the OTHER shop (minimal
  * #__<other>_products / #__<other>_variants) with different test data and a
  * disabled extension row for the other component, then asserts through the
- * public ExportModel::exportData('variants') which data set is exported:
+ * public ExportModel::exportData('variants') which data set is exported.
  *
+ * Phase 1 — the other shop's tables do not exist yet (enabled without tables):
+ *   D1  installed disabled, other enabled       → installed shop's data
+ *       (J6: fallback to j2commerce; J5: com_j2commerce has no tables and no
+ *       j2commerce tables exist → j2store)
+ *   D2  both enabled                            → installed shop's data
+ *       (J6: rule 1; J5: com_j2commerce skipped for missing tables → rule 2)
+ *
+ * Phase 2 — the other shop's tables were created and seeded:
  *   A  installed shop enabled, other disabled   → installed shop's data
  *   B  installed shop disabled, other enabled   → other shop's data
  *   C  both disabled (fallback)                 → j2commerce data (table rule)
+ *   E  both enabled (typical migration state)   → j2commerce data
  *
  * J6 stack (J2COMMERCE_STACK=j6): installed = J2Commerce 6, other = J2Store.
  *   Scenario B fails with the former table-only detection.
  * J5 stack: installed = J2Store 4, other = J2Commerce 6 tables.
- *   Scenario A fails with the former table-only detection.
+ *   Scenarios A and D2 fail with the former table-only detection.
+ *
+ * Phase 1 requires that the other shop's product table does not exist before
+ * the test; no real table is renamed or dropped for it.
  *
  * Every scenario uses a new model instance (the detection is cached per
  * instance). Afterwards only the tables/rows created here are removed and the
- * extension states are restored.
+ * extension states are restored; the cleanup is verified.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -111,9 +123,48 @@ class ActiveShopDetectionTest
 
     private function tableExists(string $table): bool
     {
-        return !empty($this->db->setQuery(
-            'SHOW TABLES LIKE ' . $this->db->quote($this->db->getPrefix() . $table)
-        )->loadResult());
+        $like = $this->db->quote($this->db->escape($this->db->getPrefix() . $table, true), false);
+
+        return !empty($this->db->setQuery('SHOW TABLES LIKE ' . $like)->loadResult());
+    }
+
+    /**
+     * Builds an insert object for $table from $data: keeps only existing
+     * columns and fills every NOT NULL column without default that $data does
+     * not cover (core tables differ between Joomla 5 and 6).
+     */
+    private function rowFor(string $table, array $data): object
+    {
+        $columns = $this->db->getTableColumns($table, false);
+        $row     = [];
+
+        foreach ($columns as $name => $info) {
+            if (array_key_exists($name, $data)) {
+                $row[$name] = $data[$name];
+                continue;
+            }
+
+            $extra    = strtolower((string) ($info->Extra ?? ''));
+            $nullable = strtoupper((string) ($info->Null ?? 'YES')) === 'YES';
+
+            if ($nullable || ($info->Default ?? null) !== null || str_contains($extra, 'auto_increment')) {
+                continue;
+            }
+
+            $type = strtolower((string) ($info->Type ?? ''));
+            if (preg_match('/^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|bit)/', $type)) {
+                $row[$name] = 0;
+            } elseif (preg_match('/^(datetime|timestamp)/', $type)) {
+                $row[$name] = Factory::getDate()->toSql();
+            } elseif (str_starts_with($type, 'date')) {
+                $row[$name] = Factory::getDate()->format('Y-m-d');
+            } else {
+                $row[$name] = '';
+            }
+            echo "INFO $table: filled NOT NULL column $name without default\n";
+        }
+
+        return (object) $row;
     }
 
     private function loadExtension(string $element): ?object
@@ -167,7 +218,7 @@ class ActiveShopDetectionTest
             return true;
         }
 
-        $extension = (object) [
+        $extension = $this->rowFor('#__extensions', [
             'name'           => $otherElement,
             'type'           => 'component',
             'element'        => $otherElement,
@@ -183,7 +234,7 @@ class ActiveShopDetectionTest
             'ordering'       => 0,
             'state'          => 0,
             'note'           => 'temporary row of 09-active-shop-detection.php',
-        ];
+        ]);
         $this->db->insertObject('#__extensions', $extension, 'extension_id');
         $this->components[$otherElement] = [
             'id'      => (int) $extension->extension_id,
@@ -404,7 +455,22 @@ class ActiveShopDetectionTest
             }
             return true;
         });
-        $this->test('Restore: extension states as before', function () {
+        $this->test('Restore: test rows in pre-existing tables removed', function () {
+            foreach ($this->insertedRows as $row) {
+                $left = $this->db->setQuery(
+                    $this->query()
+                        ->select('COUNT(*)')
+                        ->from($this->db->quoteName('#__' . $row['table']))
+                        ->where($this->db->quoteName($row['pk']) . ' = ' . (int) $row['id'])
+                )->loadResult();
+
+                if ((int) $left !== 0) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        $this->test('Restore: extension states as before, temporary rows removed', function () {
             foreach ($this->components as $info) {
                 $row = $this->db->setQuery(
                     $this->query()
@@ -456,11 +522,34 @@ class ActiveShopDetectionTest
             return;
         }
 
-        echo "\n--- Fixture ---\n";
+        $installedElement = $this->element($this->installed);
+        $otherElement     = $this->element($this->other);
+
+        echo "\n--- Fixture (installed shop) ---\n";
+        $this->seed($this->installed, 'INSTALLED');
+
+        // Phase 1: the other component is enabled while its tables are missing.
+        // Runs before the test creates them; real tables are never touched.
+        $otherMissing = !$this->tableExists($this->other . '_products');
+        $this->test(
+            "Precondition: #__{$this->other}_products absent before the fixture (enabled-without-tables cases)",
+            fn () => $otherMissing
+        );
+
+        if ($otherMissing) {
+            echo "\n--- D1: $installedElement disabled, $otherElement active without its tables ---\n";
+            $this->activate(0, 1);
+            $this->assertExports("D1 ($otherElement active, #__{$this->other}_products missing)", $this->installed);
+
+            echo "\n--- D2: both components active, #__{$this->other}_* tables missing ---\n";
+            $this->activate(1, 1);
+            $this->assertExports("D2 (both active, #__{$this->other}_products missing)", $this->installed);
+        }
+
+        echo "\n--- Fixture (other shop) ---\n";
         $this->createOtherTables();
         $this->test("Fixture: #__{$this->other}_products exists", fn () => $this->tableExists($this->other . '_products'));
         $this->test("Fixture: #__{$this->other}_variants exists", fn () => $this->tableExists($this->other . '_variants'));
-        $this->seed($this->installed, 'INSTALLED');
         $this->seed($this->other, 'OTHER');
 
         echo "\n--- A: installed shop active, other component disabled ---\n";
@@ -474,6 +563,10 @@ class ActiveShopDetectionTest
         echo "\n--- C: no shop component active (table fallback) ---\n";
         $this->activate(0, 0);
         $this->assertExports('C (none active, j2commerce tables present)', 'j2commerce');
+
+        echo "\n--- E: both components active, both table sets present (migration state) ---\n";
+        $this->activate(1, 1);
+        $this->assertExports('E (both active, both table sets present)', 'j2commerce');
     }
 
     private function summary(): bool

@@ -30,26 +30,34 @@ trait J2CommerceAwareTrait
     /** @var string|null Cached active shop: 'j2commerce', 'j2store' or '' (none active) */
     private ?string $activeShopCache = null;
 
+    /** @var bool|null Cached result of isJ2Commerce6(), including the fallback */
+    private ?bool $isJ2Commerce6Cache = null;
+
     /**
      * Returns true when J2Commerce 6 is the shop to work with.
      *
      * Order: com_j2commerce enabled with its product table → J2Commerce 6;
      * otherwise com_j2store enabled with its product table → J2Store/J2Commerce 4;
      * otherwise (no active shop) fall back to the former table check.
+     *
+     * The decision is cached per instance: t() and col() call this for every
+     * query, so the fallback must not repeat SHOW TABLES on each call.
      */
     private function isJ2Commerce6(): bool
     {
-        $shop = $this->getActiveShop();
+        if ($this->isJ2Commerce6Cache === null) {
+            $shop = $this->getActiveShop();
 
-        if ($shop !== null) {
-            return $shop === 'j2commerce';
+            // No active shop component: keep the former behaviour so that exports
+            // and imports on a site whose shop is temporarily disabled (or whose
+            // extension rows are missing) still address the existing tables.
+            // J2Commerce 6 wins when its product table exists, as before.
+            $this->isJ2Commerce6Cache = $shop !== null
+                ? $shop === 'j2commerce'
+                : $this->shopTableExists('j2commerce_products');
         }
 
-        // No active shop component: keep the former behaviour so that exports
-        // and imports on a site whose shop is temporarily disabled (or whose
-        // extension rows are missing) still address the existing tables.
-        // J2Commerce 6 wins when its product table exists, as before.
-        return $this->shopTableExists('j2commerce_products');
+        return $this->isJ2Commerce6Cache;
     }
 
     /**
@@ -86,13 +94,16 @@ trait J2CommerceAwareTrait
     /**
      * Checks whether a table (name without prefix) exists.
      * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
+     * The LIKE wildcards _ and % in the name are escaped, so only the exact
+     * table matches.
      */
     private function shopTableExists(string $table): bool
     {
         /** @var DatabaseInterface $db */
-        $db = $this->getDatabase();
+        $db      = $this->getDatabase();
+        $pattern = $db->quote($db->escape($db->getPrefix() . $table, true), false);
 
-        return !empty($db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . $table))->loadResult());
+        return !empty($db->setQuery('SHOW TABLES LIKE ' . $pattern)->loadResult());
     }
 
     /**
