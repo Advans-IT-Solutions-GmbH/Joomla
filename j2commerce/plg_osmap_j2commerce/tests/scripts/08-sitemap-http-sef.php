@@ -130,6 +130,14 @@ class SitemapHttpSefTest
             return true;
         });
 
+        // Issue #183 proposes asserting HTTP 200 (not 301) for every sitemap URL.
+        // We deliberately log the status here instead of asserting it: the SEF
+        // fixture seeds a #__languages row (sef=de) so OSMap emits /de/-prefixed
+        // URLs, but the minimal test stack installs no site language pack and does
+        // not enable plg_system_languagefilter, so a live GET of a /de/ path need
+        // not resolve to 200 in this container. The actual #176/#183 regression —
+        // a missing /de/ language prefix — is caught by the URL-form assertions
+        // above; the live status code is recorded for diagnostics only.
         foreach ($productUrls as $alias => $url) {
             if ($url === null) {
                 continue;
