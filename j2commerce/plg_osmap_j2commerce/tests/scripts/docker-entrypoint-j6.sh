@@ -141,7 +141,11 @@ echo "com_j2commerce=${COM_J2COMMERCE_ID}"
 
 echo "Inserting fixtures..."
 MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-    -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
+    -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" 2>/dev/null)
+if [ -z "${MAINMENU_ROOT_ID}" ]; then
+    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1;" 2>/dev/null || echo "1")
+fi
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
@@ -191,25 +195,65 @@ EOSQL
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Give the hidden product child menu items a real
-# content language (de-DE) and add the matching #__languages row (sef=de,
-# published=1). OSMap builds each product URL from #__languages.sef + the menu
-# path (it deliberately bypasses the Joomla router for published=-2 items), so
-# this alone makes the generated URLs carry the /de/ prefix — no language pack
-# or language-filter plugin required. It makes 08's prefix assertion meaningful:
-# a single-language fixture has no prefix that could go missing, which is exactly
-# how the #176 regression slipped through. The parent Shop menu stays language='*'
-# so OSMap still traverses it, and the non-SEF stacks keep '*' (07 asserts the
-# unprefixed /shop/... form there).
+# runs 08-sitemap-http-sef.php). Install the real de-DE language pack, make the
+# product routes live by publishing their dedicated menu items, and add the
+# matching #__languages row (sef=de, published=1). The Shop parent stays
+# language='*' so OSMap still traverses it; once the dedicated SEF lane
+# publishes the product menu items, the plugin's direct product query becomes
+# the authoritative URL source and must therefore pick up the /de/ prefix from
+# the product articles' own language instead.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
+    JOOMLA_VERSION=$(php -r "define('_JEXEC',1); define('JPATH_BASE','/var/www/html'); require JPATH_BASE . '/includes/defines.php'; require JPATH_BASE . '/includes/framework.php'; echo JVERSION;" 2>/dev/null || true)
+    if [ -n "${JOOMLA_VERSION}" ]; then
+        for suffix in v1 v2 v3; do
+            LANG_URL="https://github.com/joomlagerman/joomla/releases/download/${JOOMLA_VERSION}${suffix}/de-DE_joomla_lang_full_${JOOMLA_VERSION}${suffix}.zip"
+            if curl -fsSL "${LANG_URL}" -o /tmp/de-DE.zip; then
+                echo "Installing de-DE language pack (${JOOMLA_VERSION}${suffix})..."
+                if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/de-DE.zip; then
+                    echo "de-DE language pack installed"
+                    break
+                fi
+                echo "ERROR: de-DE language pack installation failed"
+                exit 1
+            fi
+        done
+        if [ ! -f /tmp/de-DE.zip ]; then
+            echo "ERROR: Could not download a de-DE language pack for Joomla ${JOOMLA_VERSION}"
+            exit 1
+        fi
+    else
+        echo "ERROR: Could not detect Joomla version for de-DE language pack installation"
+        exit 1
+    fi
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
-INSERT IGNORE INTO ${DB_PREFIX}languages
+INSERT INTO ${DB_PREFIX}languages
     (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)
 VALUES
-    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
+    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1)
+ON DUPLICATE KEY UPDATE
+    title = VALUES(title),
+    title_native = VALUES(title_native),
+    sef = VALUES(sef),
+    published = VALUES(published),
+    access = VALUES(access),
+    ordering = VALUES(ordering);
 
-UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+UPDATE ${DB_PREFIX}extensions
+SET enabled = 1
+WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'languagecode');
+
+UPDATE ${DB_PREFIX}menu
+SET language='de-DE'
+WHERE id IN (9002, 9003);
+
+UPDATE ${DB_PREFIX}menu
+SET published=1
+WHERE id IN (9002, 9003);
+
+UPDATE ${DB_PREFIX}content
+SET language='de-DE'
+WHERE id IN (9001, 9002);
 EOSQL
     echo "Multilingual SEF fixture applied"
 fi
