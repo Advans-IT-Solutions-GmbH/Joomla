@@ -144,9 +144,27 @@ MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
+# Standard J6 stack: two hidden product children (published=-2) nested inside
+# the shop interval so getTree() traverses the hidden-child menu path
+# (mechanism 1). The dedicated SEF stack omits them (shop stays a leaf, offset
+# 2) so the live sitemap exercises the direct product-query path (mechanism 2).
+# Shop and children share one @max_rgt in a single statement batch so the
+# children land inside the shop [lft,rgt] interval; recomputing @max_rgt after
+# the shop row (and the root expansion) would push them outside it.
 SHOP_RGT_OFFSET=6
+SHOP_CHILD_ROWS=""
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     SHOP_RGT_OFFSET=2
+else
+    SHOP_CHILD_ROWS=",
+    (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9002',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     @max_rgt + 2, @max_rgt + 3),
+    (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9003',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     @max_rgt + 4, @max_rgt + 5)"
 fi
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
@@ -168,8 +186,10 @@ VALUES
     (9001, 9001, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}'),
     (9002, 9002, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}');
 
--- Menu items: shop parent (published=1) + product children (published=-2)
--- published=-2 = hidden from navigation but routable; OSMap includes these in sitemaps
+-- Menu items: shop parent (published=1) + optional hidden product children
+-- (published=-2, hidden from navigation but routable; OSMap includes these in
+-- sitemaps). All rows share one @max_rgt so the children nest inside the shop
+-- [lft,rgt] interval; the global root rgt is then expanded once to include them.
 SET @max_rgt = (SELECT COALESCE(MAX(rgt), 10) FROM ${DB_PREFIX}menu);
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -178,35 +198,13 @@ VALUES
     (9001, 'mainmenu', 'Shop', 'shop', 'shop',
      'index.php?option=com_j2commerce&view=products',
      'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2COMMERCE_ID}, '*', 1, 0, '{}',
-     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET});
+     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET})${SHOP_CHILD_ROWS};
 
 -- Expand global root rgt to include new items
 UPDATE ${DB_PREFIX}menu
 SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}menu) AS t)
 WHERE lft = 0;
 EOSQL
-
-if [ "${J2COMMERCE_SEF}" != "1" ]; then
-    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
-SET @max_rgt = (SELECT COALESCE(MAX(rgt), 0) FROM ${DB_PREFIX}menu);
-INSERT IGNORE INTO ${DB_PREFIX}menu
-    (id, menutype, title, alias, path, link, type, published, parent_id, level,
-     component_id, language, access, client_id, params, lft, rgt)
-VALUES
-    (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
-     'index.php?option=com_content&view=article&id=9001&Itemid=9002',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
-     @max_rgt + 2, @max_rgt + 3),
-    (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
-     'index.php?option=com_content&view=article&id=9002&Itemid=9003',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
-     @max_rgt + 4, @max_rgt + 5);
-
-UPDATE ${DB_PREFIX}menu
-SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}menu) AS t)
-WHERE lft = 0;
-EOSQL
-fi
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack

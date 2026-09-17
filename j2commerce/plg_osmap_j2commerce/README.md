@@ -295,6 +295,12 @@ timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var
 CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
 
+# Joomla 5 with SEF URLs (multilingual /de/ prefix; standard J5 stack)
+docker compose -f docker-compose.sef.yml up -d
+timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j5_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef
+docker compose -f docker-compose.sef.yml down -v
+
 # Joomla 6 with SEF URLs (requires tests/j2commerce6.zip)
 docker compose -f docker-compose.joomla6-sef.yml up -d
 timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'

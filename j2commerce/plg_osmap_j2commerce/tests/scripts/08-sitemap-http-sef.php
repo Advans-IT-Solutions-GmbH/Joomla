@@ -137,7 +137,9 @@ class SitemapHttpSefTest
         // not enable plg_system_languagefilter, so a live GET of a /de/ path need
         // not resolve to 200 in this container. The actual #176/#183 regression —
         // a missing /de/ language prefix — is caught by the URL-form assertions
-        // above; the live status code is recorded for diagnostics only.
+        // above; the live status code is recorded for diagnostics only. The
+        // end-to-end HTTP-200 assertion (which needs a full multilingual stack)
+        // is tracked as follow-up issue #185.
         foreach ($productUrls as $alias => $url) {
             if ($url === null) {
                 continue;
