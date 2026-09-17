@@ -195,13 +195,13 @@ EOSQL
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Install the real de-DE language pack, make the
-# product routes live by publishing their dedicated menu items, and add the
-# matching #__languages row (sef=de, published=1). The Shop parent stays
-# language='*' so OSMap still traverses it; once the dedicated SEF lane
-# publishes the product menu items, the plugin's direct product query becomes
-# the authoritative URL source and must therefore pick up the /de/ prefix from
-# the product articles' own language instead.
+# runs 08-sitemap-http-sef.php). Install the real de-DE language pack, add
+# dedicated published de-DE product menu items for the live HTTP assertions, and
+# add the matching #__languages row (sef=de, published=1). The Shop parent
+# stays language='*' so OSMap still traverses it, while the dedicated published
+# product routes make /de/shop/<alias> resolve. Any hidden published=-2 fixture
+# children are disabled in this SEF-only lane so the sitemap must use the
+# multilingual direct-product path instead of those hidden-menu shortcuts.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
     JOOMLA_VERSION=$(php -r "define('_JEXEC',1); define('JPATH_BASE','/var/www/html'); require JPATH_BASE . '/includes/defines.php'; require JPATH_BASE . '/includes/framework.php'; echo JVERSION;" 2>/dev/null || true)
@@ -261,12 +261,30 @@ SET enabled = 1
 WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'languagecode');
 
 UPDATE ${DB_PREFIX}menu
-SET language='de-DE'
-WHERE id IN (9002, 9003);
+SET published = 0
+WHERE id IN (9002, 9003) AND published = -2;
+
+SET @live_parent_rgt = (SELECT rgt FROM ${DB_PREFIX}menu WHERE id = 9001);
+UPDATE ${DB_PREFIX}menu
+SET rgt = rgt + 4
+WHERE rgt >= @live_parent_rgt;
 
 UPDATE ${DB_PREFIX}menu
-SET published=1
-WHERE id IN (9002, 9003);
+SET lft = lft + 4
+WHERE lft > @live_parent_rgt;
+
+INSERT IGNORE INTO ${DB_PREFIX}menu
+    (id, menutype, title, alias, path, link, type, published, parent_id, level,
+     component_id, language, access, client_id, params, lft, rgt)
+VALUES
+    (9011, 'mainmenu', 'Live Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9011',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     @live_parent_rgt, @live_parent_rgt + 1),
+    (9012, 'mainmenu', 'Live Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9012',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     @live_parent_rgt + 2, @live_parent_rgt + 3);
 
 UPDATE ${DB_PREFIX}content
 SET language='de-DE'
@@ -309,7 +327,7 @@ echo "OSMap sitemap created"
 
 echo "Verifying fixtures..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, title, published FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003);
+    SELECT id, title, published, language FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003,9011,9012);
     SELECT j2commerce_product_id, product_source_id, enabled FROM ${DB_PREFIX}j2commerce_products WHERE j2commerce_product_id IN (9001,9002);
 " 2>/dev/null || echo "WARNING: fixture verification failed"
 

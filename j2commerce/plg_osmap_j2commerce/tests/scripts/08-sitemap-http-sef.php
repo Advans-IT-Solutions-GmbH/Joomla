@@ -5,11 +5,11 @@
  * Runs only in the dedicated SEF-enabled J6 environment (J2COMMERCE_SEF=1,
  * see docker-entrypoint-j6.sh + docker-compose.joomla6-sef.yml). It makes a
  * real HTTP request to the live OSMap XML sitemap and asserts that, with SEF
- * URLs enabled and the product menu items on a real content language (de-DE),
- * the J2Commerce 6 product URLs appear as correctly-formed SEF paths that carry
- * the /de/ language prefix (no index.php, no option=com_... query string) and
- * that those live multilingual product URLs resolve directly with HTTP 200
- * without a 301 redirect.
+ * URLs enabled and dedicated published de-DE product routes in place, the
+ * J2Commerce 6 product URLs appear as correctly-formed SEF paths that carry the
+ * /de/ language prefix (no index.php, no option=com_... query string) and that
+ * those live multilingual product URLs resolve directly with HTTP 200 without a
+ * 301 redirect.
  *
  * The multilingual fixture is what makes the language-prefix assertion
  * meaningful: a single-language fixture has no prefix that could go missing,
