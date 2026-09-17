@@ -17,6 +17,10 @@ function ajaxforms_decode_response(string $body): ?array
         return null;
     }
 
+    if (array_key_exists('success', $outer)) {
+        return $outer;
+    }
+
     if (isset($outer['data'][0]) && is_string($outer['data'][0])) {
         $inner = json_decode($outer['data'][0], true);
 
@@ -25,7 +29,11 @@ function ajaxforms_decode_response(string $body): ?array
         }
     }
 
-    return $outer;
+    if (isset($outer['data'][0]) && is_array($outer['data'][0]) && array_key_exists('success', $outer['data'][0])) {
+        return $outer['data'][0];
+    }
+
+    return null;
 }
 
 function ajaxforms_is_json_rejection(string $body): bool
