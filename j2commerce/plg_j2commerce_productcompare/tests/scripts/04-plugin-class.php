@@ -134,7 +134,7 @@ class PluginClassTest
         $rc = new ReflectionClass('Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare');
 
         foreach ([
-            'onAfterDispatch',
+            'onBeforeCompileHead',
             'onAfterRender',
             'onJ2StoreAfterProductDisplay',
             'onJ2StoreAfterAddToCartButton',
@@ -160,7 +160,7 @@ class PluginClassTest
             isset($events['onJ2CommerceAfterProductListItemDisplay']));
         $this->test('getSubscribedEvents() contains AfterProductDisplay hook',
             isset($events['onJ2CommerceAfterProductDisplay']));
-        foreach (['onJ2StoreAfterProductDisplay', 'onJ2StoreAfterAddToCartButton', 'onAjaxProductcompare', 'onAfterDispatch', 'onAfterRender'] as $name) {
+        foreach (['onJ2StoreAfterProductDisplay', 'onJ2StoreAfterAddToCartButton', 'onAjaxProductcompare', 'onBeforeCompileHead', 'onAfterRender'] as $name) {
             $this->test("getSubscribedEvents() contains $name", isset($events[$name]));
         }
         $this->test('getSubscribedEvents() does not contain events J2Store 4 never fires',

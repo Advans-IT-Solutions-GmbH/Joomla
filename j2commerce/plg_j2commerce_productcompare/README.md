@@ -39,17 +39,21 @@ The plugin decides at runtime which shop is active; tables alone do not decide, 
 The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
 
 **J2Commerce 4.x (Joomla 5)**:
-- The plugin subscribes to the events J2Store 4.1.4 fires in its product layouts (`app_bootstrap3`/`app_bootstrap4`): `onJ2StoreAfterAddToCartButton` adds the button in product lists after the add-to-cart button (the call in the detail layout `view_cart` is skipped), `onJ2StoreAfterProductDisplay` adds it at the end of the product page.
-- **Limitation:** J2Store 4 has no per-item list event of its own. Template overrides of the J2Store product layouts that do not call these two events show no compare button.
+- The plugin subscribes to the events J2Store 4.1.4 fires in its product layouts (`app_bootstrap3`/`app_bootstrap4`/`app_bootstrap5`): `onJ2StoreAfterAddToCartButton` adds the button in product lists after the add-to-cart button and to up-sell and cross-sell products on the product page (`cart.php`); the call in the detail layout `view_cart` is skipped. `onJ2StoreAfterProductDisplay` adds the button at the end of the product page.
+- **Limitations:** J2Store 4 has no per-item list event of its own. J2Store renders the add-to-cart block only when the cart can be shown (`canShowCart()`), so product lists show no compare button in catalogue mode or for guests when the cart is limited to registered users; the product page still shows it. Template overrides of the J2Store product layouts that do not call these events show no compare button.
 - DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
 - AJAX URL: `group=j2store`
 
-**J2Commerce 6.x (Joomla 6)**:
+**J2Commerce 6.x (Joomla 6)** (J2Commerce 6 requires Joomla 6, so the plugin group is chosen by the Joomla major version):
 - DB tables: `#__j2commerce_products`, `#__j2commerce_variants`, `#__j2commerce_product_options`
 - AJAX URL: `group=j2commerce`
 - The plugin subscribes to `onJ2CommerceAfterProductListItemDisplay` and `onJ2CommerceAfterProductDisplay` via `SubscriberInterface`.
 
-On both versions the AJAX handler `onAjaxProductcompare` and the page handlers `onAfterDispatch`/`onAfterRender` are registered through `SubscriberInterface`; the AJAX `group` is the installed plugin folder, while the tables are chosen by the active shop. Joomla loads the plugin only when the shop imports its plugin group, and the plugin adds its CSS, JS, compare bar and modal only to site HTML pages on which it rendered a compare button (never to administrator pages, com_ajax responses or non-HTML documents).
+On both versions the AJAX handler `onAjaxProductcompare` and the page handlers `onBeforeCompileHead`/`onAfterRender` are registered through `SubscriberInterface`; the AJAX `group` is the installed plugin folder, while the tables are chosen by the active shop. Joomla loads the plugin only when the shop imports its plugin group. The plugin adds its CSS, JS (depends on Joomla's `core` script), script options and texts while the page head is rendered, i.e. after the component and the modules, and the compare bar and modal before `</body>`, only on site HTML pages on which it rendered a compare button (never on administrator pages, com_ajax responses or non-HTML documents).
+
+The script posts the selected product IDs (`products[]`) together with the form token from the script options to the com_ajax endpoint, which rejects requests without a valid token. Texts of the script come from the language files (`Joomla.Text`).
+
+**Limitation:** buttons that come from cached output (for example a cached module) are not rendered in that request, so the page gets no assets, bar or modal from them.
 
 No configuration required — table names and event handlers are selected automatically at runtime.
 
@@ -123,15 +127,15 @@ This plugin has automated tests that run via GitHub Actions (`j2commerce-product
 
 1. **Installation** — plugin registration in DB, file deployment
 2. **Configuration** — plugin params, language files, and real XML manifest parameter parsing (defaults for `show_in_list`, `show_in_detail`, `max_products`, `button_text`, `button_class`)
-3. **Media Files** — CSS/JS deployment and structural validation (asset.json registers the expected script/style assets; JS consumes the `plg_j2commerce_productcompare` script options and binds the compare selectors)
+3. **Media Files** — CSS/JS deployment and structural validation (asset.json registers the expected script/style assets and the `core` dependency; JS consumes the `plg_j2commerce_productcompare` script options including the form token, posts form-encoded `products[]`, reads its texts through `Joomla.Text` and binds the compare selectors)
 4. **Plugin Class** — method existence, `SubscriberInterface`, `isJ2Commerce6()` detection
 5. **AJAX Endpoint** — HTTP tests against com_ajax (J2Commerce 4 and 6 group)
 6. **getProductsData** — DB query compatibility for J2Commerce 4 and 6 table schemas
-7. **Asset Injection** — WebAssetManager + script-options registration driven against a real `HtmlDocument` after a button was rendered through the storefront event; nothing is added without a button, for com_ajax requests or for a JSON document
+7. **Asset Injection** — WebAssetManager, script options (including the form token) and `Joomla.Text` strings registered in `onBeforeCompileHead()` against a real `HtmlDocument` after a button was rendered through the storefront event; nothing is added without a button, for com_ajax requests or for a JSON document
 8. **Render Injection** — `onAfterRender()` injects the compare bar + modal markup into a real HTML `<body>` before `</body>` once a button was rendered; a page without a button stays unchanged (both stacks)
 9. **Event Dispatch** — real product rows are seeded and the storefront events are driven, asserting the compare button is emitted: J2Commerce 6 (`onJ2CommerceAfterProductListItemDisplay`, `onJ2CommerceAfterProductDisplay`) through a real dispatcher, and J2Store 4 (`onJ2StoreAfterAddToCartButton` in the list context, `onJ2StoreAfterProductDisplay`) as generic events the way J2Store 4.1.4 fires them; also asserts that the add-to-cart hook of the detail page adds no second button and that the J2Store events add nothing on J2Commerce 6
-10. **Active Shop Detection** — seeds `#__j2commerce_*` and `#__j2store_*` with the same product IDs but different data, switches `com_j2commerce`/`com_j2store` in `#__extensions` and asserts over the real AJAX endpoint that the enabled shop's data is returned (J6: J2Commerce 6 active, both active, J2Store active, none active; J5: J2Store active, both active); restores all component states and drops only the tables it created
-11. **Page Render** — real HTTP requests: on Joomla 6 a visible J2Commerce 6 product page contains the plugin CSS/JS, its script options, the compare button and the bar and modal before `</body>`; on both stacks the home page and a com_ajax response contain none of it. (A J2Store 4 product page is not requested: it needs the complete J2Store catalogue setup; the J2Store hooks are covered by Event Dispatch.)
+10. **Active Shop Detection** — seeds `#__j2commerce_*` and `#__j2store_*` with the same product IDs but different data, switches `com_j2commerce`/`com_j2store` in `#__extensions` and asserts over the real AJAX endpoint that the enabled shop's data is returned (J6: J2Commerce 6 active, both active, J2Store active, none active, J2Store enabled without its tables; J5: J2Store active, both active, both active without the J2Commerce 6 tables, only J2Commerce 6 active, none active); restores all component states and drops only the tables it created
+11. **Page Render** — real HTTP requests: on Joomla 6 a visible J2Commerce 6 product page contains the plugin CSS/JS, its script options with form token, the translated script texts, the compare button and the bar and modal before `</body>`; the comparison is then requested exactly as the script sends it (POST, form-encoded `products[]` and the token from the page, same session) and must return both products, while the same request without token is rejected; on both stacks the home page and a com_ajax response contain none of it. (A J2Store 4 product page is not requested: it needs the complete J2Store catalogue setup; the J2Store hooks are covered by Event Dispatch.)
 12. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 13. **Uninstall** — clean removal from database and filesystem
 

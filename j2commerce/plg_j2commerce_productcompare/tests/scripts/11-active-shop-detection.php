@@ -84,9 +84,11 @@ class ActiveShopDetectionTest
     private array $seededRows = [];
     /** @var int[] #__content ids seeded here */
     private array $seededContentIds = [];
-    private int $createdCategoryId = 0;
     /** @var int[] #__extensions ids inserted here */
     private array $insertedExtensionIds = [];
+
+    /** @var array<string, string> renamed name => original name of tables hidden by withHiddenTable() */
+    private array $hiddenTables = [];
     /** @var array<int, int> extension_id => original enabled state */
     private array $originalStates = [];
 
@@ -158,6 +160,10 @@ class ActiveShopDetectionTest
         echo "\n--- both components off (fallback to table check) ---\n";
         $this->setComponents(['com_j2commerce' => 0, 'com_j2store' => 0]);
         $this->assertShopDelivered('j2commerce', 'no active shop');
+
+        echo "\n--- com_j2store on without its tables, com_j2commerce off (next rule: fallback) ---\n";
+        $this->setComponents(['com_j2commerce' => 0, 'com_j2store' => 1]);
+        $this->withHiddenTable('j2store', fn () => $this->assertShopDelivered('j2commerce', 'J2Store enabled, tables missing'));
     }
 
     private function runJ5Scenarios(): void
@@ -172,6 +178,56 @@ class ActiveShopDetectionTest
         echo "\n--- both components on (counter-check) ---\n";
         $this->setComponents(['com_j2store' => 1, 'com_j2commerce' => 1]);
         $this->assertShopDelivered('j2commerce', 'J2Commerce 6 active');
+
+        echo "\n--- both components on, j2commerce tables missing (next rule: J2Store) ---\n";
+        $this->withHiddenTable('j2commerce', fn () => $this->assertShopDelivered('j2store', 'J2Commerce enabled, tables missing'));
+
+        echo "\n--- only com_j2commerce on ---\n";
+        $this->setComponents(['com_j2store' => 0, 'com_j2commerce' => 1]);
+        $this->assertShopDelivered('j2commerce', 'only J2Commerce 6 enabled');
+
+        echo "\n--- both components off (fallback to table check) ---\n";
+        $this->setComponents(['com_j2store' => 0, 'com_j2commerce' => 0]);
+        $this->assertShopDelivered('j2commerce', 'no active shop');
+    }
+
+    /**
+     * Run $check while the product table of $shop is renamed. Only tables this
+     * suite created are renamed; the real tables of the installed shop are
+     * never touched.
+     */
+    private function withHiddenTable(string $shop, callable $check): void
+    {
+        $prefix = $this->db->getPrefix();
+        $table  = $prefix . self::SHOPS[$shop]['products'];
+        $hidden = $table . '_pcdetect_hidden';
+
+        $this->test("Precondition: {$table} was created by this suite", in_array($table, $this->createdTables, true));
+
+        if (!in_array($table, $this->createdTables, true)) {
+            return;
+        }
+
+        $this->db->setQuery('RENAME TABLE ' . $this->db->quoteName($table) . ' TO ' . $this->db->quoteName($hidden))->execute();
+        $this->hiddenTables[$hidden] = $table;
+
+        try {
+            $check();
+        } finally {
+            $this->restoreHiddenTables();
+        }
+    }
+
+    private function restoreHiddenTables(): void
+    {
+        foreach ($this->hiddenTables as $hidden => $table) {
+            try {
+                $this->db->setQuery('RENAME TABLE ' . $this->db->quoteName($hidden) . ' TO ' . $this->db->quoteName($table))->execute();
+                unset($this->hiddenTables[$hidden]);
+            } catch (\Throwable $e) {
+                echo "  WARN could not restore $table: " . $e->getMessage() . "\n";
+            }
+        }
     }
 
     /**
@@ -479,20 +535,13 @@ class ActiveShopDetectionTest
             ->setLimit(1);
         $catid = (int) $this->db->setQuery($query)->loadResult();
 
-        if ($catid) {
-            return $catid;
+        // A Joomla installation always has the published "Uncategorised"
+        // category; a hand-made category would break the nested set.
+        if ($catid <= 0) {
+            throw new \RuntimeException('No published com_content category found');
         }
 
-        $cat = (object) [
-            'title' => 'PcDetect Category', 'alias' => 'pcdetect-category-' . time(),
-            'extension' => 'com_content', 'published' => 1, 'access' => 1,
-            'params' => '{}', 'metadata' => '{}', 'language' => '*',
-            'path' => 'pcdetect-category', 'parent_id' => 1, 'level' => 1, 'lft' => 0, 'rgt' => 0,
-        ];
-        $this->db->insertObject('#__categories', $cat, 'id');
-        $this->createdCategoryId = (int) $this->db->insertid();
-
-        return $this->createdCategoryId;
+        return $catid;
     }
 
     /**
@@ -643,6 +692,8 @@ class ActiveShopDetectionTest
 
     private function cleanup(): void
     {
+        $this->restoreHiddenTables();
+
         foreach ($this->originalStates as $id => $enabled) {
             $this->safeExecute(
                 $this->q()
@@ -675,11 +726,14 @@ class ActiveShopDetectionTest
             );
         }
 
-        if ($this->createdCategoryId) {
-            $this->safeExecute(
-                $this->q()->delete($this->db->quoteName('#__categories'))
-                    ->where($this->db->quoteName('id') . ' = ' . $this->createdCategoryId)
-            );
+        // The seeded IDs lie far above the existing ones; let the real tables
+        // continue after their highest remaining ID again.
+        foreach ($this->seededRows as [$table]) {
+            $real = $this->db->getPrefix() . substr($table, 3);
+
+            if (!in_array($real, $this->createdTables, true)) {
+                $this->safeExecuteSql('ALTER TABLE ' . $this->db->quoteName($real) . ' AUTO_INCREMENT = 1');
+            }
         }
 
         foreach ($this->createdTables as $table) {
@@ -706,7 +760,25 @@ class ActiveShopDetectionTest
 
         foreach ($this->createdTables as $table) {
             $this->test("Cleanup: table $table dropped",
-                !$this->tableExists(substr($table, strlen($this->db->getPrefix()))));
+                !$this->tableExists(substr($table, strlen($this->db->getPrefix())))
+                && !$this->tableExists(substr($table, strlen($this->db->getPrefix())) . '_pcdetect_hidden'));
+        }
+
+        if ($this->insertedExtensionIds !== []) {
+            $query = $this->q()
+                ->select('COUNT(*)')
+                ->from($this->db->quoteName('#__extensions'))
+                ->whereIn($this->db->quoteName('extension_id'), $this->insertedExtensionIds);
+            $this->test('Cleanup: inserted component rows removed', (int) $this->db->setQuery($query)->loadResult() === 0);
+        }
+    }
+
+    private function safeExecuteSql(string $sql): void
+    {
+        try {
+            $this->db->setQuery($sql)->execute();
+        } catch (\Throwable $e) {
+            echo '  WARN cleanup step failed: ' . $e->getMessage() . "\n";
         }
     }
 

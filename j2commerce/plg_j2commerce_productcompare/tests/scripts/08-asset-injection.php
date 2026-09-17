@@ -1,6 +1,6 @@
 <?php
 /**
- * Asset Injection Tests — onAfterDispatch() / onAfterRender()
+ * Asset Injection Tests — onBeforeCompileHead() / onAfterRender()
  *
  * Verifies that assets, compare bar and modal are added only to site HTML pages
  * on which a compare button was rendered (the button is rendered through the
@@ -148,7 +148,7 @@ class AssetInjectionTest
         try {
             $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
-            $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
+            $this->test('onBeforeCompileHead() runs without error in frontend', false, $e->getMessage());
             return;
         }
 
@@ -161,7 +161,7 @@ class AssetInjectionTest
         $plugin->setApplication($app);
 
         // Without a rendered button the page stays untouched.
-        $plugin->onAfterDispatch();
+        $plugin->onBeforeCompileHead();
         $this->test('No button rendered → no script options added',
             empty($doc->getScriptOptions('plg_j2commerce_productcompare')));
 
@@ -171,12 +171,12 @@ class AssetInjectionTest
 
         try {
             ob_start();
-            $plugin->onAfterDispatch();
+            $plugin->onBeforeCompileHead();
             ob_end_clean();
-            $this->test('onAfterDispatch() runs without error in frontend', true);
+            $this->test('onBeforeCompileHead() runs without error in frontend', true);
         } catch (\Throwable $e) {
             ob_end_clean();
-            $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
+            $this->test('onBeforeCompileHead() runs without error in frontend', false, $e->getMessage());
             return;
         }
 
@@ -189,6 +189,12 @@ class AssetInjectionTest
         if (!empty($options)) {
             $this->test('maxProducts in script options',
                 isset($options['maxProducts']) && (int)$options['maxProducts'] === 3);
+            $this->test('form token in script options',
+                isset($options['token']) && preg_match('/^[a-f0-9]{32}$/', (string) $options['token']) === 1);
+            $texts = $doc->getScriptOptions('joomla.jtext');
+            $this->test('JS texts registered for Joomla.Text',
+                is_array($texts) && isset($texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE']) && $texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'] !== 'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
+                'joomla.jtext: ' . json_encode($texts));
             $this->test('ajaxUrl in script options',
                 isset($options['ajaxUrl']) && strpos($options['ajaxUrl'], 'com_ajax') !== false);
         }

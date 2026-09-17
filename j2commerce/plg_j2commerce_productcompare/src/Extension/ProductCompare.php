@@ -47,15 +47,20 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      *
      *   AfterAddToCartButton — fired after the add-to-cart button in
      *     default_cart.php (product list), view_cart.php (product detail) and
-     *     cart.php. Args: [$product, $context]; $context ends with the layout
-     *     name (e.g. "…default_cart"). The detail page is covered by
-     *     AfterProductDisplay, so the button is only added outside view_cart.
+     *     cart.php (up-sell and cross-sell products on the detail page).
+     *     Args: [$product, $context]; $context ends with the layout name
+     *     (e.g. "…default_cart"). The product of the detail page itself is
+     *     covered by AfterProductDisplay, so view_cart is skipped. J2Store only
+     *     renders these layouts when the cart can be shown (not in catalogue
+     *     mode, not for guests when "registered users only" is set).
      *
      *   onAjaxProductcompare — dispatched by com_ajax for
      *     plugin=productcompare&group={installed folder}.
      *
-     *   onAfterDispatch / onAfterRender — add the assets and the compare bar
-     *     and modal to pages on which a compare button was rendered.
+     *   onBeforeCompileHead / onAfterRender — add the assets, script options
+     *     and texts (head, rendered after the component and the modules) and
+     *     the compare bar and modal to pages on which a compare button was
+     *     rendered.
      *
      * Joomla registers a SubscriberInterface plugin only through this list
      * (CMSPlugin::registerListeners() skips the method-name convention), so
@@ -71,7 +76,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             'onJ2StoreAfterProductDisplay'            => 'onJ2StoreAfterProductDisplay',
             'onJ2StoreAfterAddToCartButton'           => 'onJ2StoreAfterAddToCartButton',
             'onAjaxProductcompare'                    => 'onAjaxProductcompare',
-            'onAfterDispatch'                         => 'onAfterDispatch',
+            'onBeforeCompileHead'                     => 'onBeforeCompileHead',
             'onAfterRender'                           => 'onAfterRender',
         ];
     }
@@ -102,15 +107,28 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     }
 
     /**
-     * Register assets with WebAssetManager and pass JS configuration.
-     *
-     * Assets (CSS + JS) are registered via joomla.asset.json and enqueued
-     * here. Configuration is passed via Joomla's script options mechanism
-     * (rendered as a JSON blob in <head>, read by JS via Joomla.getOptions()).
-     * The component has been dispatched at this point, so the buttons of the
-     * page are already rendered.
+     * Language strings used by media/js/productcompare.js (Joomla.Text._()).
      */
-    public function onAfterDispatch(): void
+    private const SCRIPT_TEXTS = [
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_DEFAULT_BUTTON_TEXT',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_MAX_PRODUCTS',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_MIN_PRODUCTS',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_CLEAR_CONFIRM',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_LOADING',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_LOAD_FAILED',
+        'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_PRODUCT',
+    ];
+
+    /**
+     * Register assets with WebAssetManager and pass JS configuration and texts.
+     *
+     * Runs while the document head is rendered, i.e. after the component and the
+     * modules, so buttons rendered by modules are counted as well. Configuration
+     * is passed via Joomla's script options (Joomla.getOptions()); the form token
+     * lets the script call the com_ajax endpoint.
+     */
+    public function onBeforeCompileHead(): void
     {
         if ($this->renderedButtons === 0 || !$this->isSitePage()) {
             return;
@@ -124,13 +142,17 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         $wa->useStyle('plg_j2commerce_productcompare.css')
            ->useScript('plg_j2commerce_productcompare');
 
-        // Configuration for JS — rendered as JSON in <head>, no inline <script> needed
-        // com_ajax resolves plugins by their installed group (folder in #__extensions).
-        // The group is set to j2store on J4/J5 and j2commerce on J6 by the installer script.
+        // com_ajax resolves plugins by their installed group (folder in #__extensions):
+        // j2store on Joomla 5 and j2commerce on Joomla 6.
         $doc->addScriptOptions('plg_j2commerce_productcompare', [
             'maxProducts' => (int) $this->params->get('max_products', 4),
             'ajaxUrl'     => Uri::base() . 'index.php?option=com_ajax&plugin=productcompare&group=' . $this->_type . '&format=json',
+            'token'       => Session::getFormToken(),
         ]);
+
+        foreach (self::SCRIPT_TEXTS as $key) {
+            Text::script($key);
+        }
     }
 
     /**

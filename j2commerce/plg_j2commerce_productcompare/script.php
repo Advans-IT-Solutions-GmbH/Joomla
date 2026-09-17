@@ -86,7 +86,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
             $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_SEARCH') . '</p>';
 
-            if (!$isJ6) {
+            if ($this->isJ2StoreActiveShop()) {
                 $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_J2STORE_NOTE') . '</p>';
             }
             $message .= '</div>';
@@ -371,6 +371,36 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
      * Whether this plugin is enabled in #__extensions. The group is j2commerce
      * on Joomla 6 and j2store on Joomla 5, so only type and element are matched.
      */
+    /**
+     * Whether J2Store / J2Commerce 4 is the active shop, by the same rule the
+     * plugin uses: com_j2commerce enabled with #__j2commerce_products wins;
+     * otherwise com_j2store enabled with #__j2store_products.
+     */
+    private function isJ2StoreActiveShop(): bool
+    {
+        try {
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $tables = $db->getTableList();
+            $query  = $this->createDbQuery($db)
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        $prefix = $db->getPrefix();
+
+        if (\in_array('com_j2commerce', $enabled, true) && \in_array($prefix . 'j2commerce_products', $tables, true)) {
+            return false;
+        }
+
+        return \in_array('com_j2store', $enabled, true) && \in_array($prefix . 'j2store_products', $tables, true);
+    }
+
     private function isPluginEnabled(): bool
     {
         try {

@@ -6,9 +6,12 @@
  * category, enabled product, master variant) is seeded and its detail page
  * (index.php?option=com_j2commerce&view=product&id=…) is requested. J2Commerce
  * imports the j2commerce plugin group while rendering the page, which registers
- * the plugin's onAfterDispatch/onAfterRender listeners. The response must contain
- * the plugin's CSS and JS, its script options, the compare button for the
- * product and the compare bar and modal before </body>.
+ * the plugin's onBeforeCompileHead/onAfterRender listeners. The response must contain
+ * the plugin's CSS and JS, its script options (with form token and translated
+ * texts), the compare button for the product and the compare bar and modal
+ * before </body>. Then the comparison is requested exactly as
+ * media/js/productcompare.js does it: POST to the ajaxUrl from the script
+ * options, form-encoded products[] and the token from the page, same session.
  *
  * Both stacks: pages without a compare button (home page) and com_ajax
  * responses must not contain any of it.
@@ -41,6 +44,11 @@ class PageRenderTest
 
     /** @var array<int, array{0:string,1:string,2:int}> rows to delete: table, pk, id */
     private array $seeded = [];
+
+    /** @var array<int, string> product id => title */
+    private array $titles = [];
+
+    private string $cookieJar = '';
 
     public function __construct()
     {
@@ -106,23 +114,66 @@ class PageRenderTest
     }
 
     /**
+     * GET or POST with a cookie jar, so page and AJAX request share the session.
+     *
      * @return array{0:int,1:string} HTTP status and body
      */
+    private function request(string $url, ?string $postBody = null, array $headers = []): array
+    {
+        if ($this->cookieJar === '') {
+            $this->cookieJar = (string) tempnam(sys_get_temp_dir(), 'pc-page-cookies-');
+        }
+
+        if (!preg_match('#^https?://#', $url)) {
+            $url = self::BASE_URL . $url;
+        }
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_COOKIEFILE     => $this->cookieJar,
+            CURLOPT_COOKIEJAR      => $this->cookieJar,
+            CURLOPT_HTTPHEADER     => $headers,
+        ]);
+
+        if ($postBody !== null) {
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postBody);
+        }
+
+        $body   = (string) curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$status, $body];
+    }
+
     private function get(string $path): array
     {
-        $context = stream_context_create([
-            'http' => ['method' => 'GET', 'ignore_errors' => true, 'timeout' => 30, 'header' => "Accept: text/html\r\n"],
-        ]);
-        $body   = @file_get_contents(self::BASE_URL . $path, false, $context);
-        $status = 0;
+        return $this->request($path, null, ['Accept: text/html']);
+    }
 
-        foreach ($http_response_header ?? [] as $line) {
-            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $m)) {
-                $status = (int) $m[1];
+    /**
+     * All Joomla script options of a rendered page.
+     */
+    private function scriptOptions(string $body): array
+    {
+        $options = [];
+
+        if (preg_match_all('#<script[^>]*class="joomla-script-options[^"]*"[^>]*>(.*?)</script>#is', $body, $m)) {
+            foreach ($m[1] as $json) {
+                $decoded = json_decode(html_entity_decode(trim($json), ENT_QUOTES), true);
+
+                if (\is_array($decoded)) {
+                    $options = array_replace_recursive($options, $decoded);
+                }
             }
         }
 
-        return [$status, $body === false ? '' : $body];
+        return $options;
     }
 
     private function diagnose(string $body): string
@@ -147,10 +198,11 @@ class PageRenderTest
     {
         echo "\n--- J2Commerce 6 product page ---\n";
 
-        $productId = $this->seedVisibleProduct();
-        $this->test('Visible J2Commerce 6 product seeded', $productId > 0);
+        $productId = $this->seedVisibleProduct('Compare Page Product A');
+        $secondId  = $this->seedVisibleProduct('Compare Page Product B');
+        $this->test('Two visible J2Commerce 6 products seeded', $productId > 0 && $secondId > 0);
 
-        if ($productId <= 0) {
+        if ($productId <= 0 || $secondId <= 0) {
             return;
         }
 
@@ -177,6 +229,54 @@ class PageRenderTest
             $barPos !== false && $modal !== false && $bodyEnd !== false && $barPos < $bodyEnd && $modal < $bodyEnd);
         $this->test('Bar and modal are injected once',
             substr_count($body, 'id="j2store-compare-bar"') === 1 && substr_count($body, 'id="j2store-compare-modal"') === 1);
+
+        $options = $this->scriptOptions($body);
+        $plugin  = $options['plg_j2commerce_productcompare'] ?? [];
+        $texts   = $options['joomla.jtext'] ?? [];
+        $token   = (string) ($plugin['token'] ?? '');
+        $ajaxUrl = (string) ($plugin['ajaxUrl'] ?? '');
+
+        $this->test('Script options carry a form token', preg_match('/^[a-f0-9]{32}$/', $token) === 1,
+            'options: ' . json_encode($plugin));
+        $this->test('Script options carry the com_ajax URL', str_contains($ajaxUrl, 'option=com_ajax'), $ajaxUrl);
+        $this->test('JS texts are translated on the page',
+            isset($texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'])
+            && $texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'] !== 'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
+            'joomla.jtext: ' . json_encode($texts));
+
+        if ($token === '' || $ajaxUrl === '') {
+            return;
+        }
+
+        echo "\n--- Comparison request as sent by productcompare.js ---\n";
+
+        // productcompare.js: URLSearchParams with products[] and <token>=1, POST,
+        // same session (credentials: same-origin).
+        $jsBody = http_build_query(['products' => [$productId, $secondId], $token => 1], '', '&', PHP_QUERY_RFC1738);
+        [$status, $response] = $this->request($ajaxUrl, $jsBody, [
+            'Content-Type: application/x-www-form-urlencoded;charset=UTF-8',
+            'Accept: application/json',
+            'X-Requested-With: XMLHttpRequest',
+        ]);
+        $json = json_decode(trim($response), true);
+
+        $this->test('Comparison request returns HTTP 200', $status === 200, "HTTP $status");
+        $this->test('Comparison request succeeds', \is_array($json) && ($json['success'] ?? false) === true,
+            'body: ' . mb_substr($response, 0, 300));
+
+        $html = \is_array($json) ? (string) ($json['data']['html'] ?? '') : '';
+
+        foreach ([$productId, $secondId] as $id) {
+            $this->test("Comparison table contains product $id", str_contains($html, $this->titles[$id]),
+                mb_substr(strip_tags($html), 0, 300));
+        }
+
+        // Without the token the same request is rejected.
+        $noToken = http_build_query(['products' => [$productId, $secondId]], '', '&', PHP_QUERY_RFC1738);
+        [, $rejected] = $this->request($ajaxUrl, $noToken, ['Content-Type: application/x-www-form-urlencoded;charset=UTF-8']);
+        $rejectedJson = json_decode(trim($rejected), true);
+        $this->test('Request without token is rejected',
+            \is_array($rejectedJson) && ($rejectedJson['success'] ?? true) === false, mb_substr($rejected, 0, 200));
     }
 
     private function testHomePage(): void
@@ -220,7 +320,7 @@ class PageRenderTest
         return (int) $this->db->setQuery($query)->loadResult();
     }
 
-    private function seedVisibleProduct(): int
+    private function seedVisibleProduct(string $title): int
     {
         $catid = $this->publicCategoryId();
         $this->test('Public com_content category available', $catid > 0);
@@ -230,9 +330,10 @@ class PageRenderTest
         }
 
         $now     = Factory::getDate()->toSql();
+        $title   = $title . ' ' . bin2hex(random_bytes(3));
         $article = (object) [
-            'title' => 'Compare Page Product', 'alias' => 'compare-page-product-' . time(),
-            'introtext' => '<p>Compare page product</p>', 'fulltext' => '', 'state' => 1, 'catid' => $catid,
+            'title' => $title, 'alias' => strtolower(str_replace(' ', '-', $title)),
+            'introtext' => '<p>' . $title . '</p>', 'fulltext' => '', 'state' => 1, 'catid' => $catid,
             'created' => $now, 'created_by' => 42, 'modified' => $now, 'publish_up' => $now,
             'access' => 1, 'language' => '*', 'metadata' => '{}', 'attribs' => '{}',
             'images' => '{}', 'urls' => '{}', 'metadesc' => '', 'metakey' => '', 'note' => '',
@@ -256,6 +357,7 @@ class PageRenderTest
         $this->db->insertObject('#__j2commerce_products', $product, 'j2commerce_product_id');
         $productId = (int) $this->db->insertid();
         $this->seeded[] = ['#__j2commerce_products', 'j2commerce_product_id', $productId];
+        $this->titles[$productId] = $title;
 
         $variant = $this->buildRow('#__j2commerce_variants', [
             'product_id'     => $productId,
@@ -341,6 +443,10 @@ class PageRenderTest
         }
 
         $this->seeded = [];
+
+        if ($this->cookieJar !== '' && is_file($this->cookieJar)) {
+            @unlink($this->cookieJar);
+        }
     }
 }
 

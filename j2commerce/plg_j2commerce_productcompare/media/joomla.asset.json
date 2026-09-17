@@ -15,7 +15,7 @@
       "name": "plg_j2commerce_productcompare",
       "type": "script",
       "uri": "plg_j2commerce_productcompare/js/productcompare.js",
-      "dependencies": [],
+      "dependencies": ["core"],
       "attributes": {
         "defer": true
       },

@@ -52,6 +52,29 @@ class MediaFilesTest
                 && str_contains($asset['uri'], 'js/productcompare.js');
         });
 
+        $this->test('Script asset depends on "core" (Joomla.getOptions, Joomla.Text)', function () {
+            $asset = $this->findAsset('plg_j2commerce_productcompare', 'script');
+            return $asset !== null && in_array('core', (array) ($asset['dependencies'] ?? []), true);
+        });
+
+        $this->test('JS sends the form token from the script options', function () {
+            $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
+            return str_contains($content, 'options.token') && str_contains($content, 'body.append(this.token');
+        });
+
+        $this->test('JS posts form-encoded product IDs (products[]), not JSON', function () {
+            $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
+            return str_contains($content, 'new URLSearchParams()')
+                && str_contains($content, "'products[]'")
+                && !str_contains($content, "'Content-Type': 'application/json'")
+                && !str_contains($content, 'JSON.stringify({');
+        });
+
+        $this->test('JS reads its texts through Joomla.Text', function () {
+            $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
+            return str_contains($content, 'Joomla.Text._(');
+        });
+
         $this->test('joomla.asset.json registers the style asset "plg_j2commerce_productcompare.css"', function () {
             $asset = $this->findAsset('plg_j2commerce_productcompare.css', 'style');
             return $asset !== null
