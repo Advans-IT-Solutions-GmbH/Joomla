@@ -7,6 +7,10 @@
  * The plugin may answer directly with {"success":false,...} or through the
  * com_ajax envelope that carries the plugin JSON string in data[0].
  *
+ * The envelope itself always has "success":true (com_ajax dispatched the
+ * request), so the plugin payload in data[0] is checked first; the outer
+ * object only counts when it carries no plugin payload.
+ *
  * @return array<string, mixed>|null
  */
 function ajaxforms_decode_response(string $body): ?array
@@ -17,23 +21,17 @@ function ajaxforms_decode_response(string $body): ?array
         return null;
     }
 
-    if (array_key_exists('success', $outer)) {
-        return $outer;
+    $inner = $outer['data'][0] ?? null;
+
+    if (is_string($inner)) {
+        $inner = json_decode($inner, true);
     }
 
-    if (isset($outer['data'][0]) && is_string($outer['data'][0])) {
-        $inner = json_decode($outer['data'][0], true);
-
-        if (is_array($inner) && array_key_exists('success', $inner)) {
-            return $inner;
-        }
+    if (is_array($inner) && array_key_exists('success', $inner)) {
+        return $inner;
     }
 
-    if (isset($outer['data'][0]) && is_array($outer['data'][0]) && array_key_exists('success', $outer['data'][0])) {
-        return $outer['data'][0];
-    }
-
-    return null;
+    return array_key_exists('success', $outer) ? $outer : null;
 }
 
 /**

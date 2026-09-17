@@ -132,12 +132,10 @@ class RemindRequestTest
             null,
             false
         );
-        $data     = ajaxforms_decode_response($body);
-        $rejected = ($code >= 300 && $code < 400)
-            || ($data !== null && ($data['success'] ?? null) === false)
-            || $code === 403;
+        // Always a JSON error, never a redirect (also for a new session).
+        $rejected = $code === 200 && ajaxforms_is_json_rejection($body);
 
-        $this->test('Remind request without token is rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
+        $this->test('Remind request without token is rejected with JSON success=false (no redirect)', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }
 
     private function testInvalidEmail(): void

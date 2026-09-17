@@ -92,10 +92,8 @@ class ProfileTest
             'task' => 'saveProfile', 'name' => 'Test User', 'email' => 'test@example.com',
         ], [], false);
 
-        $data     = ajaxforms_decode_response($body);
-        $rejected = ($code >= 300 && $code < 400)
-            || ($data !== null && ($data['success'] ?? null) === false)
-            || $code === 403;
+        // Always a JSON error, never a redirect (also for a new session).
+        $rejected = $code === 200 && ajaxforms_is_json_rejection($body);
 
         $this->test(
             'Unauthenticated saveProfile → rejected',
@@ -113,10 +111,8 @@ class ProfileTest
             'task' => 'saveProfile', 'name' => 'Test User', 'email' => 'test@example.com',
         ], [], false);
 
-        $data     = ajaxforms_decode_response($body);
-        $rejected = ($code >= 300 && $code < 400)
-            || ($data !== null && ($data['success'] ?? null) === false)
-            || $code === 403;
+        // Always a JSON error, never a redirect (also for a new session).
+        $rejected = $code === 200 && ajaxforms_is_json_rejection($body);
 
         $this->test('No-token profileSave POST rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }
