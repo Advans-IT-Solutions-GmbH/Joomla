@@ -263,7 +263,14 @@ WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'langu
 UPDATE ${DB_PREFIX}menu
 SET published = 0
 WHERE id IN (9002, 9003) AND published = -2;
-
+UPDATE ${DB_PREFIX}content
+SET language='de-DE'
+WHERE id IN (9001, 9002);
+EOSQL
+    LIVE_ROUTE_COUNT=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT COUNT(*) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);" 2>/dev/null || echo "0")
+    if [ "${LIVE_ROUTE_COUNT}" = "0" ]; then
+        mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 SET @live_parent_rgt = (SELECT rgt FROM ${DB_PREFIX}menu WHERE id = 9001);
 UPDATE ${DB_PREFIX}menu
 SET rgt = rgt + 4
@@ -285,11 +292,8 @@ VALUES
      'index.php?option=com_content&view=article&id=9002&Itemid=9012',
      'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
      @live_parent_rgt + 2, @live_parent_rgt + 3);
-
-UPDATE ${DB_PREFIX}content
-SET language='de-DE'
-WHERE id IN (9001, 9002);
 EOSQL
+    fi
     echo "Multilingual SEF fixture applied"
 fi
 
