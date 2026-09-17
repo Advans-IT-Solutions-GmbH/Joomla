@@ -204,6 +204,10 @@ class AssetInjectionTest
                 isset($options['maxProducts']) && (int)$options['maxProducts'] === 3);
             $this->test('form token in script options',
                 isset($options['token']) && preg_match('/^[a-f0-9]{32}$/', (string) $options['token']) === 1);
+            $texts = $doc->getScriptOptions('joomla.jtext');
+            $this->test('JS texts registered for Joomla.Text (translated, not raw keys)',
+                is_array($texts) && isset($texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE']) && $texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'] !== 'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
+                'joomla.jtext: ' . json_encode($texts));
             $this->test('ajaxUrl in script options',
                 isset($options['ajaxUrl']) && strpos($options['ajaxUrl'], 'com_ajax') !== false);
         }
