@@ -141,7 +141,11 @@ echo "com_j2commerce=${COM_J2COMMERCE_ID}"
 
 echo "Inserting fixtures..."
 MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-    -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
+    -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" 2>/dev/null)
+if [ -z "${MAINMENU_ROOT_ID}" ]; then
+    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1;" 2>/dev/null || echo "1")
+fi
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
@@ -191,26 +195,131 @@ EOSQL
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Give the hidden product child menu items a real
-# content language (de-DE) and add the matching #__languages row (sef=de,
-# published=1). OSMap builds each product URL from #__languages.sef + the menu
-# path (it deliberately bypasses the Joomla router for published=-2 items), so
-# this alone makes the generated URLs carry the /de/ prefix — no language pack
-# or language-filter plugin required. It makes 08's prefix assertion meaningful:
-# a single-language fixture has no prefix that could go missing, which is exactly
-# how the #176 regression slipped through. The parent Shop menu stays language='*'
-# so OSMap still traverses it, and the non-SEF stacks keep '*' (07 asserts the
-# unprefixed /shop/... form there).
+# runs 08-sitemap-http-sef.php). Install the real de-DE language pack, add
+# dedicated published de-DE product menu items for the live HTTP assertions, and
+# add the matching #__languages row (sef=de, published=1). The Shop parent
+# stays language='*' so OSMap still traverses it, while the dedicated published
+# product routes make /de/shop/<alias> resolve. Any pre-existing product menu
+# items for those aliases/paths are removed in this SEF-only lane so the sitemap
+# must use the multilingual direct-product path instead of hidden-menu
+# shortcuts.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
+    JOOMLA_VERSION=$(php -r "define('_JEXEC',1); define('JPATH_BASE','/var/www/html'); require JPATH_BASE . '/includes/defines.php'; require JPATH_BASE . '/includes/framework.php'; echo JVERSION;" 2>/dev/null || true)
+    if [ -z "${JOOMLA_VERSION}" ]; then
+        echo "ERROR: Could not detect Joomla version for de-DE language pack installation"
+        exit 1
+    fi
+    # The mutable joomla:6-php8.4-apache image tag auto-pulls the newest patch
+    # release, and joomlagerman may not have published a de-DE pack for that exact
+    # patch yet. A de-DE pack for an older patch in the same major.minor installs
+    # and routes fine, so walk the patch level down (each with the v1..v3 revision
+    # suffixes) until one downloads — keeping the SEF fixture green on release days.
+    LANG_MAJOR="${JOOMLA_VERSION%%.*}"
+    LANG_MINOR="$(echo "${JOOMLA_VERSION}" | cut -d. -f2)"
+    LANG_PATCH="$(echo "${JOOMLA_VERSION}" | cut -d. -f3)"
+    LANG_MINOR="${LANG_MINOR:-0}"
+    LANG_PATCH="${LANG_PATCH:-0}"
+    LANG_INSTALLED=0
+    for lang_patch in $(seq "${LANG_PATCH}" -1 0); do
+        LANG_CANDIDATE="${LANG_MAJOR}.${LANG_MINOR}.${lang_patch}"
+        for suffix in v1 v2 v3; do
+            LANG_URL="https://github.com/joomlagerman/joomla/releases/download/${LANG_CANDIDATE}${suffix}/de-DE_joomla_lang_full_${LANG_CANDIDATE}${suffix}.zip"
+            # Retry transient network/5xx failures (not HTTP 404, so a missing
+            # pack version still falls through to the next candidate quickly).
+            if curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+                --connect-timeout 15 --max-time 180 "${LANG_URL}" -o /tmp/de-DE.zip; then
+                echo "Installing de-DE language pack (${LANG_CANDIDATE}${suffix})..."
+                if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/de-DE.zip; then
+                    echo "de-DE language pack installed"
+                    LANG_INSTALLED=1
+                    break 2
+                fi
+                echo "ERROR: de-DE language pack installation failed for ${LANG_CANDIDATE}${suffix}"
+                exit 1
+            fi
+        done
+    done
+    if [ "${LANG_INSTALLED}" != "1" ]; then
+        echo "ERROR: Could not download a de-DE language pack for Joomla ${JOOMLA_VERSION}"
+        exit 1
+    fi
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
-INSERT IGNORE INTO ${DB_PREFIX}languages
+INSERT INTO ${DB_PREFIX}languages
     (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)
 VALUES
-    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
+    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1)
+ON DUPLICATE KEY UPDATE
+    title = 'German (DE)',
+    title_native = 'Deutsch (DE)',
+    sef = 'de',
+    published = 1,
+    access = 1,
+    ordering = 1;
 
-UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+UPDATE ${DB_PREFIX}extensions
+SET enabled = 1
+WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'languagecode');
+
+UPDATE ${DB_PREFIX}content
+SET language='de-DE'
+WHERE id IN (9001, 9002);
 EOSQL
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+START TRANSACTION;
+DELETE FROM ${DB_PREFIX}menu
+WHERE menutype = 'mainmenu'
+  AND parent_id = 9001
+  AND (
+      id IN (9002, 9003, 9011, 9012)
+      OR alias IN ('test-product-alpha', 'test-product-beta')
+      OR path IN ('shop/test-product-alpha', 'shop/test-product-beta')
+  );
+
+INSERT INTO ${DB_PREFIX}menu
+    (id, menutype, title, alias, path, link, type, published, parent_id, level,
+     component_id, language, access, client_id, params, img, lft, rgt)
+VALUES
+    (9011, 'mainmenu', 'Live Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9011',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0),
+    (9012, 'mainmenu', 'Live Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9012',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0);
+COMMIT;
+EOSQL
+    HTTP_HOST=localhost php <<'EOPHP'
+<?php
+define('_JEXEC', 1);
+define('JPATH_BASE', '/var/www/html');
+require JPATH_BASE . '/includes/defines.php';
+require JPATH_BASE . '/includes/framework.php';
+
+$container = \Joomla\CMS\Factory::getContainer();
+$input = null;
+
+foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+    try {
+        if ($container->has($inputClass)) {
+            $input = $container->get($inputClass);
+            break;
+        }
+    } catch (\Throwable $e) {
+        // try the next candidate
+    }
+}
+
+$app = new \Joomla\CMS\Application\SiteApplication($input, $container->get('config'), null, $container);
+$app->setDispatcher($container->get(\Joomla\Event\DispatcherInterface::class));
+\Joomla\CMS\Factory::$application = $app;
+
+$db = $container->get(\Joomla\Database\DatabaseInterface::class);
+
+if (!(new \Joomla\CMS\Table\Menu($db))->rebuild()) {
+    fwrite(STDERR, "Menu rebuild failed\n");
+    exit(1);
+}
+EOPHP
     echo "Multilingual SEF fixture applied"
 fi
 
@@ -248,7 +357,7 @@ echo "OSMap sitemap created"
 
 echo "Verifying fixtures..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, title, published FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003);
+    SELECT id, title, published, language FROM ${DB_PREFIX}menu WHERE id IN (9001,9011,9012);
     SELECT j2commerce_product_id, product_source_id, enabled FROM ${DB_PREFIX}j2commerce_products WHERE j2commerce_product_id IN (9001,9002);
 " 2>/dev/null || echo "WARNING: fixture verification failed"
 
