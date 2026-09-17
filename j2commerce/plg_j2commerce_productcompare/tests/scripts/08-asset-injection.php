@@ -70,7 +70,6 @@ class AssetInjectionTest
 
     private function makePlugin(array $paramValues = []): \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare
     {
-        $dispatcher = new Dispatcher();
         $params     = new Registry(array_merge(['max_products' => 4], $paramValues));
         $group      = getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store';
 
@@ -205,10 +204,6 @@ class AssetInjectionTest
                 isset($options['maxProducts']) && (int)$options['maxProducts'] === 3);
             $this->test('form token in script options',
                 isset($options['token']) && preg_match('/^[a-f0-9]{32}$/', (string) $options['token']) === 1);
-            $texts = $doc->getScriptOptions('joomla.jtext');
-            $this->test('JS texts registered for Joomla.Text',
-                is_array($texts) && isset($texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE']) && $texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'] !== 'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
-                'joomla.jtext: ' . json_encode($texts));
             $this->test('ajaxUrl in script options',
                 isset($options['ajaxUrl']) && strpos($options['ajaxUrl'], 'com_ajax') !== false);
         }

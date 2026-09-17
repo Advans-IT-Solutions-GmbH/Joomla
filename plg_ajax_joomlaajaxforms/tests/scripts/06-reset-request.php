@@ -85,6 +85,31 @@ class ResetRequestTest
         return [$cookie, $token];
     }
 
+    /**
+     * The plugin may answer directly with {"success":false,...} or through the
+     * com_ajax envelope that carries the plugin JSON string in data[0].
+     *
+     * @return array<string, mixed>|null
+     */
+    private function decode(string $body): ?array
+    {
+        $outer = json_decode($body, true);
+
+        if (!is_array($outer)) {
+            return null;
+        }
+
+        if (isset($outer['data'][0]) && is_string($outer['data'][0])) {
+            $inner = json_decode($outer['data'][0], true);
+
+            if (is_array($inner) && array_key_exists('success', $inner)) {
+                return $inner;
+            }
+        }
+
+        return $outer;
+    }
+
     private function testMethodsViaReflection(): void
     {
         echo "\n--- Method existence (Reflection) ---\n";
@@ -110,11 +135,10 @@ class ResetRequestTest
             'task' => 'reset', 'email' => 'nobody@example.com',
         ], [], false);
 
-        $data    = json_decode($body, true);
-        $isJson  = $data !== null;
+        $data     = $this->decode($body);
         $rejected = ($code >= 300 && $code < 400)
-            || ($isJson && isset($data['success']) && $data['success'] === false)
-            || (!$isJson && $code === 200);
+            || ($data !== null && ($data['success'] ?? null) === false)
+            || $code === 403;
 
         $this->test('No-token resetRequest POST rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }
