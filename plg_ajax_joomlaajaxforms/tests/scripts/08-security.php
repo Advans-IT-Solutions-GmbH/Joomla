@@ -7,9 +7,10 @@
  * the actual HTTP response.
  *
  * CSRF test:  POST to the AJAX endpoint without a valid token must return a
- *             JSON rejection. A GET request may still hit Joomla's SEF redirect
- *             before the ajax plugin is loaded, so it is only checked as a
- *             best-effort diagnostic.
+ *             JSON rejection. GET requests use the same endpoint, but because
+ *             the ajax plugin is not guaranteed to be loaded before Joomla's
+ *             SEF redirect, the accepted outcomes are either that redirect or
+ *             the same JSON rejection.
  *
  * IDOR test:  Attempt to remove a cart item owned by a different user while
  *             unauthenticated → the DELETE must not affect the row.
@@ -205,17 +206,19 @@ class SecurityTest
         $url = $this->baseUrl . $this->ajaxPath . '&task=getCartCount';
 
         // The plugin must reject POST requests without a valid token with a JSON
-        // error ({"success":false,...}) even for a new session. GET is only a
-        // best-effort check here: onAfterRoute is a workaround and an ajax
-        // plugin is not guaranteed to be loaded before Joomla's SEF redirect.
-        // No cookies are sent, so every request starts a new session.
+        // error ({"success":false,...}) even for a new session. For GET the
+        // accepted outcomes are narrower but different: either the same JSON
+        // rejection or the Joomla SEF redirect that happens before an ajax
+        // plugin is guaranteed to be loaded. No cookies are sent, so every
+        // request starts a new session.
 
         // 1. GET with no token, new session
         [$code, $body] = $this->http('GET', $url, [], [], false);
-        $getHandled = ($code >= 300 && $code < 400) || ($code === 200 && ajaxforms_is_json_rejection($body));
-        echo '  INFO GET without token: '
-            . ($getHandled ? 'handled' : 'unexpected')
-            . " (HTTP $code, body: " . substr($body, 0, 200) . ")\n";
+        $this->test(
+            'New session, no token: GET is rejected with JSON or redirected before the plugin is loaded',
+            ($code >= 300 && $code < 400) || ($code === 200 && ajaxforms_is_json_rejection($body)),
+            "Got HTTP $code, body: " . substr($body, 0, 200)
+        );
 
         // 1b. POST with no token, new session
         [$codeP, $bodyP] = $this->http('POST', $url, ['task' => 'getCartCount'], [], false);
