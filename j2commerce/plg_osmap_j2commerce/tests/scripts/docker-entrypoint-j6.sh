@@ -199,9 +199,10 @@ echo "Fixtures inserted"
 # dedicated published de-DE product menu items for the live HTTP assertions, and
 # add the matching #__languages row (sef=de, published=1). The Shop parent
 # stays language='*' so OSMap still traverses it, while the dedicated published
-# product routes make /de/shop/<alias> resolve. Any hidden published=-2 fixture
-# children are disabled in this SEF-only lane so the sitemap must use the
-# multilingual direct-product path instead of those hidden-menu shortcuts.
+# product routes make /de/shop/<alias> resolve. Any pre-existing product menu
+# items for those aliases/paths are removed in this SEF-only lane so the sitemap
+# must use the multilingual direct-product path instead of hidden-menu
+# shortcuts.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
     JOOMLA_VERSION=$(php -r "define('_JEXEC',1); define('JPATH_BASE','/var/www/html'); require JPATH_BASE . '/includes/defines.php'; require JPATH_BASE . '/includes/framework.php'; echo JVERSION;" 2>/dev/null || true)
@@ -260,16 +261,20 @@ UPDATE ${DB_PREFIX}extensions
 SET enabled = 1
 WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'languagecode');
 
-UPDATE ${DB_PREFIX}menu
-SET published = 0
-WHERE id IN (9002, 9003) AND published = -2;
 UPDATE ${DB_PREFIX}content
 SET language='de-DE'
 WHERE id IN (9001, 9002);
 EOSQL
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 START TRANSACTION;
-DELETE FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);
+DELETE FROM ${DB_PREFIX}menu
+WHERE menutype = 'mainmenu'
+  AND parent_id = 9001
+  AND (
+      id IN (9002, 9003, 9011, 9012)
+      OR alias IN ('test-product-alpha', 'test-product-beta')
+      OR path IN ('shop/test-product-alpha', 'shop/test-product-beta')
+  );
 
 INSERT INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -352,7 +357,7 @@ echo "OSMap sitemap created"
 
 echo "Verifying fixtures..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, title, published, language FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003,9011,9012);
+    SELECT id, title, published, language FROM ${DB_PREFIX}menu WHERE id IN (9001,9011,9012);
     SELECT j2commerce_product_id, product_source_id, enabled FROM ${DB_PREFIX}j2commerce_products WHERE j2commerce_product_id IN (9001,9002);
 " 2>/dev/null || echo "WARNING: fixture verification failed"
 
