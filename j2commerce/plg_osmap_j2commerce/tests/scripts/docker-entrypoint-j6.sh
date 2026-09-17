@@ -249,12 +249,12 @@ INSERT INTO ${DB_PREFIX}languages
 VALUES
     ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1)
 ON DUPLICATE KEY UPDATE
-    title = VALUES(title),
-    title_native = VALUES(title_native),
-    sef = VALUES(sef),
-    published = VALUES(published),
-    access = VALUES(access),
-    ordering = VALUES(ordering);
+    title = 'German (DE)',
+    title_native = 'Deutsch (DE)',
+    sef = 'de',
+    published = 1,
+    access = 1,
+    ordering = 1;
 
 UPDATE ${DB_PREFIX}extensions
 SET enabled = 1
