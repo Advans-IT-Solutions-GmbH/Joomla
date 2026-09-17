@@ -15,17 +15,17 @@
  *   result is read back from the event — the same path J2Commerce 6's
  *   eventWithHtml() uses.
  *
- *   J4 / J2Store 4  (legacy method-name convention):
- *     onJ2StoreAfterDisplayProductList
- *     onJ2StoreAfterDisplayProduct
- *   J2Store 4 dispatches these via its legacy JEventDispatcher, which invokes the
- *   matching public method on each registered plugin with positional arguments
- *   (call_user_func_array). We invoke the registered listener the same way and
- *   assert the returned button HTML.
+ *   J5 / J2Store 4.1.4  (events verified against the J2Store 4.1.4 layouts):
+ *     onJ2StoreAfterAddToCartButton  (list: context "…default_cart"; detail: "…view_cart")
+ *     onJ2StoreAfterProductDisplay   (detail page)
+ *   J2Store fires these through CMSApplication::triggerEvent(), which creates a
+ *   generic event with positional arguments and returns its "result" argument.
+ *   The test dispatches a GenericEvent through a real dispatcher with the plugin
+ *   registered as subscriber and reads the "result" argument the same way.
  *
- * Stack-correct behaviour is also asserted: on J6 the legacy J2Store events must
- * be suppressed (the plugin detects J2Commerce 6 and returns empty), and on both
- * stacks the SubscriberInterface registration must wire the J2Commerce 6 events.
+ * Stack-correct behaviour is also asserted: on J6 the J2Store events must be
+ * suppressed (J2Commerce 6 is the active shop), and on both stacks the
+ * SubscriberInterface registration must wire all storefront events.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -35,6 +35,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 require_once __DIR__ . '/bootstrap-app.php';
 
+use Joomla\CMS\Event\GenericEvent;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\Dispatcher;
@@ -237,33 +238,49 @@ class EventDispatchTest
             implode('', $offEvent->getResults()) === '');
     }
 
+    /**
+     * Fire a J2Store event the way J2Store 4 does (CMSApplication::triggerEvent():
+     * generic event with positional arguments, HTML read from the "result"
+     * argument) against the given plugin registered on a real dispatcher.
+     */
+    private function fireJ2StoreEvent(object $plugin, string $name, array $args): string
+    {
+        $dispatcher = new Dispatcher();
+        $dispatcher->addSubscriber($plugin);
+
+        $event = new GenericEvent($name, $args);
+        $dispatcher->dispatch($name, $event);
+
+        return implode('', array_filter((array) $event->getArgument('result', []), 'is_string'));
+    }
+
     private function testLegacyEventsSuppressedOnJ6(): void
     {
-        echo "\n--- Legacy J2Store 4 events suppressed on J2Commerce 6 ---\n";
+        echo "\n--- J2Store 4 events suppressed on J2Commerce 6 ---\n";
 
         $product = $this->loadSeededProduct($this->seededProductIds[0]);
-        // The legacy handler expects a J2Store-style PK; provide it. The plugin must
-        // still return '' because isJ2Commerce6() detects the J2Commerce 6 schema.
+        // Give the product a J2Store-style PK; the plugin must still add nothing
+        // because J2Commerce 6 is the active shop.
         $product->j2store_product_id = (int) $product->{$this->productsPk};
 
         $plugin = $this->makePlugin();
 
-        $listOut   = call_user_func_array([$plugin, 'onJ2StoreAfterDisplayProductList'], [$product]);
-        $detailOut = call_user_func_array([$plugin, 'onJ2StoreAfterDisplayProduct'], [$product, 'product']);
+        $listOut   = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.default_cart']);
+        $detailOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterProductDisplay', [$product, new \stdClass()]);
 
-        $this->test('onJ2StoreAfterDisplayProductList returns empty on J6', $listOut === '',
-            'Expected empty string, got: ' . $listOut);
-        $this->test('onJ2StoreAfterDisplayProduct returns empty on J6', $detailOut === '',
-            'Expected empty string, got: ' . $detailOut);
+        $this->test('onJ2StoreAfterAddToCartButton adds nothing on J6', $listOut === '',
+            'Expected no output, got: ' . $listOut);
+        $this->test('onJ2StoreAfterProductDisplay adds nothing on J6', $detailOut === '',
+            'Expected no output, got: ' . $detailOut);
     }
 
     // -------------------------------------------------------------------------
-    // J2Store 4 — legacy method-name dispatch
+    // J2Store 4 — events as fired by J2Store 4.1.4
     // -------------------------------------------------------------------------
 
     private function testJ2Store4Events(): void
     {
-        echo "--- J2Store 4 legacy events ---\n";
+        echo "--- J2Store 4 events ---\n";
 
         $productId = $this->seededProductIds[0];
         $product   = $this->loadSeededProduct($productId);
@@ -272,17 +289,20 @@ class EventDispatchTest
 
         $plugin = $this->makePlugin();
 
-        // J2Store 4's legacy dispatcher calls the matching method with positional
-        // args (call_user_func_array). Invoke the listener exactly the same way.
-        $listOut   = call_user_func_array([$plugin, 'onJ2StoreAfterDisplayProductList'], [$product]);
-        $detailOut = call_user_func_array([$plugin, 'onJ2StoreAfterDisplayProduct'], [$product, 'product']);
-
-        $this->test('List event rendered compare button',
+        // Product list: default_cart.php passes getContext('default_cart').
+        $listOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.default_cart']);
+        $this->test('List (AfterAddToCartButton) rendered compare button',
             strpos($listOut, 'j2store-compare-btn') !== false, $listOut);
         $this->test('List button carries seeded product id',
             strpos($listOut, 'data-product-id="' . $productId . '"') !== false, $listOut);
 
-        $this->test('Detail event rendered compare button',
+        // Detail page: view_cart.php fires the same event; the button comes from
+        // AfterProductDisplay instead, so nothing is added here.
+        $viewCartOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.viewview_cart']);
+        $this->test('Detail add-to-cart hook (view_cart) adds no second button', $viewCartOut === '', $viewCartOut);
+
+        $detailOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterProductDisplay', [$product, new \stdClass()]);
+        $this->test('Detail (AfterProductDisplay) rendered compare button',
             strpos($detailOut, 'j2store-compare-btn') !== false, $detailOut);
         $this->test('Detail button carries seeded product id',
             strpos($detailOut, 'data-product-id="' . $productId . '"') !== false, $detailOut);
@@ -290,9 +310,9 @@ class EventDispatchTest
         // Params must gate output.
         $offPlugin = $this->makePluginWith(['show_in_list' => 0, 'show_in_detail' => 0]);
         $this->test('show_in_list=0 suppresses list button',
-            call_user_func_array([$offPlugin, 'onJ2StoreAfterDisplayProductList'], [$product]) === '');
+            $this->fireJ2StoreEvent($offPlugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.default_cart']) === '');
         $this->test('show_in_detail=0 suppresses detail button',
-            call_user_func_array([$offPlugin, 'onJ2StoreAfterDisplayProduct'], [$product, 'product']) === '');
+            $this->fireJ2StoreEvent($offPlugin, 'onJ2StoreAfterProductDisplay', [$product, new \stdClass()]) === '');
     }
 
     /**
@@ -310,6 +330,10 @@ class EventDispatchTest
             array_key_exists('onJ2CommerceAfterProductListItemDisplay', $events));
         $this->test('Subscribes to onJ2CommerceAfterProductDisplay',
             array_key_exists('onJ2CommerceAfterProductDisplay', $events));
+        $this->test('Subscribes to onJ2StoreAfterProductDisplay',
+            array_key_exists('onJ2StoreAfterProductDisplay', $events));
+        $this->test('Subscribes to onJ2StoreAfterAddToCartButton',
+            array_key_exists('onJ2StoreAfterAddToCartButton', $events));
 
         $productId = $this->seededProductIds[0];
         $product   = (object) ['j2commerce_product_id' => $productId];

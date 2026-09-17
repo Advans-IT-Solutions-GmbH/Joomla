@@ -85,6 +85,10 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             }
 
             $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_SEARCH') . '</p>';
+
+            if (!$isJ6) {
+                $message .= '<p>' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_J2STORE_NOTE') . '</p>';
+            }
             $message .= '</div>';
             $message .= '<p style="margin-top:12px;color:#6b7280;font-size:13px">' . Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_POSTINSTALL_DOCS') . '</p>';
             $message .= '</div>';

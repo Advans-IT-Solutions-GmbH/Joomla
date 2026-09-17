@@ -39,18 +39,67 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      *   AfterProductDisplay — fired in app_bootstrap5/tmpl/bootstrap5/view.php
      *     after the product detail block. Args: [$product, $view].
      *
-     * J2Commerce 4 events (onJ2Store*) are handled by the legacy method-name
-     * convention and do not need entries here.
+     * J2Store 4 hooks (J2Store::plugin()->eventWithHtml(), prefix onJ2Store;
+     * verified against J2Store 4.1.4, app_bootstrap4 layouts):
+     *
+     *   AfterProductDisplay — fired in tmpl/bootstrap4/view.php after the
+     *     product detail block. Args: [$product, $view].
+     *
+     *   AfterAddToCartButton — fired after the add-to-cart button in
+     *     default_cart.php (product list), view_cart.php (product detail) and
+     *     cart.php. Args: [$product, $context]; $context ends with the layout
+     *     name (e.g. "…default_cart"). The detail page is covered by
+     *     AfterProductDisplay, so the button is only added outside view_cart.
+     *
+     *   onAjaxProductcompare — dispatched by com_ajax for
+     *     plugin=productcompare&group={installed folder}.
+     *
+     *   onAfterDispatch / onAfterRender — add the assets and the compare bar
+     *     and modal to pages on which a compare button was rendered.
+     *
+     * Joomla registers a SubscriberInterface plugin only through this list
+     * (CMSPlugin::registerListeners() skips the method-name convention), so
+     * every handler must be listed here. The plugin belongs to the
+     * j2commerce (Joomla 6) or j2store (Joomla 5) group, which Joomla only
+     * loads when the shop imports it.
      */
     public static function getSubscribedEvents(): array
     {
         return [
             'onJ2CommerceAfterProductListItemDisplay' => 'onJ2CommerceAfterProductListItemDisplay',
             'onJ2CommerceAfterProductDisplay'         => 'onJ2CommerceAfterProductDisplay',
+            'onJ2StoreAfterProductDisplay'            => 'onJ2StoreAfterProductDisplay',
+            'onJ2StoreAfterAddToCartButton'           => 'onJ2StoreAfterAddToCartButton',
+            'onAjaxProductcompare'                    => 'onAjaxProductcompare',
+            'onAfterDispatch'                         => 'onAfterDispatch',
+            'onAfterRender'                           => 'onAfterRender',
         ];
     }
 
     protected $autoloadLanguage = true;
+
+    /**
+     * Number of compare buttons rendered in this request. Assets, bar and
+     * modal are only added to pages that show at least one button.
+     */
+    private int $renderedButtons = 0;
+
+    /**
+     * Whether the current response is a site HTML page the plugin may extend.
+     * Administrator pages, com_ajax requests and non-HTML documents stay untouched.
+     */
+    private function isSitePage(): bool
+    {
+        $app = $this->getApplication();
+
+        if (!$app->isClient('site') || $app->getInput()->getCmd('option') === 'com_ajax') {
+            return false;
+        }
+
+        $doc = $app->getDocument();
+
+        return $doc !== null && $doc->getType() === 'html';
+    }
 
     /**
      * Register assets with WebAssetManager and pass JS configuration.
@@ -58,20 +107,17 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      * Assets (CSS + JS) are registered via joomla.asset.json and enqueued
      * here. Configuration is passed via Joomla's script options mechanism
      * (rendered as a JSON blob in <head>, read by JS via Joomla.getOptions()).
+     * The component has been dispatched at this point, so the buttons of the
+     * page are already rendered.
      */
     public function onAfterDispatch(): void
     {
+        if ($this->renderedButtons === 0 || !$this->isSitePage()) {
+            return;
+        }
+
         $app = $this->getApplication();
-
-        if ($app->isClient('administrator')) {
-            return;
-        }
-
         $doc = $app->getDocument();
-
-        if ($doc->getType() !== 'html') {
-            return;
-        }
 
         $wa = $doc->getWebAssetManager();
         $wa->getRegistry()->addRegistryFile('media/plg_j2commerce_productcompare/joomla.asset.json');
@@ -96,48 +142,107 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      */
     public function onAfterRender(): void
     {
-        $app = $this->getApplication();
-
-        if ($app->isClient('administrator')) {
+        if ($this->renderedButtons === 0 || !$this->isSitePage()) {
             return;
         }
 
-        $doc = $app->getDocument();
+        $app  = $this->getApplication();
+        $body = (string) $app->getBody();
+        $pos  = strripos($body, '</body>');
 
-        if ($doc->getType() !== 'html') {
+        if ($pos === false) {
             return;
         }
 
         $html = $this->renderLayout('bar', []) . "\n" . $this->renderLayout('modal', []);
 
-        $body = $app->getBody();
-        $app->setBody(str_replace('</body>', $html . "\n</body>", $body));
+        $app->setBody(substr($body, 0, $pos) . $html . "\n" . substr($body, $pos));
     }
 
     /**
-     * J2Commerce 4 — render compare button after a product in list view.
-     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
+     * J2Store 4 — compare button on the product detail page.
+     *
+     * Fired by app_bootstrap4/tmpl/bootstrap4/view.php via
+     *   J2Store::plugin()->eventWithHtml('AfterProductDisplay', [$product, $view])
      */
-    public function onJ2StoreAfterDisplayProductList(object $product): string
-    {
-        if (!$this->params->get('show_in_list', 1) || $this->isJ2Commerce6()) {
-            return '';
-        }
-
-        return $this->renderCompareButton((int) $product->j2store_product_id);
-    }
-
-    /**
-     * J2Commerce 4 — render compare button on the product detail page.
-     * Event fired by J2Commerce 4 (j2store group). Not fired on J2Commerce 6.
-     */
-    public function onJ2StoreAfterDisplayProduct(object $product, string $view): string
+    public function onJ2StoreAfterProductDisplay(Event $event): void
     {
         if (!$this->params->get('show_in_detail', 1) || $this->isJ2Commerce6()) {
-            return '';
+            return;
         }
 
-        return $this->renderCompareButton((int) $product->j2store_product_id);
+        $product = $this->firstJ2StoreProduct($event);
+
+        if ($product !== null) {
+            $this->appendResult($event, $this->renderCompareButton((int) $product->j2store_product_id));
+        }
+    }
+
+    /**
+     * J2Store 4 — compare button in the product list, after the add-to-cart button.
+     *
+     * Fired via
+     *   J2Store::plugin()->eventWithHtml('AfterAddToCartButton', [$product, $context])
+     * in default_cart.php (list), view_cart.php (detail) and cart.php. The detail
+     * page gets its button from onJ2StoreAfterProductDisplay(), so view_cart is
+     * skipped to avoid a second button.
+     */
+    public function onJ2StoreAfterAddToCartButton(Event $event): void
+    {
+        if (!$this->params->get('show_in_list', 1) || $this->isJ2Commerce6()) {
+            return;
+        }
+
+        $args    = array_values($event->getArguments());
+        $context = isset($args[1]) && \is_string($args[1]) ? $args[1] : '';
+
+        if (str_ends_with($context, 'view_cart')) {
+            return;
+        }
+
+        $product = $this->firstJ2StoreProduct($event);
+
+        if ($product !== null) {
+            $this->appendResult($event, $this->renderCompareButton((int) $product->j2store_product_id));
+        }
+    }
+
+    /**
+     * First event argument that is a J2Store product.
+     */
+    private function firstJ2StoreProduct(Event $event): ?object
+    {
+        foreach ($event->getArguments() as $arg) {
+            if (\is_object($arg) && !empty($arg->j2store_product_id)) {
+                return $arg;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Add HTML to the event results.
+     *
+     * J2Commerce 6 dispatches result-aware events (addResult()). J2Store 4 uses
+     * CMSApplication::triggerEvent(), which creates a generic event and returns its
+     * "result" argument, so the result is appended to that argument there.
+     */
+    private function appendResult(Event $event, string $html): void
+    {
+        if ($html === '') {
+            return;
+        }
+
+        if (method_exists($event, 'addResult')) {
+            $event->addResult($html);
+
+            return;
+        }
+
+        $results   = (array) $event->getArgument('result', []);
+        $results[] = $html;
+        $event->setArgument('result', $results);
     }
 
     /**
@@ -161,7 +266,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             return;
         }
 
-        $event->addResult($this->renderCompareButton((int) $product->j2commerce_product_id));
+        $this->appendResult($event, $this->renderCompareButton((int) $product->j2commerce_product_id));
     }
 
     /**
@@ -193,14 +298,17 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             return;
         }
 
-        $event->addResult($this->renderCompareButton((int) $product->j2commerce_product_id));
+        $this->appendResult($event, $this->renderCompareButton((int) $product->j2commerce_product_id));
     }
 
     /**
      * AJAX endpoint — returns comparison table HTML for the requested product IDs.
      *
      * Called via com_ajax:
-     *   index.php?option=com_ajax&plugin=productcompare&group=j2store&format=json
+     *   index.php?option=com_ajax&plugin=productcompare&group={j2store|j2commerce}&format=json
+     *
+     * The group is the installed plugin folder; which shop tables are read is
+     * decided by getActiveShop(), not by the group.
      */
     public function onAjaxProductcompare(): void
     {
@@ -262,6 +370,8 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      */
     protected function renderCompareButton(int $productId): string
     {
+        $this->renderedButtons++;
+
         return $this->renderLayout('button', [
             'productId'   => $productId,
             'buttonText'  => Text::_($this->params->get('button_text', 'PLG_J2COMMERCE_PRODUCTCOMPARE_DEFAULT_BUTTON_TEXT')),
@@ -269,12 +379,6 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         ]);
     }
 
-    /**
-     * Load product data for the given IDs.
-     *
-     * @param   int[]  $productIds
-     * @return  object[]
-     */
     /**
      * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
      */
@@ -284,22 +388,96 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     }
 
     /**
-     * Detect J2Commerce 6 by checking for #__j2commerce_products in the database.
-     * Uses SHOW TABLES LIKE to avoid stale getTableList() cache (e.g. during install).
-     * Cached after first call.
+     * Cached result of isJ2Commerce6().
      */
     private ?bool $j2commerce6 = null;
 
+    /**
+     * Cached result of getActiveShop(); only valid once $activeShopResolved is true.
+     */
+    private ?string $activeShop = null;
+
+    private bool $activeShopResolved = false;
+
+    /**
+     * Whether product data and events belong to J2Commerce 6.
+     *
+     * Decided by getActiveShop(). When no shop component is active, the previous
+     * table-only check is kept as fallback (#__j2commerce_products present →
+     * J2Commerce 6): without an active component nobody renders compare buttons,
+     * so this only matters for direct calls, which then behave as before.
+     */
     private function isJ2Commerce6(): bool
     {
         if ($this->j2commerce6 === null) {
-            $db     = $this->getDatabase();
-            $result = $db->setQuery('SHOW TABLES LIKE ' . $db->quote($db->getPrefix() . 'j2commerce_products'))->loadResult();
-            $this->j2commerce6 = !empty($result);
+            $shop = $this->getActiveShop();
+
+            $this->j2commerce6 = $shop === 'j2commerce'
+                || ($shop === null && $this->tableExists('j2commerce_products'));
         }
+
         return $this->j2commerce6;
     }
 
+    /**
+     * Determine the active shop component.
+     *
+     * Tables alone do not decide: after a migration J2Store → J2Commerce 6 both
+     * table sets exist, and a J2Store site can still carry j2commerce tables from
+     * an aborted installation. The enabled component decides:
+     *   1. com_j2commerce enabled and #__j2commerce_products present → 'j2commerce'
+     *   2. com_j2store enabled and #__j2store_products present       → 'j2store'
+     *   3. otherwise                                                  → null
+     *
+     * Cached per plugin instance (one instance per request).
+     *
+     * @return  string|null  'j2commerce', 'j2store' or null
+     */
+    private function getActiveShop(): ?string
+    {
+        if ($this->activeShopResolved) {
+            return $this->activeShop;
+        }
+
+        $this->activeShopResolved = true;
+
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('element'))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->where($db->quoteName('enabled') . ' = 1')
+            ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+
+        $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+        if (\in_array('com_j2commerce', $enabled, true) && $this->tableExists('j2commerce_products')) {
+            $this->activeShop = 'j2commerce';
+        } elseif (\in_array('com_j2store', $enabled, true) && $this->tableExists('j2store_products')) {
+            $this->activeShop = 'j2store';
+        }
+
+        return $this->activeShop;
+    }
+
+    /**
+     * Check whether a table exists (name without prefix).
+     * Uses SHOW TABLES LIKE to avoid the stale getTableList() cache (e.g. during install).
+     */
+    private function tableExists(string $table): bool
+    {
+        $db   = $this->getDatabase();
+        $like = $db->quote($db->escape($db->getPrefix() . $table, true), false);
+
+        return !empty($db->setQuery('SHOW TABLES LIKE ' . $like)->loadResult());
+    }
+
+    /**
+     * Load product data for the given IDs from the active shop's tables.
+     *
+     * @param   int[]  $productIds
+     * @return  object[]
+     */
     private function getProductsData(array $productIds): array
     {
         $db  = $this->getDatabase();

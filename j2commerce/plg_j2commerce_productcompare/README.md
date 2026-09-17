@@ -30,12 +30,17 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 ### J2Commerce Version Compatibility
 
-The plugin detects the installed J2Commerce version at runtime by checking for `#__j2commerce_products` in the database.
+The plugin decides at runtime which shop is active; tables alone do not decide, because a migrated site has both table sets:
+
+1. `com_j2commerce` enabled and `#__j2commerce_products` present → J2Commerce 6
+2. otherwise `com_j2store` enabled and `#__j2store_products` present → J2Store / J2Commerce 4
+3. otherwise (no active shop component) → J2Commerce 6 if `#__j2commerce_products` exists, else J2Store
 
 The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
 
 **J2Commerce 4.x (Joomla 5)**:
-- Events received via legacy method-name convention (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`)
+- The plugin subscribes to the events J2Store 4.1.4 fires in its product layouts (`app_bootstrap3`/`app_bootstrap4`): `onJ2StoreAfterAddToCartButton` adds the button in product lists after the add-to-cart button (the call in the detail layout `view_cart` is skipped), `onJ2StoreAfterProductDisplay` adds it at the end of the product page.
+- **Limitation:** J2Store 4 has no per-item list event of its own. Template overrides of the J2Store product layouts that do not call these two events show no compare button.
 - DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
 - AJAX URL: `group=j2store`
 
@@ -44,11 +49,13 @@ The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded 
 - AJAX URL: `group=j2commerce`
 - The plugin subscribes to `onJ2CommerceAfterProductListItemDisplay` and `onJ2CommerceAfterProductDisplay` via `SubscriberInterface`.
 
+On both versions the AJAX handler `onAjaxProductcompare` and the page handlers `onAfterDispatch`/`onAfterRender` are registered through `SubscriberInterface`; the AJAX `group` is the installed plugin folder, while the tables are chosen by the active shop. Joomla loads the plugin only when the shop imports its plugin group, and the plugin adds its CSS, JS, compare bar and modal only to site HTML pages on which it rendered a compare button (never to administrator pages, com_ajax responses or non-HTML documents).
+
 No configuration required — table names and event handlers are selected automatically at runtime.
 
 ### Compatibility Test Scope
 
-The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x, printed as `Tested versions: …` in each job log) plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
+The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x, printed as `Tested versions: …` in each job log) plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the J2Store 4 events are fired as J2Store 4.1.4 fires them (generic event, result read from the `result` argument) — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
 
 ## Installation
 1. Download `plg_j2commerce_productcompare_<version>.zip` from the latest release
@@ -120,11 +127,13 @@ This plugin has automated tests that run via GitHub Actions (`j2commerce-product
 4. **Plugin Class** — method existence, `SubscriberInterface`, `isJ2Commerce6()` detection
 5. **AJAX Endpoint** — HTTP tests against com_ajax (J2Commerce 4 and 6 group)
 6. **getProductsData** — DB query compatibility for J2Commerce 4 and 6 table schemas
-7. **Asset Injection** — WebAssetManager + script-options registration driven against a real `HtmlDocument`
-8. **Render Injection** — `onAfterRender()` injects the compare bar + modal markup into a real HTML `<body>` before `</body>` (both stacks)
-9. **Event Dispatch** — real product rows are seeded and the storefront events are driven, asserting the compare button is emitted: J2Commerce 6 (`onJ2CommerceAfterProductListItemDisplay`, `onJ2CommerceAfterProductDisplay`) through a real dispatcher, and J2Store 4 (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`) via the legacy listener path; also asserts the legacy events are correctly suppressed on J2Commerce 6
-10. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-11. **Uninstall** — clean removal from database and filesystem
+7. **Asset Injection** — WebAssetManager + script-options registration driven against a real `HtmlDocument` after a button was rendered through the storefront event; nothing is added without a button, for com_ajax requests or for a JSON document
+8. **Render Injection** — `onAfterRender()` injects the compare bar + modal markup into a real HTML `<body>` before `</body>` once a button was rendered; a page without a button stays unchanged (both stacks)
+9. **Event Dispatch** — real product rows are seeded and the storefront events are driven, asserting the compare button is emitted: J2Commerce 6 (`onJ2CommerceAfterProductListItemDisplay`, `onJ2CommerceAfterProductDisplay`) through a real dispatcher, and J2Store 4 (`onJ2StoreAfterAddToCartButton` in the list context, `onJ2StoreAfterProductDisplay`) as generic events the way J2Store 4.1.4 fires them; also asserts that the add-to-cart hook of the detail page adds no second button and that the J2Store events add nothing on J2Commerce 6
+10. **Active Shop Detection** — seeds `#__j2commerce_*` and `#__j2store_*` with the same product IDs but different data, switches `com_j2commerce`/`com_j2store` in `#__extensions` and asserts over the real AJAX endpoint that the enabled shop's data is returned (J6: J2Commerce 6 active, both active, J2Store active, none active; J5: J2Store active, both active); restores all component states and drops only the tables it created
+11. **Page Render** — real HTTP requests: on Joomla 6 a visible J2Commerce 6 product page contains the plugin CSS/JS, its script options, the compare button and the bar and modal before `</body>`; on both stacks the home page and a com_ajax response contain none of it. (A J2Store 4 product page is not requested: it needs the complete J2Store catalogue setup; the J2Store hooks are covered by Event Dispatch.)
+12. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+13. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
