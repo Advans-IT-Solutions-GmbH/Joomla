@@ -742,7 +742,14 @@ class ConsentLoggingTest
         $legacyDir  = $legacyRoot . '/' . $tag;
         $legacyFile = $legacyDir . '/plg_system_j2commerceprivacy.ini';
         $loadedOld  = false;
-        $siteTag    = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        // Resolve the default site language tag the same way the plugin does. In this CLI harness
+        // there is no application, so ComponentHelper::getParams() is unavailable and the tag falls
+        // back to en-GB, exactly like ConsentRepository::defaultSiteLanguageTag().
+        try {
+            $siteTag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            $siteTag = 'en-GB';
+        }
         $siteLang   = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($siteTag);
         $siteLang->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $siteTag)
             || $siteLang->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $siteTag);
@@ -896,30 +903,46 @@ class ConsentLoggingTest
 
             // The evidence-removed body is written while an administrator or the cleanup task
             // processes the order, so it must use the website's default site language, not the
-            // language of the acting person (the current CLI language here). Force a site language
-            // that differs from the current one and assert the body follows the site language.
-            $current     = method_exists(Factory::getLanguage(), 'getTag') ? (string) Factory::getLanguage()->getTag() : 'en-GB';
-            $phrases     = [
-                'de-DE' => 'nach Ablauf ihrer Aufbewahrungsfrist',
-                'en-GB' => 'after its retention period',
-                'fr-FR' => 'après sa durée de conservation',
-            ];
-            $siteTestTag = $current === 'de-DE' ? 'en-GB' : 'de-DE';
-            $langParams   = ComponentHelper::getParams('com_languages');
-            $previousSite = (string) $langParams->get('site', 'en-GB');
-            $langParams->set('site', $siteTestTag);
+            // language of the acting person. Force the acting person's (current) language to
+            // German while the site language stays the CLI default (en-GB) and assert the evidence
+            // body follows the site language, not the acting person's. Without the fix
+            // buildEvidenceRemovedBody() would build the German (acting person's) text and fail.
+            $siteRemoved   = 'after its retention period';           // en-GB CONSENT_BODY_EVIDENCE_REMOVED
+            $editorRemoved = 'nach Ablauf ihrer Aufbewahrungsfrist'; // de-DE CONSENT_BODY_EVIDENCE_REMOVED
+            $editorBody    = 'der Datenschutzerklärung zugestimmt';  // de-DE CONSENT_BODY
+
+            $editorLang = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage('de-DE');
+            $stubApp    = new class ($editorLang) {
+                private $language;
+
+                public function __construct($language)
+                {
+                    $this->language = $language;
+                }
+
+                public function getLanguage()
+                {
+                    return $this->language;
+                }
+            };
+            $previousApp          = Factory::$application;
+            Factory::$application = $stubApp;
 
             try {
+                $actingBody   = $repository->buildBody($live, '198.51.100.60', 'StaleAgent/1.0');
                 $evidenceBody = $repository->buildEvidenceRemovedBody($live);
-                $usesSite     = str_contains($evidenceBody, $phrases[$siteTestTag]);
-                $notCurrent   = !isset($phrases[$current]) || !str_contains($evidenceBody, $phrases[$current]);
+                $this->test(
+                    'Acting person language is German for this check (evidence-language anchor)',
+                    str_contains($actingBody, $editorBody),
+                    $actingBody
+                );
                 $this->test(
                     'Evidence-removed body uses the default site language, not the acting person\'s language',
-                    $usesSite && $notCurrent,
-                    "site=$siteTestTag current=$current body=$evidenceBody"
+                    str_contains($evidenceBody, $siteRemoved) && !str_contains($evidenceBody, $editorRemoved),
+                    $evidenceBody
                 );
             } finally {
-                $langParams->set('site', $previousSite);
+                Factory::$application = $previousApp;
             }
         } catch (\Throwable $e) {
             $this->test('Stale evidence cleanup runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
