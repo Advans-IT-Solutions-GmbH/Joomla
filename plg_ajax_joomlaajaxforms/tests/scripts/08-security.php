@@ -84,6 +84,31 @@ class SecurityTest
     }
 
     /**
+     * True when the body is a JSON error: the plugin's own {"success":false}
+     * or the com_ajax envelope carrying it in data[0].
+     */
+    private function isJsonRejection(string $body): bool
+    {
+        $data = json_decode($body, true);
+
+        if (!is_array($data)) {
+            return false;
+        }
+
+        if (($data['success'] ?? null) === false) {
+            return true;
+        }
+
+        $inner = $data['data'][0] ?? null;
+
+        if (is_string($inner)) {
+            $inner = json_decode($inner, true);
+        }
+
+        return is_array($inner) && ($inner['success'] ?? null) === false;
+    }
+
+    /**
      * Like http() but also returns response Set-Cookie headers as a name→value map.
      * Returns [$httpCode, $body, $responseCookies].
      */
@@ -201,22 +226,31 @@ class SecurityTest
 
         $url = $this->baseUrl . $this->ajaxPath . '&task=getCartCount';
 
-        // Joomla must reject unauthenticated/invalid-token AJAX requests with either:
-        //   - HTTP 3xx redirect to login page
-        //   - HTTP 200 with JSON {"success":false,...}
-        // HTTP 200 with non-JSON body is NOT accepted as rejection.
+        // The plugin must reject requests without a valid token with a JSON
+        // error ({"success":false,...}), also for a new session: a redirect
+        // (what Session::checkToken() does for new sessions) would leave the
+        // script with an empty response. No cookies are sent, so every request
+        // starts a new session.
 
-        // 1. GET with no token
+        // 1. GET with no token, new session
         [$code, $body] = $this->http('GET', $url, [], [], false);
-        $data    = json_decode($body, true);
-        $isJson  = $data !== null;
-        $rejected = ($code >= 300 && $code < 400)
-            || ($isJson && isset($data['success']) && $data['success'] === false);
-
         $this->test(
-            'No-token GET is rejected (3xx or JSON success=false)',
-            $rejected,
+            'New session, no token: GET answered without redirect',
+            $code === 200,
             "Got HTTP $code, body: " . substr($body, 0, 200)
+        );
+        $this->test(
+            'New session, no token: GET rejected with JSON success=false',
+            $this->isJsonRejection($body),
+            "Got HTTP $code, body: " . substr($body, 0, 200)
+        );
+
+        // 1b. POST with no token, new session
+        [$codeP, $bodyP] = $this->http('POST', $url, ['task' => 'getCartCount'], [], false);
+        $this->test(
+            'New session, no token: POST answered without redirect and rejected with JSON success=false',
+            $codeP === 200 && $this->isJsonRejection($bodyP),
+            "Got HTTP $codeP, body: " . substr($bodyP, 0, 200)
         );
 
         // 2. POST with a fabricated (wrong) token
@@ -317,15 +351,13 @@ class SecurityTest
                 : $data['data'][0];
         }
 
-        // Unauthenticated request must be rejected:
-        //   - any 3xx redirect (Joomla login redirect)
-        //   - plugin returns success=false in the unwrapped inner response
-        // HTTP 200 with non-JSON body is NOT accepted as rejection.
+        // Unauthenticated request must be rejected with a JSON error (plugin
+        // success=false, possibly wrapped by com_ajax); a redirect does not count.
         $this->test(
             'Unauthenticated removeCartItem is rejected',
-            ($code >= 300 && $code < 400)
-                || ($inner !== null && isset($inner['success']) && $inner['success'] === false)
-                || ($isJson && isset($data['success']) && $data['success'] === false),
+            $code === 200
+                && (($inner !== null && isset($inner['success']) && $inner['success'] === false)
+                    || ($isJson && isset($data['success']) && $data['success'] === false)),
             "HTTP $code, body: " . substr($body, 0, 200)
         );
 

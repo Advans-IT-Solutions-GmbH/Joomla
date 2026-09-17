@@ -123,7 +123,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     public function onAjaxJoomlaajaxforms($event = null): string
     {
         // Validate CSRF token
-        if (!Session::checkToken('get') && !Session::checkToken('post') && !Session::checkToken()) {
+        if (!$this->hasValidToken()) {
             $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
 
             if ($event) {
@@ -652,6 +652,24 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             Log::add('Cart count error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
             return $this->jsonSuccess(['data' => ['cartCount' => 0]]);
         }
+    }
+
+    /**
+     * Whether the request carries the form token of the current session (POST
+     * field, query parameter or X-CSRF-Token header).
+     *
+     * Session::checkToken() is not used: for a new session it redirects to the
+     * home page instead of returning false, so the script would get an empty
+     * redirect instead of the JSON error it shows to the user.
+     */
+    private function hasValidToken(): bool
+    {
+        $input = $this->getApplication()->getInput();
+        $token = Session::getFormToken();
+
+        return hash_equals($token, (string) $input->server->get('HTTP_X_CSRF_TOKEN', '', 'alnum'))
+            || $input->post->get($token, '', 'alnum') !== ''
+            || $input->get->get($token, '', 'alnum') !== '';
     }
 
     /**
