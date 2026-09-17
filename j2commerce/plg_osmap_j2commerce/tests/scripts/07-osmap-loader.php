@@ -204,6 +204,30 @@ class OsmapLoaderTest
         return null;
     }
 
+    private function pluginEnabled(): int
+    {
+        return (int) $this->db->setQuery(
+            $this->qb()
+                ->select($this->db->quoteName('enabled'))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->loadResult();
+    }
+
+    private function setPluginEnabled(int $enabled): void
+    {
+        $this->db->setQuery(
+            $this->qb()
+                ->update($this->db->quoteName('#__extensions'))
+                ->set($this->db->quoteName('enabled') . ' = ' . $enabled)
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->execute();
+    }
+
     public function run(): bool
     {
         echo "=== Real OSMap Loader Tests ===\n";
@@ -238,6 +262,18 @@ class OsmapLoaderTest
         $this->test("OSMap loader does NOT match plugin for {$this->otherOption} (single-element)", function () use ($otherPlugins) {
             return $this->findOurPlugin($otherPlugins) === null;
         });
+
+        $initialEnabled = $this->pluginEnabled();
+        $this->test('Disabled plugin is not matched by the OSMap loader', function () {
+            $this->setPluginEnabled(0);
+
+            try {
+                return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) === null;
+            } finally {
+                $this->setPluginEnabled(1);
+            }
+        });
+        $this->setPluginEnabled($initialEnabled);
 
         if ($ourPlugin === null) {
             echo "\nFATAL: plugin not matched by loader — cannot continue dispatch tests\n";

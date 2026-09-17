@@ -144,6 +144,11 @@ MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
+SHOP_RGT_OFFSET=6
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    SHOP_RGT_OFFSET=2
+fi
+
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 -- Content articles
 INSERT IGNORE INTO ${DB_PREFIX}content
@@ -173,7 +178,21 @@ VALUES
     (9001, 'mainmenu', 'Shop', 'shop', 'shop',
      'index.php?option=com_j2commerce&view=products',
      'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2COMMERCE_ID}, '*', 1, 0, '{}',
-     @max_rgt + 1, @max_rgt + 6),
+     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET});
+
+-- Expand global root rgt to include new items
+UPDATE ${DB_PREFIX}menu
+SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}menu) AS t)
+WHERE lft = 0;
+EOSQL
+
+if [ "${J2COMMERCE_SEF}" != "1" ]; then
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+SET @max_rgt = (SELECT COALESCE(MAX(rgt), 0) FROM ${DB_PREFIX}menu);
+INSERT IGNORE INTO ${DB_PREFIX}menu
+    (id, menutype, title, alias, path, link, type, published, parent_id, level,
+     component_id, language, access, client_id, params, lft, rgt)
+VALUES
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
      'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
@@ -183,24 +202,17 @@ VALUES
      'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
      @max_rgt + 4, @max_rgt + 5);
 
--- Expand global root rgt to include new items
 UPDATE ${DB_PREFIX}menu
 SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}menu) AS t)
 WHERE lft = 0;
 EOSQL
+fi
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Give the hidden product child menu items a real
-# content language (de-DE) and add the matching #__languages row (sef=de,
-# published=1). OSMap builds each product URL from #__languages.sef + the menu
-# path (it deliberately bypasses the Joomla router for published=-2 items), so
-# this alone makes the generated URLs carry the /de/ prefix — no language pack
-# or language-filter plugin required. It makes 08's prefix assertion meaningful:
-# a single-language fixture has no prefix that could go missing, which is exactly
-# how the #176 regression slipped through. The parent Shop menu stays language='*'
-# so OSMap still traverses it, and the non-SEF stacks keep '*' (07 asserts the
-# unprefixed /shop/... form there).
+# runs 08-sitemap-http-sef.php). Set the products to de-DE and register the
+# matching #__languages row (sef=de) so the direct product-query fixture emits
+# /de/shop/... URLs on the dedicated multilingual SEF stack.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
@@ -209,7 +221,7 @@ INSERT IGNORE INTO ${DB_PREFIX}languages
 VALUES
     ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
 
-UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id IN (9001, 9002);
 EOSQL
     echo "Multilingual SEF fixture applied"
 fi

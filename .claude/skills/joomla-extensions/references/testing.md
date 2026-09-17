@@ -129,7 +129,8 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 |---|---|
 | Privacy | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_privacy_j2commerce_j6_test ./run-tests.sh all` |
 | OSMap | `CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all` |
-| OSMap SEF (`docker-compose.joomla6-sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef` |
+| OSMap SEF (J5, `docker-compose.sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef` |
+| OSMap SEF (J6, `docker-compose.joomla6-sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef` |
 | Import/Export | `CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all` |
 | Product Compare | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all` |
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
