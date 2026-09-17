@@ -183,14 +183,10 @@ class PluginClassTest
     {
         echo "\n--- Instantiation ---\n";
 
-        $dispatcher = new \Joomla\Event\Dispatcher();
-        $params     = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
+        $params = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
 
         try {
-            $plugin = new TestableProductCompare(
-                $dispatcher,
-                ['params' => $params]
-            );
+            $plugin = new TestableProductCompare(['params' => $params]);
             $this->test('Plugin instantiates without error', true);
         } catch (\Throwable $e) {
             $this->test('Plugin instantiates without error', false, $e->getMessage());
@@ -199,10 +195,7 @@ class PluginClassTest
 
         // J2Store 4: list/detail hooks with show_in_list/show_in_detail=0 → no result added
         $params0 = new Registry(['show_in_list' => 0, 'show_in_detail' => 0]);
-        $plugin0 = new TestableProductCompare(
-            $dispatcher,
-            ['params' => $params0]
-        );
+        $plugin0 = new TestableProductCompare(['params' => $params0]);
         $product   = (object)['j2store_product_id' => 1];
         $j4List    = new TestEvent('onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.default_cart']);
         $plugin0->onJ2StoreAfterAddToCartButton($j4List);
@@ -234,10 +227,7 @@ class PluginClassTest
         // so it works whether the product is at $args[0] (current public source) or
         // $args[2] ([$result, $view, $product] signature reported in review).
         $params1 = new Registry(['show_in_list' => 1, 'show_in_detail' => 1]);
-        $plugin1 = new TestableProductCompare(
-            $dispatcher,
-            ['params' => $params1]
-        );
+        $plugin1 = new TestableProductCompare(['params' => $params1]);
 
         // Product at $args[0]
         $ev0 = new TestEvent('onJ2CommerceAfterProductDisplay', [
