@@ -295,7 +295,7 @@ class EventDispatchTest
 
         // Detail page: view_cart.php fires the same event; the button comes from
         // AfterProductDisplay instead, so nothing is added here.
-        $viewCartOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.viewview_cart']);
+        $viewCartOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.view_cart']);
         $this->test('Detail add-to-cart hook (view_cart) adds no second button', $viewCartOut === '', $viewCartOut);
 
         $detailOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterProductDisplay', [$product, new \stdClass()]);
