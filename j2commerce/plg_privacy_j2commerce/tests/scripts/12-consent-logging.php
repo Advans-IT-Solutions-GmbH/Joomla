@@ -18,7 +18,8 @@
  *   - the consent is captured on checkout.confirmPayment (form token for POST, gateway return GET) and
  *     recorded after J2Commerce accepted the order of the consent cart; once per order
  *   - legacy records of an earlier template override are only anonymized (never assigned, not shown);
- *     consent evidence of records outside the retention period and of deleted or anonymized orders is removed
+ *     consent evidence of records outside the retention period and of deleted or anonymized orders is
+ *     removed, the evidence-removed body written in the default site language, not the acting person's
  *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest), one button per
  *     enabled request type (Show Export Data / Show Delete All Data)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
@@ -879,6 +880,34 @@ class ConsentLoggingTest
             }
 
             $this->test('Second run changes nothing', $repository->removeStaleEvidence(Factory::getDate('-10 years')->toSql(), [$this->ordersTable]) === 0);
+
+            // The evidence-removed body is written while an administrator or the cleanup task
+            // processes the order, so it must use the website's default site language, not the
+            // language of the acting person (the current CLI language here). Force a site language
+            // that differs from the current one and assert the body follows the site language.
+            $current     = method_exists(Factory::getLanguage(), 'getTag') ? (string) Factory::getLanguage()->getTag() : 'en-GB';
+            $phrases     = [
+                'de-DE' => 'nach Ablauf ihrer Aufbewahrungsfrist',
+                'en-GB' => 'after its retention period',
+                'fr-FR' => 'après sa durée de conservation',
+            ];
+            $siteTestTag = $current === 'de-DE' ? 'en-GB' : 'de-DE';
+            $langParams   = ComponentHelper::getParams('com_languages');
+            $previousSite = (string) $langParams->get('site', 'en-GB');
+            $langParams->set('site', $siteTestTag);
+
+            try {
+                $evidenceBody = $repository->buildEvidenceRemovedBody($live);
+                $usesSite     = str_contains($evidenceBody, $phrases[$siteTestTag]);
+                $notCurrent   = !isset($phrases[$current]) || !str_contains($evidenceBody, $phrases[$current]);
+                $this->test(
+                    'Evidence-removed body uses the default site language, not the acting person\'s language',
+                    $usesSite && $notCurrent,
+                    "site=$siteTestTag current=$current body=$evidenceBody"
+                );
+            } finally {
+                $langParams->set('site', $previousSite);
+            }
         } catch (\Throwable $e) {
             $this->test('Stale evidence cleanup runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {

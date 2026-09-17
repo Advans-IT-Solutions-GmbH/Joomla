@@ -124,11 +124,13 @@ final class ConsentRepository
 
     /**
      * Body of a consent record after its order was anonymized: consent and order number stay as
-     * evidence, IP address and user agent are gone.
+     * evidence, IP address and user agent are gone. Written while an administrator or the cleanup
+     * task processes the order, so it uses the website's default site language, not the language
+     * of the acting person.
      */
     public function buildEvidenceRemovedBody(string $orderId): string
     {
-        $language = self::loadBodyLanguage();
+        $language = self::loadSiteBodyLanguage();
 
         return sprintf($language->_(self::BODY_REMOVED_KEY), htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
             . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER;
@@ -222,7 +224,7 @@ final class ConsentRepository
         return $changed;
     }
 
-    private static function loadLegacyBodyLanguage(): Language
+    private static function loadSiteBodyLanguage(): Language
     {
         $tag      = self::defaultSiteLanguageTag();
         $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
@@ -385,7 +387,7 @@ final class ConsentRepository
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
-        $body    = self::legacyBodyText(self::loadLegacyBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        $body    = self::legacyBodyText(self::loadSiteBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
         $changed = $this->repairLegacyAnonymizedBodies($body);
         $lastId  = 0;
