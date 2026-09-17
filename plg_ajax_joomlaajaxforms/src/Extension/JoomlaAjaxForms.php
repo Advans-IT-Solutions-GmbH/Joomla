@@ -772,7 +772,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
                 ->where($db->quoteName('enabled') . ' = 1')
                 ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
-            $enabled = $db->setQuery($query)->loadColumn();
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
 
             // Priority order: J2Commerce 6 first, then J2Store / J2Commerce 4.
             foreach (['j2commerce', 'j2store'] as $shop) {
