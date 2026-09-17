@@ -110,6 +110,13 @@ class AssetInjectionTest
     {
         $rp = new ReflectionProperty($app, 'document');
         $rp->setValue($app, $doc);
+
+        // SiteApplication::dispatch() also registers the page document with
+        // Factory; Joomla 5 Text::script() writes joomla.jtext through it.
+        // Joomla 6 no longer has the property.
+        if (property_exists(Factory::class, 'document')) {
+            Factory::$document = $doc;
+        }
     }
 
     private function makeHtmlDocument(): HtmlDocument
