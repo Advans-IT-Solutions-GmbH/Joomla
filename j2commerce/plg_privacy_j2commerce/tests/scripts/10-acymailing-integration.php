@@ -108,7 +108,6 @@ class AcyMailingIntegrationTest
             }
 
             $plugin = new \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce(
-                new \Joomla\Event\Dispatcher(),
                 ['params' => new \Joomla\Registry\Registry([])]
             );
             $plugin->setDatabase(Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class));

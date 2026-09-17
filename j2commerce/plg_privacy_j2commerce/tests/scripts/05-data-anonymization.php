@@ -172,9 +172,7 @@ class DataAnonymizationTest
                     require_once $pluginClassFile;
                 }
                 $db         = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-                $dispatcher = new \Joomla\Event\Dispatcher();
                 $plugin     = new \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce(
-                    $dispatcher,
                     ['params' => new \Joomla\Registry\Registry([])]
                 );
                 $plugin->setDatabase($db);
