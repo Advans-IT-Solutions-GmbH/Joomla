@@ -26,7 +26,6 @@ require_once JPATH_BASE . '/includes/framework.php';
 use Joomla\CMS\Factory;
 use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 JLoader::registerNamespace(
@@ -64,10 +63,7 @@ check($db->getPrefix() . 'j2store_cartitems exists', $db->loadResult() !== null)
 
 // ── 2. Detection methods ─────────────────────────────────────────────────────
 echo "\n--- Detection methods ---\n";
-$dispatcher = new Dispatcher();
-$plugin = new \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms(
-    $dispatcher, ['params' => new Registry(['enable_j2store_cart' => 1])]
-);
+$plugin = new \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms(['params' => new Registry(['enable_j2store_cart' => 1])]);
 $plugin->setDatabase($db);
 
 $rc = new ReflectionClass($plugin);

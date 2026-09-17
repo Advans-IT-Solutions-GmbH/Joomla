@@ -19,7 +19,6 @@ require_once __DIR__ . '/ajax-test-helpers.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 JLoader::registerNamespace(
