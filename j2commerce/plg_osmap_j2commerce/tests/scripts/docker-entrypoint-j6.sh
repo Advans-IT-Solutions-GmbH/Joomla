@@ -210,11 +210,11 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
         echo "ERROR: Could not detect Joomla version for de-DE language pack installation"
         exit 1
     fi
-    # The mutable joomla:6 image tag auto-pulls the newest patch release, and
-    # joomlagerman may not have published a de-DE pack for that exact patch yet.
-    # A de-DE pack for an older patch in the same major.minor installs and routes
-    # fine, so walk the patch level down (each with the v1..v3 revision suffixes)
-    # until one downloads — keeping the SEF fixture green on Joomla release days.
+    # The mutable joomla:6-php8.4-apache image tag auto-pulls the newest patch
+    # release, and joomlagerman may not have published a de-DE pack for that exact
+    # patch yet. A de-DE pack for an older patch in the same major.minor installs
+    # and routes fine, so walk the patch level down (each with the v1..v3 revision
+    # suffixes) until one downloads — keeping the SEF fixture green on release days.
     LANG_MAJOR="${JOOMLA_VERSION%%.*}"
     LANG_MINOR="$(echo "${JOOMLA_VERSION}" | cut -d. -f2)"
     LANG_PATCH="$(echo "${JOOMLA_VERSION}" | cut -d. -f3)"
