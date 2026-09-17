@@ -359,7 +359,15 @@ class AutoCleanupTaskTest
                 if (!in_array($prefix . 'j2store_' . $name, $tables, true)) {
                     $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' LIKE ' . $this->db->quoteName($prefix . 'j2commerce_' . $name))->execute();
                     $state['tables'][] = $prefix . 'j2store_' . $name;
-                }
+                    // J2Store names its key columns j2store_*_id.
+                    foreach (array_keys($this->db->getTableColumns($prefix . 'j2store_' . $name, false)) as $column) {
+                        if (str_starts_with($column, 'j2commerce_')) {
+                            $this->db->setQuery(
+                                'ALTER TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' RENAME COLUMN '
+                                . $this->db->quoteName($column) . ' TO ' . $this->db->quoteName('j2store_' . substr($column, strlen('j2commerce_')))
+                            )->execute();
+                        }
+                    }                }
             }
 
             $row = $this->db->setQuery(

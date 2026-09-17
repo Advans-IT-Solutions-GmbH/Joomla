@@ -498,13 +498,12 @@ class DataAnonymizationTest
                     $copyEmail = fn (): ?string => $this->db->setQuery(
                         'SELECT user_email FROM ' . $this->db->quoteName('#__j2store_orders') . ' WHERE order_id = ' . $this->db->quote($orderId)
                     )->loadResult();
-                    $this->test('migrated site: anonymizeOrders() alone works on the active J2Commerce 6 tables',
-                        $order->user_email === 'anonymized@deleted.invalid' && $copyEmail() === 'private@example.com', var_export($copyEmail(), true));
-
-                    // Removal requests and the cleanup task run on every data set.
-                    $sets = $plugin->call('forEachDataSet', fn (bool $isJ4): bool => $plugin->call('anonymizeOrders', 998) === null && $isJ4);
-                    $this->test('migrated site: both data sets are processed (J2Commerce 6 first)', $sets === [false, true], json_encode($sets));
-                    $this->test('migrated site: the #__j2store_orders copy is anonymized too', $copyEmail() === 'anonymized@deleted.invalid', var_export($copyEmail(), true));
+                    // The removal request above runs on every data set.
+                    $this->test('migrated site: the removal request anonymized the J2Commerce 6 order and the #__j2store_orders copy',
+                        $order->user_email === 'anonymized@deleted.invalid' && $copyEmail() === 'anonymized@deleted.invalid', var_export($copyEmail(), true));
+                    $sets = $plugin->call('forEachDataSet', fn (bool $isJ4): bool => $isJ4);
+                    $this->test('migrated site: both data sets are processed, J2Commerce 6 first', $sets === [false, true], json_encode($sets));
+                    $this->test('migrated site: outside forEachDataSet() the active set is J2Commerce 6', $plugin->call('isJ2Commerce4') === false);
                 }
 
                 // Consent records of the anonymized order lose IP address and user agent only.
@@ -596,7 +595,15 @@ class DataAnonymizationTest
                 if (!in_array($prefix . 'j2store_' . $name, $tables, true) && in_array($prefix . 'j2commerce_' . $name, $tables, true)) {
                     $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' LIKE ' . $this->db->quoteName($prefix . 'j2commerce_' . $name))->execute();
                     $state['tables'][] = $prefix . 'j2store_' . $name;
-                }
+                    // J2Store names its key columns j2store_*_id.
+                    foreach (array_keys($this->db->getTableColumns($prefix . 'j2store_' . $name, false)) as $column) {
+                        if (str_starts_with($column, 'j2commerce_')) {
+                            $this->db->setQuery(
+                                'ALTER TABLE ' . $this->db->quoteName($prefix . 'j2store_' . $name) . ' RENAME COLUMN '
+                                . $this->db->quoteName($column) . ' TO ' . $this->db->quoteName('j2store_' . substr($column, strlen('j2commerce_')))
+                            )->execute();
+                        }
+                    }                }
             }
 
             $copy = clone $testOrder;
