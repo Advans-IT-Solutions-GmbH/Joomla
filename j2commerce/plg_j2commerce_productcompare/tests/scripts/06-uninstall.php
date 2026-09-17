@@ -54,8 +54,11 @@ class UninstallTest
             return $exitCode === 0;
         });
 
+        // Match only the explicit markers Joomla's CLI emits, not bare substrings
+        // like "error"/"warning" that appear in benign summaries (e.g. "Errors: 0").
+        // Exit code and the post-conditions below already guard the removal.
         $this->test('extension:remove reports no error', function () use ($outputStr) {
-            return !preg_match('/\[ERROR\]|not removed|error|warning/i', $outputStr);
+            return !preg_match('/\[ERROR\]|\[WARNING\]|\[CAUTION\]|not removed/i', $outputStr);
         });
 
         $this->test('Plugin removed from #__extensions', function () {
