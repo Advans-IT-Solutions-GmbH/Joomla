@@ -139,7 +139,7 @@ class SitemapHttpSefTest
                 return $response['status'] === 200;
             });
 
-            $this->test("Product {$label} URL does not 301-redirect (#183/#185)", function () use ($response) {
+            $this->test("Product {$label} URL resolves without a redirect (no 301, no Location header) (#183/#185)", function () use ($response) {
                 return $response['status'] !== 301 && $response['location'] === null;
             });
         }

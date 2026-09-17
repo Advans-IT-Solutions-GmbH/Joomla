@@ -224,7 +224,10 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
         LANG_CANDIDATE="${LANG_MAJOR}.${LANG_MINOR}.${lang_patch}"
         for suffix in v1 v2 v3; do
             LANG_URL="https://github.com/joomlagerman/joomla/releases/download/${LANG_CANDIDATE}${suffix}/de-DE_joomla_lang_full_${LANG_CANDIDATE}${suffix}.zip"
-            if curl -fsSL "${LANG_URL}" -o /tmp/de-DE.zip; then
+            # Retry transient network/5xx failures (not HTTP 404, so a missing
+            # pack version still falls through to the next candidate quickly).
+            if curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+                --connect-timeout 15 --max-time 180 "${LANG_URL}" -o /tmp/de-DE.zip; then
                 echo "Installing de-DE language pack (${LANG_CANDIDATE}${suffix})..."
                 if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/de-DE.zip; then
                     echo "de-DE language pack installed"
