@@ -18,7 +18,6 @@ require_once __DIR__ . '/_osmap_bootstrap.php';
 use Joomla\CMS\Factory;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 osmap_ensure_classes();
@@ -64,7 +63,7 @@ class SitemapOutputTest
 
     private function makePlugin(): \PlgOsmapJ2commerce
     {
-        $plugin = new \PlgOsmapJ2commerce(new Dispatcher(), ['params' => new Registry([])]);
+        $plugin = new \PlgOsmapJ2commerce(['params' => new Registry([])]);
         $plugin->setDatabase($this->db);
 
         return $plugin;
@@ -102,6 +101,20 @@ class SitemapOutputTest
         return $aliases;
     }
 
+    /**
+     * @return string[]
+     */
+    private function expectedAliases(): array
+    {
+        $expected = ['test-product-alpha', 'test-product-beta'];
+        if (!$this->isJ6) {
+            $expected[] = 'test-product-nomenu';
+        }
+        sort($expected);
+
+        return $expected;
+    }
+
     public function run(): bool
     {
         echo "=== Sitemap Output Tests ===\n\n";
@@ -137,13 +150,15 @@ class SitemapOutputTest
         $nodes = $this->collect();
 
         $this->test('getTree(view=products) emits the fixture product aliases', function () use ($nodes) {
-            $expected = ['test-product-alpha', 'test-product-beta'];
-            if (!$this->isJ6) {
-                $expected[] = 'test-product-nomenu';
-            }
-            sort($expected);
+            return $this->aliases($nodes) === $this->expectedAliases();
+        });
 
-            return $this->aliases($nodes) === $expected;
+        $this->test('getTree(view=categories&id=2) emits the fixture product aliases', function () {
+            return $this->aliases($this->collect('view=categories&id=2')) === $this->expectedAliases();
+        });
+
+        $this->test('getTree(view=categoryalias&id=2) emits the fixture product aliases', function () {
+            return $this->aliases($this->collect('view=categoryalias&id=2')) === $this->expectedAliases();
         });
 
         $this->test('Emitted nodes use absolute URLs', function () use ($nodes) {
@@ -204,6 +219,49 @@ class SitemapOutputTest
             }
         });
 
+        $this->test('Unpublished articles are excluded from getTree(view=categories)', function () {
+            $this->db->setQuery('UPDATE #__content SET state = 0 WHERE id = 9001')->execute();
+
+            try {
+                $aliases = $this->aliases($this->collect('view=categories&id=2'));
+
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery('UPDATE #__content SET state = 1 WHERE id = 9001')->execute();
+            }
+        });
+
+        $this->test('Invisible products are excluded from getTree(view=categoryalias)', function () {
+            $this->db->setQuery(
+                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET visibility = 0 WHERE product_source_id = 9001'
+            )->execute();
+
+            try {
+                $aliases = $this->aliases($this->collect('view=categoryalias&id=2'));
+
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery(
+                    'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET visibility = 1 WHERE product_source_id = 9001'
+                )->execute();
+            }
+        });
+
+        $this->test('Guest-inaccessible articles are excluded from getTree(view=products)', function () {
+            $this->db->setQuery('UPDATE #__content SET access = 2 WHERE id = 9001')->execute();
+
+            try {
+                $aliases = $this->aliases($this->collect());
+
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery('UPDATE #__content SET access = 1 WHERE id = 9001')->execute();
+            }
+        });
+
         $this->test('Products stay in getTree(view=products) when a hidden child menu item is removed', function () {
             $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id = 9003')->execute();
 
@@ -213,6 +271,18 @@ class SitemapOutputTest
                 $this->db->setQuery('UPDATE #__menu SET published = -2 WHERE id = 9003')->execute();
             }
         });
+
+        if (!$this->isJ6) {
+            $this->test('J5 still emits every fixture product when all hidden child menu items are removed', function () {
+                $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id IN (9002, 9003)')->execute();
+
+                try {
+                    return $this->aliases($this->collect()) === $this->expectedAliases();
+                } finally {
+                    $this->db->setQuery('UPDATE #__menu SET published = -2 WHERE id IN (9002, 9003)')->execute();
+                }
+            });
+        }
 
         echo "\n=== Sitemap Output Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";

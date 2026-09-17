@@ -100,6 +100,20 @@ class SitemapHttpSefTest
 
                 return (int) $this->db->setQuery($query)->loadResult() === 0;
             });
+
+            $this->test('J6 SEF fixture seeds dedicated published product routes', function () {
+                $query = method_exists($this->db, 'createQuery')
+                    ? $this->db->createQuery()
+                    : $this->db->getQuery(true);
+                $query->select('COUNT(*)')
+                    ->from('#__menu')
+                    ->where('id IN (9011, 9012)')
+                    ->where('parent_id = 9001')
+                    ->where('published = 1')
+                    ->where('language = ' . $this->db->quote('de-DE'));
+
+                return (int) $this->db->setQuery($query)->loadResult() === 2;
+            });
         }
 
         $aliases = ['test-product-alpha', 'test-product-beta'];
