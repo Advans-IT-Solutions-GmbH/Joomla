@@ -150,8 +150,34 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             'token'       => Session::getFormToken(),
         ]);
 
+        $this->loadPluginLanguage();
+
         foreach (self::SCRIPT_TEXTS as $key) {
             Text::script($key);
+        }
+    }
+
+    /**
+     * Load the plugin language for Text::script().
+     *
+     * autoloadLanguage derives the file name from the installed group, which is
+     * j2store on Joomla 5 (plg_j2store_productcompare) and does not match the
+     * shipped file plg_j2commerce_productcompare.ini. The files live in the
+     * plugin folder, so load them from there (with the administrator language
+     * folder as fallback) into the application language, which Text uses.
+     */
+    private function loadPluginLanguage(): void
+    {
+        $language = $this->getApplication()->getLanguage();
+
+        if ($language === null) {
+            return;
+        }
+
+        foreach ([\dirname(__DIR__, 2), JPATH_ADMINISTRATOR] as $path) {
+            if ($language->load('plg_j2commerce_productcompare', $path)) {
+                return;
+            }
         }
     }
 
