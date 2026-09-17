@@ -143,10 +143,7 @@ class EventDispatchTest
             'button_class'   => 'btn btn-secondary',
         ]);
 
-        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
-            new Dispatcher(),
-            ['params' => $params, 'type' => $this->group, 'name' => 'productcompare']
-        );
+        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(['params' => $params, 'type' => $this->group, 'name' => 'productcompare']);
 
         $plugin->setDatabase($this->db);
 
@@ -361,10 +358,7 @@ class EventDispatchTest
             'button_class'   => 'btn btn-secondary',
         ], $paramOverrides));
 
-        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
-            new Dispatcher(),
-            ['params' => $params, 'type' => $this->group, 'name' => 'productcompare']
-        );
+        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(['params' => $params, 'type' => $this->group, 'name' => 'productcompare']);
         $plugin->setDatabase($this->db);
         try {
             $app = bootstrapSiteApplication();
