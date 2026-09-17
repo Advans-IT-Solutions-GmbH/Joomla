@@ -396,6 +396,22 @@ class ActiveShopDetectionTest
                 `variant_id` INT UNSIGNED NOT NULL DEFAULT 0,
                 `quantity`   INT          NOT NULL DEFAULT 0,
                 PRIMARY KEY (`' . $s['quantityPk'] . '`)',
+            // Option tables the comparison query joins (empty here).
+            $shop . '_options' => '`' . $shop . '_option_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `option_name` VARCHAR(255) NOT NULL DEFAULT \'\',
+                PRIMARY KEY (`' . $shop . '_option_id`)',
+            $shop . '_optionvalues' => '`' . $shop . '_optionvalue_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `optionvalue_name` VARCHAR(255) NOT NULL DEFAULT \'\',
+                PRIMARY KEY (`' . $shop . '_optionvalue_id`)',
+            $shop . '_product_options' => '`' . $shop . '_productoption_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `option_id`  INT UNSIGNED NOT NULL DEFAULT 0,
+                `product_id` INT UNSIGNED NOT NULL DEFAULT 0,
+                `ordering`   INT          NOT NULL DEFAULT 0,
+                PRIMARY KEY (`' . $shop . '_productoption_id`)',
+            $shop . '_product_optionvalues' => '`' . $shop . '_product_optionvalue_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `productoption_id` INT UNSIGNED NOT NULL DEFAULT 0,
+                `optionvalue_id`   INT UNSIGNED NOT NULL DEFAULT 0,
+                PRIMARY KEY (`' . $shop . '_product_optionvalue_id`)',
         ];
 
         foreach ($definitions as $table => $columns) {

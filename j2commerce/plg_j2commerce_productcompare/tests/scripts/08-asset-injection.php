@@ -137,8 +137,22 @@ class AssetInjectionTest
     {
         $doc = $this->makeHtmlDocument();
         $this->attachDocument($app, $doc);
+        $this->ensureSession($app);
 
         return $doc;
+    }
+
+    /**
+     * The CLI test application has no session; the plugin passes the form token
+     * of the session to the script, as on every site page.
+     */
+    private function ensureSession(object $app): void
+    {
+        try {
+            $app->getSession();
+        } catch (\Throwable $e) {
+            $app->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
+        }
     }
 
     private function testFrontendAssets(): void

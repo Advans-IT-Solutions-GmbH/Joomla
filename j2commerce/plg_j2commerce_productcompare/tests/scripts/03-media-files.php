@@ -47,9 +47,7 @@ class MediaFilesTest
         // --- Structural asset registration (not keyword matching) ---
         $this->test('joomla.asset.json registers the script asset "plg_j2commerce_productcompare"', function () {
             $asset = $this->findAsset('plg_j2commerce_productcompare', 'script');
-            return $asset !== null
-                && isset($asset['uri'])
-                && str_contains($asset['uri'], 'js/productcompare.js');
+            return $asset !== null && $this->assetFile($asset, 'js') === $this->mediaPath . '/js/productcompare.js';
         });
 
         $this->test('Script asset depends on "core" (Joomla.getOptions, Joomla.Text)', function () {
@@ -77,9 +75,7 @@ class MediaFilesTest
 
         $this->test('joomla.asset.json registers the style asset "plg_j2commerce_productcompare.css"', function () {
             $asset = $this->findAsset('plg_j2commerce_productcompare.css', 'style');
-            return $asset !== null
-                && isset($asset['uri'])
-                && str_contains($asset['uri'], 'css/productcompare.css');
+            return $asset !== null && $this->assetFile($asset, 'css') === $this->mediaPath . '/css/productcompare.css';
         });
 
         // --- JS reads exactly the script options the plugin injects ---
@@ -120,6 +116,31 @@ class MediaFilesTest
         echo "\n=== Media Files Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * File a relative asset URI resolves to, the way HTMLHelper does it:
+     * "<extension>/<file>" → media/<extension>/<css|js>/<file>. A URI that
+     * already contains the type folder would be looked up in css/css/… and
+     * the asset would silently not be rendered.
+     */
+    private function assetFile(array $asset, string $typeFolder): ?string
+    {
+        $uri = (string) ($asset['uri'] ?? '');
+
+        if ($uri === '' || !str_contains($uri, '/')) {
+            return null;
+        }
+
+        [$extension, $file] = explode('/', $uri, 2);
+
+        if (str_contains($file, '/')) {
+            return null;
+        }
+
+        $path = '/var/www/html/media/' . $extension . '/' . $typeFolder . '/' . $file;
+
+        return is_file($path) ? $path : null;
     }
 
     private function findAsset(string $name, string $type): ?array
