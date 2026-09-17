@@ -184,7 +184,9 @@ final class ConsentRepository
     }
 
     /**
-     * Update already anonymized legacy records that still store the raw language key.
+     * Update already anonymized legacy records that still store the raw language key. Global data
+     * migration for the unscoped cleanup/installer path only; never called for a scoped removal
+     * request, so it does not touch records outside the request's scope.
      */
     private function repairLegacyAnonymizedBodies(string $body): int
     {
@@ -389,7 +391,10 @@ final class ConsentRepository
     {
         $body    = self::legacyBodyText(self::loadSiteBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
-        $changed = $this->repairLegacyAnonymizedBodies($body);
+        // The raw-key body repair is a data migration for records anonymized by an older version.
+        // It runs only in the unscoped cleanup/installer path; a scoped removal request must not
+        // touch other users' already-anonymized records or inflate the returned count.
+        $changed = $userId === null ? $this->repairLegacyAnonymizedBodies($body) : 0;
         $lastId  = 0;
 
         do {

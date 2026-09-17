@@ -762,12 +762,24 @@ class ConsentLoggingTest
                 "loaded=$loadedOld tag=$tag"
             );
 
+            // An already-anonymized legacy row of another user that still stores the raw body key.
+            // A scoped removal request must not repair it (that would touch records outside the
+            // request scope and inflate the count); the unscoped cleanup below repairs it.
+            $insert(
+                'otherRawKey',
+                900,
+                Factory::getDate('-6 days')->toSql(),
+                ConsentRepository::LEGACY_BODY_KEY . ConsentRepository::LEGACY_MARKER . ConsentRepository::EVIDENCE_REMOVED_MARKER,
+                ConsentRepository::LEGACY_DONE_SUBJECT
+            );
+
             // Removal request of user 100 (account e-mail legacy-own@...): own records and guest
             // records with that e-mail address, nothing else.
             $scoped = $repository->anonymizeLegacyConsents(self::USER_ID, ['legacy-own@example.invalid', '']);
             $this->test('Removal request anonymizes the user\'s records and guest records with the user\'s e-mail', $scoped === 3, "changed $scoped");
             $this->test('Guest record with another e-mail is not touched by that request', $load('guestOther')->subject === ConsentRepository::LEGACY_SUBJECT);
             $this->test('Record of another user is not touched by that request', $load('oldBody')->subject === ConsentRepository::LEGACY_SUBJECT);
+            $this->test('Scoped removal request does not repair another user\'s already-anonymized record', str_contains((string) ($load('otherRawKey')->body ?? ''), ConsentRepository::LEGACY_BODY_KEY));
 
             $insert(
                 'rawKey',
@@ -777,7 +789,8 @@ class ConsentLoggingTest
                 ConsentRepository::LEGACY_DONE_SUBJECT
             );
             $all = $repository->anonymizeLegacyConsents();
-            $this->test('Cleanup anonymizes the remaining legacy records and repairs already key-based legacy bodies', $all === 3, "changed $all");
+            $this->test('Cleanup anonymizes the remaining legacy records and repairs already key-based legacy bodies', $all === 4, "changed $all");
+            $this->test('Unscoped cleanup repairs the other user\'s already-anonymized record', !str_contains((string) ($load('otherRawKey')->body ?? ''), ConsentRepository::LEGACY_BODY_KEY));
 
             foreach (['profile' => ['test@example.com', '198.51.100.40', 'LegacyAgent'], 'checkout' => ['198.51.100.41'], 'guestOwn' => ['legacy-own@', '198.51.100.42'], 'guestOther' => ['legacy-other@', '198.51.100.43'], 'oldBody' => ['Consent given during']] as $key => $gone) {
                 $row = $load($key);
