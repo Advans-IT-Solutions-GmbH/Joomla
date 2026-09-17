@@ -21,6 +21,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/ajax-test-helpers.php';
 
 use Joomla\CMS\Factory;
 
@@ -83,31 +84,6 @@ class SecurityTest
         curl_close($ch);
 
         return [$code, $body ?: ''];
-    }
-
-    /**
-     * True when the body is a JSON error: the plugin's own {"success":false}
-     * or the com_ajax envelope carrying it in data[0].
-     */
-    private function isJsonRejection(string $body): bool
-    {
-        $data = json_decode($body, true);
-
-        if (!is_array($data)) {
-            return false;
-        }
-
-        if (($data['success'] ?? null) === false) {
-            return true;
-        }
-
-        $inner = $data['data'][0] ?? null;
-
-        if (is_string($inner)) {
-            $inner = json_decode($inner, true);
-        }
-
-        return is_array($inner) && ($inner['success'] ?? null) === false;
     }
 
     /**
@@ -238,7 +214,7 @@ class SecurityTest
         [$code, $body] = $this->http('GET', $url, [], [], false);
         $this->test(
             'New session, no token: GET is either rejected with JSON or redirected before the plugin is loaded',
-            ($code >= 300 && $code < 400) || ($code === 200 && $this->isJsonRejection($body)),
+            ($code >= 300 && $code < 400) || ($code === 200 && ajaxforms_is_json_rejection($body)),
             "Got HTTP $code, body: " . substr($body, 0, 200)
         );
 
@@ -246,7 +222,7 @@ class SecurityTest
         [$codeP, $bodyP] = $this->http('POST', $url, ['task' => 'getCartCount'], [], false);
         $this->test(
             'New session, no token: POST answered without redirect and rejected with JSON success=false',
-            $codeP === 200 && $this->isJsonRejection($bodyP),
+            $codeP === 200 && ajaxforms_is_json_rejection($bodyP),
             "Got HTTP $codeP, body: " . substr($bodyP, 0, 200)
         );
 
@@ -256,7 +232,7 @@ class SecurityTest
             str_repeat('a', 32) => '1',   // fake 32-char hex token
         ], [], false);
         $rejected2 = ($code2 >= 300 && $code2 < 400)
-            || $this->isJsonRejection($body2);
+            || ajaxforms_is_json_rejection($body2);
 
         $this->test(
             'Fake-token POST is rejected (3xx or JSON success=false)',

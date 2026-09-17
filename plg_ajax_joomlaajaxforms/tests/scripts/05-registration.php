@@ -15,6 +15,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/ajax-test-helpers.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
@@ -85,31 +86,6 @@ class RegistrationTest
         return [$cookie, $token];
     }
 
-    /**
-     * The plugin may answer directly with {"success":false,...} or through the
-     * com_ajax envelope that carries the plugin JSON string in data[0].
-     *
-     * @return array<string, mixed>|null
-     */
-    private function decode(string $body): ?array
-    {
-        $outer = json_decode($body, true);
-
-        if (!is_array($outer)) {
-            return null;
-        }
-
-        if (isset($outer['data'][0]) && is_string($outer['data'][0])) {
-            $inner = json_decode($outer['data'][0], true);
-
-            if (is_array($inner) && array_key_exists('success', $inner)) {
-                return $inner;
-            }
-        }
-
-        return $outer;
-    }
-
     private function testMethodsViaReflection(): void
     {
         echo "\n--- Method existence (Reflection) ---\n";
@@ -154,7 +130,7 @@ class RegistrationTest
             'task' => 'register', 'username' => 'testuser', 'email' => 'test@example.com', 'password' => 'Test123!',
         ], [], false);
 
-        $data     = $this->decode($body);
+        $data     = ajaxforms_decode_response($body);
         $rejected = ($code >= 300 && $code < 400)
             || ($data !== null && ($data['success'] ?? null) === false)
             || $code === 403;
