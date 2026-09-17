@@ -269,9 +269,20 @@ WHERE id IN (9001, 9002);
 EOSQL
     LIVE_ROUTE_COUNT=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
         -e "SELECT COUNT(*) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);" 2>/dev/null || echo "0")
-    if [ "${LIVE_ROUTE_COUNT}" = "0" ]; then
+    if [ "${LIVE_ROUTE_COUNT}" != "2" ]; then
         mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 START TRANSACTION;
+SET @live_first_lft = (SELECT COALESCE(MIN(lft), 0) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012));
+SET @live_width = (SELECT COALESCE(SUM(rgt - lft + 1), 0) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012));
+DELETE FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);
+UPDATE ${DB_PREFIX}menu
+SET lft = lft - @live_width
+WHERE @live_width > 0 AND lft > @live_first_lft;
+
+UPDATE ${DB_PREFIX}menu
+SET rgt = rgt - @live_width
+WHERE @live_width > 0 AND rgt > @live_first_lft;
+
 SET @live_parent_rgt = (SELECT rgt FROM ${DB_PREFIX}menu WHERE id = 9001);
 UPDATE ${DB_PREFIX}menu
 SET rgt = rgt + 4
