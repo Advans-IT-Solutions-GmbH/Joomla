@@ -269,25 +269,7 @@ WHERE id IN (9001, 9002);
 EOSQL
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 START TRANSACTION;
-SET @live_first_lft = (SELECT COALESCE(MIN(lft), 0) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012));
-SET @live_width = (SELECT COALESCE(SUM(rgt - lft + 1), 0) FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012));
 DELETE FROM ${DB_PREFIX}menu WHERE id IN (9011, 9012);
-UPDATE ${DB_PREFIX}menu
-SET lft = lft - @live_width
-WHERE @live_width > 0 AND lft > @live_first_lft;
-
-UPDATE ${DB_PREFIX}menu
-SET rgt = rgt - @live_width
-WHERE @live_width > 0 AND rgt > @live_first_lft;
-
-SET @live_parent_rgt = (SELECT rgt FROM ${DB_PREFIX}menu WHERE id = 9001);
-UPDATE ${DB_PREFIX}menu
-SET rgt = rgt + 4
-WHERE rgt >= @live_parent_rgt;
-
-UPDATE ${DB_PREFIX}menu
-SET lft = lft + 4
-WHERE lft > @live_parent_rgt;
 
 INSERT INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -295,14 +277,44 @@ INSERT INTO ${DB_PREFIX}menu
 VALUES
     (9011, 'mainmenu', 'Live Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9011',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '',
-     @live_parent_rgt, @live_parent_rgt + 1),
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0),
     (9012, 'mainmenu', 'Live Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
      'index.php?option=com_content&view=article&id=9002&Itemid=9012',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '',
-     @live_parent_rgt + 2, @live_parent_rgt + 3);
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0);
 COMMIT;
 EOSQL
+    HTTP_HOST=localhost php <<'EOPHP'
+<?php
+define('_JEXEC', 1);
+define('JPATH_BASE', '/var/www/html');
+require JPATH_BASE . '/includes/defines.php';
+require JPATH_BASE . '/includes/framework.php';
+
+$container = \Joomla\CMS\Factory::getContainer();
+$input = null;
+
+foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+    try {
+        if ($container->has($inputClass)) {
+            $input = $container->get($inputClass);
+            break;
+        }
+    } catch (\Throwable $e) {
+        // try the next candidate
+    }
+}
+
+$app = new \Joomla\CMS\Application\SiteApplication($input, $container->get('config'), null, $container);
+$app->setDispatcher($container->get(\Joomla\Event\DispatcherInterface::class));
+\Joomla\CMS\Factory::$application = $app;
+
+$db = $container->get(\Joomla\Database\DatabaseInterface::class);
+
+if (!(new \Joomla\CMS\Table\Menu($db))->rebuild()) {
+    fwrite(STDERR, "Menu rebuild failed\n");
+    exit(1);
+}
+EOPHP
     echo "Multilingual SEF fixture applied"
 fi
 
