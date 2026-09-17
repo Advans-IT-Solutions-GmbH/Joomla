@@ -61,7 +61,7 @@ class UninstallTest
 
         $output   = [];
         $exitCode = 0;
-        exec("php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
         $outputStr = implode("\n", $output);
 
         $this->test('Uninstall command executed', function () use ($exitCode, $outputStr) {
@@ -97,6 +97,19 @@ class UninstallTest
 
         $this->test('Bundled task plugin files removed', function () {
             return !is_dir(JPATH_BASE . '/plugins/task/j2commerceprivacy');
+        });
+
+        $this->test('Bundled consent system plugin removed from #__extensions', function () {
+            $query = $this->db->getQuery(true)
+                ->select('COUNT(*)')
+                ->from('#__extensions')
+                ->where('element = ' . $this->db->quote('j2commerceprivacy'))
+                ->where('folder = '  . $this->db->quote('system'));
+            return (int) $this->db->setQuery($query)->loadResult() === 0;
+        });
+
+        $this->test('Bundled consent system plugin files removed', function () {
+            return !is_dir(JPATH_BASE . '/plugins/system/j2commerceprivacy');
         });
 
         $this->test('Bundled scheduler tasks removed', function () {

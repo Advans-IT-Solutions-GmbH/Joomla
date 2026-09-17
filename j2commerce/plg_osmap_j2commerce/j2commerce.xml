@@ -11,7 +11,7 @@
     <version>1.3.12</version>
     <description>PLG_OSMAP_J2COMMERCE_XML_DESCRIPTION</description>
 
-    <targetplatform name="joomla" version="(5\.[0-9]|6\.[0-9])" />
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
 
     <scriptfile>script.php</scriptfile>

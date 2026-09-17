@@ -27,7 +27,9 @@ JOOMLA_PID=$!
 echo "Waiting for Joomla files..."
 sleep 10
 
+SELF_INSTALLED=0
 if [ ! -f /var/www/html/configuration.php ]; then
+    SELF_INSTALLED=1
     echo "Installing Joomla via CLI..."
 
     until [ -f /var/www/html/installation/joomla.php ] || [ -f /var/www/html/cli/joomla.php ]; do
@@ -118,6 +120,21 @@ until [ -f /var/www/html/configuration.php ]; do
     sleep 2
 done
 
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window could hang or lose registrations,
+# so wait until the installation folder is gone and Apache answers. When this
+# script installed Joomla itself, the folder may stay; then only Apache counts.
+READY_ELAPSED=0
+until { [ "$SELF_INSTALLED" = "1" ] || [ ! -d /var/www/html/installation ]; } && curl -fs -o /dev/null http://localhost/; do
+    if [ $READY_ELAPSED -ge 120 ]; then
+        echo "ERROR: Joomla setup did not finish within 120 seconds"
+        exit 1
+    fi
+    sleep 2
+    READY_ELAPSED=$((READY_ELAPSED + 2))
+done
+echo "Joomla setup finished"
+
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; echo (new JConfig)->dbprefix;" 2>/dev/null || echo "j_")
 echo "DB prefix: ${DB_PREFIX}"
 
@@ -135,15 +152,40 @@ else
     exit 1
 fi
 
-# Install privacy plugin extension
-echo "Installing privacy plugin extension..."
-cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
+# Install the privacy plugin through the Joomla web installer (Installer
+# singleton, as in the backend). The administrator password is set to a known
+# value first because the site may come from the CLI/manual fallback above.
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
+echo "Installing privacy plugin extension via the Joomla web installer..."
+mkdir -p /tmp/test-state
+TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"
+ADMIN_HASH=$(TEST_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" php -r 'echo password_hash(getenv("TEST_ADMIN_PASSWORD"), PASSWORD_BCRYPT);')
+mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db \
+    -e "UPDATE ${DB_PREFIX}users SET password='${ADMIN_HASH}', block=0, requireReset=0 WHERE username='admin';"
+if [ "${PRIVACY_INSTALL_METHOD:-web}" = "cli" ]; then
+    # Used by the update-from-previous job: older releases install the bundled task
+    # plugin through the Installer singleton and fail in the web installer.
+    cp /tmp/extension.zip /var/www/html/tmp/extension.zip
+    HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip || { echo "ERROR: Extension installation FAILED"; exit 1; }
+    echo "cli" > /tmp/test-state/privacy-install-method
     echo "Extension installed via Joomla CLI"
+elif PACKAGE_PATH=/tmp/extension.zip JOOMLA_ADMIN_USERNAME=admin JOOMLA_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" \
+    EXTENSION_NAME="Privacy - J2Commerce" STRICT_MESSAGES="${STRICT_INSTALL_MESSAGES:-1}" php /usr/local/bin/install-extension-http.php; then
+    echo "web" > /tmp/test-state/privacy-install-method
+    echo "Extension installed via Joomla web installer"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
 fi
+
+# Record plugin states before the test setup enables everything.
+mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db -N \
+    -e "SELECT folder, element, enabled FROM ${DB_PREFIX}extensions WHERE type = 'plugin';" \
+    > /tmp/test-state/plugins-before-activation.tsv
 
 echo "Enabling installed plugins..."
 mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db \

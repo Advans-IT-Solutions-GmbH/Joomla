@@ -61,7 +61,7 @@ class UninstallTest
 
         $output   = [];
         $exitCode = 0;
-        exec("php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
         $outputStr = implode("\n", $output);
 
         $this->test('Uninstall command executed', function () use ($exitCode, $outputStr) {
@@ -79,8 +79,16 @@ class UninstallTest
         });
 
         $this->test('Plugin files removed', function () {
-            return !file_exists(JPATH_BASE . '/plugins/ajax/joomlaajaxforms/joomlaajaxforms.php')
-                && !is_dir(JPATH_BASE . '/plugins/ajax/joomlaajaxforms/src');
+            $dir = JPATH_BASE . '/plugins/ajax/joomlaajaxforms';
+
+            return !file_exists($dir . '/joomlaajaxforms.xml')
+                && !file_exists($dir . '/services/provider.php')
+                && !is_dir($dir . '/src')
+                && !is_dir($dir);
+        });
+
+        $this->test('Plugin media files removed', function () {
+            return !is_dir(JPATH_BASE . '/media/plg_ajax_joomlaajaxforms');
         });
 
         echo "\n=== Uninstall Test Summary ===\n";

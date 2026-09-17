@@ -25,6 +25,22 @@ while [ ! -f /var/www/html/configuration.php ] && [ $ELAPSED -lt $TIMEOUT ]; do
     echo "  Waiting... ($ELAPSED/$TIMEOUT seconds)"
 done
 
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window lost the J2Store registration
+# now and then, so wait until the installation folder is gone and Apache answers.
+if [ -f /var/www/html/configuration.php ]; then
+    READY_ELAPSED=0
+    until [ ! -d /var/www/html/installation ] && curl -fs -o /dev/null http://localhost/; do
+        if [ $READY_ELAPSED -ge 120 ]; then
+            echo "ERROR: Joomla setup did not finish within 120 seconds"
+            exit 1
+        fi
+        sleep 2
+        READY_ELAPSED=$((READY_ELAPSED + 2))
+    done
+    echo "Joomla setup finished"
+fi
+
 if [ ! -f /var/www/html/configuration.php ]; then
         echo "Creating configuration.php manually..."
         cat > /var/www/html/configuration.php << 'EOFCONFIG'
@@ -103,6 +119,12 @@ if [ -f /tmp/j2commerce4.zip ]; then
     cp /tmp/j2commerce4.zip /var/www/html/tmp/j2commerce4.zip
     if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/j2commerce4.zip 2>&1; then
         echo "J2Store/J2Commerce 4 installed via Joomla CLI"
+        J2STORE_ROWS=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -N -s \
+            -e "SELECT COUNT(*) FROM ${DB_PREFIX}extensions WHERE type='component' AND element='com_j2store';" 2>/dev/null || echo 0)
+        if [ "${J2STORE_ROWS:-0}" -lt 1 ]; then
+            echo "ERROR: com_j2store is not registered after the J2Store/J2Commerce 4 installation"
+            exit 1
+        fi
     else
         echo "ERROR: J2Store/J2Commerce 4 installation FAILED"
         exit 1
@@ -112,15 +134,42 @@ else
     exit 1
 fi
 
-# Install privacy plugin extension
-echo "Installing privacy plugin extension..."
-cp /tmp/extension.zip /var/www/html/tmp/extension.zip
-if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip; then
-    echo "✅ Extension installed via Joomla CLI"
+# Install the privacy plugin through the Joomla web installer. The backend uses
+# the Installer singleton; installing the same way covers the nested task plugin
+# installation exactly as it happens for users. The administrator password is
+# set to a known value first because the site may come from the fallback above.
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
+echo "Installing privacy plugin extension via the Joomla web installer..."
+mkdir -p /tmp/test-state
+TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"
+ADMIN_HASH=$(TEST_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" php -r 'echo password_hash(getenv("TEST_ADMIN_PASSWORD"), PASSWORD_BCRYPT);')
+mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+    -e "UPDATE ${DB_PREFIX}users SET password='${ADMIN_HASH}', block=0, requireReset=0 WHERE username='admin';"
+if [ "${PRIVACY_INSTALL_METHOD:-web}" = "cli" ]; then
+    # Used by the update-from-previous job: older releases install the bundled task
+    # plugin through the Installer singleton and fail in the web installer.
+    cp /tmp/extension.zip /var/www/html/tmp/extension.zip
+    HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip || { echo "ERROR: Extension installation FAILED"; exit 1; }
+    echo "cli" > /tmp/test-state/privacy-install-method
+    echo "Extension installed via Joomla CLI"
+elif PACKAGE_PATH=/tmp/extension.zip JOOMLA_ADMIN_USERNAME=admin JOOMLA_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" \
+    EXTENSION_NAME="Privacy - J2Commerce" STRICT_MESSAGES="${STRICT_INSTALL_MESSAGES:-1}" php /usr/local/bin/install-extension-http.php; then
+    echo "web" > /tmp/test-state/privacy-install-method
+    echo "✅ Extension installed via Joomla web installer"
 else
     echo "ERROR: Extension installation FAILED"
     exit 1
 fi
+
+# Record plugin states before the test setup enables everything, so tests can
+# verify what the installer itself enabled or disabled.
+mysql -h mysql -u joomla -pjoomla_pass joomla_db -N \
+    -e "SELECT folder, element, enabled FROM ${DB_PREFIX}extensions WHERE type = 'plugin';" \
+    > /tmp/test-state/plugins-before-activation.tsv
 
 # Enable all newly installed plugins (disabled by default)
 echo "Enabling installed plugins..."

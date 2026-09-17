@@ -1,22 +1,23 @@
-# System - J2Commerce Privacy Plugin
+# Privacy - J2Commerce Plugin
+
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-privacy.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-privacy.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-privacy.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-privacy.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
 ## Description
 
-GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5 and 6. Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data. Supports J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables) via runtime detection.
+GDPR/DSGVO compliance solution for J2Commerce shops on Joomla 5.4 or later (5.4.x, 6.x). Integrates with Joomla's native Privacy Suite (`com_privacy`) to handle data export, deletion requests, and consent — specifically for J2Commerce order and customer data. Supports J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables) via runtime detection. The the active shop (display, recording consent) is decided by the enabled component, the same rule as in all Advans J2Commerce extensions: `com_j2commerce` enabled with its tables → `#__j2commerce_*`; otherwise `com_j2store` enabled with its tables → `#__j2store_*`; an enabled component without tables is skipped, an installed but disabled one does not count; otherwise the J2Commerce 6 tables if they exist. Removal requests, anonymization, the retention cleanup and the export work on every data set that exists, because the official migration to J2Commerce 6 keeps the `#__j2store_*` tables and personal data must not survive there.
 
 ### Compatibility Test Scope
 
-The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. The bundled checkout and MyProfile template overrides are now also **rendered** for both stacks (`com_j2store` on J5/J2Store 4 and `com_j2commerce` on J6/J2Commerce 6) and asserted to actually emit the consent checkbox and Privacy tab markup, reading the real installed-and-enabled plugin params. Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
+The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x) plus real J2Commerce/J2Store runtimes for the core privacy export, anonymization, cart cleanup, retention, and uninstall paths. The bundled checkout and MyProfile template overrides are now also **rendered** for both stacks (`com_j2store` on J5/J2Store 4 and `com_j2commerce` on J6/J2Commerce 6) and asserted to actually emit the consent checkbox and Privacy tab markup, reading the real installed-and-enabled plugin params (on J2Commerce 6 the checkbox comes from the consent system plugin through the J2Commerce event `AfterDisplayShippingPayment`; test 12 also requests the real checkout steps over HTTP). Optional AcyMailing paths are exercised against a minimal database fixture only; they are not a full AcyMailing installation/runtime compatibility proof. Lifetime-license detection is covered through the J2Commerce metafield database path, but it does not replace an end-to-end license plugin runtime test.
 
 ## Features
 
-- **Checkout Consent Checkbox** — Privacy consent during checkout via template override
+- **Checkout Consent Checkbox** — Privacy consent during checkout (J2Commerce 6: J2Commerce event, validated and recorded on the server; J2Commerce 4: template override)
 - **Privacy Policy Link** — Configurable link to privacy policy article
 - **Address Management** — Frontend delete buttons for saved addresses
 - **Automated Data Cleanup** — Scheduled anonymization after configurable retention period
@@ -27,9 +28,10 @@ The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes for t
 
 ## Requirements
 
-- Joomla 5.0 or higher (Joomla 6 supported)
+- Joomla 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce 4.0 or higher (J2Commerce 6 supported)
+- J2Commerce 6: **6.3.4 or later** for the checkout consent checkbox. The core checkout templates fire the event `AfterDisplayShippingPayment` since J2Commerce commit `d7992c66` (PR #1109, merged 2026-05-28, after the 6.3.3 version bump of 2026-05-27); 6.3.4 (version bump of 2026-06-01) is the first version that contains it. The installer warns when an older J2Commerce 6 is installed
 - Joomla Privacy Component enabled (`com_privacy`)
 
 ---
@@ -58,14 +60,35 @@ Organizations with subscription-based business models should contact Advans IT S
 
 ### Install Steps
 
-1. Download `plg_privacy_j2commerce.zip`
-2. **System → Extensions → Install**
+1. Download `plg_privacy_j2commerce_<version>.zip` from the latest release
+2. **System → Install → Extensions**
 3. Upload and install
-4. **Enable via System → Plugins → System - J2Commerce Privacy**
+4. **Enable via System → Manage → Plugins → Privacy - J2Commerce**
+
+The installer also installs the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`) and enables it on the first installation. Updates install the new version of the task plugin but leave its enabled/disabled state unchanged. On install and on every update the installer also migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup` and removes update sites of this plugin that still point to the repository's former path (`advansit/Joomla`), so Joomla only queries the current update server.
+
+### Updating
+
+The manifest registers an update server (`updates/update.xml` in this repository). New versions appear under **System → Update → Extensions**. On update, template overrides that were already deployed are not touched (see [Updating overrides after plugin updates](#updating-overrides-after-plugin-updates)).
+
+### Uninstall
+
+Uninstall via **System → Manage → Extensions**. In addition to Joomla's standard removal of the privacy plugin, `script.php` (`uninstall()`):
+
+- deletes all scheduled tasks of type `plg_task_j2commerceprivacy.autocleanup` from `#__scheduler_tasks`
+- removes the bundled task plugin (its `#__extensions`, `#__schemas` and `#__update_sites_extensions` rows and the folder `plugins/task/j2commerceprivacy`)
+- removes the bundled consent system plugin (same rows and the folder `plugins/system/j2commerceprivacy`)
+
+Not removed:
+
+- template overrides copied into `templates/{template}/html/com_j2store/` and `templates/{template}/html/com_j2commerce/`
+- J2Commerce orders, addresses and all other shop data (already anonymized data stays anonymized)
+- lifetime-license flags in `#__j2commerce_metafields` / `#__j2store_product_customfields` (including a manually created `#__j2store_product_customfields` table)
+- entries already written to `#__action_logs`
 
 ### Post-Installation Configuration
 
-The plugin requires mandatory configuration before operation. A detailed setup wizard is displayed upon installation. The following steps must be completed:
+The plugin requires mandatory configuration before operation. Detailed setup steps are shown in the post-installation message. The following steps must be completed:
 
 1. Enable the plugin in Joomla's plugin manager
 2. Configure retention periods and legal compliance parameters
@@ -90,7 +113,7 @@ Joomla's `com_privacy` component requires a frontend menu item to generate valid
 6. Under **Link Type**, set **Display in Menu** to **No** (hidden menu item)
 7. Save
 
-This menu item is required for the "Data Export" and "Data Deletion" buttons in the J2Commerce profile privacy tab to work for logged-in users. Guest users see mailto links instead (see below).
+This menu item is required for the privacy request link in the J2Commerce profile privacy tab to work for logged-in users (the request form lets the user choose export or deletion). Guest users see a mailto link instead (see below).
 
 ---
 
@@ -122,42 +145,74 @@ For a full overview of how Joomla's Privacy Suite works, see the [Joomla Privacy
 
 ### Checkout Consent Checkbox
 
-The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: Shipping & Payment) via the template override `default_shipping_payment.php`. See [Template Integration](#template-integration) for deployment details.
+The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: Shipping & Payment).
 
-**Validation:** Client-side JavaScript validates both the AGB/TOS checkbox (J2Store built-in) and the privacy consent checkbox together. If either is unchecked, both error messages are shown simultaneously. The validation uses capturing-phase event listeners that run before J2Store's jQuery handler.
+- **J2Commerce 6:** the bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed together with this plugin and enabled on first installation) renders the checkbox through the J2Commerce event `AfterDisplayShippingPayment`, which the J2Commerce 6 core templates (bootstrap5 and uikit, J2Commerce 6.3.4 or later) fire directly before the Continue button. The checkbox therefore appears with the J2Commerce core templates and with any template override that keeps this event call. No J2Commerce 6 checkout override is shipped or deployed; for your own override, copy the J2Commerce core template (`components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php`) and keep the event call.
+- **Checkout overrides of earlier plugin versions (J2Commerce 6):** versions up to 1.5.5 copied `html/com_j2commerce/checkout/default_shipping_payment.php` into the site templates. That copy replaces both core templates and lacks newer J2Commerce features (payment-step custom fields, payment method descriptions, image URL handling, uikit markup). On installation and update, a copy that is still **unchanged** (identical to a shipped version) is renamed to `default_shipping_payment.php.plg_privacy_j2commerce-disabled` when J2Commerce 6.3.4 or later is installed, so the core template takes over; the installer lists the renamed files. Renaming instead of deleting keeps the file for comparison and can be undone. A **changed** copy may contain your own changes: it is left in place and the installer warns about it. With an older or unknown J2Commerce version nothing is renamed, because the copy is then the only place that renders the checkbox.
+- **J2Commerce 4 / J2Store:** the checkbox is rendered by the template override `default_shipping_payment.php`. See [Template Integration](#template-integration).
 
-**Error containers** use class `j2-validation-error` (not `j2error`) so that J2Store's global `$('.j2error').remove()` in the AJAX success handler does not destroy them.
+**Validation (J2Commerce 6):** J2Commerce 6 loads the checkout steps via AJAX and removes `<script>` tags from the step HTML, so the consent is validated on the server by the system plugin.
+
+- **When consent is enforced** depends only on the plugin options: **Show Consent Checkbox** and **Consent Required** are Yes. Neither the template nor any request parameter (`template`, `templateStyle`, `Itemid`) nor a skipped step switches the check off.
+- Every render of the shipping & payment step discards an earlier consent, so the checkbox has to be ticked again.
+- Shipping & payment step (`checkout.shippingPaymentMethodValidate`, also when called as `controller=checkout&task=shippingPaymentMethodValidate`): ticked, the consent is stored in the session for the current J2Commerce cart; not ticked while required, J2Commerce receives a field error for `j2commerce_privacy_consent` and the checkout does not advance.
+- Confirmation (`checkout.confirm`) and payment submission (`checkout.confirmPayment`, browser POST) are refused while required and no consent is stored for the current cart. This covers requests that skip the shipping & payment step, zero-total orders and cart changes (for example a login in another tab): the shopper has to tick the checkbox again. Off-site payment returns (GET) are not refused.
+- A custom J2Commerce 6 checkout override that neither fires `AfterDisplayShippingPayment` nor renders the checkbox (`j2commerce_privacy_consent`) cannot complete a checkout while consent is required. The installer warns about such overrides (also in the `bootstrap5/`, `uikit/` and, for J2Commerce before 6.3.7, `uikit3/` subfolders) on installation and update.
+
+**Validation (J2Commerce 4 / J2Store):** the `com_j2store` checkout override keeps the client-side script `media/js/consent-validator.js`, which blocks the checkout form submit while the required checkbox is unticked.
 
 ### Consent Recording
 
-| User Type | When | Where | Identifier |
-|-----------|------|-------|------------|
-| Logged-in | Checkout confirm step | `#__privacy_consents` | `user_id` |
-| Guest | First profile view after checkout | `#__privacy_consents` | `user_id=0`, email in `body` field |
+Consent is stored in Joomla's core table `#__privacy_consents`. No table of its own is created.
 
-**Logged-in users:** Consent is written to `#__privacy_consents` when the user reaches the checkout confirm step (step 5). The plugin params are read directly from `#__extensions` because the privacy plugin group is not imported during checkout AJAX requests.
+| Column | Value |
+|--------|-------|
+| `user_id` | `user_id` of the order (`0` for guest orders) |
+| `state` | `1` (valid). Core semantics apply: `0` obsolete, `-1` invalidated in **Users → Privacy → Consents** |
+| `created` | Time the order was saved |
+| `subject` | `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT` (translated in the backend) |
+| `body` | Order number, IP address and user agent (the same evidence Joomla's registration consent stores), plus the marker `<!-- j2commerce-order:ORDER_ID -->` |
+| `remind`, `token` | Core defaults (`0`, empty) |
 
-**Guest users:** At checkout, `Factory::getApplication()->getIdentity()` returns `user_id=0`. The consent entry is created retroactively when the guest views the profile privacy tab (accessed via order token). The guest email is read from the J2Store session (`guest_order_email`), and orders are matched by email address.
+**When:** on J2Commerce 6, when J2Commerce has accepted the order. On `checkout.confirmPayment` the system plugin captures the order number from the user state `j2commerce.order_id` (set by the confirmation step), the consent cart and the request data (IP address via Joomla's `IpHelper`, respecting "Behind Load Balancer"; user agent): for a POST only with a valid form token, for a GET return from an off-site payment provider without one. After J2Commerce's controller has run, the consent is written if the order exists, was created from the cart the consent was given for and is no longer incomplete (`order_state_id` 5). J2Commerce saves an incomplete order whenever the confirmation step is rendered; such orders, orders rejected by `AfterOrderValidate` or by the payment plugin, and orders of another cart get no record. Off-site payments are recorded on the return request if the payment plugin has updated the order status by then; a status set only later by a server-to-server notification is not covered. Without a cart (ID 0) the consent cannot be bound: a required consent is refused, an optional one is not stored. Exactly one record is written per order; rows from parallel requests are removed again.
+
+**Guests:** the record gets `user_id = 0`. The e-mail address is **not** copied into the consent; the guest is traced through the order (order token, `user_email` of the order and the order number in `body`).
+
+**What is stored and why:** the time of the consent (`created`), the order number, the IP address and the browser user agent (`body`), and the `user_id` of the order. IP address and user agent are stored as proof of the consent and for the security of the shop (legitimate interest).
+
+**How long:** IP address and user agent are kept as long as the order they belong to has to be kept (accounting retention period, counted from the end of the fiscal year of the order). They are removed from the consent record when this plugin anonymizes the order (removal request or cleanup task; only orders outside the retention period), and the cleanup task also removes them when the record is outside the retention period, when its order no longer exists in any J2Commerce data set (deleted) or when the order was already anonymized. The record itself stays as evidence without these personal data: `user_id`, `state`, `created`, `subject` and the order number are kept, and `body` then says that IP address and user agent were removed (marker `<!-- j2commerce-evidence-removed -->`). Consent records of other orders are not changed. With **Anonymize Orders** (plugin) or `anonymize_orders` (task) off, orders are not anonymized; the cleanup task still removes the evidence of records outside the retention period.
+
+**Export and deletion:** Joomla's privacy export (`plg_privacy_consents`) only includes consent records with the requesting user's `user_id`, and Joomla deletes consent records only when a user account is deleted. Checkout consents of guest orders (`user_id = 0`) are therefore not covered by com_privacy export or deletion requests, and this plugin does not export or delete checkout consent records itself (it only removes IP address and user agent when it anonymizes the order, see above). Handle requests of guest customers manually in **Users → Privacy → Consents**.
+
+**Operator responsibilities:** describe the stored data (IP address, user agent, order number, time), its purpose (proof of consent, shop security) and its storage period (the retention period of the order) in your privacy policy. Schedule the cleanup task (or process removal requests) so that expired orders are anonymized; guest orders are anonymized by the cleanup task. The consent records themselves, without IP address and user agent, are not deleted automatically; decide how long you keep them.
+
+**Not recorded:** consents are never created retroactively from the mere existence of an order, because an order is no evidence that the checkbox was ticked. Orders placed before this version, and checkouts on J2Commerce 4 / J2Store, have no checkout consent record.
+
+**Records of an earlier template override:** consent records with the subject `PLG_PRIVACY_J2COMMERCE` were written by earlier site template overrides, partly afterwards when the MyProfile tab was opened (dated with the newest order). They are no evidence of a checkout consent and are never assigned to an order. On installation and update, in removal requests (the user's records and guest records containing the request or account e-mail address) and in the cleanup task, the e-mail address, IP address and user agent are removed; the record gets the subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY` ("entry from an earlier version") and a neutral note that its content can no longer be verified. Such records are not shown in the Privacy tab and do not count as consent. The installer reports how many records were anonymized.
+
+**Uninstall:** consent records are Joomla core data and remain in `#__privacy_consents`.
 
 ### Profile Privacy Tab
 
-The privacy tab in J2Commerce's "My Profile" shows consent status and privacy request buttons.
+The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy request link. Its content is the override `myprofile/default_privacy.php`, which renders the layout `privacy_tab`: a copy in `templates/{template}/html/layouts/plg_privacy_j2commerce/privacy_tab.php` takes precedence over the plugin's `layouts/privacy_tab.php`.
 
-> **Template override required.** The privacy tab is only rendered when the MyProfile template override (`default.php`) is in place. The override is deployed automatically on first install. See [Template Integration](#template-integration) for details.
+> **Template override required.** The privacy tab is only rendered when the MyProfile template overrides (`default.php`, `default_privacy.php`) are in place. See [Template Integration](#template-integration) for details.
 
-**Consent status lookup** checks three sources in order:
-1. `#__privacy_consents` table (by `user_id` for logged-in, not available for guests)
-2. `#__j2store_orders` / `#__j2commerce_orders` by `user_id` (logged-in users)
-3. `#__j2store_orders` / `#__j2commerce_orders` by `user_email` (guest users)
+**Consent status lookup** (valid records only, `state = 1`):
 
-If an order is found but no `#__privacy_consents` entry exists, one is auto-created.
+| User Type | Lookup |
+|-----------|--------|
+| Logged-in | Records with the user's `user_id` and the subject of this plugin or of Joomla's registration/profile consent (`PLG_SYSTEM_PRIVACYCONSENT_SUBJECT`). Consents of other extensions are not shown |
+| Guest (order token and `guest_order_email` in the J2Commerce session) | The checkout consent of exactly the one order identified by that token and e-mail address, the same order J2Commerce shows the guest. Other orders of the same e-mail address are not shown |
 
-**Privacy request buttons** (Data Export, Data Deletion):
+**Privacy request buttons** (logged-in users and verified guest sessions): one button for a data export request while **Show Export Data** is Yes, and one for a data deletion request while **Show Delete All Data** is Yes. With both options off, the tab shows only the consent status.
 
-| User Type | Button Behavior |
-|-----------|----------------|
-| Logged-in | Links to `com_privacy` request form (requires menu item, see above) |
-| Guest | `mailto:` link to site admin email (guests cannot use `com_privacy` — Joomla's Dispatcher redirects them to login) |
+| User Type | Link |
+|-----------|------|
+| Logged-in | Both buttons open the `com_privacy` request form (`index.php?option=com_privacy&view=request`; requires the menu item, see above). The form offers both request types and cannot be preselected through the URL, so the shopper selects the type there |
+| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty, with the request type as subject (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login) |
+
+**Show Privacy Section** off hides the tab. **Show Delete Address Buttons** off hides the delete button per address in the Addresses tab (`myprofile/default_addresses.php`). Every option applies only while the plugin is enabled; with the plugin disabled, the overrides show neither the tab nor the delete buttons.
 
 ---
 
@@ -178,18 +233,19 @@ On first install, `script.php` copies the bundled overrides into every active fr
 templates/{template}/html/com_j2store/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2store/myprofile/default.php
 templates/{template}/html/com_j2store/myprofile/default_addresses.php
+templates/{template}/html/com_j2store/myprofile/default_privacy.php
 ```
 
-**J2Commerce 6.x** (`com_j2commerce`):
+**J2Commerce 6.x** (`com_j2commerce`; no checkout override, the core templates show the consent checkbox):
 ```
-templates/{template}/html/com_j2commerce/checkout/default_shipping_payment.php
 templates/{template}/html/com_j2commerce/myprofile/default.php
 templates/{template}/html/com_j2commerce/myprofile/default_addresses.php
+templates/{template}/html/com_j2commerce/myprofile/default_privacy.php
 ```
 
 Rules:
 - Files are **only copied if they do not already exist** — existing customisations are never overwritten.
-- On **updates**, no files are copied. Manage overrides manually after updating.
+- On **updates**, only `myprofile/default_privacy.php` is copied, and only into templates that already have `myprofile/default.php` for an installed J2Commerce component and where it is still missing (the deployed `default.php` loads it for the Privacy tab). All other overrides are not changed, except that unchanged J2Commerce 6 checkout overrides of earlier plugin versions are renamed (see [Checkout Consent Checkbox](#checkout-consent-checkbox)); manage them manually after updating. Installation and update warn about J2Commerce 6 checkout overrides (including `bootstrap5/`, `uikit/` and, for J2Commerce before 6.3.7, `uikit3/` subfolders) that neither fire the J2Commerce event `AfterDisplayShippingPayment` nor render the consent checkbox; with a required consent the checkout cannot be completed with them.
 - The postflight message lists which files were copied and which were skipped.
 
 ### Manual deployment
@@ -262,7 +318,9 @@ All rows referencing the subscriber are deleted before the subscriber record its
 
 ### MyProfile Newsletter tab
 
-The Newsletter tab in J2Commerce MyProfile (`default_newsletter.php`) lets logged-in users manage their subscriptions directly — no redirect to a separate AcyMailing frontend page.
+The bundled overrides do not include a Newsletter tab; this section only applies if your own template provides `default_newsletter.php`.
+
+Such a Newsletter tab in J2Commerce MyProfile (`default_newsletter.php`) lets logged-in users manage their subscriptions directly — no redirect to a separate AcyMailing frontend page.
 
 **To enable the Newsletter tab:**
 
@@ -292,22 +350,22 @@ No AcyMailing PHP classes are loaded. All queries use Joomla's `DatabaseDriver` 
 
 ### How `default.php` activates the privacy tab
 
-`default.php` checks for the plugin at runtime:
+`default.php` checks the plugin and the option **Show Privacy Section** at runtime through `PrivacyOptions` (`src/Frontend/PrivacyOptions.php`):
 
 ```php
-$privacyPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
-if ($privacyPlugin) {
-    $privacyParams = new \Joomla\Registry\Registry($privacyPlugin->params);
-    $showPrivacyTab = (bool) $privacyParams->get('show_privacy_section', 1);
-    Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showPrivacyTab();
+
+if ($_privacyEnabled) {
+    $_privacyOptions::loadLanguage();
 }
 ```
 
-If the plugin is not installed or disabled, `$showPrivacyTab` stays `false` and the tab is not rendered — no errors.
+If the plugin is not installed or disabled, or the option is off, `$_privacyEnabled` is `false` and the tab is not rendered — no errors. `default_addresses.php` uses `PrivacyOptions::showDeleteAddress()` the same way.
 
-### Language file must be loaded manually
+### Language file
 
-Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the explicit `Factory::getLanguage()->load(...)` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys render as raw strings in the tab. This call is already included in the provided `default.php` — do not remove it.
+Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the `PrivacyOptions::loadLanguage()` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys (including the tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`) render as raw strings. This call is already included in the provided `default.php` — do not remove it. The consent system plugin also loads this language file for MyProfile pages.
 
 ### Updating overrides after plugin updates
 
@@ -316,10 +374,6 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 1. Compare your deployed override with the new source file.
 2. Merge any changes relevant to your customisation.
 3. The postflight message on update will remind you of this.
-
-### Licenses tab (optional)
-
-`default.php` also conditionally renders a **Licenses** tab if the `#__license_keys` table exists and contains rows for the current user. This tab is unrelated to the privacy plugin — it is part of the Advans IT Solutions licensing system. If you do not use that system, the tab simply does not appear (the query is wrapped in a `try/catch`).
 
 ---
 
@@ -331,17 +385,14 @@ When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2comme
 
 This step is only required if your shop sells products with perpetual (lifetime) licenses. The plugin functions fully without it — lifetime license detection is simply skipped.
 
-**Two separate tables are involved:**
+**One table is used, depending on the J2Commerce version:**
 
 | Table | Purpose | How to populate |
 |-------|---------|-----------------|
 | `#__j2commerce_metafields` (J2Commerce 6.x) | Marks which products are lifetime licenses | Insert product metafields with `owner_resource = product`, `metakey = is_lifetime_license`, `metavalue = yes` |
 | `#__j2store_product_customfields` (J2Commerce 4.x) | Marks which products are lifetime licenses | Optional custom field table used by this plugin |
-| `#__license_keys` | Stores issued license keys per user | Separate SQL — see Post-Install Message |
 
 For J2Commerce 6, insert the metafield row shown in the post-installation message for every perpetual-license product. For J2Commerce 4 / J2Store, create and populate `#__j2store_product_customfields` as shown in the post-installation message.
-
-> **Note:** The `#__license_keys` table, if present, belongs to the Advans licensing system and is not used by the cleanup task for lifetime-license detection.
 
 ---
 
@@ -359,7 +410,7 @@ Repeat this process for all products requiring perpetual license data retention.
 
 ### Step 3: Plugin Activation
 
-1. Navigate to: `System → Plugins`
+1. Navigate to: `System → Manage → Plugins`
 2. Locate: `Privacy - J2Commerce`
 3. Change status from Disabled to Enabled
 
@@ -367,7 +418,7 @@ Repeat this process for all products requiring perpetual license data retention.
 
 ### Step 4: Configure Retention Parameters
 
-Navigate to: `System → Plugins → Privacy - J2Commerce`
+Navigate to: `System → Manage → Plugins → Privacy - J2Commerce`
 
 #### Data Handling Configuration
 
@@ -386,6 +437,8 @@ Navigate to: `System → Plugins → Privacy - J2Commerce`
 - UK: `6`
 - USA: `7`
 
+**Fiscal Year End (MM-DD):** default `12-31`. The retention period starts at the **end of the fiscal year** in which the order was placed (OR Art. 958f; AO § 147 (4) likewise from the end of the calendar year), not on the order date. Example with 10 years and fiscal year end 31 December: an order of 15 March 2016 is kept until 31 December 2026 and anonymized from 1 January 2027. The fiscal year is determined in the website time zone (**Global Configuration → Server → Website Time Zone**); J2Commerce stores order times in UTC, so an order placed on 1 January 2017 at 00:30 in Zurich belongs to fiscal year 2017. `02-29` means the last day of February. Days that do not exist (for example `04-31`) are rejected when saving; the cleanup task logs an invalid stored value and uses `12-31`.
+
 **Legal Basis:** (Example for Switzerland)
 ```
 • Switzerland: OR Art. 958f (10 years)
@@ -398,10 +451,10 @@ See [Legal Basis Examples](#legal-basis-examples) for more countries.
 privacy@example.com
 ```
 
-⚠️ **Important:** Replace this with your actual privacy contact email. This address is shown to users in all retention messages.
+⚠️ **Important:** The field is empty by default. If left empty, retention messages show `support@example.com` — set a real address before going live. This address is shown to users in all retention messages.
 
 **Where to change:**
-- `System → Plugins → Privacy - J2Commerce`
+- `System → Manage → Plugins → Privacy - J2Commerce`
 - Field: "Support Email"
 - Example: `privacy@your-company.com`
 
@@ -411,7 +464,7 @@ Persist configuration changes.
 
 ### Step 5: Automated Cleanup Scheduling
 
-Navigate to: `System → Scheduled Tasks → New`
+Navigate to: `System → Manage → Scheduled Tasks → New`
 
 1. Verify the plugin **Task - J2Commerce Privacy Cleanup** is enabled.
 2. Select task type: **J2Commerce - Automatic data cleanup**
@@ -422,6 +475,15 @@ Navigate to: `System → Scheduled Tasks → New`
    - **Status:** Enabled
 5. Save configuration
 
+**Task parameters** (`plugins/task/j2commerceprivacy/forms/autocleanup.xml`). The task reads its own parameters, not the privacy plugin settings:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `retention_years` | 10 | Retention period in years (required, integer 1–30), counted from the end of the fiscal year of the order. Registered users whose most recent order is outside the retention period are processed, and guest orders (`user_id = 0`) outside it are processed per order. |
+| `fiscal_year_end` | 12-31 | Fiscal year end (MM-DD) from which the retention period is counted. |
+| `anonymize_orders` | Yes | Anonymize the users' orders and order billing/shipping data; also removes IP address and user agent from the checkout consent records of these orders. |
+| `delete_addresses` | Yes | Delete the users' saved addresses. |
+
 ---
 
 ### Implementation Verification
@@ -429,12 +491,12 @@ Navigate to: `System → Scheduled Tasks → New`
 Validate the implementation using the following test procedure:
 
 1. Create a test product with lifetime-license flag `is_lifetime_license = yes`
-2. Generate a test order for the configured product
+2. Generate a test order for the configured product, dated before the end of the retention period (for example 11 years ago)
 3. Initiate a data removal request via `Users → Privacy → Requests → New Request`
-4. Attempt data deletion via `Complete Request → Delete Data`
-5. **Expected Result:** System blocks deletion and displays retention notification
+4. Run data deletion via `Complete Request → Delete Data`
+5. **Expected Result:** the request is carried out; the order is anonymized except its e-mail address, and the administrator message lists it as a lifetime-license order whose e-mail address is kept
 
-Successful display of the retention notification confirms correct implementation.
+A removal request is never refused by this plugin (see [Data Deletion](#data-deletion)).
 
 ---
 
@@ -480,7 +542,7 @@ Payment data (credit card details, bank information) is stored by payment servic
 
 **What stays intact (for orders WITHIN retention period):**
 - Complete order data including addresses
-- Required by Swiss law: OR Art. 958f, MWSTG Art. 70 (10 years)
+- Required by Swiss law: OR Art. 958f, MWSTG Art. 70 (10 years from the end of the fiscal year of the order)
 
 **What stays (anonymized orders):**
 - Order numbers
@@ -488,9 +550,10 @@ Payment data (credit card details, bank information) is stored by payment servic
 - Order amounts
 - Product information
 
-**Exception for Lifetime Licenses:**
-- Email address preserved (for license activation)
-- All other data anonymized
+**Exception for Lifetime Licenses** (provisional rule, pending confirmation by the maintainer):
+- Applies per order: only orders that contain a lifetime-license product keep their order e-mail address (for license reactivation)
+- All other data of these orders is anonymized, all other orders of the customer are handled normally
+- Same rule for removal requests and the cleanup task, for registered users and guests; a removal request is not refused because of a lifetime license
 
 ---
 
@@ -501,23 +564,28 @@ Payment data (credit card details, bank information) is stored by payment servic
 ```
 1. User requests data deletion
    ↓
-2. System checks: Has orders within retention period?
+2. Request carried out (never refused by this plugin):
+          • account pseudonymised (Joomla core privacy user plugin)
+          • saved addresses, carts, AcyMailing data deleted
+          • orders outside the retention period anonymized
+            (lifetime-license orders keep their order e-mail)
+          • orders within the retention period kept intact;
+            administrator message + e-mail to the customer list
+            them with their retention end
    ↓
-3a. NO → Immediate deletion/anonymization
-3b. YES → Deletion blocked, show retention message
+4. After the retention period of the kept orders ends
    ↓
-4. After retention period expires
+5. Scheduled task automatically anonymizes them
    ↓
-5. Scheduled task automatically anonymizes data
-   ↓
-6. Exception: Lifetime licenses keep email for activation
+6. Exception: lifetime-license orders keep their order e-mail for reactivation
+   (provisional rule, pending confirmation)
 ```
 
 ### Retention Logic
 
 **For ALL orders:**
-- Retention period: Configurable (default 10 years)
-- Applies to: ALL orders, not just licenses
+- Retention period: Configurable (default 10 years), counted from the end of the fiscal year of the order (**Fiscal Year End**, default 31 December)
+- Applies to: ALL orders, not just licenses, of registered users and guests
 - Legal basis: Accounting requirements (e.g., Swiss OR Art. 958f)
 
 **For Lifetime Licenses:**
@@ -529,11 +597,13 @@ Payment data (credit card details, bank information) is stored by payment servic
 ### Automatic Cleanup
 
 **Scheduled Task runs daily:**
-1. Finds users with all orders older than retention period
-2. Checks for lifetime licenses
-3. Full anonymization: No lifetime licenses
-4. Partial anonymization: Has lifetime licenses (keep email)
-5. Logs all actions
+1. Finds registered users whose orders are all outside the retention period
+2. Anonymizes their orders; orders with a lifetime-license product keep their order e-mail address (per order)
+3. Deletes their saved addresses
+4. Logs the effective fiscal year end and time zone (an invalid stored value is logged and replaced by `12-31`)
+5. Finds guest orders (`user_id = 0`) outside the retention period that still contain personal data and anonymizes them per order (orders with a lifetime license keep the e-mail address)
+6. Removes IP address and user agent from the checkout consent records of all anonymized orders
+7. Logs all actions; the task ends with an error status when guest orders or all users failed
 
 ---
 
@@ -592,14 +662,7 @@ AND metakey = 'is_lifetime_license'
 
 ### Configuration
 
-**For each Lifetime License product:**
-
-1. Open product in J2Store
-2. Find "Custom Fields" section
-3. Set "Lifetime License" to "Yes"
-4. Save
-
-**That's it!** No code changes, no database modifications needed.
+Insert the flag via SQL as shown in [Implementation Guide](#implementation-guide) → Step 1 / the post-installation message (J2Commerce 6: `#__j2commerce_metafields`; J2Commerce 4: `#__j2store_product_customfields`). There is no product-edit UI for this flag.
 
 ---
 
@@ -609,7 +672,7 @@ AND metakey = 'is_lifetime_license'
 
 The export request flow is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for how users submit export requests and how administrators process them.
 
-This plugin extends the export with J2Commerce-specific data: orders, order items, addresses, and (if configured) cart data.
+This plugin extends the export with J2Commerce-specific data: orders, order items, addresses, optional Joomla user/profile/action logs, and AcyMailing data.
 
 ---
 
@@ -631,39 +694,34 @@ Data immediately anonymized
 
 #### Scenario 2: User with recent orders
 
-**Result:** • Deletion blocked
+**Result:** • Request carried out, orders within the retention period kept
 
 ```
 User requests deletion
   ↓
-Orders found (e.g., 3 years old)
+Orders found (e.g., order of 15.03.2020)
   ↓
-Retention: 10 years → 7 years remaining
+Retention: 10 years from the end of 2020 → kept until 31.12.2030
   ↓
-Deletion blocked with message
+Account pseudonymised, addresses/carts/newsletter data deleted,
+expired orders anonymized; the recent order stays intact
+  ↓
+Administrator message and e-mail to the customer (request address)
 ```
 
-**Error Message:**
+**Customer e-mail (excerpt):**
 ```
-═══════════════════════════════════════════════════════
-DATA DELETION CURRENTLY NOT POSSIBLE
-═══════════════════════════════════════════════════════
+Your data deletion request has been carried out. [...]
 
-Your data cannot be deleted at this time because you
-have placed orders subject to a statutory retention
-obligation.
+Orders kept for accounting until the end of the retention period
+(10 years from the end of the fiscal year of the order), then anonymized:
 
-YOUR ORDERS:
-1. Order #123
+1. Order 123
    Date: 15.03.2020
-   Amount: 99.00 CHF
-   Retained until: 15.03.2030
-   Remaining: 7.0 years
-
-AUTOMATIC DELETION:
-• Your data will be AUTOMATICALLY deleted from: 15.03.2030
-• You do NOT need to take any further action
+   Retained until: 31.12.2030
 ```
+
+The cleanup task anonymizes the order after 31.12.2030 (the user_id of the pseudonymised account stays on the order).
 
 ---
 
@@ -674,7 +732,7 @@ AUTOMATIC DELETION:
 ```
 Scheduled task runs daily (02:00)
   ↓
-Finds users with orders older than 10 years
+Finds users and guest orders outside the retention period
   ↓
 Checks for lifetime licenses
   ↓
@@ -686,40 +744,21 @@ Has lifetime licenses → Partial anonymization (keep email)
 
 #### Scenario 4: User with Lifetime License
 
-**Result:** Partial anonymization
+**Result:** Request carried out, the lifetime-license order keeps its order e-mail address (provisional rule, pending confirmation by the maintainer)
 
 ```
-After 10 years:
+Removal request or cleanup task
   ↓
-Accounting retention expired
-  ↓
-Has lifetime license
-  ↓
-Partial anonymization:
-  • Email preserved (for license activation)
+Lifetime-license order within the retention period → kept intact, listed
+Lifetime-license order outside the retention period → anonymized:
+  • Order e-mail address preserved (license reactivation)
   • Name anonymized
-  • Address deleted
-  • Phone anonymized
+  • Address and phone cleared
+  ↓
+Other orders of the customer: handled normally
 ```
 
-**Error Message:**
-```
-═══════════════════════════════════════════════════════
-LIFETIME LICENSES (accounting retention expired)
-═══════════════════════════════════════════════════════
-
-WHAT IS RETAINED?
-
-Required for license activation:
-• Email address (for activation)
-• License key
-• Purchase date
-
-Already deleted/anonymized:
-• Full name
-• Billing address
-• Phone number
-```
+The administrator message and the customer e-mail list the lifetime-license orders and state that their order e-mail address is kept.
 
 ---
 
@@ -728,9 +767,10 @@ Already deleted/anonymized:
 ### Where to See Retention Messages
 
 **Location 1: Flash Message (Immediate)**
-- Appears at top of screen after clicking "Delete Data"
-- Red error message with full details
-- Shows retention period, orders, automatic deletion date
+- Appears at top of screen after clicking "Delete Data", after the customer e-mail was attempted
+- Lists the orders kept until the end of their retention period and the lifetime-license orders that keep their e-mail address
+- Green: the list was sent to the request address. Warning: the request address is not a valid e-mail address, or sending failed (see the log); inform the customer yourself
+- The customer e-mail is written in the customer's language (`customer_language` of the newest order, else the default site language)
 
 **Location 2: Action Log (Permanent)**
 - Visible in request detail view
@@ -738,7 +778,7 @@ Already deleted/anonymized:
 - Under "Action Log" section
 
 **Location 3: Request Status**
-- Request remains in "Confirmed" status if blocked
+- This plugin never blocks a removal request
 - Changes to "Complete" when deletion succeeds
 
 ---
@@ -747,7 +787,7 @@ Already deleted/anonymized:
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin intercepts the deletion step to apply retention logic before any data is removed. If retention blocks deletion, the request stays in "Confirmed" status and the user receives a retention message.
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request (captured before Joomla's privacy user plugin pseudonymises the account).
 
 ---
 
@@ -755,18 +795,20 @@ This plugin intercepts the deletion step to apply retention logic before any dat
 
 **View scheduled task:**
 ```
-System → Scheduled Tasks → J2Commerce - Automatic data cleanup
+System → Manage → Scheduled Tasks → J2Commerce - Automatic data cleanup
 ```
 
 **View logs:**
 ```
-System → Scheduled Tasks → [Task] → View Logs
+System → Manage → Scheduled Tasks → [Task] → View Logs
 ```
 
 **Example log:**
 ```
 [2025-01-15 02:00:15] Starting automatic data cleanup...
-[2025-01-15 02:00:15] Retention period: 10 years
+[2025-01-15 02:00:15] Retention period: 10 years from the end of the fiscal year (12-31)
+[2025-01-15 02:00:15] Orders created on or before 2014-12-31 23:59:59 are outside the retention period
+[2025-01-15 02:00:15] Anonymized 3 guest order(s), 0 of them with lifetime license (e-mail kept)
 [2025-01-15 02:00:16] Found 10 users with expired retention
 [2025-01-15 02:00:16] Fully anonymized: 8 users
 [2025-01-15 02:00:16] Partially anonymized: 2 users (lifetime licenses)
@@ -788,14 +830,15 @@ System → Scheduled Tasks → [Task] → View Logs
 
 **System Response:**
 ```
-• Deletion blocked
-Message: "Automatic deletion from: 15.03.2030"
-Status: Confirmed (not Complete)
+• Request carried out
+Message: "Order ... Retained until: 31.12.2033" (administrator and customer e-mail)
+Status: Complete
 ```
 
 **What happens:**
-- Data stays until 2030
-- Automatic cleanup deletes in 2030
+- Account, addresses, carts and newsletter data are removed or pseudonymised now
+- The order stays intact until the end of its retention period (end of the order's fiscal year + 10 years)
+- Automatic cleanup anonymizes it afterwards
 - User doesn't need to do anything
 
 ---
@@ -809,18 +852,17 @@ Status: Confirmed (not Complete)
 
 **User Action:** Requests deletion
 
-**System Response:**
+**System Response** (provisional rule, pending confirmation):
 ```
-• Deletion blocked (partial)
-Message: "Email required for license activation"
-Status: Confirmed
+• Request carried out
+Message: lifetime-license order listed, "order e-mail address is kept"
+Status: Complete
 ```
 
 **What happens:**
-- Automatic cleanup runs
-- Name, address, phone → anonymized
-- Email → preserved
-- User can still activate license
+- Name, address, phone of the order → anonymized now
+- Order e-mail address → preserved
+- User can still reactivate the license
 
 ---
 
@@ -855,11 +897,12 @@ This plugin complies with Swiss legal requirements:
 |-----|-------------|
 | **OR Art. 958f** | Business documents must be retained for 10 years |
 | **MWSTG Art. 70** | VAT-relevant documents must be retained for 10 years |
-| **nDSG Art. 17** | Right to deletion, with exception for legal obligations |
+| **DSG Art. 32 para. 2 lit. c** | Right to have personal data deleted or destroyed; statutory retention obligations (OR, MWSTG) still apply |
 
 **Implementation:**
-- Orders within 10-year retention period: **Kept intact** (not anonymized)
-- Orders outside retention period: **Anonymized** on deletion request
+- Retention period: 10 years from the **end of the fiscal year** of the order (OR Art. 958f)
+- Orders within the retention period: **Kept intact** (not anonymized); a removal request is still carried out for all other data
+- Orders outside retention period: **Anonymized** on deletion request and by the cleanup task (registered users and guest orders)
 - Address book entries: **Deleted** immediately on request
 - Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
@@ -878,7 +921,7 @@ This plugin does not store or have access to complete payment details. Users mus
 
 ### Plugin Settings
 
-**Access:** `System → Plugins → Privacy - J2Commerce`
+**Access:** `System → Manage → Plugins → Privacy - J2Commerce`
 
 #### Privacy Settings
 
@@ -893,15 +936,15 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Retention Period (Years) | 10 | Legal retention period. Switzerland: 10 (OR Art. 958f), Germany: 10 (AO §147), Austria: 7, UK/Spain: 6 |
-| Legal Basis | (empty) | Legal grounds shown in retention error messages to users |
-| Support Email | support@example.com | Contact address shown to users for privacy inquiries. **Must be changed before going live.** |
+| Legal Basis | (pre-filled with CH/DE/EU examples) | Legal grounds shown in retention error messages to users |
+| Support Email | (empty) | Contact address shown to users for privacy inquiries. If left empty, retention messages show `support@example.com` — set a real address before going live. |
 
 #### Checkout Consent
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Show Consent Checkbox | Yes | Display privacy consent checkbox in checkout step 4 |
-| Consent Required | Yes | Make consent mandatory — blocks checkout if unchecked |
+| Consent Required | Yes | Make consent mandatory: blocks the checkout step if unchecked on J2Commerce 4; on J2Commerce 6 the checkbox is displayed but does not block the step (see [Checkout Consent Checkbox](#checkout-consent-checkbox)) |
 | Privacy Policy Article | (none) | Joomla article containing your privacy policy — linked in the consent text |
 | Consent Text | (default) | Checkbox label text. Use `{privacy_policy}` as placeholder for the policy link |
 
@@ -909,24 +952,26 @@ This plugin does not store or have access to complete payment details. Users mus
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Show Privacy Section | Yes | Render the Privacy tab in the J2Commerce MyProfile page |
-| Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab |
-| Show Delete All Data | Yes | Show data deletion request button in the Privacy tab |
-| Show Export Data | Yes | Show data export request button in the Privacy tab |
+| Show Privacy Section | Yes | Render the Privacy tab in the J2Commerce MyProfile page (`myprofile/default.php` override) |
+| Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab (`myprofile/default_addresses.php` override) |
+| Show Delete All Data | Yes | Show the data deletion request button in the Privacy tab |
+| Show Export Data | Yes | Show the data export request button in the Privacy tab |
+
+These options are evaluated by the deployed MyProfile overrides; see [Profile Privacy Tab](#profile-privacy-tab).
 
 #### Notifications & Logging
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Admin Notifications | No | Send email to admin when users perform privacy actions (address deletion, export/deletion requests) |
-| Admin Email | (empty) | Recipient for admin notifications. Leave empty to use the site admin email |
+| Admin Email | (empty) | Recipient for admin notifications. Leave empty to use Global Configuration → Mail → From Email |
 | Activity Logging | No | Write all privacy actions to Joomla's action log (`#__action_logs`) for audit purposes |
 
 ---
 
 ### Scheduled Task Settings
 
-**Access:** `System → Scheduled Tasks → J2Commerce - Automatic data cleanup`
+**Access:** `System → Manage → Scheduled Tasks → J2Commerce - Automatic data cleanup`
 
 **Recommended Settings:**
 - **Frequency:** Daily
@@ -1072,8 +1117,6 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 # Install ZIP in Joomla
 ```
 
-**Note:** Error messages are currently in German. For full multi-language support, contact support.
-
 ---
 
 ## Lifetime License Metadata
@@ -1091,7 +1134,7 @@ Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
 
 ### Setup
 
-**See [Quick Setup Guide](#quick-setup-guide) Step 1**
+**See [Implementation Guide](#implementation-guide) → Step 1**
 
 ### Technical Details
 
@@ -1152,56 +1195,65 @@ AND metakey = 'is_lifetime_license';
 ./build.sh
 ```
 
-Creates: `plg_privacy_j2commerce.zip`
+Creates: `plg_privacy_j2commerce_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run on every push and on pull requests via GitHub Actions.
+This plugin has automated tests that run via GitHub Actions (`j2commerce-privacy.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5 and Joomla 6 suites, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
-1. **Installation** — plugin registration in DB, file deployment, template overrides
+Order as in `tests/test.env`:
+
+1. **Installation** — the test environment installs the plugin through the Joomla web installer; plugin registration in DB, file deployment, template overrides; installer effects are checked against the plugin states recorded before the test setup enables all plugins
 2. **Configuration** — plugin params, language files, XML manifest
-3. **Plugin Class** — method existence and class structure
-4. **Data Export** — `onPrivacyExportRequest` output validation
-5. **Data Integration** — test data setup and CRUD operations
-6. **Data Anonymization** — `onPrivacyRemoveData` retention logic
-7. **GDPR Compliance** — all DSGVO-relevant methods and hooks
-8. **Template Overrides** — override source files and deployment verification
-9. **Consent UI Render** — renders the deployed checkout and MyProfile overrides for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon) actually appear in the produced HTML
-10. **AutoCleanup Task** — scheduled task registration and execution
-11. **AcyMailing Integration** — newsletter consent sync
-12. **Uninstall** — clean removal from database and filesystem
+3. **Privacy Plugin Base** — method existence and class structure
+4. **Data Integration** — test data setup and CRUD operations
+5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure (a recent order does not block the request and is listed with a retention end on 31.12.)
+6. **Data Export** — `onPrivacyExportRequest` output validation
+7. **Data Anonymization** — migrated site (`#__j2store_*` tables present): active shop per enabled component (enabled component without tables skipped, disabled component not counted), both data sets are processed and the J2Store copy is anonymized too; `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); an expired lifetime-license order keeps only its e-mail and does not block the request; administrator message after the customer e-mail (sent, invalid address, failed), customer text in German; `RetentionPeriod` dates incl. site time zone (New Year CET, summer time), 02-29 and invalid values, form rule, cutoff consistency in four time zones
+8. **GDPR Compliance** — all DSGVO-relevant methods and hooks
+9. **Template Overrides** — override source files and deployment verification (no J2Commerce 6 checkout override)
+10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts
+11. **Consent Logging** — writes checkout consents to `#__privacy_consents` (logged-in and guest order), no duplicates, no e-mail copied; status lookup by `user_id` (checkout and registration subjects only) and for guests strictly by one order (token + e-mail); the consent system plugin's server-side checks for the shipping & payment step (incl. `controller=checkout` variant), confirmation and payment submission, enforced only from the plugin options, with the consent bound to the cart; checkbox rendering through `AfterDisplayShippingPayment`; real HTTP requests against the test site (real session and J2Commerce cart) for rendering, ticking, a skipped shipping & payment step, `template`/`templateStyle`/`Itemid` request parameters, a cart change and a checkout without any template override (accepted steps must return J2Commerce JSON without error), and the privacy policy link with SEF URLs off and on (escaped once); consent captured on `checkout.confirmPayment` (form token for POST, gateway return GET, not without cart) and recorded only for accepted orders of the consent's cart, once per order (parallel rows removed); records of an earlier template override only anonymized, never shown; consent evidence removed for records outside the retention period and for deleted or anonymized orders; Privacy tab links (`com_privacy` form vs. `mailto:`, one button per enabled request option); update path through the Joomla CLI (a disabled system plugin stays disabled, `default_privacy.php` is only added next to an existing MyProfile override of an installed component, an unchanged checkout override of 1.5.5 is renamed, a changed one is kept with a warning, custom checkout overrides without the event are reported)
+12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept); a lifetime-license order keeps its e-mail while the same user's other expired order loses it (J2Commerce 6); the copy of the expired order in the `#__j2store_*` tables of a migrated site is anonymized too; the consent of a deleted order loses IP address and user agent; an invalid fiscal year end is logged and a failing guest order ends the run with an error status
+13. **AcyMailing Integration** — detects AcyMailing via a minimal AcyMailing table structure created by the test environment (no AcyMailing installation), checks the export queries against a test subscriber, and triggers the plugin's own AcyMailing removal path against that structure to confirm that the subscriber and all related rows are deleted, also when Joomla's privacy user plugin pseudonymised the account first (lookup through the request e-mail); also checks that detection does not fail when AcyMailing is absent
+14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+15. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
+Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+
 ```bash
+# in j2commerce/plg_privacy_j2commerce
+./build.sh
+mkdir -p tests
+cp *.zip tests/extension.zip
+
 cd tests
 docker compose up -d
-timeout 300 bash -c 'until docker exec plg_privacy_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+timeout 600 bash -c 'until docker exec plg_privacy_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 
-# Joomla 6
+# Joomla 6 (requires tests/j2commerce6.zip)
 docker compose -f docker-compose.joomla6.yml up -d
-timeout 300 bash -c 'until docker exec plg_privacy_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
-./run-tests.sh all
+timeout 600 bash -c 'until docker exec plg_privacy_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_privacy_j2commerce_j6_test ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
 ```
+
+CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command with it to reproduce CI.
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Issue: Custom Field not visible**
-- Check: Field is Published
-- Check: Display in = Product
-- Clear cache: System → Clear Cache
-
 **Issue: Lifetime products not detected**
 - Check: Field name is exactly `is_lifetime_license`
-- Check: Field value is `Yes` (not `yes` or `1`)
-- Check: Product saved after setting field
+- Check: Field value is `yes` (case-insensitive; `1` is not accepted)
+- Check: The row references the correct product ID
 
 **Issue: Scheduled task not running**
 - Check: Joomla Cron configured

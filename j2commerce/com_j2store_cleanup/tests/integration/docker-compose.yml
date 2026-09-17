@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   joomla:
-    image: joomla:5-php8.2-apache
+    image: joomla:5.4-php8.3-apache
     container_name: j2store_cleanup_test
     ports:
       - "8085:80"

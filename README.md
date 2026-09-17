@@ -1,6 +1,6 @@
 # Joomla Extensions Repository
 
-Extensions for [Joomla](https://github.com/joomla/joomla-cms) and [J2Commerce](https://github.com/joomla-projects/j2commerce) developed and maintained by Advans IT Solutions GmbH.
+Extensions for [Joomla](https://github.com/joomla/joomla-cms) and [J2Commerce](https://github.com/j2commerce/j2commerce) developed and maintained by Advans IT Solutions GmbH.
 
 ## Repository Structure
 
@@ -19,11 +19,11 @@ Joomla/
 
 ## Available Extensions
 
-### Joomla Core Extensions
+### Joomla Extensions
 
 | Extension | Description | Joomla |
 |-----------|-------------|--------|
-| [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder, J2Store cart operations | 5.x – 6.x |
+| [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
@@ -37,22 +37,26 @@ Joomla/
 
 ## Testing
 
-Each extension has automated tests that run via GitHub Actions when files in the respective directory are modified.
+Each extension has automated tests that run via GitHub Actions on pushes and pull requests to `main` that change the extension directory, `shared/**` or the extension's own workflow file. Every workflow can also be started manually.
 
-| Workflow | Extension | Trigger |
+| Workflow | Extension | Trigger paths (push/PR to `main`, plus manual dispatch) |
 |----------|-----------|---------|
-| `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**` |
-| `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**` |
-| `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**` |
-| `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**` |
-| `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**` |
-| `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**` |
+| `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**`, `shared/**`, own workflow file |
+| `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, `shared/**`, own workflow file |
+| `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, `shared/**`, own workflow file |
+| `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**`, `shared/**`, own workflow file |
+| `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, `shared/**`, own workflow file |
+| `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, `shared/**`, own workflow file |
+
+Besides the test suites, every workflow lints all PHP files of the extension and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately. The pull request check **Collect Results** (`collect-results.yml`) determines which of the workflows above are triggered by the changed files, waits for them and fails unless all succeeded; a pull request that triggers none of them passes immediately. After re-running a failed workflow, re-run *Collect Results* as well.
+
+Local test prerequisites and commands: [`.claude/skills/joomla-extensions/references/testing.md`](.claude/skills/joomla-extensions/references/testing.md).
 
 View test results: https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions
 
 ## Releases
 
-Releases use a **two-stage, PR-based flow** so that no commit reaches `main` without review (the `main` branch is protected by organization rulesets — see [Branch Protection](#branch-protection)). Each extension has its own release and publish workflow, tag prefix and independent version.
+Releases use a **two-stage, PR-based flow** so that no commit reaches `main` without review (pull requests to `main` require review and passing checks; see [Security](#security)). Each extension has its own release and publish workflow, tag prefix and independent version.
 
 ### How to create a release
 
@@ -72,7 +76,7 @@ Auto-detect uses [Conventional Commits](https://www.conventionalcommits.org/) si
 | `feat:` | Minor (1.0.0 → 1.1.0) | `feat: add product export filter` |
 | `feat!:` or `BREAKING CHANGE:` | Major (1.0.0 → 2.0.0) | `feat!: require Joomla 5+` |
 
-Commits without a conventional prefix are ignored — no release is created.
+Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`docs:`, `chore:`, `test:`, `refactor:`) and unprefixed commits are ignored.
 
 ### Release workflows
 
@@ -85,126 +89,13 @@ Commits without a conventional prefix are ignored — no release is created.
 | `release-privacy.yml` | `privacy-v*` |
 | `release-osmap-j2commerce.yml` | `osmap-j2commerce-v*` |
 
-Release workflows replace older releases and tags for the same extension prefix after the new release is created.
+After a new release is created, the publish workflow deletes older releases and tags of the same extension prefix; only the latest release of each extension is kept.
 
 View all releases: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases
 
-## Repository Configuration
+## Security
 
-This repository is configured with the following GitHub settings for security, automation, and collaboration.
-
-### Security Settings
-
-All security features are configured at: **Settings → Security → Code security and analysis**
-
-#### Private Vulnerability Reporting
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository
-
-Allows security researchers to privately report potential security vulnerabilities directly to repository maintainers. Reports are submitted via GitHub's security advisory system and remain private until disclosed.
-
-#### Dependency Graph
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph
-
-Automatically detects and displays all dependencies (Composer packages, GitHub Actions) used in this repository. Provides visibility into the software supply chain.
-
-#### Dependabot Alerts
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts
-
-Automatically notifies maintainers when dependencies have known security vulnerabilities. Alerts appear in the Security tab and via notifications.
-
-#### Dependabot Security Updates
-**Status:** ✅ Enabled (with grouped updates)  
-**Documentation:** https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/about-dependabot-security-updates
-
-Automatically creates pull requests to update dependencies with known security vulnerabilities. Grouped updates combine multiple security updates into a single pull request to reduce noise.
-
-#### Dependabot Version Updates
-**Status:** ✅ Enabled  
-**Configuration:** `.github/dependabot.yml`  
-**Documentation:** https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/about-dependabot-version-updates
-
-Automatically creates pull requests to keep dependencies up-to-date (not just security updates). Configured to check weekly for:
-- Composer dependencies in plugin directories
-- GitHub Actions workflows
-
-#### Code Scanning (CodeQL)
-**Status:** ✅ Enabled (default setup)  
-**Documentation:** https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning
-
-Automatically analyzes code for security vulnerabilities and coding errors using GitHub's CodeQL engine. Runs on every push and pull request. Detects issues like SQL injection, XSS, and other common vulnerabilities.
-
-#### Copilot Autofix
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/about-autofix-for-codeql-code-scanning
-
-Automatically suggests fixes for code scanning alerts using AI. Provides code suggestions to remediate security vulnerabilities detected by CodeQL.
-
-#### Secret Scanning
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/secret-scanning/about-secret-scanning
-
-Scans the entire repository history for accidentally committed secrets (API keys, tokens, passwords). Alerts maintainers when secrets are detected.
-
-#### Push Protection
-**Status:** ✅ Enabled  
-**Documentation:** https://docs.github.com/en/code-security/secret-scanning/push-protection-for-repositories-and-organizations
-
-Prevents commits containing secrets from being pushed to the repository. Blocks the push and alerts the developer before secrets are committed.
-
-### Access Control
-
-#### Code Review Limits
-**Status:** ✅ Enabled - Collaborators only  
-**Location:** Settings → Moderation → Code review limits  
-**Documentation:** https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-pull-request-reviews-in-your-repository
-
-Only users with write access (collaborators) can approve or request changes on pull requests. All users can still comment and create pull requests.
-
-#### Branch Protection
-**Branch:** `main`  
-**Enforced via:** Organization **rulesets** (Settings → Rules → Rulesets at the organization level), not classic branch protection. Two rulesets apply to this repository: the org-wide *Protect default branch* baseline plus the public-repo *Public repos - signed, PR-reviewed, checks* ruleset.  
-**Documentation:** https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
-
-**Enabled rules:**
-- ✅ Require a pull request before merging
-- ✅ Require **1** approving review
-- ✅ Dismiss stale pull request approvals when new commits are pushed
-- ✅ Require approval of the most recent reviewable push
-- ✅ Require conversation resolution before merging
-- ✅ Require status checks to pass before merging — required check: `Collect Results`
-- ✅ Require branches to be up to date before merging (strict)
-- ✅ Require signed commits
-- ✅ Block force pushes (non-fast-forward)
-- ✅ Block branch deletion
-- ✅ Allowed merge method: **squash only**
-
-**Bypass:**
-- Only **organization administrators** may bypass these rules. `github-actions[bot]` has **no** bypass and can no longer push directly to `main` — releases now go through the two-stage PR flow described in [Releases](#releases).
-
-
-
-### Repository Features
-
-**Location:** Settings → General → Features
-
-#### Enabled Features
-- ✅ **Issues** - Bug reports and feature requests from the community
-- ✅ **Discussions** - Community support and Q&A
-- ✅ **Projects** - Public roadmap and project management
-
-#### Disabled Features
-- ❌ **Wikis** - Documentation is maintained in README files
-- ❌ **Sponsorships** - Not accepting sponsorships
-
-### Security Policy
-
-**Source:** org-wide policy in [`Advans-IT-Solutions-GmbH/.github`](https://github.com/Advans-IT-Solutions-GmbH/.github/blob/main/SECURITY.md)  
-**Documentation:** https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
-
-This repository inherits the organization-wide security policy (no repo-level `SECURITY.md`). It defines how security vulnerabilities should be reported, directs users to GitHub's private vulnerability reporting system, and provides contact information for urgent issues.
+Please report vulnerabilities via GitHub private vulnerability reporting; see the organization [security policy](https://github.com/Advans-IT-Solutions-GmbH/.github/blob/main/SECURITY.md). Pull requests to `main` require review and passing checks.
 
 ---
 

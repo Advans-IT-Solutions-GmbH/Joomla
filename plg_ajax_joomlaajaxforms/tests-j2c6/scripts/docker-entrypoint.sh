@@ -24,13 +24,13 @@ JOOMLA_ROOT="/var/www/html"
     echo "[j2c6] Joomla ready."
 
     echo "[j2c6] Installing J2Commerce 6..."
-    php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
+    HTTP_HOST=localhost php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
         --path=/tmp/j2commerce6.zip \
         --no-interaction
     echo "[j2c6] J2Commerce 6 installed."
 
     echo "[j2c6] Installing plg_ajax_joomlaajaxforms..."
-    php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
+    HTTP_HOST=localhost php "$JOOMLA_ROOT/cli/joomla.php" extension:install \
         --path=/tmp/extension.zip \
         --no-interaction
     # Enable the plugin via DB (extension:enable CLI does not exist in Joomla 5/6)

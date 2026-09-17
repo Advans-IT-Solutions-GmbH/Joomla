@@ -1,0 +1,51 @@
+# Production-like lane: the newest Joomla 6.x on the newest official Joomla image PHP
+# version (joomla:6-php8.4-apache = newest Joomla 6.x; no official PHP 8.5 image yet),
+# J2Commerce 6 built from the pinned production commit (see workflow), MariaDB
+# 10.6, and every PHP deprecation/warning/error logged for evaluation.
+services:
+  joomla:
+    build:
+      context: .
+      dockerfile: Dockerfile.joomla6
+      args:
+        JOOMLA_BASE_IMAGE: joomla:6-php8.4-apache
+        PHP_STRICT_DEPRECATIONS: "1"
+    container_name: plg_osmap_j2commerce_prod_test
+    ports:
+      - "8083:80"
+    environment:
+      JOOMLA_DB_HOST: mysql
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: joomla_pass
+      JOOMLA_DB_NAME: joomla_db
+      JOOMLA_SITE_NAME: "Test Site J6 production-like"
+      JOOMLA_ADMIN_USER: "Super User"
+      JOOMLA_ADMIN_USERNAME: admin
+      JOOMLA_ADMIN_PASSWORD: "Admin123456789!@#"
+      JOOMLA_ADMIN_EMAIL: admin@test.local
+      J2COMMERCE_STACK: j6
+    volumes:
+      - joomla_prod_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mariadb:10.6
+    container_name: plg_osmap_j2commerce_prod_test_mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: root_pass
+      MARIADB_DATABASE: joomla_db
+      MARIADB_USER: joomla
+      MARIADB_PASSWORD: joomla_pass
+    volumes:
+      - mysql_prod_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-proot_pass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  joomla_prod_data:
+  mysql_prod_data:

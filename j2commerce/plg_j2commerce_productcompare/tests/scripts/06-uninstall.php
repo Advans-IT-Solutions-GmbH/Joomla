@@ -26,8 +26,6 @@ class UninstallTest
     {
         echo "=== Uninstall Tests ===\n\n";
 
-        $group = (getenv('J2COMMERCE_STACK') === 'j6') ? 'j2commerce' : 'j2store';
-
         // Get extension ID before uninstall — search both possible folders since
         // the installer may have set folder=j2store on J5 even though the manifest
         // group is j2commerce.
@@ -43,34 +41,45 @@ class UninstallTest
             return $extensionId > 0;
         });
 
-        // Uninstall via Joomla CLI.
-        // Note: Joomla CLI may return exit code 1 even on successful removal
-        // (known issue with extension:remove on some Joomla versions). We
-        // therefore treat the command as successful when the extension is
-        // absent from #__extensions afterwards, regardless of exit code.
+        // Uninstall via Joomla CLI. The removal must succeed cleanly: exit code 0
+        // and no error in the output.
         $output = [];
         $exitCode = 0;
-        exec("php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
         $outputStr = implode("\n", $output);
         echo "  CLI output: $outputStr\n";
         echo "  CLI exit code: $exitCode\n";
 
+        $this->test('extension:remove exits with code 0', function () use ($exitCode) {
+            return $exitCode === 0;
+        });
+
+        // Match only the explicit markers Joomla's CLI emits, not bare substrings
+        // like "error"/"warning" that appear in benign summaries (e.g. "Errors: 0").
+        // Exit code and the post-conditions below already guard the removal.
+        $this->test('extension:remove reports no error', function () use ($outputStr) {
+            return !preg_match('/\[ERROR\]|\[WARNING\]|\[CAUTION\]|not removed/i', $outputStr);
+        });
+
         $this->test('Plugin removed from #__extensions', function () {
             $result = $this->db->query(
                 "SELECT COUNT(*) as cnt FROM {$this->dbPrefix}extensions"
-                . " WHERE element = 'productcompare' AND folder IN ('j2store','j2commerce')"
+                . " WHERE element = 'productcompare' AND type = 'plugin'"
+                . " AND folder IN ('j2store','j2commerce')"
             );
             $row = $result ? $result->fetch_assoc() : null;
             return $row && (int) $row['cnt'] === 0;
         });
 
-        $this->test('Plugin files removed', function () use ($group) {
-            // On J5 the canonical files are under j2commerce/, the mirror under j2store/.
-            // After uninstall both should be gone.
-            $j6gone = !file_exists('/var/www/html/plugins/j2commerce/productcompare/src/Extension/ProductCompare.php');
-            $j5gone = !file_exists('/var/www/html/plugins/j2store/productcompare/src/Extension/ProductCompare.php');
-            return $j6gone && $j5gone;
-        });
+        // On J5 Joomla installs the files under j2commerce/ and the installer
+        // copies them to j2store/; after uninstall both folders must be gone,
+        // including a leftover symlink.
+        foreach (['j2commerce', 'j2store'] as $folder) {
+            $this->test("plugins/$folder/productcompare removed", function () use ($folder) {
+                $path = '/var/www/html/plugins/' . $folder . '/productcompare';
+                return !file_exists($path) && !is_link($path);
+            });
+        }
 
         echo "\n=== Uninstall Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";

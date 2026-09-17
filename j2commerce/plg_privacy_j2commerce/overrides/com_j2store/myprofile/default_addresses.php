@@ -35,12 +35,12 @@ use Joomla\CMS\Uri\Uri;
 $addresses     = $this->addresses ?? [];
 $J2gridCol     = ($this->params->get('bootstrap_version', 2) == 2) ? 'span' : 'col-md-';
 
-$_privacyPlugin  = PluginHelper::getPlugin('privacy', 'j2commerce');
-$_privacyEnabled = !empty($_privacyPlugin);
+// Delete buttons only while the privacy plugin is enabled and "Show Delete Address Buttons" is on.
+$_privacyOptions = 'Advans\\Plugin\\Privacy\\J2Commerce\\Frontend\\PrivacyOptions';
+$_privacyEnabled = class_exists($_privacyOptions) && $_privacyOptions::showDeleteAddress();
 
 if ($_privacyEnabled) {
-    $lang = \Joomla\CMS\Factory::getApplication()->getLanguage();
-    $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
+    $_privacyOptions::loadLanguage();
     $_deleteUrl  = Uri::base() . 'index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=json&task=deleteAddress';
     $_token      = Session::getFormToken();
     $_confirmMsg = Text::_('PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_CONFIRM');
@@ -51,7 +51,7 @@ if ($_privacyEnabled) {
 <div class="j2store-myprofile-addresses">
 
     <?php if (empty($addresses)) : ?>
-        <p><?php echo JText::_('J2STORE_NO_ADDRESSES_FOUND'); ?></p>
+        <p><?php echo Text::_('J2STORE_NO_ADDRESSES_FOUND'); ?></p>
     <?php else : ?>
         <div class="<?php echo $J2gridCol; ?>12">
             <?php foreach ($addresses as $address) : ?>
@@ -73,7 +73,7 @@ if ($_privacyEnabled) {
 
                     <div class="j2store-address-actions">
                         <a href="<?php echo $this->escape($address->edit_url ?? '#'); ?>" class="btn btn-sm btn-secondary">
-                            <?php echo JText::_('J2STORE_EDIT'); ?>
+                            <?php echo Text::_('J2STORE_EDIT'); ?>
                         </a>
 
                         <?php if ($_privacyEnabled) : ?>

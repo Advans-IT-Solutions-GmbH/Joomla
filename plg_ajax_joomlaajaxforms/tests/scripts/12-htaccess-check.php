@@ -1,277 +1,245 @@
 <?php
 /**
- * Test 12: .htaccess Check
- * Tests the installer script's .htaccess validation logic
+ * Test 12: .htaccess check of the installer (behaviour test)
+ *
+ * Places .htaccess fixtures in the Joomla root, installs the real package
+ * (/tmp/extension.zip) through the Joomla CLI and inspects the messages the
+ * installer script queued. This exercises checkHtaccess() exactly as it runs
+ * during a real installation or update, instead of re-implementing its logic.
+ *
+ * Cases:
+ *   - no .htaccess                                 → no warning
+ *   - Joomla's standard htaccess.txt               → no warning
+ *   - blocking rules with the README exceptions    → no warning
+ *   - /component/ blocking without an exception    → component warning only
+ *   - index.php?option= blocking without exception → option warning only
+ *   - exception attached to a different rule        → component warning
+ *   - exceptions joined with [OR]                   → both warnings
+ *   - exceptions that do not match the rule's type  → both warnings
+ *   - components/ hardening, option=com_users rule  → no warning
+ *   - R=permanent and absolute redirect target      → both warnings
+ *
+ * The original .htaccess (if any) is restored afterwards.
  */
+
+define('JOOMLA_ROOT', '/var/www/html');
+
+require_once __DIR__ . '/shared-test-helpers.php';
 
 class HtaccessCheckTest
 {
-    private $scriptPath = '/var/www/html/plugins/ajax/joomlaajaxforms/script.php';
-    private $htaccessPath = '/var/www/html/.htaccess';
+    private const PACKAGE      = '/tmp/extension.zip';
+    private const PLUGIN_DIR   = JOOMLA_ROOT . '/plugins/ajax/joomlaajaxforms';
+    private const HTACCESS     = JOOMLA_ROOT . '/.htaccess';
+    private const REQUIRED_KEYS = [
+        'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_TITLE',
+        'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_COMPONENT_BLOCKED',
+        'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_OPTION_BLOCKED',
+        'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_ACTION',
+    ];
+
+    private int $passed = 0;
+    private int $failed = 0;
+
+    /** @var array<string, string> en-GB texts used by the installer in CLI */
+    private array $text = [];
+
+    private function test(string $name, bool $ok, string $detail = ''): void
+    {
+        if ($ok) {
+            echo "PASS $name\n";
+            $this->passed++;
+            return;
+        }
+
+        echo "FAIL $name" . ($detail !== '' ? " - $detail" : '') . "\n";
+        $this->failed++;
+    }
 
     public function run(): bool
     {
-        echo "=== .htaccess Check Tests ===\n\n";
+        echo "=== .htaccess Check Tests (installer behaviour) ===\n\n";
 
-        $allPassed = true;
-        $allPassed = $this->testScriptFileExists() && $allPassed;
-        $allPassed = $this->testScriptFileInXml() && $allPassed;
-        $allPassed = $this->testCheckMethodExists() && $allPassed;
-        $allPassed = $this->testLanguageKeys() && $allPassed;
-        $allPassed = $this->testDetectsBlockedComponentUrls() && $allPassed;
-        $allPassed = $this->testDetectsBlockedOptionUrls() && $allPassed;
-        $allPassed = $this->testPassesWithExceptions() && $allPassed;
-        $allPassed = $this->testPassesWithoutBlocking() && $allPassed;
-        $allPassed = $this->testPassesWithNoHtaccess() && $allPassed;
+        $this->testLanguageKeys();
 
-        echo "\n=== .htaccess Check Test Summary ===\n";
-        echo "All tests completed.\n";
-        return $allPassed;
-    }
-
-    private function testScriptFileExists(): bool
-    {
-        echo "Test: script.php exists... ";
-
-        if (file_exists($this->scriptPath)) {
-            echo "PASS\n";
-            return true;
+        if (!is_file(self::PACKAGE)) {
+            $this->test('package available at ' . self::PACKAGE, false);
+            return $this->summary();
         }
 
-        echo "FAIL (not found at {$this->scriptPath})\n";
-        return false;
-    }
+        $original = is_file(self::HTACCESS) ? file_get_contents(self::HTACCESS) : null;
 
-    private function testScriptFileInXml(): bool
-    {
-        echo "Test: scriptfile declared in XML... ";
+        try {
+            $this->runCase('no .htaccess', null, false, false);
 
-        $xmlPath = '/var/www/html/plugins/ajax/joomlaajaxforms/joomlaajaxforms.xml';
-        if (!file_exists($xmlPath)) {
-            echo "FAIL (XML not found)\n";
-            return false;
+            $standard = is_file(JOOMLA_ROOT . '/htaccess.txt') ? file_get_contents(JOOMLA_ROOT . '/htaccess.txt') : null;
+
+            if ($standard !== null) {
+                $this->runCase("Joomla's standard htaccess.txt", $standard, false, false);
+            } else {
+                $this->test("Joomla's standard htaccess.txt is present", false);
+            }
+
+            $this->runCase('blocking rules with the README exceptions', <<<'HTACCESS'
+RewriteEngine On
+# Block /component/ URLs
+RewriteCond %{REQUEST_URI} ^(/[a-z]{2})?/component/ [NC]
+# Allow com_ajax plugin calls through /component/ blocking
+RewriteCond %{QUERY_STRING} !plugin= [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ /$1/ [R=301,L]
+
+# Block index.php?option=com_*
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+# Allow com_ajax through index.php?option= blocking
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, false, false);
+
+            $this->runCase('/component/ blocking without exception', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{REQUEST_URI} ^(/[a-z]{2})?/component/ [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ /$1/ [R=301,L]
+HTACCESS, true, false);
+
+            $this->runCase('index.php?option= blocking without exception', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteCond %{QUERY_STRING} !^option=com_users [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, false, true);
+
+            $this->runCase('exception attached to a different rule', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} !plugin= [NC]
+RewriteRule ^legacy-page$ / [R=301,L]
+RewriteCond %{REQUEST_URI} ^/component/ [NC]
+RewriteRule ^component/.*$ / [R=301,L]
+HTACCESS, true, false);
+
+            $this->runCase('exceptions joined with [OR]', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} !plugin= [NC,OR]
+RewriteCond %{HTTP_HOST} ^www\. [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ / [R=301,L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC,OR]
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, true, true);
+
+            $this->runCase('exception that does not match the blocked request', <<<'HTACCESS'
+RewriteEngine On
+RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
+RewriteRule ^([a-z]{2})?/?component/.*$ / [R=301,L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteCond %{REQUEST_URI} !component/ajax [NC]
+RewriteRule ^index\.php$ /? [R=301,L]
+HTACCESS, true, true);
+
+            $this->runCase('components/ hardening and option=com_users rule', <<<'HTACCESS'
+RewriteEngine On
+RewriteRule ^components/.*\.php$ - [F,L]
+RewriteCond %{QUERY_STRING} ^option=com_users [NC]
+RewriteRule ^index\.php$ /login [R=301,L]
+HTACCESS, false, false);
+
+            $this->runCase('R=permanent and absolute redirect target', <<<'HTACCESS'
+RewriteEngine On
+RewriteRule ^component/(.*)$ https://example.org/$1 [L]
+RewriteCond %{QUERY_STRING} ^option=com_ [NC]
+RewriteRule ^index\.php$ / [R=permanent,L]
+HTACCESS, true, true);
+        } finally {
+            if ($original === null) {
+                @unlink(self::HTACCESS);
+            } else {
+                file_put_contents(self::HTACCESS, $original);
+            }
         }
 
-        $content = file_get_contents($xmlPath);
-        if (strpos($content, '<scriptfile>script.php</scriptfile>') !== false) {
-            echo "PASS\n";
-            return true;
-        }
-
-        echo "FAIL (scriptfile tag missing)\n";
-        return false;
+        return $this->summary();
     }
 
-    private function testCheckMethodExists(): bool
+    private function testLanguageKeys(): void
     {
-        echo "Test: checkHtaccess method exists in script.php... ";
+        echo "--- Language keys ---\n";
 
-        $content = file_get_contents($this->scriptPath);
-        if (strpos($content, 'function checkHtaccess') !== false) {
-            echo "PASS\n";
-            return true;
-        }
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            $file    = self::PLUGIN_DIR . '/language/' . $tag . '/plg_ajax_joomlaajaxforms.ini';
+            $strings = is_file($file) ? @parse_ini_file($file, false, INI_SCANNER_RAW) : false;
 
-        echo "FAIL\n";
-        return false;
-    }
-
-    private function testLanguageKeys(): bool
-    {
-        echo "Test: .htaccess language keys present... ";
-
-        $requiredKeys = [
-            'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_TITLE',
-            'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_COMPONENT_BLOCKED',
-            'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_OPTION_BLOCKED',
-            'PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_ACTION',
-        ];
-
-        $langFiles = [
-            '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.ini',
-            '/var/www/html/plugins/ajax/joomlaajaxforms/language/de-DE/plg_ajax_joomlaajaxforms.ini',
-        ];
-
-        $missing = [];
-        foreach ($langFiles as $file) {
-            if (!file_exists($file)) {
-                $missing[] = basename(dirname($file)) . '/' . basename($file);
+            if (!is_array($strings)) {
+                $this->test("$tag language file parses", false, $file);
                 continue;
             }
-            $content = file_get_contents($file);
-            $lang = basename(dirname($file));
-            foreach ($requiredKeys as $key) {
-                if (strpos($content, $key . '=') === false) {
-                    $missing[] = $lang . '/' . $key;
+
+            $missing = array_diff(self::REQUIRED_KEYS, array_keys($strings));
+            $this->test("$tag has all .htaccess keys", !$missing, implode(', ', $missing));
+
+            if ($tag === 'en-GB') {
+                foreach (self::REQUIRED_KEYS as $key) {
+                    $this->text[$key] = $this->normalise(strip_tags((string) ($strings[$key] ?? '')));
                 }
             }
         }
 
-        if (empty($missing)) {
-            echo "PASS (" . count($requiredKeys) . " keys x 2 languages)\n";
-            return true;
-        }
-
-        echo "FAIL (Missing: " . implode(', ', $missing) . ")\n";
-        return false;
+        echo "\n";
     }
 
-    /**
-     * Simulate: .htaccess blocks /component/ without plugin= exception
-     */
-    private function testDetectsBlockedComponentUrls(): bool
+    private function runCase(string $label, ?string $htaccess, bool $expectComponent, bool $expectOption): void
     {
-        echo "Test: Detects blocked /component/ URLs... ";
+        echo "--- $label ---\n";
 
-        $htaccess = <<<'HTACCESS'
-RewriteCond %{REQUEST_URI} ^(/[a-z]{2})?/component/ [NC]
-RewriteRule ^([a-z]{2})?/?component/.*$ /$1/ [R=301,L]
-HTACCESS;
-
-        // The check looks for component blocking WITHOUT plugin= exception
-        $hasBlocking = (bool) preg_match(
-            '/RewriteCond.*\/component\/.*\n.*RewriteRule.*component/im',
-            $htaccess
-        );
-        $hasException = (bool) preg_match(
-            '/RewriteCond.*QUERY_STRING.*!plugin=/im',
-            $htaccess
-        );
-
-        if ($hasBlocking && !$hasException) {
-            echo "PASS (blocking detected, no exception)\n";
-            return true;
+        if ($htaccess === null) {
+            @unlink(self::HTACCESS);
+        } else {
+            file_put_contents(self::HTACCESS, $htaccess);
         }
 
-        echo "FAIL\n";
-        return false;
+        [$code, $output] = sh_cli_install(JOOMLA_ROOT, self::PACKAGE);
+        $normalised      = $this->normalise(strip_tags(sh_strip_ansi($output)));
+
+        $this->test("$label: installation succeeds", $code === 0, "exit code $code\n$output");
+
+        $title     = $this->text['PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_WARNING_TITLE'] ?? '';
+        $component = $this->firstWords($this->text['PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_COMPONENT_BLOCKED'] ?? '');
+        $option    = $this->firstWords($this->text['PLG_AJAX_JOOMLAAJAXFORMS_HTACCESS_OPTION_BLOCKED'] ?? '');
+
+        $hasWarning   = $title !== '' && str_contains($normalised, $title);
+        $hasComponent = $component !== '' && str_contains($normalised, $component);
+        $hasOption    = $option !== '' && str_contains($normalised, $option);
+
+        $this->test(
+            "$label: warning " . ($expectComponent || $expectOption ? 'shown' : 'not shown'),
+            $hasWarning === ($expectComponent || $expectOption),
+            $output
+        );
+        $this->test("$label: /component/ issue " . ($expectComponent ? 'reported' : 'not reported'), $hasComponent === $expectComponent);
+        $this->test("$label: option= issue " . ($expectOption ? 'reported' : 'not reported'), $hasOption === $expectOption);
+
+        echo "\n";
     }
 
-    /**
-     * Simulate: .htaccess blocks index.php?option=com_* without com_ajax exception
-     */
-    private function testDetectsBlockedOptionUrls(): bool
+    private function normalise(string $text): string
     {
-        echo "Test: Detects blocked index.php?option= URLs... ";
+        // SymfonyStyle wraps long messages and prefixes continuation lines.
+        $text = preg_replace('/^\s*!?\s*(\[[A-Z]+\])?\s*/m', '', $text);
 
-        $htaccess = <<<'HTACCESS'
-RewriteCond %{QUERY_STRING} ^option=com_ [NC]
-RewriteCond %{QUERY_STRING} !^option=com_users [NC]
-RewriteRule ^index\.php$ /? [R=301,L]
-HTACCESS;
-
-        $hasBlocking = (bool) preg_match(
-            '/RewriteCond.*QUERY_STRING.*\^option=com_/im',
-            $htaccess
-        );
-        $hasAjaxException = (bool) preg_match(
-            '/RewriteCond.*QUERY_STRING.*!.*option=com_ajax/im',
-            $htaccess
-        );
-
-        if ($hasBlocking && !$hasAjaxException) {
-            echo "PASS (blocking detected, com_ajax exception missing)\n";
-            return true;
-        }
-
-        echo "FAIL\n";
-        return false;
+        return trim(preg_replace('/\s+/', ' ', $text));
     }
 
-    /**
-     * Simulate: .htaccess with correct exceptions — should pass
-     */
-    private function testPassesWithExceptions(): bool
+    private function firstWords(string $text, int $count = 6): string
     {
-        echo "Test: Passes with correct exceptions... ";
-
-        $htaccess = <<<'HTACCESS'
-RewriteCond %{REQUEST_URI} ^(/[a-z]{2})?/component/ [NC]
-RewriteCond %{QUERY_STRING} !plugin= [NC]
-RewriteRule ^([a-z]{2})?/?component/.*$ /$1/ [R=301,L]
-RewriteCond %{QUERY_STRING} ^option=com_ [NC]
-RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]
-RewriteRule ^index\.php$ /? [R=301,L]
-HTACCESS;
-
-        $issues = 0;
-
-        // Component check
-        if (preg_match('/RewriteCond.*\/component\/.*\n.*RewriteRule.*component/im', $htaccess)) {
-            if (!preg_match('/RewriteCond.*QUERY_STRING.*!plugin=/im', $htaccess)) {
-                $issues++;
-            }
-        }
-
-        // Option check
-        if (preg_match('/RewriteCond.*QUERY_STRING.*\^option=com_/im', $htaccess)) {
-            if (!preg_match('/RewriteCond.*QUERY_STRING.*!.*option=com_ajax/im', $htaccess)) {
-                $issues++;
-            }
-        }
-
-        if ($issues === 0) {
-            echo "PASS (no issues found)\n";
-            return true;
-        }
-
-        echo "FAIL ($issues issues found)\n";
-        return false;
+        return implode(' ', array_slice(explode(' ', $text), 0, $count));
     }
 
-    /**
-     * Simulate: Standard Joomla .htaccess without any blocking — should pass
-     */
-    private function testPassesWithoutBlocking(): bool
+    private function summary(): bool
     {
-        echo "Test: Passes with standard Joomla .htaccess... ";
+        echo "\n=== .htaccess Check Test Summary ===\n";
+        echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
 
-        $htaccess = <<<'HTACCESS'
-RewriteEngine On
-RewriteCond %{REQUEST_URI} !^/index\.php
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule .* index.php [L]
-HTACCESS;
-
-        $hasComponentBlock = (bool) preg_match(
-            '/RewriteCond.*\/component\/.*\n.*RewriteRule.*component/im',
-            $htaccess
-        );
-        $hasOptionBlock = (bool) preg_match(
-            '/RewriteCond.*QUERY_STRING.*\^option=com_/im',
-            $htaccess
-        );
-
-        if (!$hasComponentBlock && !$hasOptionBlock) {
-            echo "PASS (no blocking rules)\n";
-            return true;
-        }
-
-        echo "FAIL\n";
-        return false;
-    }
-
-    /**
-     * No .htaccess at all — should pass (Nginx or no SEF)
-     */
-    private function testPassesWithNoHtaccess(): bool
-    {
-        echo "Test: Passes when no .htaccess exists... ";
-
-        // The script checks file_exists() first and returns early
-        // We verify the logic: no file = no issues
-        $fakeFile = '/tmp/nonexistent_htaccess_' . uniqid();
-        if (!file_exists($fakeFile)) {
-            echo "PASS (no file = no check needed)\n";
-            return true;
-        }
-
-        echo "FAIL\n";
-        return false;
+        return $this->failed === 0;
     }
 }
 
 $test = new HtaccessCheckTest();
-$result = $test->run();
-exit($result ? 0 : 1);
+exit($test->run() ? 0 : 1);

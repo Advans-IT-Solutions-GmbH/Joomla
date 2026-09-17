@@ -1,7 +1,6 @@
-FROM joomla:5.4-php8.2-apache
+# Moving tag: newest Joomla 5.4.x release on the newest PHP of the official image.
+FROM joomla:5.4-php8.3-apache
 
-ARG JOOMLA_VERSION=5.4.6
-ARG JOOMLA_PACKAGE_URL=https://github.com/joomla/joomla-cms/releases/download/${JOOMLA_VERSION}/Joomla_${JOOMLA_VERSION}-Stable-Full_Package.zip
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
@@ -9,11 +8,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
-
-RUN rm -rf /usr/src/joomla/* /var/www/html/* \
-    && curl -fsSL "$JOOMLA_PACKAGE_URL" -o /tmp/joomla.zip \
-    && unzip -q /tmp/joomla.zip -d /usr/src/joomla \
-    && rm /tmp/joomla.zip
 
 # Configure MySQL client to skip SSL
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf
@@ -27,6 +21,7 @@ COPY extension.zip /tmp/extension.zip
 
 # Copy custom entrypoint
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
+COPY scripts/install-extension-http.php /usr/local/bin/install-extension-http.php
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
 ENV EXTENSION_NAME="J2Commerce Privacy Plugin"

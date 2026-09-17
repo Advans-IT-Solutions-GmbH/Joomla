@@ -5,7 +5,7 @@
 - Branch-Namen kurz & beschreibend: `fix/...`, `feat/...`, `docs/...`, `chore/...`.
 - Den PR niemals selbst mergen — das macht der Maintainer.
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
-- Write PRs, commit messages, and documentation in **English** (this is a public repository).
+- Write PRs, commit messages, and documentation (READMEs, skills) in **English** (this is a public repository); the agent instruction files `AGENTS.md`, `CLAUDE.md` and `copilot-instructions.md` are maintained in German.
 - **Definition of Done für Copilot-Code-Reviews:** Ein PR mit Copilot-Code-Review ist erst
   **fertig**, wenn jeder Review-Kommentar behandelt ist (Fix committen/pushen **oder** mit
   begründetem Reply ablehnen, falls der Vorschlag nicht sinnvoll ist) — **inklusive** des
@@ -26,20 +26,23 @@
   die Instruktionsdateien im PR zusätzlich als Absicherung auf Drift.
 
 ## Commit-Konventionen
-- **Eigene Identität (Modell B):** Committe unter deinem **eigenen** GitHub-Account — deinem
-  echten Namen und deiner persönlichen GitHub-No-Reply-Adresse. Es gibt **keine** feste
-  gemeinsame Firmen-Identität, unter der committet wird.
-  - `git config user.name "<Dein echter Name>"`
-  - `git config user.email "<deine persönliche GitHub-No-Reply>"`
+- **Identität von Entwicklern:** Committe unter deinem **eigenen** GitHub-Account — mit deinem
+  Namen und deiner eigenen GitHub-No-Reply-Adresse (signiert, falls ein Schlüssel vorhanden ist;
+  für Organisationsmitglieder gemäss internem Onboarding).
+  - `git config user.name "<Dein Name>"`
+  - `git config user.email "<deine eigene GitHub-No-Reply>"`
   - Deine No-Reply-Adresse findest du unter GitHub → Settings → Emails (Option „Keep my email
     addresses private“). Beide Formate sind gültig:
     `<username>@users.noreply.github.com` oder `<ID>+<username>@users.noreply.github.com`.
+- **Maintainer und KI-Agenten in seinen Sitzungen** committen als
+  `Advans IT Solutions GmbH <89843389+advansit@users.noreply.github.com>`.
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
   im Commit kann bei aktivierter „Block command line pushes that expose my email“ den Push
   ablehnen; die No-Reply-Adresse vermeidet das.)
-- **Signing:** Verwende deinen **eigenen** verifizierten **GPG-Key**
-  (`git config commit.gpgsign true`). Die Commit-E-Mail muss zu diesem Key passen, sonst ist
-  die Signatur nicht verifizierbar. Für dieses öffentliche Repo ist Signing **verpflichtend**
+- **Signing:** Ist ein verifizierter Signierschlüssel vorhanden, signiere damit
+  (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
+  die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
+  einem fehlenden Key scheitern
   (siehe „Repo-spezifisch (Joomla)“).
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
@@ -55,11 +58,10 @@
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 
 ## Repo-spezifisch (Joomla)
-Dieses öffentliche Repo erzwingt per Organization-Ruleset **verifizierte GPG-Signaturen** —
-Signing ist hier verpflichtend (nicht optional). Eine Commit-E-Mail, die nicht zu deinem
-verifizierten Key passt, erzeugt eine nicht-verifizierbare Signatur und der Merge wird abgelehnt.
-Damit gilt für dieses Repo: Der oben unter „Commit-Konventionen“ beschriebene
-**eigener verifizierter GPG-Key** (Modell B) ist Pflicht — nicht optional.
+Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz dieses Repos verifizierte
+Signaturen. Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch
+signierst du, wenn ein verifizierter Schlüssel vorhanden ist; ohne Schlüssel dürfen sie
+unsigniert sein.
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend.
@@ -72,7 +74,7 @@ Generische Extensions in diesem Repository:
 - J2Commerce-Extensions
 
 Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
-Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) müssen als `fix(...)` oder `feat(...)` mit passendem Scope formuliert werden.
+Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus. Nur wenn ein Versionssprung gewollt ist, wird die Änderung als `fix(...)` oder `feat(...)` mit passendem Scope formuliert.
 
 Skills liegen in:
 - `.claude/skills/joomla-extensions`

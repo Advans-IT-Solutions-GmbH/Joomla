@@ -2,7 +2,7 @@
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml)
-[![Joomla 5](https://img.shields.io/badge/Joomla-5.x-blue.svg)](https://www.joomla.org/)
+[![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
@@ -17,14 +17,14 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 - Modal comparison view
 - Add from list and detail pages
 - Configurable maximum products (default: 4)
-- Session-based storage
+- Selection stored in the browser (`localStorage`)
 - Responsive design
 - Customizable button styling
-- AJAX operations
+- Comparison table loaded via AJAX
 
 ## Requirements
 
-- [Joomla](https://github.com/joomla/joomla-cms) 5.x or 6.x
+- [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
 - J2Commerce 4.x (`#__j2store_*` tables) or J2Commerce 6.x (`#__j2commerce_*` tables)
 
@@ -32,9 +32,9 @@ The J2Commerce Product Compare Plugin adds a visual comparison feature to your s
 
 The plugin detects the installed J2Commerce version at runtime by checking for `#__j2commerce_products` in the database.
 
-The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 4/5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
+The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
 
-**J2Commerce 4.x (Joomla 4/5)**:
+**J2Commerce 4.x (Joomla 5)**:
 - Events received via legacy method-name convention (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`)
 - DB tables: `#__j2store_products`, `#__j2store_variants`, `#__j2store_product_options`
 - AJAX URL: `group=j2store`
@@ -48,16 +48,25 @@ No configuration required — table names and event handlers are selected automa
 
 ### Compatibility Test Scope
 
-The CI installs Joomla full packages plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
+The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x, printed as `Tested versions: …` in each job log) plus real J2Commerce/J2Store runtimes and verifies the AJAX endpoint, product data query, stock labels, and asset registration paths for Joomla 5/J2Commerce 4 and Joomla 6/J2Commerce 6. The `onAfterRender` injection path is now exercised against a real Joomla `HtmlDocument`: the suite asserts that the compare **bar** and **modal** markup (rendered from the real `tmpl/` layouts) is injected before `</body>`. The storefront events are also dispatched for real — the J2Commerce 6 per-item/detail hooks go through a real `Joomla\Event\Dispatcher` after the plugin is registered as a subscriber, and the legacy J2Store 4 events are invoked exactly as J2Store 4's legacy dispatcher invokes them — and the suite asserts the rendered compare button (with the seeded product id) is emitted on both stacks. These are real end-to-end proofs of the render and event-dispatch paths, not keyword or file-existence checks.
 
 ## Installation
-1. Download `plg_j2commerce_productcompare.zip`
-2. **System → Extensions → Install**
+1. Download `plg_j2commerce_productcompare_<version>.zip` from the latest release
+2. **System → Install → Extensions**
 3. Upload and install
-4. Enable via **System → Plugins**
+4. Enable via **System → Manage → Plugins**
+
+## Updating
+
+The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
+
+## Uninstall
+
+Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. On Joomla 5 the uninstall script removes both `plugins/j2commerce/productcompare/` and the `plugins/j2store/productcompare/` mirror; on Joomla 6 Joomla removes `plugins/j2commerce/productcompare/`. Media and language files are removed by Joomla. Template overrides in your template folder are not removed.
+
 ## Configuration
 
-**System → Plugins → J2Commerce - Product Compare**
+**System → Manage → Plugins → J2Commerce - Product Compare**
 
 - **Show in Product List:** Display button in lists (Default: Yes)
 - **Show in Product Detail:** Display on detail pages (Default: Yes)
@@ -83,14 +92,16 @@ plg_j2commerce_productcompare/
 ├── LICENSE.txt
 ├── plg_j2commerce_productcompare.xml   # Joomla manifest (group="j2commerce", element="productcompare")
 ├── build.sh
+├── script.php                          # Install/update/uninstall script
 ├── services/provider.php
 ├── src/Extension/ProductCompare.php
+├── tmpl/ (bar, button, modal, table)    # Layouts, overridable
 ├── language/ (en-GB, de-DE, fr-FR)
 ├── media/ (js, css)                    # Installed to media/plg_j2commerce_productcompare/
 └── tests/
 ```
 
-Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2store/productcompare/` (Joomla 4/5 mirror)
+Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2store/productcompare/` (Joomla 5 mirror)
 
 ### Building
 ```bash
@@ -99,7 +110,7 @@ Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2st
 
 ## Automated Testing
 
-This plugin has automated tests that run on every push via GitHub Actions.
+This plugin has automated tests that run via GitHub Actions (`j2commerce-product-compare.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -112,30 +123,39 @@ This plugin has automated tests that run on every push via GitHub Actions.
 7. **Asset Injection** — WebAssetManager + script-options registration driven against a real `HtmlDocument`
 8. **Render Injection** — `onAfterRender()` injects the compare bar + modal markup into a real HTML `<body>` before `</body>` (both stacks)
 9. **Event Dispatch** — real product rows are seeded and the storefront events are driven, asserting the compare button is emitted: J2Commerce 6 (`onJ2CommerceAfterProductListItemDisplay`, `onJ2CommerceAfterProductDisplay`) through a real dispatcher, and J2Store 4 (`onJ2StoreAfterDisplayProductList`, `onJ2StoreAfterDisplayProduct`) via the legacy listener path; also asserts the legacy events are correctly suppressed on J2Commerce 6
-10. **Uninstall** — clean removal from database and filesystem
+10. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+11. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
+Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+
 ```bash
+# in j2commerce/plg_j2commerce_productcompare
+./build.sh
+cp *.zip tests/extension.zip
+
 cd tests
 docker compose up -d
 timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 ./run-tests.sh all
 docker compose down -v
 
-# Joomla 6
+# Joomla 6 (requires tests/j2commerce6.zip)
 docker compose -f docker-compose.joomla6.yml up -d
 timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
-./run-tests.sh all
+J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
 ```
+
+CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command with it to reproduce CI.
 
 ## Troubleshooting
 
 ### Compare Button Not Showing
 **Problem:** Button missing on product pages  
 **Solution:**
-1. Verify plugin is enabled in **System → Plugins**
+1. Verify plugin is enabled in **System → Manage → Plugins**
 2. Check "Show in Product List" and "Show in Product Detail" settings
 3. Verify J2Commerce template includes plugin positions
 4. Clear Joomla cache
@@ -146,23 +166,23 @@ docker compose -f docker-compose.joomla6.yml down -v
 1. Check browser console for JavaScript errors
 2. Verify media files loaded (CSS/JS)
 3. Check for CSS conflicts with template
-4. Ensure session storage enabled in browser
+4. Ensure the browser allows `localStorage` (not disabled/private mode)
 
 ### Modal Not Opening
 **Problem:** Click "View Comparison" but nothing happens  
 **Solution:**
 1. Check browser console for errors
-2. Verify jQuery/Bootstrap loaded
+2. Verify `media/plg_j2commerce_productcompare/js/productcompare.js` is loaded
 3. Test in different browser
 4. Disable conflicting JavaScript plugins
 
 ### Products Not Persisting
 **Problem:** Comparison list clears on page reload  
 **Solution:**
-1. Verify PHP sessions working
-2. Check session timeout settings
-3. Test with cookies enabled
-4. Verify AJAX endpoints responding
+The selection is stored in the browser's `localStorage`, not in the PHP session.
+1. Ensure the browser allows `localStorage` (not disabled/private mode)
+2. Check whether the browser clears site data on reload or exit
+3. Note that the selection is kept per browser and per site address
 
 ### Maximum Products Not Enforced
 **Problem:** Can add more than configured maximum  
@@ -182,7 +202,7 @@ The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution ord
 
 1. `templates/{your-template}/html/plg_j2commerce_productcompare/{layout}.php`
 2. `plugins/j2commerce/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 6)
-3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 4/5 mirror)
+3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 5 mirror)
 
 ### Available layouts
 
@@ -246,7 +266,11 @@ Copy `tmpl/table.php` to your template override directory and add a row:
 <tr>
     <th scope="row"><?php echo Text::_('YOUR_CUSTOM_ATTRIBUTE'); ?></th>
     <?php foreach ($products as $product) : ?>
-        <td><?php echo $this->escape($product->options['your_option'] ?? '-'); ?></td>
+        <td>
+            <?php foreach ($product->options as $opt) : ?>
+                <?php echo $this->escape($opt['option_name'] . ': ' . $opt['option_value']); ?><br>
+            <?php endforeach; ?>
+        </td>
     <?php endforeach; ?>
 </tr>
 ```
@@ -268,7 +292,7 @@ In your `button.php` override:
 
 ### CSS customization
 
-The plugin loads `media/plg_j2commerce_productcompare/css/productcompare.css` via Joomla's WebAssetManager. To override styles, add CSS to your template's stylesheet — the plugin CSS uses non-`!important` rules so template styles take precedence naturally.
+The plugin loads `media/plg_j2commerce_productcompare/css/productcompare.css` via Joomla's WebAssetManager. To override styles, add CSS to your template's stylesheet — the plugin CSS uses mostly non-`!important` rules so template styles take precedence naturally.
 
 Key CSS classes:
 
@@ -313,16 +337,13 @@ Button CSS Class: btn btn-primary
 ## Compared Attributes
 
 The comparison table displays:
-- Product image
-- Product name
+- Product name (column header)
 - SKU
 - Price
-- Stock status
-- Short description
-- Key specifications
-- Add to cart button
+- Stock status (in stock / out of stock)
+- Short description (article intro text, first 200 characters)
 
-Attributes are configurable via J2Commerce product settings.
+Additional rows can be added via a `table.php` template override.
 
 ## Browser Compatibility
 
@@ -336,23 +357,23 @@ Attributes are configurable via J2Commerce product settings.
 
 ### Required Features
 - JavaScript enabled
-- Session storage
+- `localStorage`
 - CSS3 support
 - AJAX/Fetch API
 
 ## Performance Considerations
 
-- **Session storage:** ~5KB per comparison list
-- **AJAX calls:** 1 per add/remove action
+- **Browser storage:** only the selected product IDs are stored in `localStorage`
+- **AJAX calls:** none when adding or removing products; opening the comparison issues one AJAX request that loads product data from the database
 - **Page load impact:** ~50KB (CSS + JS)
-- **Database queries:** 0 additional (session-based)
+- **Database queries:** only when the comparison is opened (product data and options of the selected products)
 
 ## Multi-Language Support
 
 This extension supports the following languages:
 - **English (en-GB)** - Default
 - **German (de-DE)**
-- **French (fr-FR)** - French
+- **French (fr-FR)**
 
 Users can add additional language files by creating new language folders following Joomla's language structure:
 ```

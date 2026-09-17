@@ -3,8 +3,10 @@
  * @package     J2Commerce.OSMap
  * Plugin Emit Tests for OSMap J2Commerce Plugin
  *
- * Tests emitProductsForCategory(), emitAllProducts(), and printProductNode()
- * URL construction against real fixture data.
+ * Exercises the product emit paths (category list, full list, product URL
+ * construction) through the plugin's public OSMap entry point getTree(), the
+ * method OSMap itself calls for every matching menu item, against real fixture
+ * data.
  *
  * Covers issue #99: missing test coverage for emit methods and URL edge cases.
  */
@@ -66,14 +68,14 @@ class RecordingCollector extends \Alledia\OSMap\Sitemap\Collector
 
 class PluginEmitTest
 {
+    private const MAIN_CLASS = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce';
+    private const NEW_CLASS  = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew';
+
     private DatabaseInterface $db;
     private int $passed = 0;
     private int $failed = 0;
     private bool $isJ6;
     private string $productsTable;
-
-    // Fixture articles are in catid=2 (Joomla default "Uncategorised")
-    private const FIXTURE_CATID = 2;
 
     public function __construct()
     {
@@ -82,26 +84,73 @@ class PluginEmitTest
         $this->productsTable = $this->isJ6 ? '#__j2commerce_products' : '#__j2store_products';
     }
 
-    private function makePlugin(string $class = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce'): object
+    /**
+     * The plugin class that handles the shop component of this stack: the
+     * J2Store class reads #__j2store_products, the J2Commerce 6 subclass reads
+     * #__j2commerce_products. No property is changed from outside.
+     */
+    private function stackClass(): string
     {
+        return $this->isJ6 ? self::NEW_CLASS : self::MAIN_CLASS;
+    }
+
+    private function makePlugin(?string $class = null): object
+    {
+        $class  = $class ?? $this->stackClass();
         $plugin = new $class(new Dispatcher(), ['params' => new Registry([])]);
         $plugin->setDatabase($this->db);
 
-        // J2CommerceNew always targets #__j2commerce_products by design — do not
-        // override its default. Only inject the stack-specific table into the main
-        // J2Commerce class when running on J6 (where it would otherwise default to
-        // #__j2store_products).
-        $isMainClass = ($class === 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce');
-        if ($isMainClass && $this->isJ6) {
-            $rc = new ReflectionClass($plugin);
-            if ($rc->hasProperty('productsTable')) {
-                $prop = $rc->getProperty('productsTable');
-                $prop->setAccessible(true);
-                $prop->setValue($plugin, $this->productsTable);
+        return $plugin;
+    }
+
+    /**
+     * A plugin whose product loading returns the given rows. Only the data
+     * source is replaced (protected loadProducts()); getTree() and the URL
+     * construction in printProductNode() run unchanged. This is the only way
+     * to feed aliases that a real article cannot have (e.g. a leading slash)
+     * without reaching into private members.
+     *
+     * @param object[] $products
+     */
+    private function makePluginWithProducts(array $products): object
+    {
+        $plugin = new class (new Dispatcher(), ['params' => new Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
+            /** @var object[] */
+            public array $fixtureProducts = [];
+
+            protected function loadProducts(?int $catid): array
+            {
+                return $this->fixtureProducts;
             }
-        }
+        };
+        $plugin->setDatabase($this->db);
+        $plugin->fixtureProducts = $products;
 
         return $plugin;
+    }
+
+    /**
+     * The OSMap parent menu item for a J2Store/J2Commerce list view. id 0 keeps
+     * the hidden-menu-children mechanism out of these tests (covered in
+     * 04-sitemap-output.php / 06-sitemap-http.php).
+     */
+    private function makeParent(object $plugin, string $query, string $path): object
+    {
+        return osmap_make_item([
+            'id'         => 0,
+            'link'       => 'index.php?option=' . $plugin->getComponentElement() . ($query !== '' ? '&' . $query : ''),
+            'path'       => $path,
+            'language'   => '*',
+            'browserNav' => 0,
+        ]);
+    }
+
+    private function collect(object $plugin, object $parent): RecordingCollector
+    {
+        $collector = new RecordingCollector();
+        $plugin->getTree($collector, $parent, new Registry([]));
+
+        return $collector;
     }
 
     private function test(string $name, callable $fn): void
@@ -122,17 +171,9 @@ class PluginEmitTest
 
     // -------------------------------------------------------------------------
 
-    private function testEmitProductsForCategory(): void
+    private function testCategoryList(): void
     {
-        echo "\n--- emitProductsForCategory() ---\n";
-
-        $plugin    = $this->makePlugin();
-        $parent    = osmap_make_item([]);
-        $parent->path = 'shop';
-
-        $rc     = new ReflectionClass($plugin);
-        $method = $rc->getMethod('emitProductsForCategory');
-        $method->setAccessible(true);
+        echo "\n--- getTree(view=products&catid=…) → products of one category ---\n";
 
         // Discover the catid that fixture products actually use by querying
         // the products table directly — avoids hard-coding a catid that may
@@ -150,20 +191,24 @@ class PluginEmitTest
         $fixtureCatid = (int) $db->setQuery($q)->loadResult();
 
         if ($fixtureCatid === 0) {
-            echo "SKIP emitProductsForCategory() — no enabled fixture products found\n";
+            if (getenv('TEST_STRICT_SKIP') === '1') {
+                $this->test('fixture products available for the category list', fn () => false);
+            } else {
+                echo "SKIP category list — no enabled fixture products found\n";
+            }
             return;
         }
 
         echo "  Using fixture catid=$fixtureCatid\n";
 
-        $collector = new RecordingCollector();
-        $method->invoke($plugin, $collector, $parent, new Registry([]), $fixtureCatid);
+        $plugin    = $this->makePlugin();
+        $collector = $this->collect($plugin, $this->makeParent($plugin, 'view=products&catid=' . $fixtureCatid, 'shop'));
 
-        $this->test('emitProductsForCategory() emits nodes for fixture category', function () use ($collector) {
+        $this->test('category list emits nodes for fixture category', function () use ($collector) {
             return count($collector->nodes) >= 1;
         });
 
-        $this->test('emitProductsForCategory() nodes have absolute URLs', function () use ($collector) {
+        $this->test('category list nodes have absolute URLs', function () use ($collector) {
             $root = rtrim(Uri::root(), '/');
             foreach ($collector->nodes as $node) {
                 if (!str_starts_with($node->link, $root . '/')) {
@@ -174,7 +219,7 @@ class PluginEmitTest
             return true;
         });
 
-        $this->test('emitProductsForCategory() nodes have uid prefix j2commerce.product.', function () use ($collector) {
+        $this->test('category list nodes have uid prefix j2commerce.product.', function () use ($collector) {
             foreach ($collector->nodes as $node) {
                 if (!str_starts_with($node->uid, 'j2commerce.product.')) {
                     return false;
@@ -184,33 +229,24 @@ class PluginEmitTest
         });
 
         // Non-existent category → 0 nodes, no crash
-        $collector2 = new RecordingCollector();
-        $method->invoke($plugin, $collector2, $parent, new Registry([]), 999999999);
-        $this->test('emitProductsForCategory() with non-existent catid emits 0 nodes', function () use ($collector2) {
+        $collector2 = $this->collect($plugin, $this->makeParent($plugin, 'view=products&catid=999999999', 'shop'));
+        $this->test('category list with non-existent catid emits 0 nodes', function () use ($collector2) {
             return count($collector2->nodes) === 0;
         });
     }
 
-    private function testEmitAllProducts(): void
+    private function testFullList(): void
     {
-        echo "\n--- emitAllProducts() ---\n";
+        echo "\n--- getTree(view=products) → all products ---\n";
 
         $plugin    = $this->makePlugin();
-        $collector = new RecordingCollector();
-        $parent    = osmap_make_item([]);
-        $parent->path = 'shop';
+        $collector = $this->collect($plugin, $this->makeParent($plugin, 'view=products', 'shop'));
 
-        $rc     = new ReflectionClass($plugin);
-        $method = $rc->getMethod('emitAllProducts');
-        $method->setAccessible(true);
-
-        $method->invoke($plugin, $collector, $parent, new Registry([]));
-
-        $this->test('emitAllProducts() emits at least 2 nodes (fixture products)', function () use ($collector) {
+        $this->test('full list emits at least 2 nodes (fixture products)', function () use ($collector) {
             return count($collector->nodes) >= 2;
         });
 
-        $this->test('emitAllProducts() nodes have absolute URLs', function () use ($collector) {
+        $this->test('full list nodes have absolute URLs', function () use ($collector) {
             $root = rtrim(Uri::root(), '/');
             foreach ($collector->nodes as $node) {
                 if (!str_starts_with($node->link, $root . '/')) {
@@ -221,7 +257,7 @@ class PluginEmitTest
             return true;
         });
 
-        $this->test('emitAllProducts() nodes have expandible=false', function () use ($collector) {
+        $this->test('full list nodes have expandible=false', function () use ($collector) {
             foreach ($collector->nodes as $node) {
                 if ($node->expandible !== false) {
                     return false;
@@ -231,120 +267,91 @@ class PluginEmitTest
         });
     }
 
-    private function testPrintProductNodeUrlEdgeCases(): void
+    private function testProductUrlEdgeCases(): void
     {
-        echo "\n--- printProductNode() URL edge cases ---\n";
-
-        $plugin = $this->makePlugin();
-        $rc     = new ReflectionClass($plugin);
-        $method = $rc->getMethod('printProductNode');
-        $method->setAccessible(true);
+        echo "\n--- Product URL edge cases (getTree → printProductNode) ---\n";
 
         $root = rtrim(Uri::root(), '/');
 
+        $linkFor = function (string $parentPath, string $alias, int $id): array {
+            $plugin    = $this->makePluginWithProducts([
+                (object) ['id' => $id, 'title' => 'Test', 'alias' => $alias, 'modified' => null, 'catid' => 2, 'language' => '*'],
+            ]);
+            $collector = $this->collect($plugin, $this->makeParent($plugin, 'view=products', $parentPath));
+
+            return array_map(static fn (object $node): string => (string) $node->link, $collector->nodes);
+        };
+
         // Case 1: normal alias, parent path "shop"
-        $this->test('Normal alias: shop/my-product', function () use ($plugin, $method, $root) {
-            $collector = new RecordingCollector();
-            $parent    = osmap_make_item([]);
-            $parent->path = 'shop';
-            $product = (object)['id' => 1, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
-            $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
-            $expected = $root . '/shop/my-product';
-            return count($collector->nodes) === 1 && $collector->nodes[0]->link === $expected;
+        $this->test('Normal alias: shop/my-product', function () use ($linkFor, $root) {
+            return $linkFor('shop', 'my-product', 1) === [$root . '/shop/my-product'];
         });
 
         // Case 2: alias with leading slash (must be stripped)
-        $this->test('Alias with leading slash stripped', function () use ($plugin, $method, $root) {
-            $collector = new RecordingCollector();
-            $parent    = osmap_make_item([]);
-            $parent->path = 'shop';
-            $product = (object)['id' => 2, 'title' => 'Test', 'alias' => '/my-product', 'modified' => null];
-            $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
-            $expected = $root . '/shop/my-product';
-            return count($collector->nodes) === 1 && $collector->nodes[0]->link === $expected;
+        $this->test('Alias with leading slash stripped', function () use ($linkFor, $root) {
+            return $linkFor('shop', '/my-product', 2) === [$root . '/shop/my-product'];
         });
 
         // Case 3: empty parent path (root-level shop)
-        $this->test('Empty parent path: /my-product', function () use ($plugin, $method, $root) {
-            $collector = new RecordingCollector();
-            $parent    = osmap_make_item([]);
-            $parent->path = '';
-            $product = (object)['id' => 3, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
-            $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
-            $expected = $root . '/my-product';
-            return count($collector->nodes) === 1 && $collector->nodes[0]->link === $expected;
+        $this->test('Empty parent path: /my-product', function () use ($linkFor, $root) {
+            return $linkFor('', 'my-product', 3) === [$root . '/my-product'];
         });
 
         // Case 4: parent path with trailing slash (must not double-slash)
-        $this->test('Parent path with trailing slash: no double slash', function () use ($plugin, $method, $root) {
-            $collector = new RecordingCollector();
-            $parent    = osmap_make_item([]);
-            $parent->path = 'shop/';
-            $product = (object)['id' => 4, 'title' => 'Test', 'alias' => 'my-product', 'modified' => null];
-            $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
-            $link = $collector->nodes[0]->link ?? '';
-            return !str_contains($link, '//shop') && str_ends_with($link, '/my-product');
+        $this->test('Parent path with trailing slash: no double slash', function () use ($linkFor, $root) {
+            return $linkFor('shop/', 'my-product', 4) === [$root . '/shop/my-product'];
         });
 
         // Case 5: alias must NOT be percent-encoded (rawurlencode removed)
-        $this->test('Alias not percent-encoded (no rawurlencode)', function () use ($plugin, $method, $root) {
-            $collector = new RecordingCollector();
-            $parent    = osmap_make_item([]);
-            $parent->path = 'shop';
-            $product = (object)['id' => 5, 'title' => 'Test', 'alias' => 'my-great-product', 'modified' => null];
-            $method->invoke($plugin, $collector, $parent, new Registry([]), $product);
-            $link = $collector->nodes[0]->link ?? '';
-            return !preg_match('/%[0-9A-F]{2}/i', $link) && str_ends_with($link, '/my-great-product');
+        $this->test('Alias not percent-encoded (no rawurlencode)', function () use ($linkFor) {
+            $links = $linkFor('shop', 'my-great-product', 5);
+            return count($links) === 1
+                && !preg_match('/%[0-9A-F]{2}/i', $links[0])
+                && str_ends_with($links[0], '/my-great-product');
+        });
+
+        // Case 6: the same product twice in one run is emitted once
+        $this->test('Duplicate product emitted once per getTree() run', function () {
+            $product   = (object) ['id' => 6, 'title' => 'Test', 'alias' => 'dup', 'modified' => null, 'catid' => 2, 'language' => '*'];
+            $plugin    = $this->makePluginWithProducts([$product, clone $product]);
+            $collector = $this->collect($plugin, $this->makeParent($plugin, 'view=products', 'shop'));
+            return count($collector->nodes) === 1;
         });
     }
 
-    private function testJ2CommerceNewEmitAllProducts(): void
+    private function testJ2CommerceNewFullList(): void
     {
-        echo "\n--- J2CommerceNew::emitAllProducts() (J6 branch) ---\n";
+        echo "\n--- J2CommerceNew getTree(view=products) (J6 branch) ---\n";
 
-        $newClass = 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew';
-        if (!class_exists($newClass)) {
-            echo "SKIP J2CommerceNew not available\n";
+        if (!class_exists(self::NEW_CLASS)) {
+            $this->test('J2CommerceNew class available', fn () => false);
             return;
         }
 
-        $plugin    = $this->makePlugin($newClass);
-        $collector = new RecordingCollector();
-        $parent    = osmap_make_item([]);
-        $parent->path = 'shop';
+        $plugin = $this->makePlugin(self::NEW_CLASS);
 
-        $rc     = new ReflectionClass($plugin);
-        $method = $rc->getMethod('emitAllProducts');
-        $method->setAccessible(true);
+        $this->test('J2CommerceNew handles com_j2commerce', function () use ($plugin) {
+            return $plugin->getComponentElement() === 'com_j2commerce';
+        });
 
-        // On J5 stack #__j2commerce_products doesn't exist — expect 0 nodes, no crash.
-        // On J6 stack expect fixture products.
-        try {
-            $method->invoke($plugin, $collector, $parent, new Registry([]));
-            $this->test('J2CommerceNew::emitAllProducts() does not crash', function () { return true; });
-        } catch (\Throwable $e) {
-            // Table-not-found on J5 is acceptable — treat as 0 nodes
-            $isTableMissing = str_contains($e->getMessage(), 'j2commerce_products')
-                || str_contains($e->getMessage(), "doesn't exist")
-                || str_contains($e->getMessage(), 'Table');
-            if ($isTableMissing && !$this->isJ6) {
-                echo "NOTE J2CommerceNew: table absent on J5 stack (expected)\n";
-                $this->test('J2CommerceNew::emitAllProducts() gracefully absent on J5', function () { return true; });
-                return;
-            }
-            $this->test('J2CommerceNew::emitAllProducts() does not crash', function () use ($e) {
-                echo "  Error: " . $e->getMessage() . "\n";
-                return false;
-            });
+        // On the J5 stack #__j2commerce_products does not exist: the plugin logs
+        // the query error and emits nothing. On J6 it emits the fixture products.
+        $collector = null;
+        $this->test('J2CommerceNew getTree() does not throw', function () use ($plugin, &$collector) {
+            $collector = $this->collect($plugin, $this->makeParent($plugin, 'view=products', 'shop'));
+            return true;
+        });
+
+        if ($collector === null) {
             return;
         }
 
         if ($this->isJ6) {
-            $this->test('J2CommerceNew::emitAllProducts() emits nodes on J6 stack', function () use ($collector) {
+            $this->test('J2CommerceNew emits nodes on J6 stack', function () use ($collector) {
                 return count($collector->nodes) >= 1;
             });
         } else {
-            $this->test('J2CommerceNew::emitAllProducts() emits 0 nodes on J5 stack', function () use ($collector) {
+            $this->test('J2CommerceNew emits 0 nodes on J5 stack', function () use ($collector) {
                 return count($collector->nodes) === 0;
             });
         }
@@ -357,11 +364,12 @@ class PluginEmitTest
         echo "=== Plugin Emit Tests ===\n";
         echo "Stack: " . ($this->isJ6 ? 'J6 (j2commerce)' : 'J5 (j2store)') . "\n";
         echo "Products table: {$this->productsTable}\n";
+        echo "Plugin class: " . $this->stackClass() . "\n";
 
-        $this->testEmitProductsForCategory();
-        $this->testEmitAllProducts();
-        $this->testPrintProductNodeUrlEdgeCases();
-        $this->testJ2CommerceNewEmitAllProducts();
+        $this->testCategoryList();
+        $this->testFullList();
+        $this->testProductUrlEdgeCases();
+        $this->testJ2CommerceNewFullList();
 
         echo "\n=== Plugin Emit Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";

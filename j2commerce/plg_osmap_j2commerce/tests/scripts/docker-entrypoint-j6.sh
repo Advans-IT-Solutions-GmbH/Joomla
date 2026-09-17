@@ -15,6 +15,22 @@ until [ -f /var/www/html/configuration.php ] && [ ! -d /var/www/html/installatio
     sleep 3
 done
 
+# configuration.php appears before the official entrypoint has finished its
+# setup. Installing extensions in that window could lose registrations, so wait
+# until the installation folder is gone and the site answers.
+if [ -f /var/www/html/configuration.php ]; then
+    READY_ELAPSED=0
+    until [ ! -d /var/www/html/installation ] && php -r 'exit(@file_get_contents("http://localhost/") === false ? 1 : 0);'; do
+        if [ $READY_ELAPSED -ge 120 ]; then
+            echo "ERROR: Joomla setup did not finish within 120 seconds"
+            exit 1
+        fi
+        sleep 2
+        READY_ELAPSED=$((READY_ELAPSED + 2))
+    done
+    echo "Joomla setup finished"
+fi
+
 echo "Getting DB prefix..."
 DB_PREFIX=$(php -r "require '/var/www/html/configuration.php'; \$c=new JConfig; echo \$c->dbprefix;" 2>/dev/null || echo "joom_")
 echo "Prefix: ${DB_PREFIX}"
@@ -22,9 +38,10 @@ echo "Prefix: ${DB_PREFIX}"
 install_with_web_installer() {
     local package_path="$1"
     local label="$2"
+    local strict="${3:-0}"
 
     echo "Installing ${label} via Joomla Web Installer..."
-    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" php /usr/local/bin/install-extension-http.php; then
+    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" STRICT_MESSAGES="${strict}" php /usr/local/bin/install-extension-http.php; then
         echo "${label} installed via Joomla Web Installer"
     else
         echo "ERROR: ${label} installation FAILED via Joomla Web Installer"
@@ -46,8 +63,13 @@ else
     exit 1
 fi
 
+# Extensions installed through the CLI run as root and leave a root-owned
+# namespace map (administrator/cache/autoload_psr4.php). The web installer runs as
+# www-data and could then not rebuild the map, so newly installed namespaces would
+# stay unknown to later CLI runs. On real sites the cache belongs to the web server.
+chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 install_with_web_installer /tmp/osmap.zip "OSMap"
-install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin"
+install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}"
 
 echo "Waiting for plugin in DB..."
 until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
@@ -56,6 +78,12 @@ until mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     sleep 3
 done
 echo "Plugin in DB."
+
+# Record plugin states before the test setup enables everything.
+mkdir -p /tmp/test-state
+mysql -h mysql -u joomla -pjoomla_pass joomla_db -N \
+    -e "SELECT folder, element, enabled FROM ${DB_PREFIX}extensions WHERE type = 'plugin';" \
+    > /tmp/test-state/plugins-before-activation.tsv 2>/dev/null
 
 echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \

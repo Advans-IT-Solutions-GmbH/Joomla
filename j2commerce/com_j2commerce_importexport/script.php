@@ -9,8 +9,8 @@ use Joomla\Database\ParameterType;
 
 class Com_j2commerce_importexportInstallerScript extends InstallerScript
 {
-    protected $minimumJoomla = '4.0';
-    protected $minimumPhp = '7.4';
+    protected $minimumJoomla = '5.4';
+    protected $minimumPhp = '8.1';
 
     public function postflight($type, $parent)
     {
@@ -20,6 +20,20 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
             $lang->load('com_j2commerce_importexport', JPATH_ADMINISTRATOR);
+
+            // Updates only get a short confirmation; the first installation shows
+            // where the component is found.
+            if ($type === 'update') {
+                $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+                $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+                $app->enqueueMessage(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                    'message'
+                );
+
+                return;
+            }
 
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid;background:#eff6ff;border-color:#2563eb';
 
@@ -51,6 +65,8 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
         $extensionId = (int) $db->loadResult();
 
         if (!$extensionId) { return; }
+
+        $this->removeLegacyUpdateSites($db, $extensionId);
 
         $query = $this->createDbQuery($db)
             ->select($db->quoteName('update_site_id'))
@@ -92,6 +108,58 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
             ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
         $db->setQuery($query);
         $db->execute();
+    }
+
+    /**
+     * Remove update sites of this extension that still point to the repository's
+     * former organisation name. Joomla would otherwise keep querying both the
+     * old and the new update URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
     }
 
     /**

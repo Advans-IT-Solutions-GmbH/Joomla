@@ -212,7 +212,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         }
 
         try {
-            $productIds = array_map('intval', (array) $app->input->get('products', [], 'array'));
+            $productIds = array_map('intval', (array) $app->getInput()->get('products', [], 'array'));
             $productIds = array_filter($productIds);
 
             if (count($productIds) < 2) {
