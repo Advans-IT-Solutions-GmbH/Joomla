@@ -88,8 +88,10 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 
 # Default fixture: keep SEF off for the standard J5 suite. The dedicated
 # J5 SEF stack (docker-compose.sef.yml, J2COMMERCE_SEF=1) enables rewrite URLs
-# so 08-sitemap-http-sef.php can assert that every emitted product URL resolves
-# directly with HTTP 200 instead of via a 301 redirect.
+# so 08-sitemap-http-sef.php can assert that every emitted product URL carries
+# the correct language SEF prefix (e.g. /de/shop/...) in the live sitemap. The
+# end-to-end HTTP-200 resolution check needs a full multilingual stack and is
+# tracked as follow-up #185.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Enabling SEF URLs (J2COMMERCE_SEF=1)..."
     mysql -h mysql -u joomla -pjoomla_pass joomla_db \
@@ -231,7 +233,14 @@ VALUES
     ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
 
 UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
-UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id IN (9001, 9002, 9003, 9004);
+-- Only the menu-less product's article (9004) gets de-DE so the direct-query
+-- lane (mechanism 2) carries its /de/ prefix from the article language. The
+-- articles behind the hidden children (9001, 9002) stay '*' on purpose: their
+-- /de/ prefix must come from the hidden child menu item's own language
+-- (mechanism 1, printMenuPathNode). Making them de-DE too would let the
+-- direct-query fallback re-emit them with a /de/ prefix even if the hidden-child
+-- path broke, masking exactly the regression this lane must catch.
+UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id = 9004;
 EOSQL
     echo "Multilingual SEF fixture applied"
 fi

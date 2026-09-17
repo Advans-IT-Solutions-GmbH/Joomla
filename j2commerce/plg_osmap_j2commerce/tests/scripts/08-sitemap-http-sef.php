@@ -103,6 +103,12 @@ class SitemapHttpSefTest
         }
 
         $aliases = ['test-product-alpha', 'test-product-beta'];
+        if (!$this->isJ6) {
+            // The J5 fixture also emits the enabled menu-less product (9004)
+            // through the direct-query path (mechanism 2). Assert its /de/ prefix
+            // too, so a missing prefix on that path cannot leave this lane green.
+            $aliases[] = 'test-product-nomenu';
+        }
         $productUrls = [];
 
         foreach ($aliases as $alias) {
