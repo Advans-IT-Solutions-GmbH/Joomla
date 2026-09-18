@@ -112,7 +112,6 @@ class AcyMailingIntegrationTest
             }
 
             $plugin = new \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce(
-                new \Joomla\Event\Dispatcher(),
                 ['params' => new \Joomla\Registry\Registry([])]
             );
             $plugin->setDatabase(Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class));
@@ -409,7 +408,7 @@ class AcyMailingIntegrationTest
                 )->execute();
                 $this->test("[$label] subscriber inserted", $subId > 0);
 
-                $plugin = new class (new \Joomla\Event\Dispatcher(), ['params' => new \Joomla\Registry\Registry(['anonymize_orders' => 0, 'delete_addresses' => 0])]) extends \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce {
+                $plugin = new class (['params' => new \Joomla\Registry\Registry(['anonymize_orders' => 0, 'delete_addresses' => 0])]) extends \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce {
                     public array $notifiedUsernames = [];
 
                     protected function sendAdminNotification(string $action, User $user, string $details = '', ?string $username = null): void
@@ -460,6 +459,8 @@ class AcyMailingIntegrationTest
                 )->execute();
             }
         }
+
+        $this->test('AcyMailing detected again after the test', $this->getAcymPrefix() === $prefix);
     }
     private function testGracefulSkip(): void
     {
