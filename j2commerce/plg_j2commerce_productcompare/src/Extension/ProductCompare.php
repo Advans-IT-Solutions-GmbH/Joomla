@@ -165,9 +165,19 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
      * shipped file plg_j2commerce_productcompare.ini. The files live in the
      * plugin folder, so load them from there (with the administrator language
      * folder as fallback) into the application language, which Text uses.
+     *
+     * Storefront button events fire before onBeforeCompileHead, so this is also
+     * called from renderCompareButton() to translate the button text; the guard
+     * keeps it to a single successful load per request.
      */
+    private bool $languageLoaded = false;
+
     private function loadPluginLanguage(): void
     {
+        if ($this->languageLoaded) {
+            return;
+        }
+
         $language = $this->getApplication()->getLanguage();
 
         if ($language === null) {
@@ -176,6 +186,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
 
         foreach ([\dirname(__DIR__, 2), JPATH_ADMINISTRATOR] as $path) {
             if ($language->load('plg_j2commerce_productcompare', $path)) {
+                $this->languageLoaded = true;
                 return;
             }
         }
@@ -437,6 +448,11 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     protected function renderCompareButton(int $productId): string
     {
         $this->renderedButtons++;
+
+        // Storefront button events fire before onBeforeCompileHead, so the plugin
+        // language must be loaded here to translate the button text (autoloadLanguage
+        // misses it on Joomla 5, where the installed group is j2store).
+        $this->loadPluginLanguage();
 
         return $this->renderLayout('button', [
             'productId'   => $productId,
