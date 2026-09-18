@@ -909,7 +909,7 @@ class ConsentLoggingTest
             Factory::$application = $stubApp;
 
             try {
-                $actingBody   = $repository->buildBody($live, '198.51.100.60', 'StaleAgent/1.0');
+                $actingBody   = $repository->buildBody($live, '', 'StaleAgent/1.0');
                 $evidenceBody = $repository->buildEvidenceRemovedBody($live);
                 $this->test(
                     'Acting person language is German for this check (evidence-language anchor)',
