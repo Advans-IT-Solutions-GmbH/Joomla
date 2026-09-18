@@ -4,10 +4,7 @@
 - Nie direkt auf `main` committen oder pushen. Jede Änderung über einen Feature-Branch + PR.
 - Branch-Namen kurz & beschreibend: `fix/...`, `feat/...`, `docs/...`, `chore/...`.
 - Den PR niemals selbst mergen — das macht der Maintainer.
-  - Solange der Maintainer allein arbeitet, mergt er bewusst per Admin-Bypass der Review-Pflicht;
-    vorher müssen alle Checks grün sein.
-  - Vor dem Merge prüft der Maintainer die Änderung auf seiner Staging-Umgebung. Dort liegen echte
-    Kundendaten: nichts davon in Commits, PRs, Kommentare, Tests oder Doku übernehmen.
+  - Vor dem Merge müssen alle Checks grün sein.
 - Squash-Merge; Branch wird nach dem Merge gelöscht.
 - **Review-Takt:** Review-Befunde sofort beheben und pushen, nicht auf die CI warten; rote Checks
   sofort auswerten und beheben. Unabhängige Reviews laufen mit mehreren Modellen; die
