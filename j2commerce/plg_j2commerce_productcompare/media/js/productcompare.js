@@ -156,6 +156,7 @@
                 remove.className = 'remove-compare';
                 remove.dataset.productId = String(productId);
                 remove.textContent = '×';
+                remove.setAttribute('aria-label', text('JS_REMOVE', 'Remove from comparison'));
                 remove.addEventListener('click', (e) => {
                     e.preventDefault();
                     this.removeProduct(productId);
