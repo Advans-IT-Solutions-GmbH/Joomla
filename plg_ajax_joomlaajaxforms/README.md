@@ -72,7 +72,7 @@ removed.
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password) — currently not evaluated, `saveProfile` is always available | Yes |
 | Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) — currently not evaluated, cart tasks are always available | Yes |
-| Debug Output | Write the plugin's developer messages to the browser console. With this off the plugin prints nothing to the console of a visitor's browser | No |
+| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
 
 ### J2Commerce Cart Compatibility
 

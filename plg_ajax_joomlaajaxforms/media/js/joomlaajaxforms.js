@@ -21,8 +21,9 @@ function getFormsLang(key, fallback) {
 }
 
 /**
- * Developer trace, printed only while the plugin option "Debug output" is on.
- * Without it the plugin writes nothing to the browser console of a live site.
+ * Developer trace, printed only while the plugin option "Debug Output" is on.
+ * Without it no trace is printed during normal use. Failed requests are still
+ * reported with console.error, so a real problem stays visible.
  */
 function formsDebug() {
     var enabled = false;
