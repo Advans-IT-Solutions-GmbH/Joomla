@@ -60,7 +60,7 @@ All extensions are licensed under **GPL-3.0-or-later**. Every extension director
 
 - Manifests: `<license>GNU General Public License version 3 or later; see LICENSE.txt</license>` and `<copyright>(C) <year> Advans IT Solutions GmbH</copyright>` (no "All rights reserved").
 - `composer.json` and `joomla.asset.json`: `"license": "GPL-3.0-or-later"`.
-- Header for new PHP/JS/CSS files:
+- Header for new PHP/JS/CSS files that ship in an installation package. Test scripts, Docker entry points and CI helpers are excluded from the package by `shared/build/build.sh` and need no header:
 
   ```php
   /**
