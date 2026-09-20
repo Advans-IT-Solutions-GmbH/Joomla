@@ -368,10 +368,6 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
     }
 
     /**
-     * Whether this plugin is enabled in #__extensions. The group is j2commerce
-     * on Joomla 6 and j2store on Joomla 5, so only type and element are matched.
-     */
-    /**
      * Whether J2Store / J2Commerce 4 is the active shop, by the same rule the
      * plugin uses: com_j2commerce enabled with #__j2commerce_products wins;
      * otherwise com_j2store enabled with #__j2store_products.
@@ -409,6 +405,10 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         return !empty($db->setQuery('SHOW TABLES LIKE ' . $like)->loadResult());
     }
 
+    /**
+     * Whether this plugin is enabled in #__extensions. The group is j2commerce
+     * on Joomla 6 and j2store on Joomla 5, so only type and element are matched.
+     */
     private function isPluginEnabled(): bool
     {
         try {
