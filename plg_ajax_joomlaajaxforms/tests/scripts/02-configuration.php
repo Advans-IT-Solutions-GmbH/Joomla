@@ -32,6 +32,7 @@ class ConfigurationTest
         $allPassed = $this->testDefaultParams() && $allPassed;
         $allPassed = $this->testXmlConfigFields() && $allPassed;
         $allPassed = $this->testParamsCanBeUpdated() && $allPassed;
+        $allPassed = $this->testDebugOption() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -156,6 +157,100 @@ class ConfigurationTest
             echo "FAIL ({$e->getMessage()})\n";
             return false;
         }
+    }
+
+    /**
+     * The plugin passes the "debug" option to the script, and it follows the
+     * plugin parameter. Off by default, so a live site's browser console stays
+     * clean; on only while an administrator switches it on.
+     */
+    private function testDebugOption(): bool
+    {
+        $original = $this->readParams();
+        $passed   = true;
+
+        try {
+            echo "Test: Debug is off in the script options by default... ";
+            $this->writeParams(array_merge($original, ['debug' => 0]));
+            $off = $this->pluginScriptOptions();
+
+            if (\is_array($off) && \array_key_exists('debug', $off) && $off['debug'] === false) {
+                echo "PASS\n";
+            } else {
+                echo "FAIL (options: " . json_encode($off) . ")\n";
+                $passed = false;
+            }
+
+            echo "Test: Debug reaches the script when the option is on... ";
+            $this->writeParams(array_merge($original, ['debug' => 1]));
+            $on = $this->pluginScriptOptions();
+
+            if (\is_array($on) && ($on['debug'] ?? null) === true) {
+                echo "PASS\n";
+            } else {
+                echo "FAIL (options: " . json_encode($on) . ")\n";
+                $passed = false;
+            }
+        } finally {
+            $this->writeParams($original);
+        }
+
+        return $passed;
+    }
+
+    /** Plugin parameters as an array. */
+    private function readParams(): array
+    {
+        $query = $this->db->getQuery(true)
+            ->select($this->db->quoteName('params'))
+            ->from($this->db->quoteName('#__extensions'))
+            ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+            ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('ajax'))
+            ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('joomlaajaxforms'));
+
+        $this->db->setQuery($query);
+
+        return json_decode((string) ($this->db->loadResult() ?: '{}'), true) ?: [];
+    }
+
+    private function writeParams(array $params): void
+    {
+        $query = $this->db->getQuery(true)
+            ->update($this->db->quoteName('#__extensions'))
+            ->set($this->db->quoteName('params') . ' = ' . $this->db->quote(json_encode($params)))
+            ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+            ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('ajax'))
+            ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('joomlaajaxforms'));
+
+        $this->db->setQuery($query)->execute();
+    }
+
+    /**
+     * Script options the plugin injects into a real front-end page, read from
+     * the rendered <script class="joomla-script-options"> element.
+     */
+    private function pluginScriptOptions(): ?array
+    {
+        $ch = curl_init('http://localhost/index.php');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        $body = (string) curl_exec($ch);
+        curl_close($ch);
+
+        if (!preg_match_all('#<script[^>]*class="[^"]*joomla-script-options[^"]*"[^>]*>(.*?)</script>#s', $body, $matches)) {
+            return null;
+        }
+
+        foreach ($matches[1] as $json) {
+            $decoded = json_decode(html_entity_decode(trim($json), ENT_QUOTES, 'UTF-8'), true);
+
+            if (\is_array($decoded) && isset($decoded['plg_ajax_joomlaajaxforms'])) {
+                return $decoded['plg_ajax_joomlaajaxforms'];
+            }
+        }
+
+        return null;
     }
 
     private function printSummary(): void

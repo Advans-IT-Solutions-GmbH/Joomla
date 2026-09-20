@@ -87,13 +87,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Pass language strings to JavaScript via Joomla script options
+     * Pass language strings to JavaScript via Joomla script options.
+     *
+     * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
+     * off by default, so a production site's browser console stays clean.
      */
     public function onBeforeRender(): void
     {
         $doc = $this->getApplication()->getDocument();
         if (method_exists($doc, 'addScriptOptions')) {
             $doc->addScriptOptions('plg_ajax_joomlaajaxforms', [
+                'debug'                  => (bool) $this->params->get('debug', 0),
                 'ERROR_GENERIC'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
                 'MFA_SELECT_METHOD'      => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_SELECT_METHOD'),
                 'MFA_ENTER_CODE'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_ENTER_CODE'),

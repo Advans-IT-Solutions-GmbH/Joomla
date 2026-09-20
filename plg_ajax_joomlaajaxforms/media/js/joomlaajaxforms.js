@@ -21,6 +21,24 @@ function getFormsLang(key, fallback) {
 }
 
 /**
+ * Developer trace, printed only while the plugin option "Debug output" is on.
+ * Without it the plugin writes nothing to the browser console of a live site.
+ */
+function formsDebug() {
+    var enabled = false;
+
+    try {
+        enabled = !!(Joomla.getOptions('plg_ajax_joomlaajaxforms') || {}).debug;
+    } catch (e) {
+        return;
+    }
+
+    if (enabled && typeof console !== 'undefined' && typeof console.log === 'function') {
+        console.log.apply(console, arguments);
+    }
+}
+
+/**
  * Joomla AJAX Forms Handler
  * Converts standard Joomla forms to AJAX-powered forms
  */
@@ -87,7 +105,7 @@ const JoomlaAjaxForms = {
      */
     init: function() {
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('[JoomlaAjaxForms] Initializing...');
+            formsDebug('[JoomlaAjaxForms] Initializing...');
             JoomlaAjaxForms.initLoginForm();
             JoomlaAjaxForms.initRegistrationForm();
             JoomlaAjaxForms.initResetForm();
@@ -207,9 +225,9 @@ const JoomlaAjaxForms = {
      */
     initResetForm: function() {
         const form = document.querySelector('.reset form.form-validate, .reset #user-registration, form[action*="reset.request"]');
-        console.log('[JoomlaAjaxForms] Reset form search:', form ? 'FOUND' : 'NOT FOUND');
+        formsDebug('[JoomlaAjaxForms] Reset form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
-            console.log('[JoomlaAjaxForms] Converting reset form to AJAX');
+            formsDebug('[JoomlaAjaxForms] Converting reset form to AJAX');
             JoomlaAjaxForms.convertForm(form, 'reset', ['email']);
             form.dataset.ajaxInitialized = 'true';
         }
@@ -220,9 +238,9 @@ const JoomlaAjaxForms = {
      */
     initRemindForm: function() {
         const form = document.querySelector('.remind form.form-validate, .remind #user-registration, form[action*="remind.remind"]');
-        console.log('[JoomlaAjaxForms] Remind form search:', form ? 'FOUND' : 'NOT FOUND');
+        formsDebug('[JoomlaAjaxForms] Remind form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
-            console.log('[JoomlaAjaxForms] Converting remind form to AJAX');
+            formsDebug('[JoomlaAjaxForms] Converting remind form to AJAX');
             JoomlaAjaxForms.convertForm(form, 'remind', ['email']);
             form.dataset.ajaxInitialized = 'true';
         }
@@ -701,7 +719,7 @@ const JoomlaAjaxForms = {
             var forms = document.querySelectorAll(selector);
             forms.forEach(function(form) {
                 if (!form.dataset.ajaxInitialized) {
-                    console.log('[JoomlaAjaxForms] Converting profile form to AJAX');
+                    formsDebug('[JoomlaAjaxForms] Converting profile form to AJAX');
                     // Prevent Joomla's form validator from submitting normally
                     form.classList.remove('form-validate');
                     form.setAttribute('novalidate', 'novalidate');
