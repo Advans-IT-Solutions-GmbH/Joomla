@@ -278,10 +278,42 @@ class PageRenderTest
 
         // Without the token the same request is rejected.
         $noToken = http_build_query(['products' => [$productId, $secondId]], '', '&', PHP_QUERY_RFC1738);
-        [, $rejected] = $this->request($ajaxUrl, $noToken, ['Content-Type: application/x-www-form-urlencoded;charset=UTF-8']);
+        [$noTokenStatus, $rejected] = $this->request($ajaxUrl, $noToken, ['Content-Type: application/x-www-form-urlencoded;charset=UTF-8']);
         $rejectedJson = json_decode(trim($rejected), true);
         $this->test('Request without token is rejected',
             \is_array($rejectedJson) && ($rejectedJson['success'] ?? true) === false, mb_substr($rejected, 0, 200));
+
+        // The rejection is answered with JSON, never with a redirect to the home
+        // page: Session::checkToken() would redirect a new session and the script
+        // would receive an empty response instead of an error it can display.
+        $this->test('Rejection without token answers HTTP 200 with JSON, not a redirect',
+            $noTokenStatus === 200 && \is_array($rejectedJson), "HTTP $noTokenStatus, body: " . mb_substr($rejected, 0, 200));
+        $this->test('Rejection without token carries a message for the visitor',
+            \is_array($rejectedJson) && trim((string) ($rejectedJson['message'] ?? '')) !== '',
+            mb_substr($rejected, 0, 200));
+        $this->test('Rejection without token returns no comparison table',
+            !\is_array($rejectedJson) || ($rejectedJson['data']['html'] ?? '') === '',
+            mb_substr($rejected, 0, 200));
+
+        // A JSON request body carries no form fields, so the endpoint sees no
+        // product ids: it reads them with getInput()->get('products', [], 'array').
+        // The token goes in the header here, so the request passes the token check
+        // and only the body format decides — this is why the script has to post
+        // form-encoded data and must not send JSON.
+        $jsonBody = json_encode(['products' => [$productId, $secondId]]);
+        [$jsonStatus, $jsonResponse] = $this->request($ajaxUrl, (string) $jsonBody, [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'X-Requested-With: XMLHttpRequest',
+            'X-CSRF-Token: ' . $token,
+        ]);
+        $jsonJson = json_decode(trim($jsonResponse), true);
+        $this->test('A JSON request body yields no comparison table',
+            $jsonStatus === 200
+            && \is_array($jsonJson)
+            && ($jsonJson['success'] ?? true) === false
+            && ($jsonJson['data']['html'] ?? '') === '',
+            "HTTP $jsonStatus, body: " . mb_substr($jsonResponse, 0, 200));
     }
 
     private function testHomePage(): void
