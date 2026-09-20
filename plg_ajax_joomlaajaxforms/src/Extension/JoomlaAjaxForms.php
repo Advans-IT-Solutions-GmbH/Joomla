@@ -90,7 +90,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * Pass language strings to JavaScript via Joomla script options.
      *
      * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
-     * off by default, so a production site's browser console stays clean.
+     * off by default, so a production site prints no traces during normal use;
+     * a failed request is still reported with console.error.
      */
     public function onBeforeRender(): void
     {
