@@ -73,6 +73,13 @@ class MediaFilesTest
             return str_contains($content, 'Joomla.Text._(');
         });
 
+        $this->test('JS gives the compare-bar remove button an accessible name (aria-label)', function () {
+            $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
+            // The remove button renders only the "×" glyph, so it needs an aria-label
+            // built from the translated JS_REMOVE text for screen-reader users.
+            return str_contains($content, "remove.setAttribute('aria-label', text('JS_REMOVE'");
+        });
+
         $this->test('joomla.asset.json registers the style asset "plg_j2commerce_productcompare.css"', function () {
             $asset = $this->findAsset('plg_j2commerce_productcompare.css', 'style');
             return $asset !== null && $this->assetFile($asset, 'css') === $this->mediaPath . '/css/productcompare.css';

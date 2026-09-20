@@ -64,10 +64,8 @@ Advans-IT-Solutions-GmbH/Joomla
 - **OSMap mixed installation** (J2Store and J2Commerce both enabled): the sitemap has no shop
   entries; this documented limitation stays (issue #182) and is covered by the migration order in
   the OSMap README.
-- **Public repository:** no customer data, host names, IP addresses or internal details in code,
-  tests, docs, commit messages, pull requests or comments.
-- **Review cadence:** fix review findings and push immediately; do not wait for CI. Independent
-  reviews use several models; red checks are analysed and fixed at once.
+- **Workflow, public-repository and review-cadence rules** are defined once in `AGENTS.md` (the
+  single source of truth) — this skill stays focused on extension-specific decisions.
 
 ## Workflows
 

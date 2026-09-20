@@ -293,6 +293,12 @@ class EventDispatchTest
         $this->test('List button carries seeded product id',
             strpos($listOut, 'data-product-id="' . $productId . '"') !== false, $listOut);
 
+        // On Joomla 5 the plugin group is j2store, so autoloadLanguage misses the
+        // shipped plg_j2commerce_productcompare.ini and the button text would render
+        // as the raw key unless renderCompareButton() loads the language itself.
+        $this->test('List button text is translated, not a raw language key',
+            strpos($listOut, 'PLG_J2COMMERCE_PRODUCTCOMPARE_DEFAULT_BUTTON_TEXT') === false, $listOut);
+
         // Detail page: view_cart.php fires the same event; the button comes from
         // AfterProductDisplay instead, so nothing is added here.
         $viewCartOut = $this->fireJ2StoreEvent($plugin, 'onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.view_cart']);
