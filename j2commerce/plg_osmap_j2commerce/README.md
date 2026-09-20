@@ -27,11 +27,13 @@ stacks (Joomla 5 + J2Store/J2Commerce 4 and Joomla 6 + J2Commerce 6):
   are only used as a last-resort fallback if OSMap is not installed at all.
 - **Full-stack HTTP sitemap** (`06-sitemap-http.php`): a real HTTP request to the
   live OSMap XML endpoint asserting product URLs.
-- **J6 SEF URLs** (`08-sitemap-http-sef.php`): a dedicated SEF-enabled J6 job
-  (`docker-compose.joomla6-sef.yml`, `J2COMMERCE_SEF=1`) installs the Joomla
-  German `de-DE` pack, seeds dedicated published `de-DE` product routes, and
-  asserts the live sitemap contains `/de/shop/<alias>` URLs that resolve
-  directly with HTTP 200 on Joomla 6 + J2Commerce 6.
+- **SEF URLs on both stacks** (`08-sitemap-http-sef.php`): dedicated SEF-enabled
+  J5 and J6 jobs (`docker-compose.sef.yml`, `docker-compose.joomla6-sef.yml`,
+  `J2COMMERCE_SEF=1`) assert that the live sitemap emits language-prefixed SEF
+  product URLs on both stacks. The J6 job additionally installs the Joomla German
+  `de-DE` pack and seeds dedicated published `de-DE` product routes, so it also
+  asserts that every `/de/shop/<alias>` URL resolves directly with HTTP 200 and
+  without a redirect.
 
 ## Description
 
@@ -243,7 +245,7 @@ Installed path: `plugins/osmap/j2commerce/`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6 and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6, Joomla 5 SEF and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the Joomla 6 SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -259,8 +261,9 @@ Order as in `tests/test.env`:
 6. **OSMap Loader** — dispatch through OSMap's real `getPluginsForComponent()` →
    `getComponentElement()` → `getTree()` loader on both stacks
 7. **Sitemap HTTP** — full-stack HTTP request against the live sitemap endpoint
-8. **Sitemap HTTP (SEF)** — J6-only SEF-enabled job asserting SEF-formed product
-   URLs in the live sitemap
+8. **Sitemap HTTP (SEF)** — dedicated J5/J6 SEF-enabled jobs asserting SEF-formed product
+   URLs in the live sitemap; on Joomla 6 the same suite also requests every product
+   URL and requires a direct HTTP 200 without a redirect
 9. **Mixed Migration State** (`09-mixed-migration.php`) — J2Store and J2Commerce 6
    registered at the same time: while both components are enabled the plugin serves
    `com_j2store`, after `com_j2store` is disabled it serves `com_j2commerce`, and a
@@ -295,6 +298,12 @@ docker compose -f docker-compose.joomla6.yml up -d
 timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
 CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
+
+# Joomla 5 with SEF URLs (multilingual /de/ prefix; standard J5 stack)
+docker compose -f docker-compose.sef.yml up -d
+timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j5_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef
+docker compose -f docker-compose.sef.yml down -v
 
 # Joomla 6 with SEF URLs (requires tests/j2commerce6.zip)
 docker compose -f docker-compose.joomla6-sef.yml up -d

@@ -53,10 +53,32 @@ spl_autoload_register(function (string $class): void {
     }
 });
 
+require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
+
 class PluginClassTest
 {
     private int $passed = 0;
     private int $failed = 0;
+
+    private function makePlugin(string $class): object
+    {
+        $db     = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = new \Joomla\Registry\Registry([]);
+        $plugin = new $class(['params' => $params]);
+        $plugin->setDatabase($db);
+
+        return $plugin;
+    }
+
+    private function currentOption(): string
+    {
+        return getenv('J2COMMERCE_STACK') === 'j6' ? 'com_j2commerce' : 'com_j2store';
+    }
+
+    private function expectedLink(string $alias): string
+    {
+        return rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/shop/' . $alias;
+    }
 
     public function run(): bool
     {
@@ -80,8 +102,8 @@ class PluginClassTest
         });
 
         $this->test('J2Commerce handles com_j2store', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2Commerce.php');
-            return str_contains($src, "com_j2store");
+            $plugin = $this->makePlugin('Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce');
+            return $plugin->getComponentElement() === 'com_j2store';
         });
 
         $this->test('J2CommerceNew class exists', function () {
@@ -96,13 +118,16 @@ class PluginClassTest
         });
 
         $this->test('J2CommerceNew handles com_j2commerce', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2CommerceNew.php');
-            return str_contains($src, "com_j2commerce");
+            $plugin = $this->makePlugin('Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew');
+            return $plugin->getComponentElement() === 'com_j2commerce';
         });
 
         $this->test('J2CommerceNew uses j2commerce_products table', function () {
-            $src = file_get_contents(JPATH_PLUGINS . '/osmap/j2commerce/src/Extension/J2CommerceNew.php');
-            return str_contains($src, 'j2commerce_products');
+            $plugin = $this->makePlugin('Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew');
+            $rc     = new ReflectionClass($plugin);
+            $prop   = $rc->getProperty('productsTable');
+            $prop->setAccessible(true);
+            return $prop->getValue($plugin) === '#__j2commerce_products';
         });
 
         // --- Reflection: method existence on J2Commerce ---
@@ -144,10 +169,9 @@ class PluginClassTest
         // --- emitSingleProduct() round-trip: real DB query, no crash ---
         $this->test('emitSingleProduct() returns null for non-existent article (no crash)', function () use ($j2cClass) {
             $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-            $dispatcher = new \Joomla\Event\Dispatcher();
             $params     = new \Joomla\Registry\Registry([]);
 
-            $plugin = new $j2cClass($dispatcher, ['params' => $params]);
+            $plugin = new $j2cClass(['params' => $params]);
             $plugin->setDatabase($db);
 
             // Recording collector — real OSMap Collector subtype.
@@ -168,10 +192,9 @@ class PluginClassTest
         // --- J2CommerceNew::emitSingleProduct() round-trip ---
         $this->test('J2CommerceNew::emitSingleProduct() queries #__j2commerce_products (no crash)', function () use ($newClass) {
             $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-            $dispatcher = new \Joomla\Event\Dispatcher();
             $params     = new \Joomla\Registry\Registry([]);
 
-            $plugin = new $newClass($dispatcher, ['params' => $params]);
+            $plugin = new $newClass(['params' => $params]);
             $plugin->setDatabase($db);
 
             // Recording collector — real OSMap Collector subtype.
@@ -188,34 +211,46 @@ class PluginClassTest
             return count($collector->nodes) === 0;
         });
 
-        // --- emitSingleProduct() against a REAL seeded product (issue #99) ---
-        // Article 9001 (Test Product Alpha) has an enabled product row in the
-        // stack's products table. Use the stack-appropriate class so the table
-        // exists, and assert a real node with the correct SEF URL is emitted.
-        $isJ6           = (getenv('J2COMMERCE_STACK') === 'j6');
-        $stackClass     = $isJ6 ? $newClass : $j2cClass;
-        $this->test('emitSingleProduct() emits a real node for seeded product 9001', function () use ($stackClass) {
-            $db         = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-            $dispatcher = new \Joomla\Event\Dispatcher();
-            $params     = new \Joomla\Registry\Registry([]);
+        // --- Real public dispatch against a seeded product (issue #99) ---
+        // Article 9001 (Test Product Alpha) has an enabled product row on both
+        // stacks. Drive the public plugin entry point through getTree() so the
+        // component/table selection happens the same way OSMap triggers it.
+        $this->test('PlgOsmapJ2commerce emits a real node for seeded product 9001', function () {
+            $plugin = $this->makePlugin('PlgOsmapJ2commerce');
+            $collector = new ClassTestRecordingCollector();
+            $parent    = osmap_make_item([
+                'id'         => 9001,
+                'component'  => $this->currentOption(),
+                'link'       => 'index.php?option=' . $this->currentOption() . '&view=product&id=9001',
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
 
-            $plugin = new $stackClass($dispatcher, ['params' => $params]);
-            $plugin->setDatabase($db);
+            $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry());
+
+            return count($collector->nodes) === 1
+                && $collector->nodes[0]->link === $this->expectedLink('test-product-alpha')
+                && $collector->nodes[0]->uid  === 'j2commerce.product.9001';
+        });
+
+        $this->test('Query failures in getTree(view=products) are caught without emitting nodes', function () {
+            $plugin = new class (['params' => new \Joomla\Registry\Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
+                protected string $productsTable = '#__content';
+            };
+            $plugin->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
 
             $collector = new ClassTestRecordingCollector();
-            // Parent menu item with SEF path 'shop' — product URL is built from
-            // parent->path + product alias.
-            $parent = osmap_make_item(['path' => 'shop', 'browserNav' => 0]);
+            $parent    = osmap_make_item([
+                'id'         => 9001,
+                'component'  => 'com_j2store',
+                'link'       => 'index.php?option=com_j2store&view=products',
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
+            $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
 
-            $rc     = new ReflectionClass($plugin);
-            $method = $rc->getMethod('emitSingleProduct');
-            $method->setAccessible(true);
-            $method->invoke($plugin, $collector, $parent, new \Joomla\Registry\Registry(), 9001);
-
-            $root = rtrim(\Joomla\CMS\Uri\Uri::root(), '/');
-            return count($collector->nodes) === 1
-                && $collector->nodes[0]->link === $root . '/shop/test-product-alpha'
-                && $collector->nodes[0]->uid  === 'j2commerce.product.9001';
+            return count($collector->nodes) === 0;
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";

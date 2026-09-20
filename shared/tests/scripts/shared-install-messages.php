@@ -143,12 +143,36 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
 // (*_POSTINSTALL_UPDATED) instead of the first-installation guide (any other
 // *_POSTINSTALL_* string). A plugin mentions the one step that can still be open,
 // enabling it (*_ENABLE_HINT), only while it is disabled in #__extensions.
-$runUpdate = static function (string $tag, string $label) use ($package, $checkOutput): string {
-    echo "\n--- $label ---\n";
+//
+// Each update installs a copy of the package whose root manifest declares a
+// strictly higher version than the one currently installed, so every update is
+// a genuine upgrade over a lower version and never a same-version reinstall.
+$updatePackage = sys_get_temp_dir() . '/shared-install-messages-' . bin2hex(random_bytes(4)) . '.zip';
+register_shutdown_function(static function () use ($updatePackage): void {
+    @unlink($updatePackage);
+});
+
+if (!copy($package, $updatePackage)) {
+    im_fail('cannot copy the package for the update checks');
+    exit(1);
+}
+
+$updateVersion = $manifest['version'];
+
+$runUpdate = static function (string $tag, string $label) use ($updatePackage, $manifest, &$updateVersion, $checkOutput): string {
+    $updateVersion = sh_bump_version($updateVersion);
+
+    if (sh_set_package_version($updatePackage, $manifest['xmlfile'], $updateVersion) === null) {
+        im_fail("$label: cannot build an update package with version $updateVersion");
+
+        return '';
+    }
+
+    echo "\n--- $label (version $updateVersion) ---\n";
     $restore = sh_use_cli_language(JOOMLA_ROOT, $tag);
 
     try {
-        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $package);
+        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $updatePackage);
     } finally {
         $restore();
     }
@@ -159,14 +183,14 @@ $runUpdate = static function (string $tag, string $label) use ($package, $checkO
     return sh_plain_text(sh_strip_ansi($out));
 };
 
-$checkUpdate = static function (string $tag, string $label, string $plain, bool $expectHint) use ($package, $manifest): void {
+$checkUpdate = static function (string $tag, string $label, string $plain, bool $expectHint) use ($package, $manifest, &$updateVersion): void {
     $updated = null;
     $hint    = null;
     $shown   = [];
 
     foreach (sh_read_package_language($package, $tag) as $key => $value) {
         if (str_ends_with($key, '_POSTINSTALL_UPDATED')) {
-            $updated = sh_plain_text(str_replace('%s', $manifest['version'], $value));
+            $updated = sh_plain_text(str_replace('%s', $updateVersion, $value));
         } elseif (str_ends_with($key, '_ENABLE_HINT')) {
             $hint = mb_substr(sh_plain_text($value), 0, 60);
         } elseif (str_contains($key, '_POSTINSTALL_')) {
