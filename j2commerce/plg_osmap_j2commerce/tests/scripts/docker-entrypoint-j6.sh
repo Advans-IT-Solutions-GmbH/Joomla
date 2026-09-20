@@ -146,11 +146,15 @@ MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
 # Standard J6 stack: two hidden product children (published=-2) nested inside
 # the shop interval so getTree() traverses the hidden-child menu path
-# (mechanism 1). The dedicated SEF stack omits them (shop stays a leaf, offset
-# 2) so the live sitemap exercises the direct product-query path (mechanism 2).
-# Shop and children share one @max_rgt in a single statement batch so the
-# children land inside the shop [lft,rgt] interval; recomputing @max_rgt after
-# the shop row (and the root expansion) would push them outside it.
+# (mechanism 1). The dedicated SEF stack omits them and nests two published
+# de-DE product routes (9011/9012) instead, so the live sitemap exercises the
+# direct product-query path (mechanism 2) while those routes stay resolvable
+# for the live-routing assertions.
+# Either way exactly two child rows follow the shop row, so the shop interval
+# is @max_rgt + 1 .. @max_rgt + 6 on both stacks. Shop and children share one
+# @max_rgt in a single statement batch so the children land inside that
+# interval; recomputing @max_rgt after the shop row (and the root expansion)
+# would push them outside it.
 SHOP_RGT_OFFSET=6
 SHOP_CHILD_ROWS=""
 SHOP_LIVE_ROUTE_ROWS=""

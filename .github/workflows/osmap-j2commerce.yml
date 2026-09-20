@@ -584,16 +584,21 @@ jobs:
   official-j5-j2c4:
     name: OSMap / official-j5-j2c4
     runs-on: ubuntu-latest
-    needs: test-j5
+    needs: [test-j5, test-j5-sef]
     if: always()
     permissions: {}
     steps:
       - name: Verify official J5/J2C4 matrix
         env:
-          RESULT: ${{ needs.test-j5.result }}
+          RESULT_J5: ${{ needs.test-j5.result }}
+          RESULT_SEF: ${{ needs.test-j5-sef.result }}
         run: |
-          if [ "$RESULT" != "success" ]; then
-            echo "Official J5/J2C4 matrix did not pass: $RESULT"
+          if [ "$RESULT_J5" != "success" ]; then
+            echo "Official J5/J2C4 matrix did not pass: $RESULT_J5"
+            exit 1
+          fi
+          if [ "$RESULT_SEF" != "success" ]; then
+            echo "Official J5/J2C4 SEF job did not pass: $RESULT_SEF"
             exit 1
           fi
 
