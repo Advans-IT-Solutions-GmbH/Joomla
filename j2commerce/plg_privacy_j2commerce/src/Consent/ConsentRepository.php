@@ -24,7 +24,8 @@ use Joomla\Database\ParameterType;
  * Data model (Joomla core, unchanged): id, user_id, state, created, subject, body, remind, token.
  * - One record per J2Commerce order, written only when the shopper ticked the consent checkbox.
  * - user_id is the order's user_id (0 for guest orders), exactly as J2Commerce stored it.
- * - body holds order number, IP address and user agent, plus a language-independent order marker.
+ * - body holds order number, IP address and user agent, plus a language-independent order marker
+ *   and a marker naming the language the text is written in (the language the customer saw).
  *   No e-mail address is copied; guests are traced through the order (token + user_email).
  *   IP address and user agent are removed when the plugin anonymizes the order (removeOrderEvidence).
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
@@ -61,8 +62,6 @@ final class ConsentRepository
     /** Body language key of an anonymized legacy record. */
     public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
 
-    /** Fallback body when the language key is missing during an update request. */
-    private const LEGACY_BODY_FALLBACK = '<p>Legacy consent entry from an earlier site template. Personal data (e-mail address, IP address, user agent) was removed.</p>';
 
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
@@ -72,6 +71,9 @@ final class ConsentRepository
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
+
+    /** Prefix of the marker naming the language the stored body is written in. */
+    private const LANGUAGE_MARKER_PREFIX = '<!-- j2commerce-lang:';
 
     private DatabaseInterface $db;
 
@@ -97,6 +99,30 @@ final class ConsentRepository
     }
 
     /**
+     * Marker naming the language a stored body is written in. The record is evidence of what the
+     * customer saw, so the text stays in the language it was written in and the tag says which
+     * one that is. Unknown characters are dropped so the marker cannot break out of the comment.
+     */
+    public static function languageMarker(string $tag): string
+    {
+        $tag = (string) preg_replace('/[^A-Za-z0-9_-]/', '', $tag);
+
+        return $tag === '' ? '' : self::LANGUAGE_MARKER_PREFIX . $tag . self::MARKER_SUFFIX;
+    }
+
+    /**
+     * Language tag of a stored body, or null for a record written before the marker existed.
+     */
+    public static function extractLanguageTag(string $body): ?string
+    {
+        if (preg_match('/<!-- j2commerce-lang:([A-Za-z0-9_-]+) -->/', $body, $matches) === 1) {
+            return $matches[1];
+        }
+
+        return null;
+    }
+
+    /**
      * Extract the referenced order number from a consent body, or null if there is none.
      */
     public static function extractOrderId(string $body): ?string
@@ -119,7 +145,7 @@ final class ConsentRepository
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
         return sprintf($language->_(self::BODY_KEY), $escape($orderId), $escape($ipAddress), $escape($userAgent))
-            . self::orderMarker($orderId);
+            . self::orderMarker($orderId) . self::languageMarker($language->getTag());
     }
 
     /**
@@ -133,7 +159,7 @@ final class ConsentRepository
         $language = self::loadSiteBodyLanguage();
 
         return sprintf($language->_(self::BODY_REMOVED_KEY), htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
-            . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER;
+            . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($language->getTag());
     }
 
     /**
@@ -265,15 +291,30 @@ final class ConsentRepository
         return $language;
     }
 
-    private static function legacyBodyText(Language $language): string
+    /**
+     * Text of an anonymized legacy record together with the tag of the language it is written in.
+     * The wording always comes from a language file, never from the code: if the site language
+     * does not resolve the key, the packaged en-GB file is read. Should even that be missing, the
+     * key itself is stored and repairLegacyAnonymizedBodies() replaces it with the text on the
+     * next unscoped run, once the language file is back.
+     *
+     * @return  array{0: string, 1: string}  Body text, language tag
+     */
+    private static function legacyBody(Language $language): array
     {
         $text = $language->_(self::LEGACY_BODY_KEY);
 
-        if ($text === '' || $text === self::LEGACY_BODY_KEY) {
-            return self::LEGACY_BODY_FALLBACK;
+        if ($text !== '' && $text !== self::LEGACY_BODY_KEY) {
+            return [$text, (string) $language->getTag()];
         }
 
-        return $text;
+        $english = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage('en-GB');
+        $english->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', 'en-GB', true)
+            || $english->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, 'en-GB', true);
+
+        $text = $english->_(self::LEGACY_BODY_KEY);
+
+        return [$text, $text === self::LEGACY_BODY_KEY ? '' : 'en-GB'];
     }
 
     /**
@@ -389,7 +430,8 @@ final class ConsentRepository
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
-        $body    = self::legacyBodyText(self::loadSiteBodyLanguage()) . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER;
+        [$text, $tag] = self::legacyBody(self::loadSiteBodyLanguage());
+        $body         = $text . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($tag);
         $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
         // The raw-key body repair is a data migration for records anonymized by an older version.
         // It runs only in the unscoped cleanup/installer path; a scoped removal request must not
