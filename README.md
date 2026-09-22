@@ -48,9 +48,22 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, `shared/**`, own workflow file |
 | `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, `shared/**`, own workflow file |
 
-Besides the test suites, every workflow lints all PHP files of the extension and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately. The pull request check **Collect Results** (`collect-results.yml`) determines which of the workflows above are triggered by the changed files, waits for them and fails unless all succeeded; a pull request that triggers none of them passes immediately. After re-running a failed workflow, re-run *Collect Results* as well.
+Besides the test suites, every workflow lints all PHP files of the extension and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks, every key the code uses defined in every language, no unused and no assembled keys) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately. The pull request check **Collect Results** (`collect-results.yml`) determines which of the workflows above are triggered by the changed files, waits for them and fails unless all succeeded; a pull request that triggers none of them passes immediately. After re-running a failed workflow, re-run *Collect Results* as well.
 
 Local test prerequisites and commands: [`.claude/skills/joomla-extensions/references/testing.md`](.claude/skills/joomla-extensions/references/testing.md).
+
+## Languages
+
+All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for three extensions, one manifest line per file.
+
+To add a language:
+
+1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
+2. Import/Export, Cleanup and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. The other extensions load their whole `language/` folder.
+3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension.
+4. Add the tag where tests name the languages explicitly (installer-messages suite, `de-DE, en-GB, fr-FR` loops).
+
+Details: [`.claude/skills/joomla-extensions/references/conventions.md`](.claude/skills/joomla-extensions/references/conventions.md#checklist-add-a-language).
 
 View test results: https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions
 

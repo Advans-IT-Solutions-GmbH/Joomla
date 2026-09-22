@@ -208,7 +208,10 @@ Notable test details:
   extension; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
   keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
-  fr-FR without missing accents) followed by `php shared/tests/requirements-check.php <extension dir>`
+  fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
+  every defined key is used by the code, derived from a `langConstPrefix` or listed in
+  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime) followed by
+  `php shared/tests/requirements-check.php <extension dir>`
   (`minimumJoomla '5.4'`/`minimumPhp '8.1'` in `script.php`, `preflight()` calls the parent, every
   manifest and `update.xml` `targetplatform`/`php_minimum`, the release workflow `targetplatform`, and
   that the expression accepts 5.4.x/6.x and rejects 4.x and 5.0 to 5.3) and
