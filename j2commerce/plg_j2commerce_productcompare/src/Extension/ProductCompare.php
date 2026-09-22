@@ -11,6 +11,7 @@ namespace Advans\Plugin\J2Commerce\ProductCompare\Extension;
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Layout\FileLayout;
 use Joomla\CMS\Plugin\CMSPlugin;
@@ -570,6 +571,7 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         $productsT   = $j6 ? '#__j2commerce_products' : '#__j2store_products';
         $variantsT   = $j6 ? '#__j2commerce_variants'  : '#__j2store_variants';
         $quantitiesT  = $j6 ? '#__j2commerce_productquantities' : '#__j2store_productquantities';
+        $now          = Factory::getDate()->toSql();
 
         $query = $this->createDbQuery($db)
             ->select([
@@ -595,6 +597,18 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id'))
             ->whereIn($db->quoteName('p') . '.' . $db->quoteName($productsPk), $productIds)
             ->where($db->quoteName('p') . '.' . $db->quoteName('enabled') . ' = 1')
+            // The endpoint answers without a login, so it returns only what the storefront shows
+            // this visitor: the product article must be published, inside its publishing window
+            // and readable with the visitor's view levels. Without this a guessed product ID would
+            // hand out title, description, price and stock of a hidden product.
+            ->where($db->quoteName('c') . '.' . $db->quoteName('state') . ' = 1')
+            ->whereIn($db->quoteName('c') . '.' . $db->quoteName('access'), $this->viewLevels())
+            ->where('(' . $db->quoteName('c') . '.' . $db->quoteName('publish_up') . ' IS NULL OR '
+                . $db->quoteName('c') . '.' . $db->quoteName('publish_up') . ' <= :nowup)')
+            ->where('(' . $db->quoteName('c') . '.' . $db->quoteName('publish_down') . ' IS NULL OR '
+                . $db->quoteName('c') . '.' . $db->quoteName('publish_down') . ' >= :nowdown)')
+            ->bind(':nowup', $now)
+            ->bind(':nowdown', $now)
             ->order($db->quoteName('p') . '.' . $db->quoteName($productsPk));
 
         $db->setQuery($query);
@@ -605,6 +619,24 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         }
 
         return $products;
+    }
+
+    /**
+     * View levels of the visitor asking. Without an identity (CLI, tests) only the public level
+     * counts, so nothing more than a logged-out visitor sees is ever returned.
+     *
+     * @return  int[]
+     */
+    private function viewLevels(): array
+    {
+        try {
+            $user   = $this->getApplication()->getIdentity();
+            $levels = $user ? array_map('intval', $user->getAuthorisedViewLevels()) : [];
+        } catch (\Throwable $e) {
+            $levels = [];
+        }
+
+        return $levels === [] ? [1] : array_values(array_unique($levels));
     }
 
     /**
