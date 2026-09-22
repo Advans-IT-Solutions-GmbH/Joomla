@@ -206,6 +206,7 @@ class GetProductsDataTest
             'article behind a view level' => ['state' => 1, 'access' => 2, 'publish_up' => null,    'publish_down' => null],
             'article published later'     => ['state' => 1, 'access' => 1, 'publish_up' => $future, 'publish_down' => null],
             'article no longer published' => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => $past],
+            'invisible product'           => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'visibility' => 0],
         ];
 
         $pkCol = $this->productsPk;
@@ -214,14 +215,14 @@ class GetProductsDataTest
             $productId = $this->seedHiddenProduct($label, $case);
 
             if ($productId === 0) {
-                $this->test("Fixture for an $label could be created", false);
+                $this->test("Fixture '$label' could be created", false);
 
                 continue;
             }
 
             $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
 
-            $this->test("Product with an $label not in results", $returned === [], implode(',', $returned));
+            $this->test("Hidden product ($label) not in results", $returned === [], implode(',', $returned));
         }
     }
 
@@ -266,7 +267,7 @@ class GetProductsDataTest
                 'product_source_id' => $contentId,
                 'product_source'    => 'com_content',
                 'product_type'      => 'simple',
-                'visibility'        => 1,
+                'visibility'        => $article['visibility'] ?? 1,
                 'enabled'           => 1,
                 'taxprofile_id'     => 0,
                 'vendor_id'         => 0,
