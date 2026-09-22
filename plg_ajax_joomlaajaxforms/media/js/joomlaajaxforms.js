@@ -9,15 +9,23 @@
 'use strict';
 
 /**
- * Get language string from Joomla script options
+ * Translated text the script shows itself, or an empty string.
+ *
+ * The texts come from the script options the plugin (or the page) adds, or,
+ * when a page loaded the script without them, from the endpoint (task
+ * "texts"). The script carries no text of its own, so a site never shows a
+ * message in a language other than its own.
  */
-function getFormsLang(key, fallback) {
+function getFormsLang(key) {
+    var opts = {};
+
     try {
-        var opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
-        return opts[key] || fallback;
+        opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
     } catch (e) {
-        return fallback;
+        opts = {};
     }
+
+    return opts[key] || (JoomlaAjaxForms.texts && JoomlaAjaxForms.texts[key]) || '';
 }
 
 /**
@@ -60,6 +68,38 @@ const JoomlaAjaxForms = {
         errorClass: 'alert alert-danger',
         successClass: 'alert alert-success',
         loadingClass: 'is-loading'
+    },
+
+    /**
+     * Texts fetched from the endpoint when the page did not provide them.
+     */
+    texts: {},
+
+    /**
+     * Fetch the translated texts once when the page loaded the script without
+     * them (script options missing). Read-only request without a token.
+     */
+    loadTexts: function() {
+        if (getFormsLang('ERROR_GENERIC') !== '') {
+            return;
+        }
+
+        fetch(JoomlaAjaxForms.config.baseUrl + '&task=texts', {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(rawData) {
+            var data = JoomlaAjaxForms.unwrapResponse(rawData);
+
+            if (data && data.success && data.data && typeof data.data === 'object') {
+                JoomlaAjaxForms.texts = data.data;
+            }
+        })
+        .catch(function(error) {
+            formsDebug('[JoomlaAjaxForms] Texts could not be loaded:', error);
+        });
     },
 
     /**
@@ -107,6 +147,7 @@ const JoomlaAjaxForms = {
     init: function() {
         document.addEventListener('DOMContentLoaded', function() {
             formsDebug('[JoomlaAjaxForms] Initializing...');
+            JoomlaAjaxForms.loadTexts();
             JoomlaAjaxForms.initLoginForm();
             JoomlaAjaxForms.initRegistrationForm();
             JoomlaAjaxForms.initResetForm();
@@ -309,7 +350,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
         });
@@ -370,7 +411,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
         });
@@ -423,7 +464,7 @@ const JoomlaAjaxForms = {
 
                 // Empty data[] from com_ajax means plugin was not reached (token/session issue)
                 if (rawData.data && Array.isArray(rawData.data) && rawData.data.length === 0) {
-                    JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                    JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 } else if (data.success) {
                     var msg = data.message || (data.data && data.data.message) || '';
                     JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');
@@ -435,7 +476,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
 
@@ -540,7 +581,7 @@ const JoomlaAjaxForms = {
         if (data.message) {
             return data.message;
         }
-        return getFormsLang('ERROR_GENERIC', 'An error occurred');
+        return getFormsLang('ERROR_GENERIC');
     },
 
     /**
@@ -551,7 +592,13 @@ const JoomlaAjaxForms = {
      * @param {string} type - 'success' or 'error'
      */
     showMessage: function(container, message, type) {
-        container.className = 'ajax-message ' + (type === 'success' 
+        // No translated text available (neither from the server nor from the
+        // page): show nothing rather than a text in another language.
+        if (!message) {
+            return;
+        }
+
+        container.className = 'ajax-message ' + (type === 'success'
             ? JoomlaAjaxForms.config.successClass 
             : JoomlaAjaxForms.config.errorClass);
         container.innerHTML = '';
@@ -561,7 +608,10 @@ const JoomlaAjaxForms = {
         var closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'close';
-        closeBtn.setAttribute('aria-label', 'Schliessen');
+        var closeLabel = getFormsLang('CLOSE');
+        if (closeLabel !== '') {
+            closeBtn.setAttribute('aria-label', closeLabel);
+        }
         closeBtn.innerHTML = '&times;';
         closeBtn.addEventListener('click', function() { container.remove(); });
         container.appendChild(closeBtn);
@@ -768,7 +818,7 @@ const JoomlaAjaxForms = {
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
             if (data.success) {
-                var msg = data.message || getFormsLang('PROFILE_SAVED', 'Profile saved.');
+                var msg = data.message || getFormsLang('PROFILE_SAVED');
                 JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');
             } else {
                 JoomlaAjaxForms.showMessage(messageContainer, JoomlaAjaxForms.getErrorMessage(data), 'error');
@@ -777,7 +827,7 @@ const JoomlaAjaxForms = {
         .catch(function(error) {
             console.error('[JoomlaAjaxForms] Profile save error:', error);
             JoomlaAjaxForms.enableSubmit(submitBtn);
-            JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred.'), 'error');
+            JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
         });
     }
 };
