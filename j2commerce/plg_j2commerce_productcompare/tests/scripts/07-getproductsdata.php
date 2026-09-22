@@ -64,6 +64,7 @@ class GetProductsDataTest
             $this->seedFixtures();
             $this->testGetProductsData();
             $this->testDisabledProductExcluded();
+            $this->testHiddenProductsExcluded();
             $this->testGetProductOptions();
         } finally {
             $this->cleanupFixtures();
@@ -181,6 +182,109 @@ class GetProductsDataTest
         $this->test('Disabled product not in results',
             !in_array($this->seededProductIds[2], $returnedIds),
             'Disabled product ID ' . $this->seededProductIds[2] . ' should be excluded');
+    }
+
+    /**
+     * The comparison endpoint answers without a login, so it must return only what the storefront
+     * shows a logged-out visitor: an unpublished article, one outside its publishing window and one
+     * behind a view level the visitor does not have stay out of the result.
+     */
+    private function testHiddenProductsExcluded(): void
+    {
+        echo "\n--- Hidden products excluded ---\n";
+
+        $plugin = $this->makePlugin();
+        $rc     = new ReflectionClass($plugin);
+        $method = $rc->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $future = date('Y-m-d H:i:s', time() + 86400);
+        $past   = date('Y-m-d H:i:s', time() - 86400);
+
+        $cases = [
+            'unpublished article'         => ['state' => 0, 'access' => 1, 'publish_up' => null,    'publish_down' => null],
+            'article behind a view level' => ['state' => 1, 'access' => 2, 'publish_up' => null,    'publish_down' => null],
+            'article published later'     => ['state' => 1, 'access' => 1, 'publish_up' => $future, 'publish_down' => null],
+            'article no longer published' => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => $past],
+        ];
+
+        $pkCol = $this->productsPk;
+
+        foreach ($cases as $label => $case) {
+            $productId = $this->seedHiddenProduct($label, $case);
+
+            if ($productId === 0) {
+                $this->test("Fixture for an $label could be created", false);
+
+                continue;
+            }
+
+            $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+            $this->test("Product with an $label not in results", $returned === [], implode(',', $returned));
+        }
+    }
+
+    /**
+     * Seed an article with the given publication state plus an enabled product pointing at it.
+     * Returns the product ID, or 0 when the fixture could not be created.
+     */
+    private function seedHiddenProduct(string $label, array $article): int
+    {
+        try {
+            $row = (object) [
+                'title'        => 'Test Product ' . $label,
+                'alias'        => 'test-product-' . md5($label . microtime(true)),
+                'introtext'    => 'Description for ' . $label,
+                'fulltext'     => '',
+                'state'        => $article['state'],
+                'catid'        => $this->ensureCatid(),
+                'created'      => date('Y-m-d H:i:s'),
+                'created_by'   => 42,
+                'modified'     => date('Y-m-d H:i:s'),
+                'access'       => $article['access'],
+                'language'     => '*',
+                'metadata'     => '{}',
+                'attribs'      => '{}',
+                'images'       => '{}',
+                'urls'         => '{}',
+                'metadesc'     => '',
+                'metakey'      => '',
+                'note'         => '',
+                'featured'     => 0,
+                'version'      => 1,
+                'ordering'     => 0,
+                'hits'         => 0,
+                'publish_up'   => $article['publish_up'],
+                'publish_down' => $article['publish_down'],
+            ];
+            $this->db->insertObject('#__content', $row, 'id');
+            $contentId                = (int) $this->db->insertid();
+            $this->seededContentIds[] = $contentId;
+
+            $product = (object) [
+                'product_source_id' => $contentId,
+                'product_source'    => 'com_content',
+                'product_type'      => 'simple',
+                'visibility'        => 1,
+                'enabled'           => 1,
+                'taxprofile_id'     => 0,
+                'vendor_id'         => 0,
+                'addtocart_text'    => '',
+                'up_sells'          => '',
+                'cross_sells'       => '',
+                'params'            => '{}',
+            ];
+            $this->db->insertObject($this->productsTable, $product, $this->productsPk);
+            $productId                = (int) $this->db->insertid();
+            $this->seededProductIds[] = $productId;
+
+            return $productId;
+        } catch (\Exception $e) {
+            echo '  Fixture error: ' . $e->getMessage() . "\n";
+
+            return 0;
+        }
     }
 
     private function testGetProductOptions(): void
