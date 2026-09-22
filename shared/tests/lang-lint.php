@@ -13,6 +13,18 @@
  *   - de-DE: no "ß" (Swiss High German) and no ae/oe/ue spellings of common words
  *   - fr-FR: no unaccented spellings of common French words
  *
+ * And the usage of the keys by the extension's own code (PHP, JavaScript, XML
+ * outside language/ and tests/), so a further language can be added by adding
+ * language files only:
+ *   - every key of the extension's own prefixes that the code names is defined
+ *     in every language the extension ships
+ *   - every defined key is named by the code, derived from a Joomla
+ *     `langConstPrefix` (<prefix>_TITLE, <prefix>_DESC), or listed in
+ *     tests/language-keys-for-template-overrides.txt (keys provided for site
+ *     template overrides that no code of the extension uses itself)
+ *   - no key of an own prefix is assembled at runtime ('PREFIX_' . $x or
+ *     'PREFIX_' + x): keys are written out in full so both checks above see them
+ *
  * Exits with 1 when any problem is found.
  */
 
@@ -117,6 +129,145 @@ function lint_parse_file(string $path, callable $addError): array
     return $entries;
 }
 
+/**
+ * Check that the extension's code and its language files agree (see the file
+ * header). $definedByTag: tag => key => [path, line] of the definition.
+ *
+ * @param array<string, array<string, array{0:string, 1:int}>> $definedByTag
+ */
+function lint_usage(string $extensionDir, array $definedByTag, array $fileNames, callable $addError): void
+{
+    if ($definedByTag === []) {
+        return;
+    }
+
+    // Own prefixes from the language file names: plg_privacy_j2commerce(.sys).ini
+    // -> PLG_PRIVACY_J2COMMERCE. Keys of these prefixes must be defined when named.
+    $prefixes = [];
+    foreach ($fileNames as $name) {
+        $prefixes[strtoupper(preg_replace('/(\.sys)?\.ini$/', '', $name))] = true;
+    }
+    $prefixes = array_keys($prefixes);
+
+    $isOwn = static function (string $key) use ($prefixes): bool {
+        foreach ($prefixes as $prefix) {
+            if ($key === $prefix || str_starts_with($key, $prefix . '_')) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    $tokens   = [];   // key-shaped token => [path, line] of first use
+    $named    = [];   // own-prefix key literal => [path, line]
+    $derived  = [];   // keys Joomla derives from a langConstPrefix
+    $constPrefixes = [];   // the langConstPrefix values themselves (not keys)
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($extensionDir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $fileInfo) {
+        $path = str_replace('\\', '/', $fileInfo->getPathname());
+
+        if (!preg_match('/\.(php|js|xml)$/', $path)
+            || preg_match('#/(language|vendor|node_modules|tests[^/]*)/#', $path)
+        ) {
+            continue;
+        }
+
+        $content = (string) file_get_contents($path);
+
+        foreach (preg_split('/\R/', $content) as $index => $line) {
+            $where = [$path, $index + 1];
+
+            if (preg_match_all('/[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+/', $line, $m)) {
+                foreach ($m[0] as $token) {
+                    $tokens[$token] ??= $where;
+                }
+            }
+
+            // Quoted literals and XML attribute or element values that name a key.
+            if (preg_match_all('/[\'">]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)[\'"<]/', $line, $m)) {
+                foreach ($m[1] as $literal) {
+                    if ($isOwn($literal)) {
+                        $named[$literal] ??= $where;
+                    }
+                }
+            }
+
+            if (preg_match_all("/['\"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_)['\"]\s*[.+]/", $line, $m)) {
+                foreach ($m[1] as $fragment) {
+                    if ($isOwn(rtrim($fragment, '_'))) {
+                        $addError($path, $index + 1, "language key assembled at runtime from '$fragment' (write the keys out in full)");
+                    }
+                }
+            }
+
+            if (preg_match("/['\"]langConstPrefix['\"]\s*=>\s*['\"]([A-Z0-9_]+)['\"]/", $line, $m)) {
+                $derived[$m[1] . '_TITLE'] = true;
+                $derived[$m[1] . '_DESC']  = true;
+                $constPrefixes[$m[1]]      = true;
+            }
+        }
+    }
+
+    // Keys the extension provides for site template overrides.
+    $forOverrides = [];
+    $listFile     = $extensionDir . '/tests/language-keys-for-template-overrides.txt';
+
+    if (is_file($listFile)) {
+        foreach (preg_split('/\R/', (string) file_get_contents($listFile)) as $line) {
+            $line = trim($line);
+
+            if ($line !== '' && $line[0] !== '#') {
+                $forOverrides[$line] = true;
+            }
+        }
+    }
+
+    $allDefined = [];
+    foreach ($definedByTag as $keys) {
+        $allDefined += $keys;
+    }
+
+    // Named but not defined in every language.
+    foreach ($named as $key => $where) {
+        if (isset($constPrefixes[$key]) || isset($derived[$key])) {
+            continue;   // checked below as <prefix>_TITLE and <prefix>_DESC
+        }
+
+        foreach ($definedByTag as $tag => $keys) {
+            if (!isset($keys[$key])) {
+                $addError($where[0], $where[1], "$key is used here but not defined in $tag");
+            }
+        }
+    }
+
+    foreach (array_keys($derived) as $key) {
+        foreach ($definedByTag as $tag => $keys) {
+            if (!isset($keys[$key])) {
+                $addError($extensionDir, 0, "$key (derived from langConstPrefix) is not defined in $tag");
+            }
+        }
+    }
+
+    // Defined but used nowhere.
+    foreach ($allDefined as $key => $where) {
+        if (isset($tokens[$key]) || isset($derived[$key]) || isset($forOverrides[$key])) {
+            continue;
+        }
+
+        $addError($where[0], $where[1], "$key is defined but no code uses it (remove it, or list it in tests/language-keys-for-template-overrides.txt)");
+    }
+
+    foreach (array_keys($forOverrides) as $key) {
+        if (!isset($allDefined[$key])) {
+            $addError($listFile, 0, "$key is listed for template overrides but not defined");
+        }
+    }
+}
+
 function lint_placeholders(string $value): array
 {
     preg_match_all('/%(?:\d+\$)?[-+ 0#]*\d*(?:\.\d+)?[bcdeEfFgGosuxX%]/', $value, $m);
@@ -155,12 +306,21 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
     ksort($groups);
 
+    $definedByTag = [];   // tag => key => [path, line], over all files of the extension
+    $fileNames    = [];
+
     foreach ($groups as $group => $files) {
         $parsed = [];
 
         foreach ($files as $tag => $path) {
             $parsed[$tag] = lint_parse_file($path, $addError);
+
+            foreach ($parsed[$tag] as $key => $entry) {
+                $definedByTag[$tag][$key] ??= [$path, $entry['line']];
+            }
         }
+
+        $fileNames[] = explode('|', $group)[1];
 
         if (!isset($parsed[REFERENCE_TAG])) {
             $addError(reset($files), 0, 'no en-GB counterpart for this language file');
@@ -213,6 +373,8 @@ foreach (array_slice($argv, 1) as $extensionDir) {
             }
         }
     }
+
+    lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
 }
 
 if ($errors) {

@@ -97,21 +97,31 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     {
         $doc = $this->getApplication()->getDocument();
         if (method_exists($doc, 'addScriptOptions')) {
-            $doc->addScriptOptions('plg_ajax_joomlaajaxforms', [
-                'debug'                  => (bool) $this->params->get('debug', 0),
-                'ERROR_GENERIC'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
-                'MFA_SELECT_METHOD'      => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_SELECT_METHOD'),
-                'MFA_ENTER_CODE'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_ENTER_CODE'),
-                'MFA_METHOD'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_METHOD'),
-                'MFA_CODE_LABEL'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_LABEL'),
-                'MFA_CANCEL'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CANCEL'),
-                'MFA_VERIFY'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_VERIFY'),
-                'MFA_CODE_INVALID_LENGTH' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_INVALID_LENGTH'),
-                'PROFILE_SAVED'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
-            ]);
+            $doc->addScriptOptions(
+                'plg_ajax_joomlaajaxforms',
+                array_merge(['debug' => (bool) $this->params->get('debug', 0)], $this->scriptTexts())
+            );
         }
     }
 
+    /**
+     * Texts the script shows itself, in the language of the current request.
+     *
+     * The script never carries a text of its own. Plugins of the ajax group are
+     * imported by com_ajax, so on a normal page onBeforeRender() runs only when
+     * something imported the plugin; the script then asks the endpoint for these
+     * texts (task "texts") instead of falling back to a fixed language.
+     *
+     * @return  array<string, string>
+     */
+    private function scriptTexts(): array
+    {
+        return [
+            'ERROR_GENERIC' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
+            'PROFILE_SAVED' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
+            'CLOSE'         => Text::_('JCLOSE'),
+        ];
+    }
 
 
     /**
@@ -127,6 +137,22 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     public function onAjaxJoomlaajaxforms($event = null): string
     {
+        $input = $this->getApplication()->getInput();
+        $task = $input->getCmd('task', '');
+
+        // "texts" only returns the public texts the script shows (no user data, no
+        // state change), so it is answered without a form token: a page without
+        // any form still needs them.
+        if ($task === 'texts') {
+            $result = $this->jsonSuccess(['data' => $this->scriptTexts()]);
+
+            if ($event) {
+                $event->addResult($result);
+            }
+
+            return $result;
+        }
+
         // Validate CSRF token
         if (!$this->hasValidToken()) {
             $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
@@ -137,9 +163,6 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             return $result;
         }
-
-        $input = $this->getApplication()->getInput();
-        $task = $input->getCmd('task', '');
 
         switch ($task) {
             case 'login':

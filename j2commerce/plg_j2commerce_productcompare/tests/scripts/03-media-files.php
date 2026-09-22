@@ -77,7 +77,8 @@ class MediaFilesTest
             $content = file_get_contents($this->mediaPath . '/js/productcompare.js');
             // The remove button renders only the "×" glyph, so it needs an aria-label
             // built from the translated JS_REMOVE text for screen-reader users.
-            return str_contains($content, "remove.setAttribute('aria-label', text('JS_REMOVE'");
+            return str_contains($content, "removeLabel = text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE')")
+                && str_contains($content, "remove.setAttribute('aria-label', removeLabel)");
         });
 
         $this->test('joomla.asset.json registers the style asset "plg_j2commerce_productcompare.css"', function () {
@@ -120,10 +121,10 @@ class MediaFilesTest
                 && str_contains($content, '.j2store-compare-bar');
         });
 
-        // --- No user-visible text reaches the visitor without a language key ---
-        // An English literal may only appear as the fallback argument of
-        // text('KEY', 'fallback'), never as the value that is printed. Otherwise a
-        // German or French site shows English.
+        // --- The script carries no text of its own ---
+        // Every text the visitor reads comes from a language file, so any language
+        // can be added without touching the script. Earlier versions printed these
+        // English texts directly or used them as fallbacks.
         foreach ([
             'Remove from Compare',
             'Remove from comparison',
@@ -136,23 +137,23 @@ class MediaFilesTest
             'Loading...',
             'Loading comparison...',
             'The comparison could not be loaded.',
-            'Compare',
         ] as $literal) {
-            $this->test("JS uses \"{$literal}\" only as a language fallback", function () use ($literal) {
-                return $this->literalIsAlwaysFallback($literal);
+            $this->test("JS does not contain the text \"{$literal}\"", function () use ($literal) {
+                return !str_contains($this->scriptSource(), $literal);
             });
         }
 
-        $this->test('Every alert() and confirm() shows a translated text', function () {
-            preg_match_all('/\b(?:alert|confirm)\(\s*([^\n]{0,20})/', $this->scriptSource(), $matches);
+        $this->test('text() takes the language key only, without a fallback text', function () {
+            return preg_match("/\btext\(\s*'[A-Z0-9_]+'\s*,/", $this->scriptSource()) === 0
+                && preg_match_all("/\btext\(\s*'PLG_J2COMMERCE_PRODUCTCOMPARE_[A-Z0-9_]+'\s*\)/", $this->scriptSource()) > 0;
+        });
 
-            foreach ($matches[1] ?? [] as $argument) {
-                if (!str_starts_with(ltrim($argument), 'text(') && !str_starts_with(ltrim($argument), 'format(text(')) {
-                    return false;
-                }
-            }
+        $this->test('No alert() or confirm() is called with a string literal', function () {
+            return preg_match('/\b(?:alert|confirm)\(\s*[\'"`]/', $this->scriptSource()) === 0;
+        });
 
-            return ($matches[1] ?? []) !== [];
+        $this->test('Keys are written out in full, not assembled from a prefix', function () {
+            return preg_match("/'PLG_J2COMMERCE_PRODUCTCOMPARE_'\s*\+/", $this->scriptSource()) === 0;
         });
 
         // --- Every text key the script asks for is translated in all languages ---
@@ -219,39 +220,17 @@ class MediaFilesTest
     }
 
     /**
-     * True when every occurrence of $literal in the script is the fallback
-     * argument of a text('KEY', '<literal>') call, and not a printed value.
-     */
-    private function literalIsAlwaysFallback(string $literal): bool
-    {
-        $source = $this->scriptSource();
-        $offset = 0;
-
-        while (($pos = strpos($source, "'" . $literal, $offset)) !== false) {
-            $offset = $pos + 1;
-            $before = substr($source, 0, $pos);
-
-            if (preg_match("/text\(\s*'[A-Z0-9_]+'\s*,\s*$/", $before) !== 1) {
-                return false;
-            }
-        }
-
-        // A double-quoted occurrence is never a fallback in this file.
-        return !str_contains($source, '"' . $literal);
-    }
-
-    /**
-     * Text keys the script asks for, read from its own text('KEY', …) calls, so
-     * a new key has to be translated and registered without touching this test.
+     * Text keys the script asks for, read from its own text('KEY') calls, so a
+     * new key has to be translated and registered without touching this test.
      */
     private function scriptTextKeys(): array
     {
-        preg_match_all("/text\(\s*'([A-Z0-9_]+)'/", $this->scriptSource(), $matches);
+        preg_match_all("/\btext\(\s*'([A-Z0-9_]+)'/", $this->scriptSource(), $matches);
 
         $keys = array_values(array_unique($matches[1] ?? []));
         sort($keys);
 
-        return array_map(static fn (string $key): string => 'PLG_J2COMMERCE_PRODUCTCOMPARE_' . $key, $keys);
+        return $keys;
     }
 
     /** Keys the plugin passes to Text::script(), read from its SCRIPT_TEXTS list. */
