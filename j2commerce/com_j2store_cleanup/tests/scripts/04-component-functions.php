@@ -262,10 +262,13 @@ class ComponentFunctionsTest
     {
         echo "\n--- Texts in de-DE ---\n";
 
+        // Joomla installs an extension's language file only for languages the site
+        // has, and the test site has no de-DE pack. Load the de-DE file from the
+        // package under test instead, without falling back to en-GB.
         $language = Factory::getContainer()
             ->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)
             ->createLanguage('de-DE');
-        $language->load('com_j2store_cleanup', JPATH_ADMINISTRATOR, 'de-DE', true);
+        $language->load('com_j2store_cleanup', $this->packageLanguageDir('com_j2store_cleanup', 'de-DE'), 'de-DE', true, false);
 
         $previousApplication = Factory::$application;
         $hasLanguageProperty = property_exists(Factory::class, 'language');
@@ -312,6 +315,33 @@ class ComponentFunctionsTest
                 Factory::$language = $previousLanguage;
             }
         }
+    }
+
+    /**
+     * Directory holding language/<tag>/<extension>.ini from the package under
+     * test (/tmp/extension.zip), as a base path for Language::load().
+     */
+    private function packageLanguageDir(string $extension, string $tag): string
+    {
+        $dir = $this->tmpDir . '/package-language';
+        @mkdir($dir . '/language/' . $tag, 0755, true);
+
+        $zip = new \ZipArchive();
+
+        if ($zip->open('/tmp/extension.zip') === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = (string) $zip->getNameIndex($i);
+
+                if (str_ends_with($name, $tag . '/' . $extension . '.ini')) {
+                    file_put_contents($dir . '/language/' . $tag . '/' . $extension . '.ini', (string) $zip->getFromIndex($i));
+                    break;
+                }
+            }
+
+            $zip->close();
+        }
+
+        return $dir;
     }
 
     private function removeDir(string $dir): void

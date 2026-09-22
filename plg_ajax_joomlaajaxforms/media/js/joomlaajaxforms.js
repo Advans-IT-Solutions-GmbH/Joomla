@@ -84,10 +84,16 @@ const JoomlaAjaxForms = {
             return;
         }
 
-        fetch(JoomlaAjaxForms.config.baseUrl + '&task=texts', {
-            method: 'GET',
+        // POST like the other requests: a GET of the non-SEF com_ajax URL is
+        // redirected by Joomla's router first.
+        fetch(JoomlaAjaxForms.config.baseUrl, {
+            method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Accept': 'application/json' }
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            },
+            body: JoomlaAjaxForms.buildBaseParams('texts', '').toString()
         })
         .then(function(response) { return response.json(); })
         .then(function(rawData) {

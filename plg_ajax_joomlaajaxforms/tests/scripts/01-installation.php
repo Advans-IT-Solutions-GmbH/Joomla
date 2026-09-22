@@ -307,7 +307,7 @@ class InstallationTest
         }
 
         echo "Test: Missing texts are fetched from the endpoint (task=texts)... ";
-        if (str_contains($source, "'&task=texts'") && str_contains($source, 'JoomlaAjaxForms.loadTexts()')) {
+        if (str_contains($source, "buildBaseParams('texts', '')") && str_contains($source, 'JoomlaAjaxForms.loadTexts()')) {
             echo "PASS\n";
         } else {
             echo "FAIL\n";

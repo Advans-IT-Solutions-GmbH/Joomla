@@ -336,7 +336,7 @@ The plugin avoids all APIs deprecated in Joomla 6:
 
 Language keys cover all UI labels, error messages, email templates, and JavaScript strings.
 
-The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PROFILE_SAVED`, `CLOSE`) from the script options `plg_ajax_joomlaajaxforms`, which the plugin adds while it renders a page. Plugins of the `ajax` group are imported by `com_ajax`, so on a page where nothing imported the plugin those options are missing; the script then fetches the texts once from `index.php?option=com_ajax&plugin=joomlaajaxforms&format=json&task=texts` (read-only, no form token) in the language of the request. Messages from the server are translated by the plugin itself. A site template that loads the script may also add the options itself.
+The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PROFILE_SAVED`, `CLOSE`) from the script options `plg_ajax_joomlaajaxforms`, which the plugin adds while it renders a page. Plugins of the `ajax` group are imported by `com_ajax`, so on a page where nothing imported the plugin those options are missing; the script then fetches the texts once with a POST of `task=texts` to `index.php?option=com_ajax&plugin=joomlaajaxforms&format=json` (read-only, no form token) in the language of the request. Messages from the server are translated by the plugin itself. A site template that loads the script may also add the options itself.
 
 Keys that only site template overrides use (profile and security section of the account view) are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there.
 
