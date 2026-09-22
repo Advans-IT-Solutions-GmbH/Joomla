@@ -301,7 +301,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Most UI texts of the component page are currently hard-coded in English; the menu entry and the removal result messages use language keys. Users can add additional language files by creating new language folders following Joomla's language structure:
+Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages and the confirmation before removal (passed to the browser with `Text::script()`). Generic words use Joomla core keys (`JENABLED`, `JDISABLED`, `JGLOBAL_CHECK_ALL`). A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../../README.md#languages)):
 ```
 administrator/language/{language-tag}/com_j2store_cleanup.ini
 administrator/language/{language-tag}/com_j2store_cleanup.sys.ini
