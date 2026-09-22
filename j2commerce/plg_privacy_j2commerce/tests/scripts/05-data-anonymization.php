@@ -547,11 +547,76 @@ class DataAnonymizationTest
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
 
+        $this->testActivityLogKeys();
+
         echo "\n=== Data Anonymization Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Every action the plugin logs writes an entry with its own language key into
+     * Joomla's User Actions Log, and that key is translated in every language, so
+     * the log never shows a raw key. An action without a key writes no entry.
+     */
+    private function testActivityLogKeys(): void
+    {
+        echo "\n--- User Actions Log keys ---\n";
+
+        $plugin = new AnonymizationTestPlugin(['params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
+        $plugin->setDatabase($this->db);
+
+        $expected = [
+            'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+            'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
+            'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
+            'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',
+            'orders_anonymized'             => 'PLG_PRIVACY_J2COMMERCE_LOG_ORDERS_ANONYMIZED',
+        ];
+        $userId = 987654;
+
+        $readKeys = function () use ($userId): array {
+            return array_map('strval', $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('message_language_key') . ' FROM ' . $this->db->quoteName('#__action_logs')
+                . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                . ' AND ' . $this->db->quoteName('user_id') . ' = ' . (int) $userId
+            )->loadColumn() ?: []);
+        };
+        $cleanup = function () use ($userId): void {
+            $this->db->setQuery(
+                'DELETE FROM ' . $this->db->quoteName('#__action_logs')
+                . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                . ' AND ' . $this->db->quoteName('user_id') . ' = ' . (int) $userId
+            )->execute();
+        };
+
+        $cleanup();
+
+        try {
+            foreach ($expected as $action => $key) {
+                $plugin->call('logActivity', $action, $userId, 'test');
+            }
+            $plugin->call('logActivity', 'no_such_action', $userId, 'test');
+
+            $written = $readKeys();
+            sort($written);
+            $wanted = array_values($expected);
+            sort($wanted);
+
+            $this->test('Each logged action writes its own language key', $written === $wanted, implode(', ', $written));
+            $this->test('An action without a language key writes no entry', count($written) === count($expected));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $missing = array_values(array_filter($wanted, fn ($key) => empty($values[$key])));
+                $this->test("$tag translates every User Actions Log key", $missing === [], implode(', ', $missing));
+            }
+        } finally {
+            $cleanup();
+        }
     }
 
     /**
