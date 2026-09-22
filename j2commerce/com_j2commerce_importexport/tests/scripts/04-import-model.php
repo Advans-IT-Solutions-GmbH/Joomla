@@ -151,10 +151,30 @@ class ImportModelTest
      */
     private function testTranslatedRowErrors(object $model): void
     {
+        // Joomla installs an extension's language file only for languages the site
+        // has, and the test site has no de-DE pack. Load the de-DE file from the
+        // package under test instead, without falling back to en-GB.
+        $languageDir = sys_get_temp_dir() . '/import-language-' . uniqid();
+        @mkdir($languageDir . '/language/de-DE', 0755, true);
+        $zip = new \ZipArchive();
+
+        if ($zip->open('/tmp/extension.zip') === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = (string) $zip->getNameIndex($i);
+
+                if (str_ends_with($name, 'de-DE/com_j2commerce_importexport.ini')) {
+                    file_put_contents($languageDir . '/language/de-DE/com_j2commerce_importexport.ini', (string) $zip->getFromIndex($i));
+                    break;
+                }
+            }
+
+            $zip->close();
+        }
+
         $language = Factory::getContainer()
             ->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)
             ->createLanguage('de-DE');
-        $language->load('com_j2commerce_importexport', JPATH_ADMINISTRATOR, 'de-DE', true);
+        $language->load('com_j2commerce_importexport', $languageDir, 'de-DE', true, false);
 
         $previousApplication = Factory::$application;
         $hasLanguageProperty = property_exists(Factory::class, 'language');
@@ -213,6 +233,10 @@ class ImportModelTest
             }
 
             @unlink($file);
+            @unlink($languageDir . '/language/de-DE/com_j2commerce_importexport.ini');
+            @rmdir($languageDir . '/language/de-DE');
+            @rmdir($languageDir . '/language');
+            @rmdir($languageDir);
         }
     }
 }
