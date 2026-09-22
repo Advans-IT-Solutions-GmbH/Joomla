@@ -84,6 +84,9 @@ class RenderHarnessApp
     /** @var Registry|null Lazily-loaded real Joomla configuration. */
     private $config = null;
 
+    /** @var object|null Lazily-created session double (see getSession()). */
+    private $session = null;
+
     public function getDocument()
     {
         return new class {
@@ -140,6 +143,45 @@ class RenderHarnessApp
     public function getLanguage()
     {
         return Factory::getLanguage();
+    }
+
+    /**
+     * Minimal session double.
+     *
+     * The J2Store 4 checkout override renders HTMLHelper::_('form.token'), which goes
+     * through Session::getFormToken() to Factory::getUser() and
+     * Factory::getApplication()->getSession()->getToken(). Without this method the render
+     * would fatal on the undefined method instead of producing the token input. A fixed
+     * token string is enough: getFormToken() hashes it, so the markup keeps the usual
+     * 32-character name. get('user') answering null makes Factory::getUser() fall back to
+     * a guest user, which is what the render harness represents.
+     */
+    public function getSession()
+    {
+        if ($this->session === null) {
+            $this->session = new class {
+                private array $data = [];
+
+                public function getToken($forceNew = false)
+                {
+                    return 'plg-privacy-j2commerce-render-harness';
+                }
+
+                public function get($key, $default = null)
+                {
+                    return $this->data[$key] ?? $default;
+                }
+
+                public function set($key, $value = null)
+                {
+                    $this->data[$key] = $value;
+
+                    return $value;
+                }
+            };
+        }
+
+        return $this->session;
     }
 }
 
