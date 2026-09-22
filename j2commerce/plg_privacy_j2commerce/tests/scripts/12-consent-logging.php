@@ -787,6 +787,10 @@ class ConsentLoggingTest
                 $this->test("[$key] anonymized, never assigned to an order, neutral text", $isAnonymized($row, $gone), $row->body ?? '');
                 $this->test("[$key] created and invalidated for com_privacy lists", $row && (int) $row->state === -1);
                 $this->test("[$key] body uses the default site language", $row && str_starts_with((string) $row->body, $expectedBodyPrefix), $row->body ?? '');
+                // The record is evidence, so it keeps the text it was written with and names its
+                // language. Nothing of the wording comes from the code.
+                $this->test("[$key] body names the language it is written in",
+                    $row && ConsentRepository::extractLanguageTag((string) $row->body) === $siteTag, $row->body ?? '');
             }
             $rawKey = $load('rawKey');
             $this->test('[rawKey] already anonymized key-based legacy body is repaired', $isAnonymized($rawKey, [ConsentRepository::LEGACY_BODY_KEY]), $rawKey->body ?? '');
@@ -920,6 +924,26 @@ class ConsentLoggingTest
                     'Evidence-removed body uses the default site language, not the acting person\'s language',
                     str_contains($evidenceBody, $siteRemoved) && !str_contains($evidenceBody, $editorRemoved),
                     $evidenceBody
+                );
+                // Every stored body names its language, so the record says which wording the
+                // customer saw.
+                $this->test(
+                    'Checkout body names the language it was written in',
+                    ConsentRepository::extractLanguageTag($actingBody) === 'de-DE',
+                    $actingBody
+                );
+                $this->test(
+                    'Evidence-removed body names the site language it was written in',
+                    ConsentRepository::extractLanguageTag($evidenceBody) === 'en-GB',
+                    $evidenceBody
+                );
+                // No body text is built into the code: the class carries no visible wording.
+                $source  = (string) @file_get_contents(JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php');
+                $code    = implode("\n", array_filter(explode("\n", $source), static fn (string $line): bool => !preg_match('#^\s*(\*|//)#', $line)));
+                $this->test(
+                    'ConsentRepository stores no wording of its own',
+                    $source !== '' && !preg_match('#[\'"]<(p|strong|br|div|span)[ >/]#i', $code),
+                    'HTML text literal in ConsentRepository'
                 );
             } finally {
                 Factory::$application = $previousApp;

@@ -340,6 +340,10 @@ The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PRO
 
 Keys that only site template overrides use (profile and security section of the account view) are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there.
 
+### Removed keys
+
+`PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND` was removed. It was an alias of `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` from the time of the J2Store to J2Commerce rename. The plugin only ever emits the J2Commerce key, so the alias was never resolved by anything: a language file entry has no effect unless code asks for that key. Sites that still translate the old key in a template override can delete that line. Anyone who really calls the old key from own code should switch the call to `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND`.
+
 ## Support & Contact
 
 **Advans IT Solutions GmbH**  
