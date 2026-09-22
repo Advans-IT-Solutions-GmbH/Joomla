@@ -140,10 +140,15 @@ class AjaxEndpointTest
 
         echo "Test: Script texts are delivered by the endpoint without a token... ";
 
-        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json&task=texts');
+        // Sent like the script sends it: POST to the com_ajax URL, task in the body,
+        // no form token, no session.
+        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'task=texts');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
         $body     = (string) curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
