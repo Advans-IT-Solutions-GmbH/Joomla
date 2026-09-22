@@ -13,14 +13,17 @@
         ? (Joomla.getOptions('plg_j2commerce_productcompare') || {})
         : {};
 
-    const text = (key, fallback) => {
+    // Translated text registered by the plugin with Text::script(), or an empty
+    // string. The script carries no text of its own, so a site never shows a
+    // message in a language other than its own.
+    const text = (key) => {
         if (hasJoomla && Joomla.Text && typeof Joomla.Text._ === 'function') {
-            const value = Joomla.Text._('PLG_J2COMMERCE_PRODUCTCOMPARE_' + key, fallback);
+            const value = Joomla.Text._(key, '');
 
-            return value || fallback;
+            return value && value !== key ? value : '';
         }
 
-        return fallback;
+        return '';
     };
 
     const format = (template, value) => String(template).replace('%s', String(value)).replace('%d', String(value));
@@ -102,7 +105,8 @@
                 this.products.splice(index, 1);
             } else {
                 if (this.products.length >= this.maxProducts) {
-                    alert(format(text('JS_MAX_PRODUCTS', 'You can compare up to %s products.'), this.maxProducts));
+                    const message = text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_MAX_PRODUCTS');
+                    if (message) alert(format(message, this.maxProducts));
                     return;
                 }
                 this.products.push(productId);
@@ -121,10 +125,10 @@
 
             if (this.products.includes(productId)) {
                 button.classList.add('active');
-                button.textContent = text('JS_REMOVE', 'Remove from comparison');
+                button.textContent = text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE') || button.dataset.originalText;
             } else {
                 button.classList.remove('active');
-                button.textContent = button.dataset.originalText || text('DEFAULT_BUTTON_TEXT', 'Compare');
+                button.textContent = button.dataset.originalText || text('PLG_J2COMMERCE_PRODUCTCOMPARE_DEFAULT_BUTTON_TEXT');
             }
         },
 
@@ -149,14 +153,15 @@
                 productDiv.className = 'compare-product-item';
 
                 const label = document.createElement('span');
-                label.textContent = format(text('JS_PRODUCT', 'Product #%s'), productId);
+                label.textContent = format(text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_PRODUCT') || '%s', productId);
 
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'remove-compare';
                 remove.dataset.productId = String(productId);
                 remove.textContent = '×';
-                remove.setAttribute('aria-label', text('JS_REMOVE', 'Remove from comparison'));
+                const removeLabel = text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE');
+                if (removeLabel) remove.setAttribute('aria-label', removeLabel);
                 remove.addEventListener('click', (e) => {
                     e.preventDefault();
                     this.removeProduct(productId);
@@ -178,7 +183,8 @@
         },
 
         clearAll() {
-            if (!confirm(text('JS_CLEAR_CONFIRM', 'Remove all products from the comparison?'))) return;
+            const question = text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_CLEAR_CONFIRM');
+            if (question && !confirm(question)) return;
 
             this.products = [];
             this.saveToStorage();
@@ -211,7 +217,8 @@
 
         viewComparison() {
             if (this.products.length < 2) {
-                alert(text('ERROR_MIN_PRODUCTS', 'Please select at least 2 products to compare'));
+                const message = text('PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_MIN_PRODUCTS');
+                if (message) alert(message);
                 return;
             }
 
@@ -224,7 +231,7 @@
             modalBody.textContent = '';
             const loading = document.createElement('div');
             loading.className = 'loading';
-            loading.textContent = text('LOADING', 'Loading comparison...');
+            loading.textContent = text('PLG_J2COMMERCE_PRODUCTCOMPARE_LOADING');
             modalBody.appendChild(loading);
 
             fetch(this.ajaxUrl, {
@@ -244,10 +251,10 @@
                         return;
                     }
 
-                    this.showMessage(modalBody, (data && data.message) || text('JS_LOAD_FAILED', 'The comparison could not be loaded.'));
+                    this.showMessage(modalBody, (data && data.message) || text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_LOAD_FAILED'));
                 })
                 .catch(() => {
-                    this.showMessage(modalBody, text('JS_LOAD_FAILED', 'The comparison could not be loaded.'));
+                    this.showMessage(modalBody, text('PLG_J2COMMERCE_PRODUCTCOMPARE_JS_LOAD_FAILED'));
                 });
         }
     };

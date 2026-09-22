@@ -367,6 +367,8 @@ If the plugin is not installed or disabled, or the option is off, `$_privacyEnab
 
 Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joomla does not auto-import it in the frontend. Its language file is therefore not loaded automatically either. Without the `PrivacyOptions::loadLanguage()` call in `default.php`, all `PLG_PRIVACY_J2COMMERCE_*` keys (including the tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`) render as raw strings. This call is already included in the provided `default.php` — do not remove it. The consent system plugin also loads this language file for MyProfile pages.
 
+The language file also carries keys that no code of this plugin prints but a site template can use in its own MyProfile overrides (privacy notice, process steps, list of privacy requests). They are listed in `tests/language-keys-for-template-overrides.txt`, which the language lint reads. Because the overrides only name keys, a label fixed in the language file (for example the delete button `PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN`) reaches overrides that were deployed earlier without redeploying them.
+
 ### Updating overrides after plugin updates
 
 When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2commerce/overrides/` are updated but the deployed copies in `templates/` are **not** touched. After a plugin update:

@@ -35,6 +35,7 @@ class InstallationTest
         $allPassed = $this->testLanguageFiles() && $allPassed;
         $allPassed = $this->testJavaScriptFiles() && $allPassed;
         $allPassed = $this->testNoConsoleNoise() && $allPassed;
+        $allPassed = $this->testScriptHasNoFixedTexts() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -255,6 +256,61 @@ class InstallationTest
             echo "PASS\n";
         } else {
             echo "FAIL (" . implode(', ', $missing) . ")\n";
+            $passed = false;
+        }
+
+        return $passed;
+    }
+
+    /**
+     * The script shows only texts it received from the plugin or the page (or
+     * fetched from the endpoint), never a text of its own, so a site in any
+     * language shows its own language.
+     */
+    private function testScriptHasNoFixedTexts(): bool
+    {
+        $jsFile = '/var/www/html/media/plg_ajax_joomlaajaxforms/js/joomlaajaxforms.js';
+        $source = is_file($jsFile) ? (string) file_get_contents($jsFile) : '';
+        $passed = true;
+
+        echo "Test: getFormsLang() takes a key only, without a fallback text... ";
+        if ($source !== '' && preg_match('/getFormsLang\(\s*\'[A-Z_]+\'\s*,/', $source) === 0) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        echo "Test: Script contains none of the former fixed texts... ";
+        $found = [];
+        foreach (['An error occurred', 'Please try again', 'Profile saved', 'Schliessen', 'Close'] as $text) {
+            if (str_contains($source, "'" . $text) || str_contains($source, '"' . $text)) {
+                $found[] = $text;
+            }
+        }
+        if ($source !== '' && $found === []) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (" . implode(', ', $found) . ")\n";
+            $passed = false;
+        }
+
+        echo "Test: aria-label and messages come from getFormsLang()... ";
+        if ($source !== ''
+            && preg_match("/setAttribute\(\s*'aria-label'\s*,\s*'/", $source) === 0
+            && str_contains($source, "getFormsLang('CLOSE')")
+        ) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        echo "Test: Missing texts are fetched from the endpoint (task=texts)... ";
+        if (str_contains($source, "'&task=texts'") && str_contains($source, 'JoomlaAjaxForms.loadTexts()')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
             $passed = false;
         }
 

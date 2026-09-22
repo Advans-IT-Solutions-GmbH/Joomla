@@ -6,7 +6,7 @@ This plugin is a `privacy` group plugin that extends `com_privacy`. It does not 
 
 **Joomla core handles:** request management UI, export/deletion workflow, consent tracking (`#__privacy_consents`), action logging, pseudonymisation of the user account (`plg_privacy_user`, same `User` object and ordering as this plugin, so it may run first).
 
-**Action log:** `#__action_logs` (for example login records) stays under Joomla core. This plugin exports the user's entries (`include_joomla_data`) and, with `activity_logging`, writes its own entries (including the IP address of the request); it never changes or deletes existing entries.
+**Action log:** `#__action_logs` (for example login records) stays under Joomla core. This plugin exports the user's entries (`include_joomla_data`) and, with `activity_logging`, writes its own entries (including the IP address of the request); it never changes or deletes existing entries. The language key of each entry and of each administrator notification comes from the maps `ACTIVITY_LOG_KEYS` and `ADMIN_NOTIFICATION_KEYS` in `J2Commerce.php` (action => full key); an action without a key writes only the log file line (entry) or sends nothing (notification). Keys are never assembled from the action name, so the language lint sees every key; a new action needs a map entry and a key in de-DE, en-GB and fr-FR.
 
 **This plugin handles:** J2Commerce-specific data in exports, retention enforcement, order anonymization, lifetime license detection, checkout consent, MyProfile tab.
 

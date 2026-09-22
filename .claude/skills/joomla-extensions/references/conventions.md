@@ -48,6 +48,34 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 - `de-DE` uses Swiss High German (no `ß`, use `ss` instead)
 - README is always in English
 - Example output in README uses English (not German)
+- No fixed wording in code: every text a visitor or administrator reads (PHP, layouts, JavaScript,
+  `confirm()`/`alert()`, `aria-label`, messages) comes from a language key. JavaScript receives its
+  texts through `Text::script()` / script options and has no fallback text of its own. Joomla core
+  keys (`JENABLED`, `JCLOSE`, …) are fine for generic words, because every language pack has them.
+  Only log lines for developers may stay English.
+- Keys are written out in full. No `'PREFIX_' . $action` assembly; use a map of complete keys
+  instead, so the usage check sees every key. Joomla's `langConstPrefix` (`<prefix>_TITLE`,
+  `<prefix>_DESC`) is the one accepted exception.
+- `php shared/tests/lang-lint.php <extension dir>` (CI job `Language Files`) fails on a key the code
+  uses but a language does not define, on a defined key no code uses, and on assembled keys. Keys a
+  plugin ships only for site template overrides go into
+  `tests/language-keys-for-template-overrides.txt` of the extension.
+
+### Checklist: add a language
+
+1. Copy the `en-GB` folder of every `language/` directory of the extension (plugin folder, bundled
+   sub-plugins, `administrator/language` of components) to the new tag, rename the files if their
+   name carries the tag, and translate every value. Keep the keys and the `printf` placeholders.
+2. Register the files where the manifest lists them. Extensions with `<folder>language</folder>`
+   (Privacy with its sub-plugins, OSMap, Product Compare) need nothing else. Import/Export, Cleanup
+   and AJAX Forms list each file in `<languages>`: add one `<language tag="xx-XX">` line per file.
+   These three stay on `<languages>` on purpose: installed sites have copies in the global
+   `administrator/language/<tag>/` folder, which Joomla loads before the extension folder, and a
+   switch would leave those copies behind unchanged.
+3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension; it compares the new
+   files with `en-GB` (keys, placeholders) and checks the usage of every key.
+4. Add the tag to the language checks of the tests where they name languages explicitly (for example
+   the installer-messages suite and the `de-DE, en-GB, fr-FR` loops) and to this list.
 
 ## Database
 
