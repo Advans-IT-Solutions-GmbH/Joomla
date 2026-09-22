@@ -485,6 +485,14 @@ class ConsentUiRenderTest
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
+
+            // J2Store 4 has no server-side consent check, so the client guard has to
+            // cover the click on that button, not only a form submit.
+            $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
+            $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
+            $this->test('Consent validator guards #button-payment-method',
+                strpos($validatorSrc, 'button-payment-method') !== false,
+                $validatorJs);
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
