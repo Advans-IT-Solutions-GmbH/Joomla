@@ -473,6 +473,20 @@ class ConsentUiRenderTest
         $this->test('Consent checkbox has name="j2commerce_privacy_consent"',
             strpos($checkoutHtml, 'name="j2commerce_privacy_consent"') !== false);
 
+        // ── J2Store 4: the step must post itself, with a CSRF token ──────────
+        // J2Store 4.1.8 checks the form token on shipping_payment_method_validate.
+        // J2Store's checkout script posts the step on a click on #button-payment-method
+        // and collects the step's hidden inputs, so they have to be in this override.
+        if (!$isJ6) {
+            $this->test('Checkout step carries the hidden task input',
+                strpos($checkoutHtml, 'value="shipping_payment_method_validate"') !== false);
+            $this->test('Checkout step carries the button J2Store binds to',
+                strpos($checkoutHtml, 'id="button-payment-method"') !== false);
+            $this->test('Checkout step carries a Joomla form token',
+                (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
+                'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
+        }
+
         // ── Render myprofile override → assert real Privacy tab markup ───────
         echo "\n-- MyProfile: Privacy tab --\n";
         $view2          = new RenderHarnessView();
