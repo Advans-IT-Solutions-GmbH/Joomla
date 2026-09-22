@@ -597,6 +597,8 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id'))
             ->whereIn($db->quoteName('p') . '.' . $db->quoteName($productsPk), $productIds)
             ->where($db->quoteName('p') . '.' . $db->quoteName('enabled') . ' = 1')
+            // The shop's own hidden-product flag, same gate as the sitemap query.
+            ->where($db->quoteName('p') . '.' . $db->quoteName('visibility') . ' = 1')
             // The endpoint answers without a login, so it returns only what the storefront shows
             // this visitor: the product article must be published, inside its publishing window
             // and readable with the visitor's view levels. Without this a guessed product ID would
