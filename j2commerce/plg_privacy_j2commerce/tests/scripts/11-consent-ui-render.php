@@ -84,6 +84,9 @@ class RenderHarnessApp
     /** @var Registry|null Lazily-loaded real Joomla configuration. */
     private $config = null;
 
+    /** @var object|null Lazily-created session double (see getSession()). */
+    private $session = null;
+
     public function getDocument()
     {
         return new class {
@@ -140,6 +143,45 @@ class RenderHarnessApp
     public function getLanguage()
     {
         return Factory::getLanguage();
+    }
+
+    /**
+     * Minimal session double.
+     *
+     * The J2Store 4 checkout override renders HTMLHelper::_('form.token'), which goes
+     * through Session::getFormToken() to Factory::getUser() and
+     * Factory::getApplication()->getSession()->getToken(). Without this method the render
+     * would fatal on the undefined method instead of producing the token input. A fixed
+     * token string is enough: getFormToken() hashes it, so the markup keeps the usual
+     * 32-character name. get('user') answering null makes Factory::getUser() fall back to
+     * a guest user, which is what the render harness represents.
+     */
+    public function getSession()
+    {
+        if ($this->session === null) {
+            $this->session = new class {
+                private array $data = [];
+
+                public function getToken($forceNew = false)
+                {
+                    return 'plg-privacy-j2commerce-render-harness';
+                }
+
+                public function get($key, $default = null)
+                {
+                    return $this->data[$key] ?? $default;
+                }
+
+                public function set($key, $value = null)
+                {
+                    $this->data[$key] = $value;
+
+                    return $value;
+                }
+            };
+        }
+
+        return $this->session;
     }
 }
 
@@ -472,6 +514,28 @@ class ConsentUiRenderTest
             strpos($checkoutHtml, 'id="j2commerce_privacy_consent"') !== false);
         $this->test('Consent checkbox has name="j2commerce_privacy_consent"',
             strpos($checkoutHtml, 'name="j2commerce_privacy_consent"') !== false);
+
+        // ── J2Store 4: the step must post itself, with a CSRF token ──────────
+        // J2Store 4.1.8 checks the form token on shipping_payment_method_validate.
+        // J2Store's checkout script posts the step on a click on #button-payment-method
+        // and collects the step's hidden inputs, so they have to be in this override.
+        if (!$isJ6) {
+            $this->test('Checkout step carries the hidden task input',
+                strpos($checkoutHtml, 'value="shipping_payment_method_validate"') !== false);
+            $this->test('Checkout step carries the button J2Store binds to',
+                strpos($checkoutHtml, 'id="button-payment-method"') !== false);
+            $this->test('Checkout step carries a Joomla form token',
+                (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
+                'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
+
+            // J2Store 4 has no server-side consent check, so the client guard has to
+            // cover the click on that button, not only a form submit.
+            $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
+            $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
+            $this->test('Consent validator guards #button-payment-method',
+                strpos($validatorSrc, 'button-payment-method') !== false,
+                $validatorJs);
+        }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
         echo "\n-- MyProfile: Privacy tab --\n";
