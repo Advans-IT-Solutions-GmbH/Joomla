@@ -62,7 +62,6 @@ final class ConsentRepository
     /** Body language key of an anonymized legacy record. */
     public const LEGACY_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_LEGACY';
 
-
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
 
@@ -111,6 +110,31 @@ final class ConsentRepository
     }
 
     /**
+     * Tag of the language the wording actually came from, read from the file the language loaded.
+     * A language whose pack is not installed on the site carries no metadata and reports no tag of
+     * its own, and a load that fell back to en-GB must be named as en-GB, not as the language that
+     * was asked for. The default site language stays the last resort.
+     */
+    private static function bodyLanguageTag(Language $language): string
+    {
+        // Joomla loads the default language before the requested one, so the file loaded last is
+        // the one whose texts are in use.
+        $paths = array_reverse((array) $language->getPaths('plg_system_j2commerceprivacy'), true);
+
+        foreach ($paths as $file => $success) {
+            if (!$success) {
+                continue;
+            }
+
+            if (preg_match('#[/\\\\]([A-Za-z]{2,3}-[A-Za-z]{2,4})[/\\\\][^/\\\\]+\.ini$#', (string) $file, $matches) === 1) {
+                return $matches[1];
+            }
+        }
+
+        return self::defaultSiteLanguageTag();
+    }
+
+    /**
      * Language tag of a stored body, or null for a record written before the marker existed.
      */
     public static function extractLanguageTag(string $body): ?string
@@ -145,7 +169,7 @@ final class ConsentRepository
         $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
         return sprintf($language->_(self::BODY_KEY), $escape($orderId), $escape($ipAddress), $escape($userAgent))
-            . self::orderMarker($orderId) . self::languageMarker($language->getTag());
+            . self::orderMarker($orderId) . self::languageMarker(self::bodyLanguageTag($language));
     }
 
     /**
@@ -159,7 +183,7 @@ final class ConsentRepository
         $language = self::loadSiteBodyLanguage();
 
         return sprintf($language->_(self::BODY_REMOVED_KEY), htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
-            . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($language->getTag());
+            . self::orderMarker($orderId) . self::EVIDENCE_REMOVED_MARKER . self::languageMarker(self::bodyLanguageTag($language));
     }
 
     /**
@@ -305,7 +329,7 @@ final class ConsentRepository
         $text = $language->_(self::LEGACY_BODY_KEY);
 
         if ($text !== '' && $text !== self::LEGACY_BODY_KEY) {
-            return [$text, (string) $language->getTag()];
+            return [$text, self::bodyLanguageTag($language)];
         }
 
         $english = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage('en-GB');
