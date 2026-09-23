@@ -45,7 +45,10 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 ## Language Files
 
 - Three locales required: `de-DE`, `en-GB`, `fr-FR`
-- `de-DE` uses Swiss High German (no `ß`, use `ss` instead)
+- `de-DE` uses Swiss High German (no `ß`, use `ss` instead). The lint enforces this in the language
+  files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
+  `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries
+  the marker `lang-lint-allow-eszett`
 - README is always in English
 - Example output in README uses English (not German)
 - No fixed wording in code: every text a visitor or administrator reads (PHP, layouts, JavaScript,

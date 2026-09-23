@@ -24,6 +24,8 @@
  *     template overrides that no code of the extension uses itself)
  *   - no key of an own prefix is assembled at runtime ('PREFIX_' . $x or
  *     'PREFIX_' + x): keys are written out in full so both checks above see them
+ *   - no "ß" in text the code hard-codes, so the Swiss spelling holds outside
+ *     the language files too (marker `lang-lint-allow-eszett` exempts a line)
  *
  * Exits with 1 when any problem is found.
  */
@@ -135,6 +137,73 @@ function lint_parse_file(string $path, callable $addError): array
  *
  * @param array<string, array<string, array{0:string, 1:int}>> $definedByTag
  */
+/**
+ * The extension's own code files: PHP, JavaScript and XML that ship with the
+ * extension.
+ *
+ * Skipped on purpose, so the checks below never fire on something the
+ * extension does not write itself or does not ship:
+ *   - `language/`   the language files, which have their own checks
+ *   - `vendor/`, `node_modules/`   third-party code, taken over unchanged
+ *   - `tests…/`     test scripts, fixtures and frozen comparison files, which
+ *                   are not part of the package and deliberately contain the
+ *                   very spellings the checks look for
+ *
+ * @return string[]  Absolute paths with forward slashes, sorted.
+ */
+function lint_code_files(string $extensionDir): array
+{
+    $files    = [];
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($extensionDir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $fileInfo) {
+        $path = str_replace('\\', '/', $fileInfo->getPathname());
+
+        if (!preg_match('/\.(php|js|xml)$/', $path)
+            || preg_match('#/(language|vendor|node_modules|tests[^/]*)/#', $path)
+        ) {
+            continue;
+        }
+
+        $files[] = $path;
+    }
+
+    sort($files);
+
+    return $files;
+}
+
+/**
+ * Swiss High German in text the extension hard-codes.
+ *
+ * The language files are already checked for "ß"; a German string written
+ * straight into PHP, JavaScript or XML (a label, a description, a message, an
+ * XML `label=` or `description=`) used to slip past. Any "ß" in a shipped code
+ * file is reported, because the house spelling has no legitimate use for it.
+ *
+ * A line that genuinely must keep the character — third-party text that may not
+ * be altered — carries the marker `lang-lint-allow-eszett` in a comment on the
+ * same line.
+ */
+function lint_swiss_spelling(string $extensionDir, callable $addError): void
+{
+    foreach (lint_code_files($extensionDir) as $path) {
+        foreach (preg_split('/\R/', (string) file_get_contents($path)) as $index => $line) {
+            if (!str_contains($line, 'ß') || str_contains($line, 'lang-lint-allow-eszett')) {
+                continue;
+            }
+
+            $addError(
+                $path,
+                $index + 1,
+                "hard-coded text contains 'ß' (use 'ss' for Swiss High German, or move the text to a language file)"
+            );
+        }
+    }
+}
+
 function lint_usage(string $extensionDir, array $definedByTag, array $fileNames, callable $addError): void
 {
     if ($definedByTag === []) {
@@ -163,19 +232,8 @@ function lint_usage(string $extensionDir, array $definedByTag, array $fileNames,
     $named    = [];   // own-prefix key literal => [path, line]
     $derived  = [];   // keys Joomla derives from a langConstPrefix
     $constPrefixes = [];   // the langConstPrefix values themselves (not keys)
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($extensionDir, FilesystemIterator::SKIP_DOTS)
-    );
 
-    foreach ($iterator as $fileInfo) {
-        $path = str_replace('\\', '/', $fileInfo->getPathname());
-
-        if (!preg_match('/\.(php|js|xml)$/', $path)
-            || preg_match('#/(language|vendor|node_modules|tests[^/]*)/#', $path)
-        ) {
-            continue;
-        }
-
+    foreach (lint_code_files($extensionDir) as $path) {
         $content = (string) file_get_contents($path);
 
         foreach (preg_split('/\R/', $content) as $index => $line) {
@@ -375,6 +433,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
     }
 
     lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+    lint_swiss_spelling($extensionDir, $addError);
 }
 
 if ($errors) {
