@@ -83,6 +83,14 @@ class ComponentFunctionsTest
         $this->test('getIssuePatterns() defined',    function_exists('getIssuePatterns'));
         $this->test('scanForIssues() defined',       function_exists('scanForIssues'));
         $this->test('classifyExtension() defined',   function_exists('classifyExtension'));
+        // Extension names are language keys in #__extensions; the page must not
+        // print the column unchanged (see getExtensionName()). Behaviour is
+        // covered over HTTP by the shared backend-views suite, which needs a
+        // real application; here only the inventory is asserted.
+        $this->test('getExtensionName() defined',    function_exists('getExtensionName'));
+        $this->test('The page never prints the raw name column',
+            !str_contains((string) @file_get_contents($this->mainFile), 'htmlspecialchars($ext->name)'),
+            'use getExtensionName($ext) so the language key is translated');
 
         if (!function_exists('getExtensionPath') || !function_exists('getIssuePatterns')
             || !function_exists('scanForIssues') || !function_exists('classifyExtension')) {

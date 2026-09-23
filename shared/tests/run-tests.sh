@@ -9,6 +9,9 @@
 #   J2COMMERCE_STACK     "j6" for the Joomla 6 + J2Commerce 6 stack
 #   INSTALLED_PLUGIN_FOLDERS  comma-separated plugin groups the extension may
 #                        be registered in (may also be set in test.env)
+#   BACKEND_VIEWS_EXTRA  comma-separated backend view names shared-backend-views.php
+#                        must render besides the ones it finds on disk (usually
+#                        set in test.env)
 #
 
 set -e
@@ -41,7 +44,7 @@ RESULTS_DIR="${RESULTS_DIR:-./test-results}"
 mkdir -p "$RESULTS_DIR"
 
 EXEC_ENV=()
-for var in TEST_STRICT_SKIP J2COMMERCE_STACK INSTALLED_PLUGIN_FOLDERS; do
+for var in TEST_STRICT_SKIP J2COMMERCE_STACK INSTALLED_PLUGIN_FOLDERS BACKEND_VIEWS_EXTRA; do
     if [ -n "${!var:-}" ]; then
         EXEC_ENV+=(-e "${var}=${!var}")
     fi

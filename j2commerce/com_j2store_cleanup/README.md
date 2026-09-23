@@ -116,7 +116,7 @@ logic is exercised with the actual core component present in each:
   (`EXPECTED_CORE_COMPONENT=com_j2commerce`).
 
 Both stacks run the **same full suite** from `tests/test.env` (installation, scanning,
-cleanup, component functions, safety checks, installer messages, uninstall). The
+cleanup, component functions, safety checks, backend views, installer messages, uninstall). The
 `official-j5-j2c4` job runs the safety checks against J2Store 4 as expected core
 component; `official-j6-j2c6` asserts that the Joomla 6 matrix passed.
 
@@ -132,10 +132,14 @@ Order as in `tests/test.env`:
 4. **Component Functions** - Main file function validation (`createDbQuery`, `cleanupExtensions`)
 5. **Safety Checks** - Protected extensions list, edge cases, DB verification that
    the expected core component is installed
-6. **Installer Messages** - shared suite: removes and reinstalls the package through the
+6. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
+   and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
+   error page, no untranslated language key, and at least one string of the component's own
+   language file on the page
+7. **Installer Messages** - shared suite: removes and reinstalls the package through the
    Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language
    keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-7. **Uninstall** - Component removal, verification
+8. **Uninstall** - Component removal, verification
 
 ### Running Tests Locally
 
