@@ -140,13 +140,26 @@ function bv_login(string $baseUrl, string $user, string $pass): bool
  */
 function bv_page_text(string $html): string
 {
-    $html = (string) preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html);
+    return sh_plain_text(bv_strip_scripts($html));
+}
 
-    return sh_plain_text($html);
+/**
+ * The page without its script and style blocks.
+ *
+ * Everything is judged on this, never on the raw response. Joomla injects its
+ * JavaScript language strings into every admin page, and among them are texts
+ * such as "An error has occurred while fetching the JSON data"
+ * (JLIB_JS_AJAX_ERROR_OTHER) and the raw keys a page registered with
+ * Text::script(). Reading those as findings would fail every healthy page.
+ */
+function bv_strip_scripts(string $html): string
+{
+    return (string) preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html);
 }
 
 /**
  * Markers that only ever come from a broken page, never from page content.
+ * Expects the page without its script blocks (see bv_strip_scripts).
  *
  * @return string[]
  */
@@ -270,7 +283,7 @@ foreach ($views as $view) {
 
     bv_pass("$label: HTTP 200");
 
-    $markers = bv_error_markers($body);
+    $markers = bv_error_markers(bv_strip_scripts($body));
 
     if ($markers) {
         bv_fail("$label: error markers on the page: " . implode(', ', $markers));
@@ -279,13 +292,16 @@ foreach ($views as $view) {
         bv_pass("$label: no PHP error and no Joomla error page");
     }
 
+    // Only this extension's own keys count. An admin page carries the whole
+    // sidebar, so a third-party extension with an untranslated menu entry
+    // would otherwise fail a page that is perfectly fine.
     $text    = bv_page_text($body);
-    $rawKeys = sh_find_raw_language_keys($text);
+    $rawKeys = array_values(array_intersect(sh_find_raw_language_keys($text), array_keys($strings)));
 
     if ($rawKeys) {
-        bv_fail("$label: untranslated language keys: " . implode(', ', \array_slice($rawKeys, 0, 5)));
+        bv_fail("$label: untranslated keys of this extension: " . implode(', ', \array_slice($rawKeys, 0, 5)));
     } else {
-        bv_pass("$label: no untranslated language keys");
+        bv_pass("$label: no untranslated language key of this extension");
     }
 
     $shown = sh_shown_language_keys($text, $strings);
