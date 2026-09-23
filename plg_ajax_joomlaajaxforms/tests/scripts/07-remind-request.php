@@ -45,6 +45,26 @@ class RemindRequestTest
         }
     }
 
+    /**
+     * A plain GET. http() above always posts, and the form-detection check has
+     * to fetch the rendered view without submitting anything.
+     *
+     * @return array{0: int, 1: string}
+     */
+    private function httpGet(string $url): array
+    {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$code, $body ?: ''];
+    }
+
     private function http(string $url, array $fields, ?string $cookieJar = null, bool $follow = true): array
     {
         $ch = curl_init($url);
@@ -209,7 +229,7 @@ class RemindRequestTest
             return;
         }
 
-        [$code, $html] = $this->http('GET', $this->baseUrl . '/index.php?option=com_users&view=remind');
+        [$code, $html] = $this->httpGet($this->baseUrl . '/index.php?option=com_users&view=remind');
         $this->test('Remind page delivered', $code === 200 && str_contains($html, '<form'), "HTTP $code");
 
         $robust = [];
