@@ -96,6 +96,69 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
 }
 
 /**
+ * The display name of an extension.
+ *
+ * `#__extensions.name` holds a language key for almost every extension
+ * (`COM_J2STORE_CLEANUP`, `PLG_...`), and each extension carries the
+ * translation in its own `.sys.ini`. Printing the column unchanged put raw
+ * language keys on an otherwise German or English page, so the extension's
+ * system language file is loaded first — the same way Joomla's own extension
+ * manager does it. An extension that ships no such file keeps its stored name,
+ * exactly as Joomla shows it.
+ *
+ * @param object $ext  Extension record from #__extensions
+ */
+function getExtensionName($ext): string
+{
+    $name = (string) ($ext->name ?? '');
+
+    if ($name === '') {
+        return '';
+    }
+
+    $language = Factory::getApplication()->getLanguage();
+    $client   = empty($ext->client_id) ? JPATH_SITE : JPATH_ADMINISTRATOR;
+
+    switch ($ext->type) {
+        case 'component':
+            $language->load($ext->element . '.sys', JPATH_ADMINISTRATOR)
+                || $language->load($ext->element . '.sys', JPATH_ADMINISTRATOR . '/components/' . $ext->element);
+            break;
+
+        case 'plugin':
+            $key = 'plg_' . $ext->folder . '_' . $ext->element;
+            $language->load($key . '.sys', JPATH_ADMINISTRATOR)
+                || $language->load($key . '.sys', JPATH_PLUGINS . '/' . $ext->folder . '/' . $ext->element);
+            break;
+
+        case 'module':
+            $language->load($ext->element . '.sys', $client)
+                || $language->load($ext->element . '.sys', $client . '/modules/' . $ext->element);
+            break;
+
+        case 'template':
+            $key = 'tpl_' . $ext->element;
+            $language->load($key . '.sys', $client)
+                || $language->load($key . '.sys', $client . '/templates/' . $ext->element);
+            break;
+
+        case 'library':
+            $language->load('lib_' . str_replace('/', '_', (string) $ext->element) . '.sys', $client);
+            break;
+
+        case 'file':
+            $language->load('files_' . $ext->element . '.sys', JPATH_SITE);
+            break;
+
+        default:
+            $language->load($ext->element . '.sys', JPATH_SITE);
+            break;
+    }
+
+    return Text::_($name);
+}
+
+/**
  * Resolve the filesystem path for an extension.
  *
  * @param object $ext  Extension record from #__extensions
@@ -685,7 +748,7 @@ $cleanupVersion = getCleanupVersion($db);
                     <?php foreach ($groups['incompatible'] as $ext): ?>
                     <tr class="incompatible">
                         <td><input type="checkbox" name="cid[]" value="<?php echo $ext->extension_id; ?>"></td>
-                        <td><?php echo htmlspecialchars($ext->name); ?></td>
+                        <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
                         <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
                         <td><?php echo $enabledBadge($ext); ?></td>
@@ -726,7 +789,7 @@ $cleanupVersion = getCleanupVersion($db);
                     <?php foreach ($groups['no-files'] as $ext): ?>
                     <tr style="background: #2a2a2a !important; border-left: 3px solid #6c757d;">
                         <td><input type="checkbox" name="cid[]" value="<?php echo $ext->extension_id; ?>"></td>
-                        <td><?php echo htmlspecialchars($ext->name); ?></td>
+                        <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
                         <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
                         <td><?php echo htmlspecialchars($ext->_reason); ?></td>
@@ -762,7 +825,7 @@ $cleanupVersion = getCleanupVersion($db);
                         $badge = $ext->_status === 'core' ? 'badge-info' : 'badge-success';
                     ?>
                     <tr class="compatible">
-                        <td><?php echo htmlspecialchars($ext->name); ?></td>
+                        <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
                         <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
                         <td><?php echo $enabledBadge($ext); ?></td>
