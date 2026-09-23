@@ -269,10 +269,68 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * Selectors that find a com_users form, in the order they are tried.
+     *
+     * The form action is the weakest hook. Joomla writes the task only into the
+     * action URL (`index.php?task=reset.request`); neither the reset nor the
+     * remind form of the core carries a hidden task field. With SEF turned on
+     * the routed address no longer contains the task, so `form[action*=...]`
+     * stops matching, the form is never converted, and a visitor who enters a
+     * valid address gets no answer at all.
+     *
+     * The first two entries match the form element itself, independently of its
+     * surroundings and of the action: the class Joomla puts on the form
+     * (`com-users-reset__form`) and `data-joomlaajaxforms`, which a template
+     * override can set on markup of its own. Only then come the wrapper of the
+     * core view and the action, which still covers a site without SEF.
+     *
+     * @param {string} view - "reset" or "remind"
+     * @param {string} task - the com_users task of that view
+     * @returns {string[]}
+     */
+    userFormSelectors: function(view, task) {
+        return [
+            'form[data-joomlaajaxforms="' + view + '"]',
+            'form.com-users-' + view + '__form',
+            '.com-users-' + view + ' form.form-validate',
+            '.com-users-' + view + ' #user-registration',
+            '.' + view + ' form.form-validate',
+            '.' + view + ' #user-registration',
+            'form[action*="' + task + '"]'
+        ];
+    },
+
+    /**
+     * The form of a com_users view, or null.
+     *
+     * Besides the selectors above a hidden task field is accepted, which a
+     * template override may render instead of a class or a data attribute.
+     *
+     * @param {string} view - "reset" or "remind"
+     * @param {string} task - the com_users task of that view
+     * @returns {HTMLFormElement|null}
+     */
+    findUserForm: function(view, task) {
+        const selectors = JoomlaAjaxForms.userFormSelectors(view, task);
+
+        for (let i = 0; i < selectors.length; i++) {
+            const found = document.querySelector(selectors[i]);
+
+            if (found) {
+                return found.tagName === 'FORM' ? found : (found.form || found.closest('form'));
+            }
+        }
+
+        const taskInput = document.querySelector('input[name="task"][value="' + task + '"]');
+
+        return taskInput ? taskInput.form : null;
+    },
+
+    /**
      * Initialize password reset form
      */
     initResetForm: function() {
-        const form = document.querySelector('.reset form.form-validate, .reset #user-registration, form[action*="reset.request"]');
+        const form = JoomlaAjaxForms.findUserForm('reset', 'reset.request');
         formsDebug('[JoomlaAjaxForms] Reset form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
             formsDebug('[JoomlaAjaxForms] Converting reset form to AJAX');
@@ -285,7 +343,7 @@ const JoomlaAjaxForms = {
      * Initialize username reminder form
      */
     initRemindForm: function() {
-        const form = document.querySelector('.remind form.form-validate, .remind #user-registration, form[action*="remind.remind"]');
+        const form = JoomlaAjaxForms.findUserForm('remind', 'remind.remind');
         formsDebug('[JoomlaAjaxForms] Remind form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
             formsDebug('[JoomlaAjaxForms] Converting remind form to AJAX');

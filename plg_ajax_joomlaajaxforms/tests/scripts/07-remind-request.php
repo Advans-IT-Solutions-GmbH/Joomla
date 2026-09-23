@@ -45,6 +45,26 @@ class RemindRequestTest
         }
     }
 
+    /**
+     * A plain GET. http() above always posts, and the form-detection check has
+     * to fetch the rendered view without submitting anything.
+     *
+     * @return array{0: int, 1: string}
+     */
+    private function httpGet(string $url): array
+    {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$code, $body ?: ''];
+    }
+
     private function http(string $url, array $fields, ?string $cookieJar = null, bool $follow = true): array
     {
         $ch = curl_init($url);
@@ -187,6 +207,52 @@ class RemindRequestTest
         }
     }
 
+    /**
+     * The script has to find the form without the form action.
+     *
+     * Same reasoning as in 06-reset-request.php: Joomla writes the task only
+     * into the action URL and renders no hidden task field, so with SEF turned
+     * on `form[action*="remind.remind"]` stops matching and the form is never
+     * converted. A wrapper-bound selector is no better, because a template
+     * override replaces that wrapper. At least one selector must find the form
+     * element on its own: no ancestor, no action.
+     */
+    private function testFormDetection(): void
+    {
+        echo "\n--- Form detection (independent of SEF and of the wrapper) ---\n";
+
+        $selectors = ajaxforms_form_selectors('remind', 'remind.remind');
+        $this->test('Script exposes its form selectors', $selectors !== [],
+            'userFormSelectors() missing or of an unexpected shape in joomlaajaxforms.js');
+
+        if (!$selectors) {
+            return;
+        }
+
+        [$code, $html] = $this->httpGet($this->baseUrl . '/index.php?option=com_users&view=remind');
+        $this->test('Remind page delivered', $code === 200 && str_contains($html, '<form'), "HTTP $code");
+
+        $robust = [];
+
+        foreach ($selectors as $selector) {
+            if (!ajaxforms_selector_is_standalone($selector) || ajaxforms_selector_uses_action($selector)) {
+                continue;
+            }
+
+            $matched = ajaxforms_selector_matches($html, $selector);
+            $this->test("Selector '$selector' is understood", $matched !== null, 'unsupported selector shape');
+
+            if ($matched === true) {
+                $robust[] = $selector;
+            }
+        }
+
+        $this->test('A selector finds the form without its wrapper and without the action',
+            $robust !== [],
+            'only wrapper- or action-dependent selectors match, so SEF or a template override breaks the detection: '
+                . implode(' | ', $selectors));
+    }
+
     public function run(): bool
     {
         echo "=== Username Reminder Request Tests ===\n";
@@ -196,6 +262,7 @@ class RemindRequestTest
         $this->testInvalidEmail();
         $this->testUnknownEmail();
         $this->testLanguageKeys();
+        $this->testFormDetection();
 
         echo "\n=== Remind Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

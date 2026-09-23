@@ -212,7 +212,8 @@ Notable test details:
   keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
   fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
   every defined key is used by the code, derived from a `langConstPrefix` or listed in
-  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime) followed by
+  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, and no `ß` in
+  text the shipped PHP/JS/XML hard-codes) followed by
   `php shared/tests/requirements-check.php <extension dir>`
   (`minimumJoomla '5.4'`/`minimumPhp '8.1'` in `script.php`, `preflight()` calls the parent, every
   manifest and `update.xml` `targetplatform`/`php_minimum`, the release workflow `targetplatform`, and

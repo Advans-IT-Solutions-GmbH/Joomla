@@ -592,9 +592,16 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             ->join('LEFT', $db->quoteName($quantitiesT, 'pq')
                 . ' ON ' . $db->quoteName('pq') . '.' . $db->quoteName('variant_id')
                 . ' = ' . $db->quoteName('v') . '.' . $db->quoteName($variantsPk))
+            // The article is joined only for a product that really comes from com_content.
+            // `product_source_id` is just a number: without this predicate a product of
+            // another source whose ID happens to match a published article would pick up
+            // that article's title and description and pass the article checks below.
+            // Same predicate as the sitemap query and the import/export models.
             ->join('LEFT', $db->quoteName('#__content', 'c')
                 . ' ON ' . $db->quoteName('c') . '.' . $db->quoteName('id')
-                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id'))
+                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id')
+                . ' AND ' . $db->quoteName('p') . '.' . $db->quoteName('product_source')
+                . ' = ' . $db->quote('com_content'))
             ->whereIn($db->quoteName('p') . '.' . $db->quoteName($productsPk), $productIds)
             ->where($db->quoteName('p') . '.' . $db->quoteName('enabled') . ' = 1')
             // The shop's own hidden-product flag, same gate as the sitemap query.
