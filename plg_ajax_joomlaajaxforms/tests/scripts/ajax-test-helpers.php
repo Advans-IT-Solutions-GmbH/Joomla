@@ -47,6 +47,30 @@ function ajaxforms_is_json_rejection(string $body): bool
 }
 
 /**
+ * The shipped script on disk.
+ *
+ * Joomla installs the plugin's media files to media/plg_ajax_joomlaajaxforms
+ * (`<media destination="plg_ajax_joomlaajaxforms" folder="media">`), not into
+ * the plugin folder. The source layout is accepted as a fallback, so the
+ * helpers also work against a checkout.
+ */
+function ajaxforms_script_path(): string
+{
+    $candidates = [
+        '/var/www/html/media/plg_ajax_joomlaajaxforms/js/joomlaajaxforms.js',
+        '/var/www/html/plugins/ajax/joomlaajaxforms/media/js/joomlaajaxforms.js',
+    ];
+
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return $candidates[0];
+}
+
+/**
  * The selectors the shipped script uses to find a com_users form.
  *
  * Read straight from media/js/joomlaajaxforms.js (userFormSelectors), so the
@@ -58,8 +82,7 @@ function ajaxforms_is_json_rejection(string $body): bool
  */
 function ajaxforms_form_selectors(string $view, string $task, string $scriptPath = ''): array
 {
-    $scriptPath = $scriptPath ?: '/var/www/html/plugins/ajax/joomlaajaxforms/media/js/joomlaajaxforms.js';
-    $source     = (string) @file_get_contents($scriptPath);
+    $source = (string) @file_get_contents($scriptPath ?: ajaxforms_script_path());
 
     if (!preg_match('/userFormSelectors:\s*function\s*\([^)]*\)\s*\{\s*return\s*\[(.*?)\];/s', $source, $m)) {
         $init = 'init' . ucfirst($view) . 'Form';

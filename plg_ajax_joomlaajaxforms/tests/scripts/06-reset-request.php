@@ -217,7 +217,7 @@ class ResetRequestTest
             'only wrapper- or action-dependent selectors match, so SEF or a template override breaks the detection: '
                 . implode(' | ', $selectors));
 
-        $script = (string) @file_get_contents('/var/www/html/plugins/ajax/joomlaajaxforms/media/js/joomlaajaxforms.js');
+        $script = (string) @file_get_contents(ajaxforms_script_path());
         $this->test('A hidden task field is accepted as a further hook',
             str_contains($script, 'input[name="task"][value='));
     }
