@@ -207,6 +207,10 @@ class GetProductsDataTest
             'article published later'     => ['state' => 1, 'access' => 1, 'publish_up' => $future, 'publish_down' => null],
             'article no longer published' => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => $past],
             'invisible product'           => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'visibility' => 0],
+            // product_source_id is just a number. A product of another source whose ID
+            // matches a perfectly published article must not pick up that article and
+            // hand out its title, description, price and stock.
+            'product of another source'   => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'product_source' => 'com_somethingelse'],
         ];
 
         $pkCol = $this->productsPk;
@@ -222,7 +226,7 @@ class GetProductsDataTest
 
             $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
 
-            $this->test("Hidden product ($label) not in results", $returned === [], implode(',', $returned));
+            $this->test("Not in results ($label)", $returned === [], implode(',', $returned));
         }
     }
 
@@ -265,7 +269,7 @@ class GetProductsDataTest
 
             $product = (object) [
                 'product_source_id' => $contentId,
-                'product_source'    => 'com_content',
+                'product_source'    => $article['product_source'] ?? 'com_content',
                 'product_type'      => 'simple',
                 'visibility'        => $article['visibility'] ?? 1,
                 'enabled'           => 1,
