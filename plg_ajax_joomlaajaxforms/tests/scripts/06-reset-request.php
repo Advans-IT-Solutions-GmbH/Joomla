@@ -169,6 +169,59 @@ class ResetRequestTest
         }
     }
 
+    /**
+     * The script has to find the form without the form action.
+     *
+     * Joomla writes the task only into the action URL and renders no hidden task
+     * field in this form. With SEF turned on the routed address no longer
+     * carries the task, `form[action*="reset.request"]` stops matching, the form
+     * is never converted to AJAX, and a visitor who enters a valid address gets
+     * no answer at all. A selector that depends on the wrapper of the core view
+     * is no better, because a template override replaces that wrapper.
+     *
+     * So at least one selector must find the form element on its own: no
+     * ancestor, no action.
+     */
+    private function testFormDetection(): void
+    {
+        echo "\n--- Form detection (independent of SEF and of the wrapper) ---\n";
+
+        $selectors = ajaxforms_form_selectors('reset', 'reset.request');
+        $this->test('Script exposes its form selectors', $selectors !== [],
+            'userFormSelectors() missing or of an unexpected shape in joomlaajaxforms.js');
+
+        if (!$selectors) {
+            return;
+        }
+
+        [$code, $html] = $this->http('GET', $this->baseUrl . '/index.php?option=com_users&view=reset');
+        $this->test('Reset page delivered', $code === 200 && str_contains($html, '<form'), "HTTP $code");
+
+        $robust = [];
+
+        foreach ($selectors as $selector) {
+            if (!ajaxforms_selector_is_standalone($selector) || ajaxforms_selector_uses_action($selector)) {
+                continue;
+            }
+
+            $matched = ajaxforms_selector_matches($html, $selector);
+            $this->test("Selector '$selector' is understood", $matched !== null, 'unsupported selector shape');
+
+            if ($matched === true) {
+                $robust[] = $selector;
+            }
+        }
+
+        $this->test('A selector finds the form without its wrapper and without the action',
+            $robust !== [],
+            'only wrapper- or action-dependent selectors match, so SEF or a template override breaks the detection: '
+                . implode(' | ', $selectors));
+
+        $script = (string) @file_get_contents('/var/www/html/plugins/ajax/joomlaajaxforms/media/js/joomlaajaxforms.js');
+        $this->test('A hidden task field is accepted as a further hook',
+            str_contains($script, 'input[name="task"][value='));
+    }
+
     public function run(): bool
     {
         echo "=== Password Reset Request Tests ===\n";
@@ -177,6 +230,7 @@ class ResetRequestTest
         $this->testNoTokenRejected();
         $this->testUnknownEmailHandled();
         $this->testLanguageKeys();
+        $this->testFormDetection();
 
         echo "\n=== Reset Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
