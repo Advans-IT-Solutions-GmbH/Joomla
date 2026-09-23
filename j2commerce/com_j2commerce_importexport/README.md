@@ -252,6 +252,24 @@ com_j2commerce_importexport/
 └── VERSION
 ```
 
+### One View, Two Tasks
+
+The component has exactly one backend view, `dashboard`. Import and export are
+**controller tasks**, not views of their own: the dashboard renders both forms
+and they post to `task=import.upload`, `task=import.preview`,
+`task=import.process` and `task=export.export`. There is no `View\Import` or
+`View\Export` class, so `&view=import` and `&view=export` used to end in
+Joomla's "View not found" (HTTP 404). `DisplayController` now maps both names
+onto the dashboard, so a guessed or bookmarked address opens the component.
+
+A backend view also has to declare its own dependencies. Joomla's `MVCFactory`
+injects a database into **models** (`createModel()` calls `setDatabase()` on a
+`DatabaseAwareInterface`) but never into **views** — `createView()` sets only
+the form factory, dispatcher, router, cache controller and user factory. A view
+that reads from the database therefore implements `DatabaseAwareInterface`,
+uses `DatabaseAwareTrait` **and** falls back to the DI container, otherwise
+`getDatabase()` is an undefined method or throws `DatabaseNotFoundException`.
+
 ## Automated Testing
 
 This component has automated tests that run via GitHub Actions (`j2commerce-import-export.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
@@ -275,8 +293,9 @@ Order as in `tests/test.env`:
 7. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
 8. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
 9. **Active Shop Detection** (`09-active-shop-detection.php`) — adds the other shop's tables with different test data next to the installed shop and asserts via `exportData('variants')` that the enabled shop component decides which data is exported: installed or other shop enabled alone, both enabled (J2Commerce 6 wins), the fallback when no shop component is enabled, and — before the other shop's tables are created — an enabled component without its tables being skipped. Every constellation uses a new model instance; the temporary tables, rows and `#__extensions` changes are removed afterwards and the cleanup is verified (J2Commerce 4 and 6)
-10. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-11. **Uninstall** — clean removal from database and filesystem
+10. **Backend Views** (`shared-backend-views.php`) — shared suite: logs into `/administrator` and really renders every backend view of the component. It requests the entry point without a view, every `View\<Name>\HtmlView` class, every `tmpl/<name>` folder and every name in `BACKEND_VIEWS_EXTRA` (here `import,export`), and asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the extension's own language file on the page. Reflection alone never opens a page, which is why a view calling a method it did not have shipped green
+11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+12. **Uninstall** — clean removal from database and filesystem
 
 ### Running Tests Locally
 
