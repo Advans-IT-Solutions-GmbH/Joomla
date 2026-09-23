@@ -123,6 +123,27 @@ if (PluginHelper::isEnabled('ajax', 'joomlaajaxforms')) {
 
 The plugin automatically initializes form handlers for login, reset, remind, and registration forms. For cart and profile operations, use the JavaScript API:
 
+#### Finding the reset and remind forms
+
+Joomla writes the task of these two views only into the form action
+(`index.php?task=reset.request`) and renders no hidden task field. With SEF
+turned on the routed address no longer carries the task, so a detection that
+reads the action stops working and the form is never converted: a visitor who
+enters a valid address then gets no answer at all.
+
+The script therefore looks for the form itself first, independently of the
+action and of any wrapper around it:
+
+1. `form[data-joomlaajaxforms="reset"]` / `…="remind"`
+2. `form.com-users-reset__form` / `form.com-users-remind__form` (the class Joomla core gives the form)
+3. the wrapper of the core view (`.com-users-reset`, `.reset`, …)
+4. `form[action*="reset.request"]`, which still covers a site without SEF
+5. a hidden `input[name="task"][value="reset.request"]`, if an override renders one
+
+**A template override that replaces the core markup should set
+`data-joomlaajaxforms="reset"` (or `"remind"`) on its `<form>`.** That is the
+one hook that survives both SEF routing and a rewritten wrapper.
+
 ```javascript
 // Remove cart item
 JoomlaAjaxForms.removeCartItem(cartItemId, clickedElement, callback);
