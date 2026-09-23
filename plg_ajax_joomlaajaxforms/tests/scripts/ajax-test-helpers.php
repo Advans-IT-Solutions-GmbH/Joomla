@@ -130,6 +130,12 @@ function ajaxforms_selector_uses_action(string $selector): bool
  */
 function ajaxforms_selector_matches(string $html, string $selector): ?bool
 {
+    // An empty body would make loadHTML() raise a PHP warning, which the
+    // deprecation lane reads as a finding. Report "not understood" instead.
+    if (trim($html) === '') {
+        return null;
+    }
+
     if (!preg_match('/^([a-z][a-z0-9]*)?((?:[.#][A-Za-z0-9_-]+|\[[^\]]+\])*)$/', trim($selector), $m)) {
         return null;
     }
