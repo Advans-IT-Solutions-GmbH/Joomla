@@ -2,9 +2,22 @@
 /**
  * SEF Sitemap HTTP Test for the OSMap J2Commerce Plugin
  *
- * Runs only in the dedicated SEF-enabled stacks (J2COMMERCE_SEF=1). It makes a
- * real HTTP request to the live OSMap XML sitemap and asserts that the emitted
- * product URLs carry the expected language prefix on the dedicated SEF stacks.
+ * Runs only in the dedicated SEF-enabled stacks (J2COMMERCE_SEF=1): the J5 stack
+ * (docker-entrypoint.sh + docker-compose.sef.yml) and the J6 stack
+ * (docker-entrypoint-j6.sh + docker-compose.joomla6-sef.yml). It makes a real
+ * HTTP request to the live OSMap XML sitemap and asserts that the emitted product
+ * URLs are correctly-formed SEF paths carrying the /de/ language prefix (no
+ * index.php, no option=com_... query string).
+ *
+ * The multilingual fixture is what makes the language-prefix assertion
+ * meaningful: a single-language fixture has no prefix that could go missing,
+ * which is how the #176 regression slipped through (issue #99/#183).
+ *
+ * On J6 the fixture additionally installs the de-DE language pack and seeds
+ * dedicated published de-DE product routes, so this suite also requires every
+ * product URL to resolve directly with HTTP 200 and without a 301 redirect
+ * (issue #185). The J5 SEF stack installs no language pack, so it asserts URL
+ * generation only and logs the live status for diagnostics.
  */
 define('_JEXEC', 1);
 
@@ -150,22 +163,34 @@ class SitemapHttpSefTest
             return true;
         });
 
-        // Issue #183 proposes asserting HTTP 200 (not 301) for every sitemap URL.
-        // We deliberately log the status here instead of asserting it: the SEF
-        // fixture seeds a #__languages row (sef=de) so OSMap emits /de/-prefixed
-        // URLs, but the minimal test stack installs no site language pack and does
-        // not enable plg_system_languagefilter, so a live GET of a /de/ path need
-        // not resolve to 200 in this container. The actual #176/#183 regression —
-        // a missing /de/ language prefix — is caught by the URL-form assertions
-        // above; the live status code is recorded for diagnostics only. The
-        // end-to-end HTTP-200 assertion (which needs a full multilingual stack)
-        // is tracked as follow-up issue #185.
+        // Issue #183/#185: every sitemap URL must resolve directly with HTTP 200,
+        // not only after a 301 canonicalisation hop. The J6 SEF fixture builds the
+        // full multilingual stack for that (de-DE language pack, plg_system_
+        // languagefilter enabled, dedicated published de-DE product routes), so the
+        // status is asserted there. The J5 SEF stack installs no language pack and
+        // therefore proves URL *generation* only; its live status is logged for
+        // diagnostics. The #176/#183 regression itself — a missing /de/ language
+        // prefix — is caught by the URL-form assertions above on both stacks.
         foreach ($productUrls as $alias => $url) {
             if ($url === null) {
                 continue;
             }
+
             $response = $this->httpResponse($url);
-            echo "  (info) {$alias}: {$response['status']}" . ($response['location'] !== '' ? " -> {$response['location']}" : '') . "\n";
+            echo "  (info) {$alias}: {$response['status']}"
+                . ($response['location'] !== null ? " -> {$response['location']}" : '') . "\n";
+
+            if (!$this->isJ6) {
+                continue;
+            }
+
+            $this->test("Product {$alias} URL resolves directly with HTTP 200 (#183/#185)", function () use ($response) {
+                return $response['status'] === 200;
+            });
+
+            $this->test("Product {$alias} URL resolves without a redirect (no 301, no Location header) (#183/#185)", function () use ($response) {
+                return $response['status'] !== 301 && $response['location'] === null;
+            });
         }
 
         $this->test('Disabled product is not in the SEF sitemap', function () use ($urls) {
@@ -192,6 +217,14 @@ class SitemapHttpSefTest
         return null;
     }
 
+    /**
+     * Returns the direct HTTP response for $url without following redirects.
+     * This lets the test distinguish a real 200 from a URL that only resolves
+     * after a 301 canonicalisation hop. Returns status 0 when the host is
+     * unreachable.
+     *
+     * @return array{status:int, location:?string}
+     */
     private function httpResponse(string $url): array
     {
         $ctx = stream_context_create(['http' => [
@@ -201,11 +234,18 @@ class SitemapHttpSefTest
             'ignore_errors'   => true,
         ]]);
 
+        // Reset so a request that fails before receiving any response cannot
+        // report the previous request's headers (the wrapper only repopulates
+        // $http_response_header on a completed response).
         $http_response_header = [];
-        $status = 0;
-        $location = '';
+        $status               = 0;
+        $location             = null;
 
-        @file_get_contents($url, false, $ctx);
+        $body = @file_get_contents($url, false, $ctx);
+
+        if ($body === false && empty($http_response_header)) {
+            return ['status' => 0, 'location' => null];
+        }
 
         foreach (($http_response_header ?? []) as $header) {
             if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m)) {

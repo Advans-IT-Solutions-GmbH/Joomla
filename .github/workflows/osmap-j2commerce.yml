@@ -137,17 +137,20 @@ jobs:
       - name: Start environment (J5)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose up -d; then
               break
             fi
-            if [ "$attempt" = "3" ]; then
+            if [ "$attempt" = "$attempts" ]; then
               echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
-            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
@@ -240,17 +243,20 @@ jobs:
       - name: Start environment (J6)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose -f docker-compose.joomla6.yml up -d; then
               break
             fi
-            if [ "$attempt" = "3" ]; then
+            if [ "$attempt" = "$attempts" ]; then
               echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
-            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose -f docker-compose.joomla6.yml down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
@@ -318,17 +324,20 @@ jobs:
       - name: Start environment (J6 SEF)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose -f docker-compose.joomla6-sef.yml up -d; then
               break
             fi
-            if [ "$attempt" = "3" ]; then
+            if [ "$attempt" = "$attempts" ]; then
               echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
-            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose -f docker-compose.joomla6-sef.yml down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
@@ -374,17 +383,20 @@ jobs:
       - name: Start environment (J5 SEF)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose -f docker-compose.sef.yml up -d; then
               break
             fi
-            if [ "$attempt" = "3" ]; then
+            if [ "$attempt" = "$attempts" ]; then
               echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
-            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose -f docker-compose.sef.yml down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j5_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
@@ -449,15 +461,20 @@ jobs:
       - name: Start environment (production-like)
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose -f docker-compose.production.yml up -d; then
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" = "$attempts" ]; then
+              echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose -f docker-compose.production.yml down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           timeout 420 bash -c 'until docker exec plg_osmap_j2commerce_prod_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           docker exec plg_osmap_j2commerce_prod_test php -v
@@ -551,15 +568,20 @@ jobs:
           STRICT_INSTALL_MESSAGES: '0'
         run: |
           cd j2commerce/plg_osmap_j2commerce/tests
-          for attempt in 1 2 3; do
+          attempts=5
+          delay=15
+          for attempt in $(seq 1 "$attempts"); do
             if docker compose -f docker-compose.joomla6.yml up -d; then
               break
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" = "$attempts" ]; then
+              echo "docker compose up failed after $attempt attempts"
               exit 1
             fi
+            echo "docker compose up failed (likely a transient registry/network error); retrying after cleanup ($attempt/$attempts) in ${delay}s"
             docker compose -f docker-compose.joomla6.yml down -v || true
-            sleep 20
+            sleep "$delay"
+            delay=$((delay * 2))
           done
           timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
       - name: Update to the package under test

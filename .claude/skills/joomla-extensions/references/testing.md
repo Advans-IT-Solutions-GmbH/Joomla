@@ -31,6 +31,12 @@ by a new Joomla release rather than by the change under test: check the `Tested 
 job log or summary and compare it with the last green run. Locally, Docker reuses a cached base image;
 pull it (`docker pull joomla:6-php8.4-apache`) or build with `--pull` to test the same version as CI.
 
+The OSMap Joomla 6 SEF lane also installs the real Joomla German `de-DE` pack. Because the moving
+`joomla:6-php8.4-apache` tag may advance before `joomlagerman` publishes the exact same patch, the fixture first tries
+the current Joomla patch and then walks older patches of the same major.minor, each with release suffixes
+`v1`..`v3`. Downloads use curl retries/timeouts so transient network or 5xx failures do not make the SEF
+fixture flaky.
+
 Pinned on purpose: J2Commerce 4 stays on release 4.1.4; J2Commerce 6 is built from the commits listed
 under "J2Commerce 6 package" below.
 
