@@ -66,9 +66,16 @@ class ResetRequestTest
         return [$code, $body ?: ''];
     }
 
-    private function getSessionAndToken(): array
+    /**
+     * Session cookie and CSRF token of one and the same page view.
+     *
+     * The default is the home page; a page with a com_users form is the more
+     * reliable source, because a site without a form on the home page carries
+     * no token there.
+     */
+    private function getSessionAndToken(string $url = ''): array
     {
-        $ch = curl_init($this->baseUrl . '/');
+        $ch = curl_init($url !== '' ? $url : $this->baseUrl . '/');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_HEADER, true);
@@ -222,6 +229,197 @@ class ResetRequestTest
             str_contains($script, 'input[name="task"][value='));
     }
 
+    /**
+     * The reset mail has to carry the design of the site.
+     *
+     * The plugin used to compose subject and body itself and to send them with
+     * setBody(), so this mail left the site as Content-Type: text/plain while
+     * every other mail of the site was rendered from the template in
+     * #__mail_templates, with frame, logo and tables. The setting under System,
+     * Mail Templates had no effect on it at all.
+     *
+     * The check is made on the message the site actually hands to the mail
+     * transport, which is where that difference showed.
+     */
+    private function testResetMailCarriesTheSiteDesign(): void
+    {
+        echo "\n--- Reset mail goes through the site's mail template ---\n";
+
+        $reason = ajaxforms_mailcatch_install();
+        $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+        if ($reason !== null) {
+            return;
+        }
+
+        try {
+            $selfTest = ajaxforms_mailcatch_selftest();
+            $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
+
+            if ($selfTest !== null) {
+                return;
+            }
+
+            // The site has to be allowed to build HTML mails at all; without
+            // that setting even a template mail stays plain text.
+            ajaxforms_enable_html_mail();
+
+            $user  = ajaxforms_create_test_user('reset', 'en-GB');
+            $token = str_repeat('a1b2c3d4', 4);
+
+            ajaxforms_mailcatch_clear();
+
+            $plugin = ajaxforms_plugin_instance();
+            $send   = new ReflectionMethod($plugin, 'sendResetEmail');
+            $send->setAccessible(true);
+            $send->invoke($plugin, $user, $token);
+
+            $messages = ajaxforms_mailcatch_messages();
+            $this->test('Exactly one reset mail sent', count($messages) === 1, count($messages) . ' captured');
+
+            if (count($messages) !== 1) {
+                return;
+            }
+
+            $raw  = $messages[0];
+            $text = ajaxforms_mail_text($raw);
+
+            $this->test(
+                'Mail addressed to the account',
+                stripos($raw, (string) $user->email) !== false,
+                'recipient not found in the message'
+            );
+
+            $this->test(
+                'Mail carries an HTML part (Content-Type is not text/plain)',
+                (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
+                'headers: ' . substr($raw, 0, 400)
+            );
+
+            $this->test(
+                'HTML part is rendered through the mail layout',
+                stripos($text, '<html') !== false && stripos($text, '<table') !== false,
+                'no frame markup in the message'
+            );
+
+            $this->test(
+                'A plain-text alternative is still sent',
+                stripos($raw, 'text/plain') !== false
+            );
+
+            $this->test(
+                'Mail carries the reset link with the token',
+                strpos($text, 'com_users') !== false && strpos($text, $token) !== false,
+                'reset link or token missing'
+            );
+
+            // The plugin answers inside com_ajax, where the strings of
+            // com_users are not loaded; without loading them the template would
+            // arrive as its raw language keys.
+            $this->test(
+                'Template strings are translated, not raw language keys',
+                stripos($text, 'COM_USERS_EMAIL_') === false,
+                'a raw language key is in the message'
+            );
+        } finally {
+            ajaxforms_delete_test_user('reset');
+            ajaxforms_mailcatch_remove();
+        }
+    }
+
+    /**
+     * The mail has to arrive in the language of the customer, so the language
+     * of the account decides, not the language the request happened to run in.
+     */
+    private function testMailLanguageFollowsTheAccount(): void
+    {
+        echo "\n--- Mail language follows the account ---\n";
+
+        $class = \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class;
+        $rc    = new ReflectionClass($class);
+
+        $this->test('Method accountMailLanguage exists', $rc->hasMethod('accountMailLanguage'));
+
+        if (!$rc->hasMethod('accountMailLanguage')) {
+            return;
+        }
+
+        $method = $rc->getMethod('accountMailLanguage');
+        $method->setAccessible(true);
+        $plugin = $rc->newInstanceWithoutConstructor();
+
+        $chosen         = new stdClass();
+        $chosen->params = json_encode(['language' => 'fr-FR']);
+
+        $this->test(
+            'Language of the account wins',
+            $method->invoke($plugin, $chosen) === 'fr-FR',
+            'got ' . var_export($method->invoke($plugin, $chosen), true)
+        );
+
+        $none         = new stdClass();
+        $none->params = '{}';
+
+        $this->test(
+            'Without a choice a valid tag is still used',
+            (bool) preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', (string) $method->invoke($plugin, $none)),
+            'got ' . var_export($method->invoke($plugin, $none), true)
+        );
+    }
+
+    /**
+     * The answer must stay the same for a known and an unknown address,
+     * otherwise the form tells an attacker which addresses have an account.
+     */
+    private function testAnswerDoesNotRevealAccounts(): void
+    {
+        echo "\n--- Answer does not reveal whether an account exists ---\n";
+
+        $user = ajaxforms_create_test_user('resetreveal');
+
+        try {
+            $known   = $this->resetAnswer((string) $user->email);
+            $unknown = $this->resetAnswer('nobody_xyz_' . time() . '@example.test');
+
+            $this->test(
+                'Request with a token is accepted',
+                $known !== null && ($known['success'] ?? null) === true,
+                'answer: ' . var_export($known, true)
+            );
+
+            $this->test(
+                'Known and unknown address get the same answer',
+                $known !== null && $known === $unknown,
+                'known: ' . var_export($known, true) . ', unknown: ' . var_export($unknown, true)
+            );
+        } finally {
+            ajaxforms_delete_test_user('resetreveal');
+        }
+    }
+
+    /**
+     * @return  array<string, mixed>|null  The decoded answer of a reset request
+     */
+    private function resetAnswer(string $email): ?array
+    {
+        [$cookie, $token] = $this->getSessionAndToken($this->baseUrl . '/index.php?option=com_users&view=reset');
+
+        $cookies = [];
+        if ($cookie && str_contains($cookie, '=')) {
+            [$cn, $cv] = explode('=', $cookie, 2);
+            $cookies[$cn] = $cv;
+        }
+
+        $fields = ['task' => 'reset', 'email' => $email];
+        if ($token) {
+            $fields[$token] = '1';
+        }
+
+        [, $body] = $this->http('POST', $this->baseUrl . $this->ajaxPath . '&task=reset', $fields, $cookies);
+
+        return ajaxforms_decode_response($body);
+    }
+
     public function run(): bool
     {
         echo "=== Password Reset Request Tests ===\n";
@@ -231,6 +429,9 @@ class ResetRequestTest
         $this->testUnknownEmailHandled();
         $this->testLanguageKeys();
         $this->testFormDetection();
+        $this->testResetMailCarriesTheSiteDesign();
+        $this->testMailLanguageFollowsTheAccount();
+        $this->testAnswerDoesNotRevealAccounts();
 
         echo "\n=== Reset Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

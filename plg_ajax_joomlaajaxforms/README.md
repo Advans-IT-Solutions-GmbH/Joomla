@@ -349,6 +349,41 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - Uses `UserFactoryInterface` instead of `User::getInstance()`
 - Uses `->getInput()` instead of `->input`
 
+## Account Mails
+
+The password reset, the username reminder, the activation mail and the notice
+to the site address are sent through Joomla's `MailTemplate`, with the same
+template ids and the same data keys `com_users` uses:
+
+| Mail | Template id |
+|---|---|
+| Password reset | `com_users.password_reset` |
+| Username reminder | `com_users.reminder` |
+| Activation, self activation | `com_users.registration.user.self_activation` |
+| Activation, admin activation | `com_users.registration.user.admin_activation` |
+| Notice about a new registration | `com_users.registration.admin.new_notification` |
+
+What a site configures under System, Mail Templates therefore applies to these
+mails as well: the stored subject and body, the HTML layout with frame and
+logo, and a template of its own per language. Nothing has to be configured in
+the plugin for that.
+
+Two details follow from the plugin answering inside `com_ajax`:
+
+- The language files of the extension the template belongs to are loaded before
+  the mail is rendered. `MailTemplate` does that only for a mail in another
+  language than the request, so without it the mail would carry the raw
+  language keys.
+- The mail is rendered in the language of the account, if the account has one,
+  otherwise in the language of the request and finally in the default site
+  language. The notice about a new registration goes to the site itself and is
+  written in the default site language.
+
+A site whose `#__mail_templates` has no such template still gets its mail: the
+plugin then falls back to its own plain-text mail from
+`PLG_AJAX_JOOMLAAJAXFORMS_*_EMAIL_SUBJECT` and `..._EMAIL_BODY` and writes a
+warning to the log.
+
 ## Multi-Language Support
 
 - English (`en-GB`)
