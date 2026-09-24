@@ -66,16 +66,9 @@ class ResetRequestTest
         return [$code, $body ?: ''];
     }
 
-    /**
-     * Session cookie and CSRF token of one and the same page view.
-     *
-     * The default is the home page; a page with a com_users form is the more
-     * reliable source, because a site without a form on the home page carries
-     * no token there.
-     */
-    private function getSessionAndToken(string $url = ''): array
+    private function getSessionAndToken(): array
     {
-        $ch = curl_init($url !== '' ? $url : $this->baseUrl . '/');
+        $ch = curl_init($this->baseUrl . '/');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_HEADER, true);
@@ -398,24 +391,69 @@ class ResetRequestTest
     }
 
     /**
+     * Starts a guest session in a cookie jar and reads a CSRF token for it.
+     *
+     * Redirects are followed and the cookies are kept across them, because the
+     * token only counts together with the session it was issued for. The reset
+     * view of com_users renders a form for guests, the home page is the
+     * fallback.
+     *
+     * @return  array{0: string, 1: string}  cookie jar path, token ('' if none)
+     */
+    private function sessionAndToken(): array
+    {
+        $cookieJar = tempnam(sys_get_temp_dir(), 'reset-cookies-');
+
+        foreach (['/index.php?option=com_users&view=reset', '/'] as $page) {
+            $ch = curl_init($this->baseUrl . $page);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+            $response = (string) curl_exec($ch);
+            $code     = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $finalUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            curl_close($ch);
+
+            if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)
+                || preg_match('/"csrf\.token"\s*:\s*"([a-f0-9]{32})"/i', $response, $m)) {
+                return [$cookieJar, $m[1]];
+            }
+
+            echo "  DIAG no token on $page: HTTP $code, final URL $finalUrl, " . strlen($response) . " bytes\n";
+        }
+
+        return [$cookieJar, ''];
+    }
+
+    /**
      * @return  array<string, mixed>|null  The decoded answer of a reset request
      */
     private function resetAnswer(string $email): ?array
     {
-        [$cookie, $token] = $this->getSessionAndToken($this->baseUrl . '/index.php?option=com_users&view=reset');
-
-        $cookies = [];
-        if ($cookie && str_contains($cookie, '=')) {
-            [$cn, $cv] = explode('=', $cookie, 2);
-            $cookies[$cn] = $cv;
-        }
+        [$cookieJar, $token] = $this->sessionAndToken();
 
         $fields = ['task' => 'reset', 'email' => $email];
-        if ($token) {
+
+        if ($token !== '') {
             $fields[$token] = '1';
         }
 
-        [, $body] = $this->http('POST', $this->baseUrl . $this->ajaxPath . '&task=reset', $fields, $cookies);
+        $ch = curl_init($this->baseUrl . $this->ajaxPath . '&task=reset');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($fields));
+        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+        curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+        $body = (string) curl_exec($ch);
+        curl_close($ch);
+
+        @unlink($cookieJar);
 
         return ajaxforms_decode_response($body);
     }
