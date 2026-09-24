@@ -556,6 +556,36 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     }
 
     /**
+     * One bound of an article's publishing window.
+     *
+     * Joomla stores an open-ended window either as SQL NULL or as the driver's
+     * null-date sentinel ('0000-00-00 00:00:00' on Joomla 4 and 5). Both mean
+     * "no limit", the same rule com_content and the sitemap query use. Reading
+     * only NULL as open would drop an ordinary published product, because the
+     * sentinel is neither NULL nor a date that satisfies the comparison.
+     *
+     * @param   string  $column       Column of #__content the bound applies to
+     * @param   string  $comparison   SQL comparison against the current time
+     * @param   string  $placeholder  Bound parameter that carries the current time
+     *
+     * @return  string
+     */
+    private function publicationBound(string $column, string $comparison, string $placeholder): string
+    {
+        $db   = $this->getDatabase();
+        $name = $db->quoteName('c') . '.' . $db->quoteName($column);
+
+        $open = $name . ' IS NULL';
+
+        // getNullDate() is gone on some newer stacks, so it is guarded.
+        if (method_exists($db, 'getNullDate')) {
+            $open .= ' OR ' . $name . ' = ' . $db->quote($db->getNullDate());
+        }
+
+        return '(' . $open . ' OR ' . $name . ' ' . $comparison . ' ' . $placeholder . ')';
+    }
+
+    /**
      * Load product data for the given IDs from the active shop's tables.
      *
      * @param   int[]  $productIds
@@ -612,10 +642,8 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             // hand out title, description, price and stock of a hidden product.
             ->where($db->quoteName('c') . '.' . $db->quoteName('state') . ' = 1')
             ->whereIn($db->quoteName('c') . '.' . $db->quoteName('access'), $this->viewLevels())
-            ->where('(' . $db->quoteName('c') . '.' . $db->quoteName('publish_up') . ' IS NULL OR '
-                . $db->quoteName('c') . '.' . $db->quoteName('publish_up') . ' <= :nowup)')
-            ->where('(' . $db->quoteName('c') . '.' . $db->quoteName('publish_down') . ' IS NULL OR '
-                . $db->quoteName('c') . '.' . $db->quoteName('publish_down') . ' >= :nowdown)')
+            ->where($this->publicationBound('publish_up', '<=', ':nowup'))
+            ->where($this->publicationBound('publish_down', '>=', ':nowdown'))
             ->bind(':nowup', $now)
             ->bind(':nowdown', $now)
             ->order($db->quoteName('p') . '.' . $db->quoteName($productsPk));
