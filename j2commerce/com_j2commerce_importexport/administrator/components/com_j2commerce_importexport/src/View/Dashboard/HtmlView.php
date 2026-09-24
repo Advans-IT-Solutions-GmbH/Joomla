@@ -9,23 +9,28 @@ namespace Advans\Component\J2CommerceImportExport\Administrator\View\Dashboard;
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Toolbar\ToolbarHelper;
-use Joomla\CMS\Language\Text;
+use Joomla\Database\DatabaseAwareInterface;
+use Joomla\Database\DatabaseAwareTrait;
+use Joomla\Database\DatabaseInterface;
+use Joomla\Database\Exception\DatabaseNotFoundException;
+use Joomla\Database\QueryInterface;
 
-class HtmlView extends BaseHtmlView
+class HtmlView extends BaseHtmlView implements DatabaseAwareInterface
 {
-    /**
-     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
-     */
-    private function createDbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
-    {
-        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-    }
+    use DatabaseAwareTrait;
 
     protected $menutypes;
     protected $viewlevels;
     protected $categories;
+
+    /**
+     * Database resolved once per request by getDb().
+     */
+    private ?DatabaseInterface $resolvedDatabase = null;
 
     public function display($tpl = null)
     {
@@ -37,6 +42,39 @@ class HtmlView extends BaseHtmlView
         return parent::display($tpl);
     }
 
+    /**
+     * The database this view reads its option lists from.
+     *
+     * A view has to declare the dependency itself and be able to resolve it
+     * itself. Joomla's MVCFactory injects a database into models, never into
+     * views: createModel() calls setDatabase() on a DatabaseAwareInterface,
+     * createView() sets only the form factory, dispatcher, router, cache
+     * controller and user factory. Without DatabaseAwareTrait the call is an
+     * undefined method (fatal error), with the trait alone it throws
+     * DatabaseNotFoundException — so the container is the fallback. Same class
+     * of defect as the OSMap plugin's createDbQuery() once had.
+     */
+    private function getDb(): DatabaseInterface
+    {
+        if ($this->resolvedDatabase === null) {
+            try {
+                $this->resolvedDatabase = $this->getDatabase();
+            } catch (DatabaseNotFoundException $e) {
+                $this->resolvedDatabase = Factory::getContainer()->get(DatabaseInterface::class);
+            }
+        }
+
+        return $this->resolvedDatabase;
+    }
+
+    /**
+     * Create a fresh query object — compatible with Joomla 4/5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(DatabaseInterface $db): QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
     protected function addToolbar()
     {
         ToolbarHelper::title(Text::_('COM_J2COMMERCE_IMPORTEXPORT'), 'upload');
@@ -45,7 +83,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getMenuTypes(): array
     {
-        $db = $this->getDatabase();
+        $db = $this->getDb();
         $query = $this->createDbQuery($db)
             ->select(['menutype', 'title'])
             ->from($db->quoteName('#__menu_types'))
@@ -56,7 +94,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getViewLevels(): array
     {
-        $db = $this->getDatabase();
+        $db = $this->getDb();
         $query = $this->createDbQuery($db)
             ->select(['id', 'title'])
             ->from($db->quoteName('#__viewlevels'))
@@ -67,7 +105,7 @@ class HtmlView extends BaseHtmlView
 
     protected function getCategories(): array
     {
-        $db = $this->getDatabase();
+        $db = $this->getDb();
         $query = $this->createDbQuery($db)
             ->select(['id', 'title', 'level'])
             ->from($db->quoteName('#__categories'))

@@ -81,6 +81,10 @@ if (!function_exists('bootstrapSiteApplication')) {
 
         Factory::$application = $app;
 
+        // A site request initialises the application language, which Text uses
+        // (and which the plugin loads its strings into). Do the same here.
+        $app->loadLanguage();
+
         return $app;
     }
 }

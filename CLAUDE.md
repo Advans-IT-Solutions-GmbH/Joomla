@@ -13,6 +13,7 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 - Nie direkt auf `main`; jede Änderung über Feature-Branch + PR, der vom Maintainer gemergt wird (Squash).
 - Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte Signaturen**. Das erfüllt der von GitHub signierte Squash-Merge. Feature-Branch-Commits signierst du, wenn ein Key vorhanden ist (Commit-E-Mail passend zum Key); ohne Key dürfen sie unsigniert sein (Details: `AGENTS.md`).
 - Conventional Commits steuern den automatischen Version-Bump (siehe Release).
+- Regeln, Review-Takt, Merge und weitere Entscheidungen: `AGENTS.md` (maßgebliche Quelle, nicht hier duplizieren).
 
 ## Tiefenwissen (Skills)
 
@@ -108,7 +109,7 @@ docker compose -f docker-compose.joomla6.yml down -v
 - Cleanup (Workflow setzt nur den Container): `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all`
 - AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
 
-Alle Extensions verlangen Joomla 5.4 oder neuer (5.4.x, 6.x) und PHP 8.1 oder neuer; `shared/tests/requirements-check.php` prüft das im CI-Job „Language Files". Die Test-Images nutzen mitlaufende offizielle Tags (`joomla:5.4-php8.3-apache` = neuestes 5.4.x, `joomla:6-php8.4-apache` = neuestes 6.x), keine gepinnte Joomla-Patch-Version. Jeder Job gibt `Tested versions: Joomla X.Y.Z, PHP A.B.C` aus; ein roter Lauf kann daher von einem neuen Joomla-Release kommen, erst die ausgegebene Version prüfen. Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
+Alle Extensions verlangen Joomla 5.4 oder neuer (5.4.x, 6.x) und PHP 8.1 oder neuer; `shared/tests/requirements-check.php` prüft das im CI-Job „Language Files". Die Test-Images nutzen mitlaufende offizielle Tags (`joomla:5.4-php8.3-apache` = neuestes 5.4.x, `joomla:6-php8.4-apache` = neuestes 6.x), keine gepinnte Joomla-Patch-Version. Jeder Job gibt `Tested versions: Joomla X.Y.Z, PHP A.B.C` aus; ein roter Lauf kann daher von einem neuen Joomla-Release kommen, erst die ausgegebene Version prüfen. J2Commerce 6 wird aus einem gepinnten Commit gebaut. Der Job „Language Files" führt zusätzlich `shared/tests/deprecated-api-scan.php` aus; die produktionsnahen Lanes werten mit `shared-deprecations.php` alle Deprecations aus, die Code der Extension direkt auslöst. Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
 
 ## Release-Workflow
 
@@ -117,5 +118,7 @@ Zwei-stufig und PR-basiert; pro Extension getrennt. Maßgebliche Beschreibung: `
 1. In GitHub Actions den `Release - …`-Workflow der jeweiligen Extension via **Run workflow** starten (Bump-Level wählen oder Auto-Detect).
 2. Der Workflow bumpt `VERSION`/Manifest/`update.xml` auf einem `release/…`-Branch und öffnet einen `release: …`-PR — **er pusht nicht auf `main`**.
 3. Ein Mensch reviewt und mergt (Squash). Beim Merge baut der `Publish - …`-Workflow das Paket, setzt den Tag (`{prefix}-v*`) und erstellt das GitHub-Release.
+
+Nach dem Publish löscht der Workflow ältere Releases und Tags derselben Extension — gewollt, nicht „reparieren".
 
 Wichtig für Agents: **nie den `release:`-PR selbst mergen**, **nie `VERSION`/Manifest/`update.xml` manuell ändern**, immer nur einen Release-Workflow gleichzeitig. Auto-Detect liest Conventional Commits seit dem letzten `{prefix}-v*`-Tag, die nur den Pfad dieser Extension berühren. Nur erkannte Typen öffnen einen Release-PR: `fix:` → Patch, `feat:` → Minor, `!`/`BREAKING CHANGE` → Major. Alles andere (`docs:`, `chore:`, …) wird ignoriert und löst keinen Release aus. Wenn ein Bump gewollt ist, muss die Änderung gemäß `AGENTS.md` als erkannter Typ (`fix(...)`/`feat(...)` mit passendem Scope) formuliert werden — nicht als `docs:`/`chore:`.

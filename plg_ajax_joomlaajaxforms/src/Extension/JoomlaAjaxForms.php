@@ -87,26 +87,41 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Pass language strings to JavaScript via Joomla script options
+     * Pass language strings to JavaScript via Joomla script options.
+     *
+     * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
+     * off by default, so a production site prints no traces during normal use;
+     * a failed request is still reported with console.error.
      */
     public function onBeforeRender(): void
     {
         $doc = $this->getApplication()->getDocument();
         if (method_exists($doc, 'addScriptOptions')) {
-            $doc->addScriptOptions('plg_ajax_joomlaajaxforms', [
-                'ERROR_GENERIC'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
-                'MFA_SELECT_METHOD'      => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_SELECT_METHOD'),
-                'MFA_ENTER_CODE'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_ENTER_CODE'),
-                'MFA_METHOD'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_METHOD'),
-                'MFA_CODE_LABEL'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_LABEL'),
-                'MFA_CANCEL'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CANCEL'),
-                'MFA_VERIFY'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_VERIFY'),
-                'MFA_CODE_INVALID_LENGTH' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_INVALID_LENGTH'),
-                'PROFILE_SAVED'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
-            ]);
+            $doc->addScriptOptions(
+                'plg_ajax_joomlaajaxforms',
+                array_merge(['debug' => (bool) $this->params->get('debug', 0)], $this->scriptTexts())
+            );
         }
     }
 
+    /**
+     * Texts the script shows itself, in the language of the current request.
+     *
+     * The script never carries a text of its own. Plugins of the ajax group are
+     * imported by com_ajax, so on a normal page onBeforeRender() runs only when
+     * something imported the plugin; the script then asks the endpoint for these
+     * texts (task "texts") instead of falling back to a fixed language.
+     *
+     * @return  array<string, string>
+     */
+    private function scriptTexts(): array
+    {
+        return [
+            'ERROR_GENERIC' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
+            'PROFILE_SAVED' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
+            'CLOSE'         => Text::_('JCLOSE'),
+        ];
+    }
 
 
     /**
@@ -122,9 +137,14 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     public function onAjaxJoomlaajaxforms($event = null): string
     {
-        // Validate CSRF token
-        if (!Session::checkToken('get') && !Session::checkToken('post') && !Session::checkToken()) {
-            $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
+        $input = $this->getApplication()->getInput();
+        $task = $input->getCmd('task', '');
+
+        // "texts" only returns the public texts the script shows (no user data, no
+        // state change), so it is answered without a form token: a page without
+        // any form still needs them.
+        if ($task === 'texts') {
+            $result = $this->jsonSuccess(['data' => $this->scriptTexts()]);
 
             if ($event) {
                 $event->addResult($result);
@@ -133,8 +153,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $result;
         }
 
-        $input = $this->getApplication()->getInput();
-        $task = $input->getCmd('task', '');
+        // Validate CSRF token
+        if (!$this->hasValidToken()) {
+            $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
+
+            if ($event) {
+                $event->addResult($result);
+            }
+
+            return $result;
+        }
 
         switch ($task) {
             case 'login':
@@ -227,14 +255,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $session = $this->getApplication()->getSession();
                 $session->set('application.queue', []);
 
-                // Find the profile page URL via a direct DB query.
-                // Direct DB query instead of Menu::getItems() to avoid loading the full menu tree.
-                $profileUrl = Uri::base();
-                $profileItemId = $this->getMyProfileMenuItemId();
-                if ($profileItemId) {
-                    $sefPath = Route::_('index.php?Itemid=' . $profileItemId, false);
-                    $profileUrl = rtrim(Uri::base(), '/') . '/' . ltrim($sefPath, '/');
-                }
+                // Same target as without MFA (see getProfileRedirect()), as an
+                // absolute URL because it is stored as the return URL of the
+                // captive page.
+                $profileUrl = $this->getProfileRedirect(true);
                 $session->set('com_users.return_url', $profileUrl);
 
                 // Pass return URL as query parameter so the captive template
@@ -271,10 +295,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $session->set('com_users.return_url', '');
 
             if (empty($redirect)) {
-                $profileItemId = $this->getMyProfileMenuItemId();
-                $redirect = $profileItemId
-                    ? Route::_('index.php?Itemid=' . $profileItemId, false)
-                    : Route::_('index.php?option=' . ($this->isJ2Commerce4($this->getDatabase()) ? 'com_j2store' : 'com_j2commerce') . '&view=myprofile', false);
+                $redirect = $this->getProfileRedirect();
             }
 
             // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
@@ -577,7 +598,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             }
 
             if ($this->isJ2Commerce4($db)) {
-                // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                // J2Store / J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
                 // $userId is (int) — safe to inline in subquery; bind() on subquery objects is lost
                 // when the subquery is cast to string and embedded in the outer query's WHERE clause.
@@ -662,24 +683,68 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Returns true if any supported version of J2Commerce is installed.
+     * Whether the request carries the form token of the current session (POST
+     * field, query parameter or X-CSRF-Token header).
+     *
+     * Session::checkToken() is not used: for a new session it redirects to the
+     * home page instead of returning false, so the script would get an empty
+     * redirect instead of the JSON error it shows to the user.
      */
+    private function hasValidToken(): bool
+    {
+        $input = $this->getApplication()->getInput();
+        $token = Session::getFormToken();
+
+        return hash_equals($token, (string) $input->server->get('HTTP_X_CSRF_TOKEN', '', 'alnum'))
+            || $input->post->get($token, '', 'alnum') !== ''
+            || $input->get->get($token, '', 'alnum') !== '';
+    }
+
     /**
-     * Returns the menu item ID for the J2Store/J2Commerce "myprofile" view,
-     * or null if no such menu item exists.
+     * Profile page to open after a login (with and without MFA):
+     * the "myprofile" menu item of the active shop, otherwise the
+     * "myprofile" view of the active shop, otherwise (no active shop)
+     * the Joomla user profile.
+     *
+     * @param   bool  $absolute  Return an absolute URL instead of a routed path.
+     */
+    private function getProfileRedirect(bool $absolute = false): string
+    {
+        $profileItemId = $this->getMyProfileMenuItemId();
+        $shop          = $this->getActiveShop($this->getDatabase());
+
+        if ($profileItemId) {
+            $url = 'index.php?Itemid=' . $profileItemId;
+        } elseif ($shop !== null) {
+            $url = 'index.php?option=com_' . $shop . '&view=myprofile';
+        } else {
+            // No active shop: the Joomla user profile is the only profile page.
+            $url = 'index.php?option=com_users&view=profile';
+        }
+
+        return Route::_($url, false, Route::TLS_IGNORE, $absolute);
+    }
+
+    /**
+     * Returns the menu item ID for the "myprofile" view of the active shop
+     * (see getActiveShop()), or null if no shop is active or no such menu
+     * item exists.
      *
      * Uses a direct DB query instead of Menu::getItems() to avoid loading
      * the full menu tree. Works on J4/J5/J6.
      */
     private function getMyProfileMenuItemId(): ?int
     {
-        $db = $this->getDatabase();
-        $j4 = $this->isJ2Commerce4($db);
+        $db   = $this->getDatabase();
+        $shop = $this->getActiveShop($db);
 
-        $option = $j4 ? 'com_j2store' : 'com_j2commerce';
-        $link   = 'index.php?option=' . $option . '&view=myprofile';
+        if ($shop === null) {
+            return null;
+        }
 
-        $q = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        $link = 'index.php?option=com_' . $shop . '&view=myprofile';
+
+        $q = $this->createDbQuery($db)
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('link') . ' = :link')
@@ -694,37 +759,91 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         return $id ? (int) $id : null;
     }
 
-    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    /**
+     * Result of getActiveShop() for this request.
+     *
+     * @var  string|null
+     */
+    private ?string $activeShop = null;
+
+    /**
+     * Whether getActiveShop() has already been resolved for this request.
+     *
+     * @var  bool
+     */
+    private bool $activeShopResolved = false;
+
+    /**
+     * Active shop: 'j2commerce' when com_j2commerce is enabled and #__j2commerce_carts
+     * exists, otherwise 'j2store' when com_j2store is enabled and #__j2store_carts exists,
+     * otherwise null.
+     *
+     * Tables alone do not decide: after a migration the #__j2store_* tables remain.
+     * A component alone does not decide either: an enabled component without its
+     * cart table is skipped and the next candidate is checked.
+     * Without an active shop AJAX Forms does not use any shop: the cart and the
+     * profile of a disabled shop are not reachable for the user anyway.
+     */
+    private function getActiveShop(DatabaseInterface $db): ?string
     {
-        static $installed = null;
-        if ($installed === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix    = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $j4 = $db->loadResult() !== null;
-            if (!$j4) {
-                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2commerce_carts'));
-                $j6 = $db->loadResult() !== null;
-            }
-            $installed = $j4 || (!$j4 && ($j6 ?? false));
+        if ($this->activeShopResolved) {
+            return $this->activeShop;
         }
-        return $installed;
+
+        $this->activeShopResolved = true;
+        $this->activeShop         = null;
+
+        try {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+            // Priority order: J2Commerce 6 first, then J2Store / J2Commerce 4.
+            foreach (['j2commerce', 'j2store'] as $shop) {
+                if (!in_array('com_' . $shop, $enabled, true)) {
+                    continue;
+                }
+
+                // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
+                // escape(..., true) escapes the LIKE wildcards ('_' and '%') so the
+                // pattern matches the exact table name and not a similarly named table.
+                $like = $db->quote($db->escape($db->getPrefix() . $shop . '_carts', true), false);
+                $db->setQuery('SHOW TABLES LIKE ' . $like);
+
+                if ($db->loadResult() !== null) {
+                    $this->activeShop = $shop;
+                    break;
+                }
+
+                // Enabled but without its cart table: try the next candidate.
+            }
+        } catch (\Throwable $e) {
+            Log::add('Shop detection error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+        }
+
+        return $this->activeShop;
     }
 
     /**
-     * Returns true if J2Commerce 4.x is installed (uses #__j2store_* tables).
-     * Returns false for J2Commerce 6.x (uses #__j2commerce_* tables).
+     * Returns true if a supported shop is active (see getActiveShop()).
+     */
+    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    {
+        return $this->getActiveShop($db) !== null;
+    }
+
+    /**
+     * Returns true if J2Store / J2Commerce 4.x is the active shop (#__j2store_* tables),
+     * false for J2Commerce 6.x (#__j2commerce_* tables) or when no shop is active.
+     * Decided by the enabled component, not by the tables (see getActiveShop()).
      */
     private function isJ2Commerce4(DatabaseInterface $db): bool
     {
-        static $result = null;
-        if ($result === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $result = $db->loadResult() !== null;
-        }
-        return $result;
+        return $this->getActiveShop($db) === 'j2store';
     }
 
     /**

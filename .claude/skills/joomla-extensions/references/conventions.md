@@ -27,8 +27,16 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 - The `Language Files` CI job runs `php shared/tests/requirements-check.php <extension dir>`, which
   fails if `minimumJoomla`/`minimumPhp`, the parent `preflight()` call, a manifest or `update.xml`
   `targetplatform`/`php_minimum`, or the release workflow `targetplatform` deviates from this rule
-- Database queries: `$db->getQuery(true)` on Joomla 5 (Joomla 5.4's `DatabaseInterface` has no
-  `createQuery()`), `$db->createQuery()` on Joomla 6; select at runtime
+- Database queries: `method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true)`.
+  `createQuery()` is not declared on `DatabaseInterface` in Joomla 5.4, but the database drivers
+  provide it; `getQuery(true)` is deprecated. The static scan only accepts `getQuery(true)` behind
+  this check.
+- Plugin service providers: `new Plugin((array) PluginHelper::getPlugin(...))`, then
+  `setApplication()`/`setDatabase()` as needed. Never pass the dispatcher to the constructor and never
+  call `setDispatcher()` (both deprecated since Joomla 5.2; `PluginHelper` sets the dispatcher).
+- Deprecated APIs are rejected by `php shared/tests/deprecated-api-scan.php <extension dir>` (tokenizer
+  based; allowlist with reasons at the top of the script). Fix the code instead of extending the
+  allowlist.
 - Namespaces: Plugins `Advans\Plugin\{Group}\{Name}` (e.g. `Advans\Plugin\Privacy\J2Commerce`); Components: `Advans\Component\{Name}`
 - Follow Joomla Coding Standards
 - No direct `$_GET`/`$_POST` — use `$app->getInput()`
@@ -37,9 +45,40 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 ## Language Files
 
 - Three locales required: `de-DE`, `en-GB`, `fr-FR`
-- `de-DE` uses Swiss High German (no `ß`, use `ss` instead)
+- `de-DE` uses Swiss High German (no `ß`, use `ss` instead). The lint enforces this in the language
+  files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
+  `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries
+  the marker `lang-lint-allow-eszett`
 - README is always in English
 - Example output in README uses English (not German)
+- No fixed wording in code: every text a visitor or administrator reads (PHP, layouts, JavaScript,
+  `confirm()`/`alert()`, `aria-label`, messages) comes from a language key. JavaScript receives its
+  texts through `Text::script()` / script options and has no fallback text of its own. Joomla core
+  keys (`JENABLED`, `JCLOSE`, …) are fine for generic words, because every language pack has them.
+  Only log lines for developers may stay English.
+- Keys are written out in full. No `'PREFIX_' . $action` assembly; use a map of complete keys
+  instead, so the usage check sees every key. Joomla's `langConstPrefix` (`<prefix>_TITLE`,
+  `<prefix>_DESC`) is the one accepted exception.
+- `php shared/tests/lang-lint.php <extension dir>` (CI job `Language Files`) fails on a key the code
+  uses but a language does not define, on a defined key no code uses, and on assembled keys. Keys a
+  plugin ships only for site template overrides go into
+  `tests/language-keys-for-template-overrides.txt` of the extension.
+
+### Checklist: add a language
+
+1. Copy the `en-GB` folder of every `language/` directory of the extension (plugin folder, bundled
+   sub-plugins, `administrator/language` of components) to the new tag, rename the files if their
+   name carries the tag, and translate every value. Keep the keys and the `printf` placeholders.
+2. Register the files where the manifest lists them. Extensions with `<folder>language</folder>`
+   (Privacy with its sub-plugins, OSMap, Product Compare) need nothing else. Import/Export, Cleanup
+   and AJAX Forms list each file in `<languages>`: add one `<language tag="xx-XX">` line per file.
+   These three stay on `<languages>` on purpose: installed sites have copies in the global
+   `administrator/language/<tag>/` folder, which Joomla loads before the extension folder, and a
+   switch would leave those copies behind unchanged.
+3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension; it compares the new
+   files with `en-GB` (keys, placeholders) and checks the usage of every key.
+4. Add the tag to the language checks of the tests where they name languages explicitly (for example
+   the installer-messages suite and the `de-DE, en-GB, fr-FR` loops) and to this list.
 
 ## Database
 

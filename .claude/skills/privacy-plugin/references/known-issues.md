@@ -34,6 +34,17 @@ Both tables are populated via SQL (see the post-installation message); there is 
 
 **Discovered:** 2026-04-29, fixed in PR #69.
 
+## `getContainer()` Is Protected on the Application
+
+`CMSApplication::getContainer()` is `protected`. Calling `$app->getContainer()` from a plugin throws
+`\Error: Call to protected method`, which aborted removal requests before the customer notice was
+sent. Always take services from `Factory::getContainer()` instead. The plugin funnels both mail paths
+(customer retention notice and administrator notification) through one `protected createMailer()`,
+which the tests override, and the administrator notification catches `\Throwable`, so a mailer
+failure is logged and never breaks the removal.
+
+**Discovered:** 2026-09-17 in a manual test on a test site, fixed in PR #188.
+
 ## Minimum Requirements
 
 - Joomla 5.4+ (5.4.x and 6.x; uses DI container, `Factory::getContainer()`)

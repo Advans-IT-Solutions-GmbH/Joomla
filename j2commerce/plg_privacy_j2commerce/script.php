@@ -382,7 +382,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * The privacy plugin group is not imported during the J2Commerce checkout, so checkout
      * consent is validated and recorded by this system plugin. It is enabled on first
      * installation only; an administrator's later choice to disable it survives updates.
-     */    private function installConsentSystemPlugin(string $packageSource): void
+     */
+    private function installConsentSystemPlugin(string $packageSource): void
     {
         $source = $packageSource . '/plugins/system/j2commerceprivacy';
 

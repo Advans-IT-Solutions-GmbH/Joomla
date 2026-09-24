@@ -613,7 +613,30 @@ class ConsentUiRenderTest
             $this->test("[$component] address delete button depends on \"Show Delete Address Buttons\"",
                 str_contains($addresses, '$_privacyOptions::showDeleteAddress()')
                 && substr_count($addresses, 'if ($_privacyEnabled)') >= 2);
+
+            // Every key the override prints is translated in the installed language
+            // files, so the button never shows a raw key such as
+            // PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN.
+            preg_match_all("/Text::_\('(PLG_PRIVACY_J2COMMERCE_[A-Z0-9_]+)'\)/", $addresses, $keys);
+            $this->test("[$component] address override prints the delete button label key",
+                in_array('PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN', $keys[1] ?? [], true));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $untranslated = array_values(array_filter(array_unique($keys[1] ?? []), fn ($key) => empty($values[$key])));
+
+                $this->test("[$component] $tag translates every key of the address override",
+                    ($keys[1] ?? []) !== [] && $untranslated === [], implode(', ', $untranslated));
+            }
         }
+
+        $this->test('de-DE delete address button reads "Adresse löschen"', (function () {
+            $ini = JPATH_BASE . '/plugins/privacy/j2commerce/language/de-DE/plg_privacy_j2commerce.ini';
+            $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+
+            return ($values['PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN'] ?? '') === 'Adresse löschen';
+        })());
 
         echo "\n=== Consent-UI Render Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

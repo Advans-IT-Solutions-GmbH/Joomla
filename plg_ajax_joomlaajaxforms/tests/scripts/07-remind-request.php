@@ -17,6 +17,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/ajax-test-helpers.php';
 
 use Joomla\CMS\Factory;
 
@@ -42,6 +43,26 @@ class RemindRequestTest
             echo "✗ $name" . ($msg ? " — $msg" : '') . "\n";
             $this->failed++;
         }
+    }
+
+    /**
+     * A plain GET. http() above always posts, and the form-detection check has
+     * to fetch the rendered view without submitting anything.
+     *
+     * @return array{0: int, 1: string}
+     */
+    private function httpGet(string $url): array
+    {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$code, $body ?: ''];
     }
 
     private function http(string $url, array $fields, ?string $cookieJar = null, bool $follow = true): array
@@ -107,31 +128,6 @@ class RemindRequestTest
         return [$cookieJar, ''];
     }
 
-    /**
-     * The plugin answers with a JSON envelope; the handler result may be nested
-     * as a JSON string in data[0] (com_ajax format=json).
-     *
-     * @return array<string,mixed>|null
-     */
-    private function decode(string $body): ?array
-    {
-        $outer = json_decode($body, true);
-
-        if (!is_array($outer)) {
-            return null;
-        }
-
-        if (isset($outer['data'][0]) && is_string($outer['data'][0])) {
-            $inner = json_decode($outer['data'][0], true);
-
-            if (is_array($inner) && array_key_exists('success', $inner)) {
-                return $inner;
-            }
-        }
-
-        return $outer;
-    }
-
     private function testHandlerExists(): void
     {
         echo "\n--- Handler ---\n";
@@ -156,12 +152,10 @@ class RemindRequestTest
             null,
             false
         );
-        $data     = $this->decode($body);
-        $rejected = ($code >= 300 && $code < 400)
-            || ($data !== null && ($data['success'] ?? null) === false)
-            || $code === 403;
+        // Always a JSON error, never a redirect (also for a new session).
+        $rejected = $code === 200 && ajaxforms_is_json_rejection($body);
 
-        $this->test('Remind request without token is rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
+        $this->test('Remind request without token is rejected with JSON success=false (no redirect)', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }
 
     private function testInvalidEmail(): void
@@ -177,7 +171,7 @@ class RemindRequestTest
         }
 
         [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=remind', $fields, $cookies);
-        $data = $this->decode($body);
+        $data = ajaxforms_decode_response($body);
 
         $this->test('Invalid e-mail → no server error', $code < 500, "HTTP $code");
         $this->test('Invalid e-mail → success:false', $data !== null && ($data['success'] ?? null) === false, 'body: ' . substr($body, 0, 200));
@@ -195,7 +189,7 @@ class RemindRequestTest
         }
 
         [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=remind', $fields, $cookies);
-        $data = $this->decode($body);
+        $data = ajaxforms_decode_response($body);
 
         $this->test('Unknown e-mail → no server error', $code < 500, "HTTP $code");
         $this->test('Unknown e-mail → neutral success response', $data !== null && ($data['success'] ?? null) === true, 'body: ' . substr($body, 0, 200));
@@ -213,6 +207,52 @@ class RemindRequestTest
         }
     }
 
+    /**
+     * The script has to find the form without the form action.
+     *
+     * Same reasoning as in 06-reset-request.php: Joomla writes the task only
+     * into the action URL and renders no hidden task field, so with SEF turned
+     * on `form[action*="remind.remind"]` stops matching and the form is never
+     * converted. A wrapper-bound selector is no better, because a template
+     * override replaces that wrapper. At least one selector must find the form
+     * element on its own: no ancestor, no action.
+     */
+    private function testFormDetection(): void
+    {
+        echo "\n--- Form detection (independent of SEF and of the wrapper) ---\n";
+
+        $selectors = ajaxforms_form_selectors('remind', 'remind.remind');
+        $this->test('Script exposes its form selectors', $selectors !== [],
+            'userFormSelectors() missing or of an unexpected shape in joomlaajaxforms.js');
+
+        if (!$selectors) {
+            return;
+        }
+
+        [$code, $html] = $this->httpGet($this->baseUrl . '/index.php?option=com_users&view=remind');
+        $this->test('Remind page delivered', $code === 200 && str_contains($html, '<form'), "HTTP $code");
+
+        $robust = [];
+
+        foreach ($selectors as $selector) {
+            if (!ajaxforms_selector_is_standalone($selector) || ajaxforms_selector_uses_action($selector)) {
+                continue;
+            }
+
+            $matched = ajaxforms_selector_matches($html, $selector);
+            $this->test("Selector '$selector' is understood", $matched !== null, 'unsupported selector shape');
+
+            if ($matched === true) {
+                $robust[] = $selector;
+            }
+        }
+
+        $this->test('A selector finds the form without its wrapper and without the action',
+            $robust !== [],
+            'only wrapper- or action-dependent selectors match, so SEF or a template override breaks the detection: '
+                . implode(' | ', $selectors));
+    }
+
     public function run(): bool
     {
         echo "=== Username Reminder Request Tests ===\n";
@@ -222,6 +262,7 @@ class RemindRequestTest
         $this->testInvalidEmail();
         $this->testUnknownEmail();
         $this->testLanguageKeys();
+        $this->testFormDetection();
 
         echo "\n=== Remind Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
