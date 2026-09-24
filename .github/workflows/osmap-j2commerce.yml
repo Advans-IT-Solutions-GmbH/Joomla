@@ -357,6 +357,62 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           docker compose -f docker-compose.joomla6-sef.yml down -v
 
+  test-j5-sef:
+    name: 08 - Sitemap HTTP SEF (J5 SEF)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: extension-package
+          path: j2commerce/plg_osmap_j2commerce/tests/
+      - name: Start environment (J5 SEF)
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.sef.yml up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "docker compose up failed after $attempt attempts"
+              exit 1
+            fi
+            echo "docker compose up failed; retrying after cleanup ($attempt/3)"
+            docker compose -f docker-compose.sef.yml down -v || true
+            sleep 20
+          done
+          echo "Waiting for container to be ready..."
+          timeout 300 bash -c 'until docker exec plg_osmap_j2commerce_j5_sef_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          echo "Container ready"
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          echo "=== Joomla Container Logs ==="
+          docker compose -f docker-compose.sef.yml logs joomla 2>&1 | tail -100 || true
+      - name: Run SEF test
+        env:
+          TEST_STRICT_SKIP: '1'
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          chmod +x run-tests.sh
+          CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: j5-sef-sitemap-http-sef-logs
+          path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/plg_osmap_j2commerce/tests
+          docker compose -f docker-compose.sef.yml down -v
+
   test-production:
     name: Production-like (newest J6, PHP 8.4, MariaDB 10.6, J2C6 production pin)
     runs-on: ubuntu-latest
@@ -528,16 +584,21 @@ jobs:
   official-j5-j2c4:
     name: OSMap / official-j5-j2c4
     runs-on: ubuntu-latest
-    needs: test-j5
+    needs: [test-j5, test-j5-sef]
     if: always()
     permissions: {}
     steps:
       - name: Verify official J5/J2C4 matrix
         env:
-          RESULT: ${{ needs.test-j5.result }}
+          RESULT_J5: ${{ needs.test-j5.result }}
+          RESULT_SEF: ${{ needs.test-j5-sef.result }}
         run: |
-          if [ "$RESULT" != "success" ]; then
-            echo "Official J5/J2C4 matrix did not pass: $RESULT"
+          if [ "$RESULT_J5" != "success" ]; then
+            echo "Official J5/J2C4 matrix did not pass: $RESULT_J5"
+            exit 1
+          fi
+          if [ "$RESULT_SEF" != "success" ]; then
+            echo "Official J5/J2C4 SEF job did not pass: $RESULT_SEF"
             exit 1
           fi
 
@@ -575,6 +636,7 @@ jobs:
       - test-j5
       - test-j6
       - test-j6-sef
+      - test-j5-sef
       - test-production
       - test-update
       - official-j5-j2c4
