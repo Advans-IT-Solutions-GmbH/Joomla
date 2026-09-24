@@ -253,6 +253,95 @@ class RemindRequestTest
                 . implode(' | ', $selectors));
     }
 
+    /**
+     * The reminder mail has to carry the design of the site.
+     *
+     * The plugin used to compose subject and body itself and to send them with
+     * setBody(), so this mail left the site as Content-Type: text/plain while
+     * every other mail of the site was rendered from the template in
+     * #__mail_templates, with frame, logo and tables.
+     */
+    private function testRemindMailCarriesTheSiteDesign(): void
+    {
+        echo "\n--- Reminder mail goes through the site's mail template ---\n";
+
+        // Installed outside the try, cleaned up inside the finally: a partly
+        // installed capture must never survive this method either.
+        $reason = ajaxforms_mailcatch_install();
+
+        try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
+            $selfTest = ajaxforms_mailcatch_selftest();
+            $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
+
+            if ($selfTest !== null) {
+                return;
+            }
+
+            ajaxforms_enable_html_mail();
+
+            $user = ajaxforms_create_test_user('remind', 'en-GB');
+
+            ajaxforms_mailcatch_clear();
+
+            $plugin = ajaxforms_plugin_instance();
+            $send   = new ReflectionMethod($plugin, 'sendRemindEmail');
+            $send->setAccessible(true);
+            $send->invoke($plugin, $user);
+
+            $messages = ajaxforms_mailcatch_messages();
+            $this->test('Exactly one reminder mail sent', count($messages) === 1, count($messages) . ' captured');
+
+            if (count($messages) !== 1) {
+                return;
+            }
+
+            $raw  = $messages[0];
+            $text = ajaxforms_mail_text($raw);
+
+            $this->test(
+                'Mail addressed to the account',
+                stripos($raw, (string) $user->email) !== false,
+                'recipient not found in the message'
+            );
+
+            $this->test(
+                'Mail carries an HTML part (Content-Type is not text/plain)',
+                (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
+                'headers: ' . substr($raw, 0, 400)
+            );
+
+            $this->test(
+                'HTML part is rendered through the mail layout',
+                stripos($text, '<html') !== false && stripos($text, '<table') !== false,
+                'no frame markup in the message'
+            );
+
+            $this->test(
+                'Mail names the username it reminds of',
+                strpos($text, (string) $user->username) !== false,
+                'username missing in the message'
+            );
+
+            // The plugin answers inside com_ajax, where the strings of
+            // com_users are not loaded; without loading them the template would
+            // arrive as its raw language keys.
+            $this->test(
+                'Template strings are translated, not raw language keys',
+                stripos($text, 'COM_USERS_EMAIL_') === false,
+                'a raw language key is in the message'
+            );
+        } finally {
+            ajaxforms_delete_test_user('remind');
+            ajaxforms_mailcatch_remove();
+        }
+    }
+
     public function run(): bool
     {
         echo "=== Username Reminder Request Tests ===\n";
@@ -263,6 +352,7 @@ class RemindRequestTest
         $this->testUnknownEmail();
         $this->testLanguageKeys();
         $this->testFormDetection();
+        $this->testRemindMailCarriesTheSiteDesign();
 
         echo "\n=== Remind Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

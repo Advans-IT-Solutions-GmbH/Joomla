@@ -198,6 +198,133 @@ class RegistrationTest
         }
     }
 
+    /**
+     * The activation mail and the notice about a new registration have to carry
+     * the design of the site, just like the reset and the reminder mail.
+     *
+     * Both used to be composed in the plugin and sent with setBody(), so they
+     * left the site as Content-Type: text/plain. The check is made on the
+     * message the site actually hands to the mail transport.
+     */
+    private function testRegistrationMailsCarryTheSiteDesign(): void
+    {
+        echo "\n--- Registration mails go through the site's mail templates ---\n";
+
+        $reason = ajaxforms_mailcatch_install();
+
+        try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
+            $selfTest = ajaxforms_mailcatch_selftest();
+            $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
+
+            if ($selfTest !== null) {
+                return;
+            }
+
+            ajaxforms_enable_html_mail();
+
+            $user = ajaxforms_create_test_user('activation');
+            // handleRegistration() stores the plain token in activation and puts
+            // it into the link of the mail.
+            $user->activation = str_repeat('9f8e7d6c', 4);
+
+            $plugin = ajaxforms_plugin_instance();
+
+            $this->checkActivationMail($plugin, $user);
+            $this->checkAdminNotification($plugin, $user);
+        } finally {
+            ajaxforms_delete_test_user('activation');
+            ajaxforms_mailcatch_remove();
+        }
+    }
+
+    private function checkActivationMail(object $plugin, object $user): void
+    {
+        // Self-activation (useractivation = 1) and admin activation (2) have
+        // their own core template; this is the self-activation case.
+        $config = new \Joomla\Registry\Registry(['useractivation' => 1]);
+
+        ajaxforms_mailcatch_clear();
+
+        $send = new ReflectionMethod($plugin, 'sendActivationEmail');
+        $send->setAccessible(true);
+        $send->invoke($plugin, $user, $config);
+
+        $messages = ajaxforms_mailcatch_messages();
+        $this->test('Exactly one activation mail sent', count($messages) === 1, count($messages) . ' captured');
+
+        if (count($messages) !== 1) {
+            return;
+        }
+
+        $raw  = $messages[0];
+        $text = ajaxforms_mail_text($raw);
+
+        $this->test('Activation mail addressed to the account',
+            stripos($raw, (string) $user->email) !== false);
+
+        $this->test('Activation mail carries an HTML part (Content-Type is not text/plain)',
+            (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
+            'headers: ' . substr($raw, 0, 400));
+
+        $this->test('Activation mail is rendered through the mail layout',
+            stripos($text, '<html') !== false && stripos($text, '<table') !== false);
+
+        $this->test('Activation mail carries the activation link',
+            strpos($text, 'registration.activate') !== false
+                && strpos($text, (string) $user->activation) !== false,
+            'activation link or token missing');
+
+        $this->test('Activation mail strings are translated, not raw language keys',
+            stripos($text, 'COM_USERS_EMAIL_') === false);
+
+        // The stored password hash must never reach a mail, whatever a site put
+        // into its template.
+        $this->test('Activation mail carries no stored credential',
+            (string) $user->password !== '' && strpos($raw, (string) $user->password) === false);
+    }
+
+    private function checkAdminNotification(object $plugin, object $user): void
+    {
+        ajaxforms_mailcatch_clear();
+
+        $send = new ReflectionMethod($plugin, 'sendAdminNotification');
+        $send->setAccessible(true);
+        $send->invoke($plugin, $user);
+
+        $messages = ajaxforms_mailcatch_messages();
+        $this->test('Exactly one notice about the registration sent',
+            count($messages) === 1, count($messages) . ' captured');
+
+        if (count($messages) !== 1) {
+            return;
+        }
+
+        $raw  = $messages[0];
+        $text = ajaxforms_mail_text($raw);
+
+        $this->test('Notice goes to the address of the site',
+            stripos($raw, (string) Factory::getApplication()->get('mailfrom')) !== false);
+
+        $this->test('Notice carries an HTML part (Content-Type is not text/plain)',
+            (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
+            'headers: ' . substr($raw, 0, 400));
+
+        $this->test('Notice is rendered through the mail layout',
+            stripos($text, '<html') !== false && stripos($text, '<table') !== false);
+
+        $this->test('Notice names the new account',
+            strpos($text, (string) $user->username) !== false);
+
+        $this->test('Notice strings are translated, not raw language keys',
+            stripos($text, 'COM_USERS_EMAIL_') === false);
+    }
+
     public function run(): bool
     {
         echo "=== Registration Tests ===\n";
@@ -207,6 +334,7 @@ class RegistrationTest
         $this->testNoTokenRejected();
         $this->testDuplicateUsernameRejected();
         $this->testLanguageKeys();
+        $this->testRegistrationMailsCarryTheSiteDesign();
 
         echo "\n=== Registration Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

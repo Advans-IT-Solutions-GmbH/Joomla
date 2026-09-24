@@ -349,6 +349,78 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - Uses `UserFactoryInterface` instead of `User::getInstance()`
 - Uses `->getInput()` instead of `->input`
 
+## Account Mails
+
+The password reset, the username reminder, the activation mail and the notice
+to the site address are sent through Joomla's `MailTemplate`, with the same
+template ids and the same data keys `com_users` uses:
+
+| Mail | Template id |
+|---|---|
+| Password reset | `com_users.password_reset` |
+| Username reminder | `com_users.reminder` |
+| Activation, self activation | `com_users.registration.user.self_activation` |
+| Activation, admin activation | `com_users.registration.user.admin_activation` |
+| Notice about a new registration | `com_users.registration.admin.new_notification` |
+
+What a site configures under System, Mail Templates therefore applies to these
+mails as well: the stored subject and body, the HTML layout with frame and
+logo, and a template of its own per language. Nothing has to be configured in
+the plugin for that.
+
+### What changes for an existing site
+
+**The wording of these mails changes on every site, not only on a site that
+styled its templates.** Joomla creates the rows in `#__mail_templates` with
+every installation, and `MailTemplate` reads the stored subject and body
+whatever the mail style is set to. From this version on, the recipient
+therefore reads Joomla's own `COM_USERS_EMAIL_…` texts, which Joomla ships
+translated, instead of the plugin's former `PLG_AJAX_JOOMLAAJAXFORMS_…` texts.
+That is the point of the change: these mails now read and look like every other
+account mail of the site, and the site can edit them in the backend like all
+the others. A site that wants its former wording back enters it in the
+corresponding mail template.
+
+The plugin's own texts are kept as a fallback only. That fallback is reached
+when `#__mail_templates` has no such row, for example after someone deleted it,
+which is why a normal installation never uses it. It writes a warning to the
+log when it does.
+
+Three details follow from the plugin answering inside `com_ajax`:
+
+- The language files of the extension the template belongs to are loaded before
+  the mail is rendered. `MailTemplate` does that only for a mail in another
+  language than the request, so without it the mail would carry the raw
+  language keys.
+- The mail is rendered in the language of the account, if the account has one
+  and the site has that language installed, otherwise in the language of the
+  request and finally in the default site language. A language the site does
+  not have is refused, because the template texts are language keys and the
+  recipient would read those keys.
+- Joomla's own helper for those language files remembers per extension that it
+  already loaded them, without regard for the language. When one request sends
+  two mails of the same extension in two languages that both differ from the
+  language of the request, the second one can therefore arrive untranslated.
+  The registration path sends the mail to the customer first and the notice to
+  the site second, so the notice is the one that would be affected.
+
+### The notice about a new registration
+
+It goes to the address of the site (`mailfrom`) in the default site language,
+and it uses `com_users.registration.admin.new_notification`, the template whose
+text says that someone has registered. It deliberately does not use
+`com_users.registration.admin.verification_request`: that is the template
+Joomla sends **after** the new account has confirmed its e-mail address, with a
+token generated at that moment for the administration to activate the account.
+Joomla's own registration flow still sends it at that point, because the
+activation link of this plugin leads into `com_users`. At the time the plugin
+sends its notice, nothing is required of the administration yet, so a text
+asking for approval, and a link carrying the customer's own confirmation token,
+would both be wrong.
+
+When the site has no valid `mailfrom` address, the notice is skipped and a
+warning is written to the log instead.
+
 ## Multi-Language Support
 
 - English (`en-GB`)
