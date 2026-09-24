@@ -18,6 +18,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
+use Joomla\CMS\Mail\MailTemplate;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
@@ -29,6 +30,8 @@ use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Event\DispatcherInterface;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Registry\Registry;
+use Joomla\Utilities\ArrayHelper;
 
 class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 {
@@ -1014,6 +1017,230 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Send one of Joomla's own account mail templates.
+     *
+     * Everything the site configured under System, Mail Templates then applies:
+     * the stored subject and body, the HTML layout with frame and logo, and the
+     * language of the recipient.
+     *
+     * MailTemplate::send() returns false when the template is missing from
+     * #__mail_templates, so only a strict true counts as sent and anything else
+     * lets the caller fall back to the plain-text mail.
+     *
+     * @param   string    $templateId      Mail template id, for example com_users.password_reset
+     * @param   string    $languageTag     Language the mail is rendered in
+     * @param   string    $recipientEmail  Address the mail goes to
+     * @param   string    $recipientName   Name of the recipient (may be empty)
+     * @param   array     $data            Replacement data for the template tags
+     * @param   string    $context         Short label for the log entry
+     * @param   string[]  $unsafeTags      Tags whose value is escaped in the HTML body
+     *
+     * @return  bool  True only when the mail was sent
+     */
+    protected function sendTemplateMail(
+        string $templateId,
+        string $languageTag,
+        string $recipientEmail,
+        string $recipientName,
+        array $data,
+        string $context,
+        array $unsafeTags = []
+    ): bool {
+        try {
+            $this->loadMailTemplateStrings($templateId, $languageTag);
+
+            $mailer = new MailTemplate($templateId, $languageTag);
+            $mailer->addTemplateData($data);
+            $mailer->addRecipient($recipientEmail, $recipientName !== '' ? $recipientName : null);
+
+            if ($unsafeTags) {
+                $mailer->addUnsafeTags($unsafeTags);
+            }
+
+            if ($mailer->send() === true) {
+                return true;
+            }
+
+            Log::add(
+                $context . ': mail template ' . $templateId . ' is not available, falling back to plain text',
+                Log::WARNING,
+                'plg_ajax_joomlaajaxforms'
+            );
+        } catch (\Exception $e) {
+            Log::add(
+                $context . ' via mail template failed, falling back to plain text: ' . $e->getMessage(),
+                Log::WARNING,
+                'plg_ajax_joomlaajaxforms'
+            );
+        }
+
+        return false;
+    }
+
+    /**
+     * Make the strings of a mail template readable.
+     *
+     * A mail template stores subject and body as language keys of the extension
+     * it belongs to. MailTemplate loads that extension's language files only
+     * when the mail goes out in a language other than the one of the running
+     * request. This plugin answers inside com_ajax, where the strings of
+     * com_users are not loaded, so without this the mail would carry the raw
+     * language keys.
+     *
+     * @param   string  $templateId   Mail template id, the part before the dot names the extension
+     * @param   string  $languageTag  Language the mail is rendered in
+     *
+     * @return  void
+     */
+    protected function loadMailTemplateStrings(string $templateId, string $languageTag): void
+    {
+        try {
+            $language = $this->getApplication()->getLanguage();
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        if ($languageTag !== $language->getTag()) {
+            // MailTemplate builds its own language object and loads the files itself.
+            return;
+        }
+
+        $extension = strstr($templateId, '.', true);
+
+        if ($extension === false || $extension === '') {
+            return;
+        }
+
+        $language->load($extension, JPATH_SITE, $languageTag, true)
+            || $language->load($extension, JPATH_SITE . '/components/' . $extension, $languageTag, true);
+    }
+
+    /**
+     * Replacement data built from a user record.
+     *
+     * The same set com_users passes, minus the credential fields: a mail
+     * template is editable in the backend, so no secret may be reachable
+     * through a tag. The link the mail needs is built separately, so dropping
+     * the stored token costs nothing. Values that are not scalar are dropped as
+     * well, because a template tag can only carry text.
+     *
+     * @param   object  $user  User object or record from #__users
+     *
+     * @return  array<string, mixed>
+     */
+    protected function mailTemplateData(object $user): array
+    {
+        $data = ArrayHelper::fromObject($user, false);
+
+        unset($data['password'], $data['password_clear'], $data['otpKey'], $data['otep'], $data['activation']);
+
+        foreach ($data as $key => $value) {
+            if ($value !== null && !is_scalar($value) && !is_array($value)) {
+                unset($data[$key]);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Language tag for a mail to a user.
+     *
+     * The mail has to arrive in the language of the customer, so the language
+     * chosen in the user's own account wins, then the language of the running
+     * request, then the default site language.
+     *
+     * @param   object  $user  User object or record from #__users
+     *
+     * @return  string
+     */
+    protected function accountMailLanguage(object $user): string
+    {
+        $chosen = '';
+        $params = $user->params ?? null;
+
+        if ($params instanceof Registry) {
+            $chosen = (string) $params->get('language', '');
+        } else {
+            if (is_string($params) && $params !== '') {
+                $params = json_decode($params, true);
+            }
+
+            if (is_object($params)) {
+                $params = (array) $params;
+            }
+
+            if (is_array($params)) {
+                $chosen = (string) ($params['language'] ?? '');
+            }
+        }
+
+        $candidates = [$chosen];
+
+        try {
+            $candidates[] = (string) $this->getApplication()->getLanguage()->getTag();
+        } catch (\Throwable $e) {
+            // No application language available.
+        }
+
+        $candidates[] = $this->defaultSiteLanguage();
+
+        foreach ($candidates as $tag) {
+            if (preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
+                return $tag;
+            }
+        }
+
+        return 'en-GB';
+    }
+
+    /**
+     * The default language of the site.
+     *
+     * @return  string
+     */
+    protected function defaultSiteLanguage(): string
+    {
+        try {
+            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            $tag = '';
+        }
+
+        return preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag) ? $tag : 'en-GB';
+    }
+
+    /**
+     * An absolute, routed address for a mail.
+     *
+     * Route::link() gives the address the site itself would show, instead of
+     * the raw component URL. Without a site router, for example in a CLI
+     * context, the unrouted address is still a working link.
+     *
+     * @param   string   $query  Internal Joomla URL, starting with index.php
+     * @param   bool     $xhtml  Escape & as &amp; for the HTML body
+     * @param   int      $tls    Route::TLS_* constant
+     *
+     * @return  string
+     */
+    protected function routedLink(string $query, bool $xhtml, int $tls): string
+    {
+        try {
+            $link = Route::link('site', $query, $xhtml, $tls, true);
+
+            if (is_string($link) && $link !== '') {
+                return $link;
+            }
+        } catch (\Throwable $e) {
+            // No site router available.
+        }
+
+        $link = Uri::root() . $query;
+
+        return $xhtml ? htmlspecialchars($link, ENT_COMPAT, 'UTF-8') : $link;
+    }
+
+    /**
      * Send password reset email
      *
      * @param   object  $user   User object
@@ -1023,9 +1250,35 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendResetEmail(object $user, string $token): void
     {
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
+
+        // Joomla's own mail template, with the same id and the same data keys
+        // com_users uses, so the stored template, the HTML layout and the logo
+        // apply to this mail exactly as they do to every other account mail.
+        $data              = $this->mailTemplateData($user);
+        $data['sitename']  = $app->get('sitename');
+        $data['link_text'] = $this->routedLink($query, false, $mode);
+        $data['link_html'] = $this->routedLink($query, true, $mode);
+        $data['token']     = $token;
+
+        if ($this->sendTemplateMail(
+            'com_users.password_reset',
+            $this->accountMailLanguage($user),
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Reset email'
+        )) {
+            return;
+        }
+
+        // Fallback for a site without that mail template: the former plain-text
+        // mail. An unstyled mail is better than no mail.
         try {
-            $siteName = $this->getApplication()->get('sitename');
-            $resetLink = Uri::root() . 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+            $siteName = $app->get('sitename');
+            $resetLink = Uri::root() . $query;
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
             $body = Text::sprintf(
@@ -1056,9 +1309,30 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendRemindEmail(object $user): void
     {
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&view=login';
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
+
+        // Same reasoning as sendResetEmail().
+        $data              = $this->mailTemplateData($user);
+        $data['sitename']  = $app->get('sitename');
+        $data['link_text'] = $this->routedLink($query, false, $mode);
+        $data['link_html'] = $this->routedLink($query, true, $mode);
+
+        if ($this->sendTemplateMail(
+            'com_users.reminder',
+            $this->accountMailLanguage($user),
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Remind email'
+        )) {
+            return;
+        }
+
         try {
-            $siteName = $this->getApplication()->get('sitename');
-            $loginLink = Uri::root() . 'index.php?option=com_users&view=login';
+            $siteName = $app->get('sitename');
+            $loginLink = Uri::root() . $query;
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
             $body = Text::sprintf(
@@ -1090,9 +1364,38 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendActivationEmail($user, $config): void
     {
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&task=registration.activate&token=' . $user->activation;
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
+
+        // Self-activation and admin activation have their own core template,
+        // the same split com_users makes.
+        $templateId = ((int) $config->get('useractivation') === 2)
+            ? 'com_users.registration.user.admin_activation'
+            : 'com_users.registration.user.self_activation';
+
+        $data              = $this->mailTemplateData($user);
+        $data['fromname']  = $app->get('fromname');
+        $data['mailfrom']  = $app->get('mailfrom');
+        $data['sitename']  = $app->get('sitename');
+        $data['siteurl']   = Uri::root();
+        $data['activate']  = $this->routedLink($query, false, $mode);
+
+        if ($this->sendTemplateMail(
+            $templateId,
+            $this->accountMailLanguage($user),
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Activation email',
+            ['username', 'name']
+        )) {
+            return;
+        }
+
         try {
-            $siteName = $this->getApplication()->get('sitename');
-            $activationLink = Uri::root() . 'index.php?option=com_users&task=registration.activate&token=' . $user->activation;
+            $siteName = $app->get('sitename');
+            $activationLink = Uri::root() . $query;
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_SUBJECT', $siteName);
             $body = Text::sprintf(
@@ -1123,9 +1426,31 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendAdminNotification($user): void
     {
+        $app        = $this->getApplication();
+        $adminEmail = (string) $app->get('mailfrom');
+
+        $data             = $this->mailTemplateData($user);
+        $data['fromname'] = $app->get('fromname');
+        $data['mailfrom'] = $app->get('mailfrom');
+        $data['sitename'] = $app->get('sitename');
+        $data['siteurl']  = Uri::root();
+
+        // The notice goes to the site's own address, so it is addressed in the
+        // default site language rather than in the language of the registrant.
+        if ($this->sendTemplateMail(
+            'com_users.registration.admin.new_notification',
+            $this->defaultSiteLanguage(),
+            $adminEmail,
+            '',
+            $data,
+            'Admin notification',
+            ['username', 'name']
+        )) {
+            return;
+        }
+
         try {
-            $siteName = $this->getApplication()->get('sitename');
-            $adminEmail = $this->getApplication()->get('mailfrom');
+            $siteName = $app->get('sitename');
 
             $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_SUBJECT', $siteName);
             $body = Text::sprintf(
