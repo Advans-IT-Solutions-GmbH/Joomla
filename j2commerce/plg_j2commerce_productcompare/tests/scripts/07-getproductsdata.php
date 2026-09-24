@@ -65,6 +65,7 @@ class GetProductsDataTest
             $this->testGetProductsData();
             $this->testDisabledProductExcluded();
             $this->testHiddenProductsExcluded();
+            $this->testNullDateWindowStaysVisible();
             $this->testGetProductOptions();
         } finally {
             $this->cleanupFixtures();
@@ -228,6 +229,46 @@ class GetProductsDataTest
 
             $this->test("Not in results ($label)", $returned === [], implode(',', $returned));
         }
+    }
+
+    /**
+     * An open publishing window is stored by Joomla either as SQL NULL or, in a
+     * database that was migrated from an older Joomla, as the driver's null-date
+     * sentinel ('0000-00-00 00:00:00'). Both mean "no limit", so a product whose
+     * article carries the sentinel is an ordinary, visible product and has to be
+     * returned. Reading only NULL as open would hide it.
+     */
+    private function testNullDateWindowStaysVisible(): void
+    {
+        echo "\n--- Open publishing window stored as the null date ---\n";
+
+        $nullDate = method_exists($this->db, 'getNullDate') ? $this->db->getNullDate() : '0000-00-00 00:00:00';
+
+        $productId = $this->seedHiddenProduct('null date window', [
+            'state'        => 1,
+            'access'       => 1,
+            'publish_up'   => $nullDate,
+            'publish_down' => $nullDate,
+        ]);
+
+        $this->test('Fixture with the null date created', $productId !== 0);
+
+        if ($productId === 0) {
+            return;
+        }
+
+        $plugin = $this->makePlugin();
+        $method = (new ReflectionClass($plugin))->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $pkCol    = $this->productsPk;
+        $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+        $this->test(
+            'Product with a null-date window is returned',
+            $returned === [$productId],
+            'returned: ' . implode(',', $returned)
+        );
     }
 
     /**
