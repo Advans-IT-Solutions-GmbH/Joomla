@@ -106,6 +106,10 @@ After a new release is created, the publish workflow deletes older releases and 
 
 View all releases: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases
 
+## License
+
+All extensions in this repository are free software, licensed under the GNU General Public License version 3 or later (`GPL-3.0-or-later`); see [LICENSE.txt](LICENSE.txt). Each extension ships its own copy of the license text. Third-party template code bundled with the privacy plugin is listed in [THIRD-PARTY-NOTICES.txt](j2commerce/plg_privacy_j2commerce/THIRD-PARTY-NOTICES.txt).
+
 ## Security
 
 Please report vulnerabilities via GitHub private vulnerability reporting; see the organization [security policy](https://github.com/Advans-IT-Solutions-GmbH/.github/blob/main/SECURITY.md). Pull requests to `main` require review and passing checks.
@@ -120,5 +124,5 @@ CHE-316.407.165
 
 https://advans.ch
 
-Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+Copyright (C) 2026 Advans IT Solutions GmbH
 

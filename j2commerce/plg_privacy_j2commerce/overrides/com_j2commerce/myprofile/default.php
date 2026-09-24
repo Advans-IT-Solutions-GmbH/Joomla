@@ -18,8 +18,12 @@
  * on first install. Never overwritten on updates.
  *
  * @package     J2Commerce Privacy Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2024-2026 J2Commerce, LLC <https://www.j2commerce.com>
+ * @copyright   Modifications (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ *              The original J2Commerce template is licensed under the GNU General
+ *              Public License version 2 or later; see THIRD-PARTY-NOTICES.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 defined('_JEXEC') or die;

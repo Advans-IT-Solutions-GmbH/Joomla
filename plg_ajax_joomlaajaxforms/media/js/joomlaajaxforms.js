@@ -2,8 +2,9 @@
  * @package     Joomla.Plugin
  * @subpackage  Ajax.JoomlaAjaxForms
  *
- * @copyright   Copyright (C) 2025 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary License
+ * @copyright   (C) 2025-2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 'use strict';

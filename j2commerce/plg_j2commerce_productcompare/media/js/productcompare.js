@@ -4,6 +4,10 @@
  * Configuration (maxProducts, ajaxUrl, token) and texts are passed by the
  * plugin through Joomla's script options and read with Joomla.getOptions() and
  * Joomla.Text._() (asset dependency "core").
+ *
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 (function() {
     'use strict';
