@@ -157,7 +157,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private static function loadHelperClasses(): void
     {
-        foreach ([RetentionPeriod::class => '/../Retention/RetentionPeriod.php', LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php', J2CommerceStack::class => '/../Support/J2CommerceStack.php', ConsentRepository::class => '/../Consent/ConsentRepository.php'] as $class => $file) {
+        $classes = [
+            RetentionPeriod::class => '/../Retention/RetentionPeriod.php',
+            LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php',
+            J2CommerceStack::class => '/../Support/J2CommerceStack.php',
+            ConsentRepository::class => '/../Consent/ConsentRepository.php',
+        ];
+
+        foreach ($classes as $class => $file) {
             if (!class_exists($class)) {
                 require_once __DIR__ . $file;
             }
@@ -1117,7 +1124,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $language = $this->pluginLanguage($languageTag);
 
         try {
-            $mailer = $app->getContainer()->get(MailerFactoryInterface::class)->createMailer();
+            $mailer = $this->createMailer();
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
             $mailer->setBody(
@@ -1511,9 +1518,31 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     // =========================================================================
 
     /**
+     * Language key of the administrator notification per action. Written out in
+     * full instead of being assembled from the action, so every key the plugin
+     * can use is visible to the language usage check.
+     */
+    private const ADMIN_NOTIFICATION_KEYS = [
+        'address_deleted' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_DELETED',
+        'data_deletion'   => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_DATA_DELETION',
+    ];
+
+    /**
+     * Language key of the User Actions Log entry per action (see
+     * ADMIN_NOTIFICATION_KEYS for why the keys are written out).
+     */
+    private const ACTIVITY_LOG_KEYS = [
+        'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+        'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
+        'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
+        'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',
+        'orders_anonymized'             => 'PLG_PRIVACY_J2COMMERCE_LOG_ORDERS_ANONYMIZED',
+    ];
+
+    /**
      * Send admin notification email about privacy-related user action
      *
-     * @param string $action Action type (address_deleted, data_export, etc.)
+     * @param string $action Action type, a key of ADMIN_NOTIFICATION_KEYS
      * @param User   $user   User who performed the action
      * @param string $details Additional details
      */
@@ -1533,9 +1562,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        $langKey = self::ADMIN_NOTIFICATION_KEYS[$action] ?? null;
+
+        if ($langKey === null) {
+            Log::add('Privacy admin notification skipped: unknown action ' . $action, Log::WARNING, 'plg_privacy_j2commerce');
+
+            return;
+        }
+
         $subject = Text::_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_SUBJECT');
-        
-        $langKey = 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_' . strtoupper($action);
+
         // $username: captured before a pseudonymisation of the account in the same request.
         $body = Text::sprintf($langKey, $username ?? $user->username, $user->id);
         
@@ -1544,15 +1580,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            $mailer = $this->getApplication()->getContainer()->get(MailerFactoryInterface::class)->createMailer();
+            $mailer = $this->createMailer();
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
             $mailer->send();
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Log error but don't fail the operation
             Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
+    }
+
+    protected function createMailer()
+    {
+        return Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
     }
 
     // =========================================================================
@@ -1562,7 +1603,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     /**
      * Log privacy-related activity
      *
-     * @param string $action  Action type
+     * @param string $action  Action type, a key of ACTIVITY_LOG_KEYS
      * @param int    $userId  User ID
      * @param string $details Additional details
      */
@@ -1579,9 +1620,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'plg_privacy_j2commerce'
         );
 
-        // Also store in database for audit trail
+        // Also store in database for audit trail. The entry carries a language key
+        // that Joomla's User Actions Log translates; an action without its own key
+        // is only written to the log file.
+        $logKey = self::ACTIVITY_LOG_KEYS[$action] ?? null;
+
+        if ($logKey === null) {
+            Log::add('Privacy action without a log text: ' . $action, Log::WARNING, 'plg_privacy_j2commerce');
+
+            return;
+        }
+
         $db = $this->getDatabase();
-        
+
         // Check if action_logs table exists (Joomla's built-in)
         try {
             $query = $this->createDbQuery()
@@ -1596,7 +1647,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     $db->quoteName('ip_address')
                 ])
                 ->values(
-                    $db->quote('PLG_PRIVACY_J2COMMERCE_LOG_' . strtoupper($action)) . ',' .
+                    $db->quote($logKey) . ',' .
                     $db->quote(json_encode(['action' => $action, 'details' => $details])) . ',' .
                     $db->quote(Factory::getDate()->toSql()) . ',' .
                     $db->quote('plg_privacy_j2commerce') . ',' .

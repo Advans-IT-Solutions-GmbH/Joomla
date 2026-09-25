@@ -27,6 +27,7 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
@@ -118,8 +119,11 @@ if ($_showConsent && $_privacyArticleId) {
     <?php endif; ?>
 
     <?php // ── Continue button ───────────────────────────────────────────── ?>
+    <?php // J2Store's own checkout script (checkout/default.php) submits this step when
+          // #button-payment-method is clicked and collects the step's inputs, the hidden
+          // ones below included. A plain submit button has no form to submit here. ?>
     <div class="j2store-checkout-actions mt-3">
-        <button type="submit" class="btn btn-primary j2store-checkout-button">
+        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button">
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
     </div>
@@ -127,3 +131,9 @@ if ($_showConsent && $_privacyArticleId) {
 </div>
 
 <?php echo J2Store::plugin()->eventWithHtml('AfterDisplayShippingPayment', [$this->order]); ?>
+
+<input type="hidden" name="task" value="shipping_payment_method_validate" />
+<input type="hidden" name="option" value="com_j2store" />
+<input type="hidden" name="view" value="checkout" />
+<?php // J2Store 4.1.8 checks the form token on shipping_payment_method_validate. ?>
+<?php echo HTMLHelper::_('form.token'); ?>

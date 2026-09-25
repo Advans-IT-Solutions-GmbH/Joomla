@@ -32,6 +32,7 @@ class ConfigurationTest
         $allPassed = $this->testDefaultParams() && $allPassed;
         $allPassed = $this->testXmlConfigFields() && $allPassed;
         $allPassed = $this->testParamsCanBeUpdated() && $allPassed;
+        $allPassed = $this->testDebugOption() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -156,6 +157,122 @@ class ConfigurationTest
             echo "FAIL ({$e->getMessage()})\n";
             return false;
         }
+    }
+
+    /**
+     * onBeforeRender() passes the "debug" option to the script and it follows
+     * the plugin parameter: off by default, so a live site's browser console
+     * stays clean, on only while an administrator switches it on.
+     *
+     * The plugin is driven directly with a real site application and a real
+     * HTML document, because plugins of the ajax group are imported by com_ajax
+     * and a normal page request would not dispatch this handler in a CLI test.
+     */
+    private function testDebugOption(): bool
+    {
+        $passed = true;
+
+        echo "Test: Debug is off in the script options by default... ";
+        $off = $this->scriptOptionsFor(['debug' => 0]);
+
+        if (\is_array($off) && \array_key_exists('debug', $off) && $off['debug'] === false) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (options: " . json_encode($off) . ")\n";
+            $passed = false;
+        }
+
+        echo "Test: Debug reaches the script when the option is on... ";
+        $on = $this->scriptOptionsFor(['debug' => 1]);
+
+        if (\is_array($on) && ($on['debug'] ?? null) === true) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (options: " . json_encode($on) . ")\n";
+            $passed = false;
+        }
+
+        echo "Test: Language strings still reach the script... ";
+        if (\is_array($off) && !empty($off['ERROR_GENERIC'])) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (options: " . json_encode($off) . ")\n";
+            $passed = false;
+        }
+
+        return $passed;
+    }
+
+    /**
+     * Script options the plugin adds to a fresh HTML document for the given
+     * plugin parameters, or null when the handler could not be driven.
+     */
+    private function scriptOptionsFor(array $params): ?array
+    {
+        try {
+            \JLoader::registerNamespace(
+                'Advans\\Plugin\\Ajax\\JoomlaAjaxForms',
+                '/var/www/html/plugins/ajax/joomlaajaxforms/src',
+                false,
+                false,
+                'psr4'
+            );
+
+            $app = $this->siteApplication();
+            $doc = new \Joomla\CMS\Document\HtmlDocument();
+
+            $property = new \ReflectionProperty($app, 'document');
+            $property->setValue($app, $doc);
+
+            if (property_exists(\Joomla\CMS\Factory::class, 'document')) {
+                \Joomla\CMS\Factory::$document = $doc;
+            }
+
+            $class  = 'Advans\\Plugin\\Ajax\\JoomlaAjaxForms\\Extension\\JoomlaAjaxForms';
+            $plugin = new $class([
+                'params' => new \Joomla\Registry\Registry($params),
+                'type'   => 'ajax',
+                'name'   => 'joomlaajaxforms',
+            ]);
+            $plugin->setApplication($app);
+            $plugin->setDatabase($this->db);
+
+            $plugin->onBeforeRender();
+
+            return $doc->getScriptOptions('plg_ajax_joomlaajaxforms');
+        } catch (\Throwable $e) {
+            echo "\n  (error: " . $e->getMessage() . ")\n  ";
+
+            return null;
+        }
+    }
+
+    /** Site application for the plugin, created once per process. */
+    private function siteApplication(): object
+    {
+        if (\Joomla\CMS\Factory::$application instanceof \Joomla\CMS\Application\SiteApplication) {
+            return \Joomla\CMS\Factory::$application;
+        }
+
+        $container = \Joomla\CMS\Factory::getContainer();
+        $input     = null;
+
+        foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+            try {
+                if ($container->has($inputClass)) {
+                    $input = $container->get($inputClass);
+                    break;
+                }
+            } catch (\Throwable $e) {
+                // try the next candidate
+            }
+        }
+
+        $app = new \Joomla\CMS\Application\SiteApplication($input, $container->get('config'), null, $container);
+        $app->setDispatcher($container->get(\Joomla\Event\DispatcherInterface::class));
+        \Joomla\CMS\Factory::$application = $app;
+
+        return $app;
     }
 
     private function printSummary(): void

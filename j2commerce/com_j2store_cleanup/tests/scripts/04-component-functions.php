@@ -13,6 +13,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 
 $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -82,6 +83,14 @@ class ComponentFunctionsTest
         $this->test('getIssuePatterns() defined',    function_exists('getIssuePatterns'));
         $this->test('scanForIssues() defined',       function_exists('scanForIssues'));
         $this->test('classifyExtension() defined',   function_exists('classifyExtension'));
+        // Extension names are language keys in #__extensions; the page must not
+        // print the column unchanged (see getExtensionName()). Behaviour is
+        // covered over HTTP by the shared backend-views suite, which needs a
+        // real application; here only the inventory is asserted.
+        $this->test('getExtensionName() defined',    function_exists('getExtensionName'));
+        $this->test('The page never prints the raw name column',
+            !str_contains((string) @file_get_contents($this->mainFile), 'htmlspecialchars($ext->name)'),
+            'use getExtensionName($ext) so the language key is translated');
 
         if (!function_exists('getExtensionPath') || !function_exists('getIssuePatterns')
             || !function_exists('scanForIssues') || !function_exists('classifyExtension')) {
@@ -93,6 +102,8 @@ class ComponentFunctionsTest
         $this->testGetIssuePatterns();
         $this->testScanForIssues();
         $this->testClassifyExtension();
+        $this->testPageHasNoFixedText();
+        $this->testTextsFollowTheLanguage();
 
         echo "\n=== Component Functions Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
@@ -140,9 +151,11 @@ class ComponentFunctionsTest
         $this->test('joomla patterns not empty',      !empty($patterns['joomla']));
 
         // On any Joomla version, J3 legacy classes must be in the patterns
-        $allLabels = implode(' ', array_values($patterns['joomla']));
-        $this->test('JPlugin pattern present',        strpos($allLabels, 'JPlugin') !== false);
-        $this->test('JModel pattern present',         strpos($allLabels, 'JModel') !== false);
+        $apis = array_column($patterns['joomla'], 'api');
+        $this->test('JPlugin pattern present',        in_array('JPlugin', $apis, true));
+        $this->test('JModel pattern present',         in_array('JModel', $apis, true));
+        $this->test('Every pattern names the Joomla version that removes the API',
+            array_filter(array_column($patterns['joomla'], 'removedIn'), fn ($v) => !in_array($v, [4, 6], true)) === []);
     }
 
     private function testScanForIssues(): void
@@ -211,6 +224,132 @@ class ComponentFunctionsTest
         $this->test('Legacy extension → incompatible', $result4['status'] === 'incompatible');
         $this->test('Incompatible has issues list', !empty($result4['issues']));
         $this->removeDir($legacyDir);
+    }
+
+    /**
+     * The page prints no text of its own: every visible text comes from a
+     * language key, so a further language needs language files only. What is
+     * left after removing PHP output, styles and tags may only be the company
+     * name, the copyright line and separators.
+     */
+    private function testPageHasNoFixedText(): void
+    {
+        echo "\n--- Page texts ---\n";
+
+        $source = (string) file_get_contents($this->mainFile);
+        $start  = strpos($source, '<body>');
+        $end    = strpos($source, '</html>');
+        $this->test('Page markup found', $start !== false && $end !== false);
+
+        if ($start === false || $end === false) {
+            return;
+        }
+
+        $markup = substr($source, $start, $end - $start);
+        $markup = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
+        $markup = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $markup);
+        $text   = html_entity_decode(strip_tags($markup), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text   = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
+        $text   = trim(preg_replace('/\s+/u', ' ', $text));
+
+        $this->test('Page markup contains no fixed text', $text === '', "left over: '" . mb_substr($text, 0, 200) . "'");
+
+        $this->test('Removal confirmation comes from the language file',
+            str_contains($source, "Text::script('COM_J2STORE_CLEANUP_CONFIRM_REMOVE')")
+            && str_contains($source, "confirm(Joomla.Text._('COM_J2STORE_CLEANUP_CONFIRM_REMOVE'))"));
+
+        $this->test('No English message is built outside the language file',
+            !preg_match("/(?:enqueueMessage|\['messages'\]\[\]\s*=|'reason'\s*=>)\s*\(?\s*'[A-Za-z][^']*\s[^']*'/", $source));
+    }
+
+    /**
+     * Results and messages follow the site language. Runs in de-DE, so an
+     * English text built into the code would show.
+     */
+    private function testTextsFollowTheLanguage(): void
+    {
+        echo "\n--- Texts in de-DE ---\n";
+
+        // Joomla installs an extension's language file only for languages the site
+        // has, and the test site has no de-DE pack. Load the de-DE file from the
+        // package under test instead, without falling back to en-GB.
+        $language = Factory::getContainer()
+            ->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)
+            ->createLanguage('de-DE');
+        $language->load('com_j2store_cleanup', $this->packageLanguageDir('com_j2store_cleanup', 'de-DE'), 'de-DE', true, false);
+
+        $previousApplication = Factory::$application;
+        $hasLanguageProperty = property_exists(Factory::class, 'language');
+        $previousLanguage    = $hasLanguageProperty ? Factory::$language : null;
+
+        // Text reads the language through Factory; give it the German one.
+        Factory::$application = new class ($language) {
+            public function __construct(private object $language)
+            {
+            }
+
+            public function getLanguage(): object
+            {
+                return $this->language;
+            }
+        };
+
+        if ($hasLanguageProperty) {
+            Factory::$language = $language;
+        }
+
+        try {
+            $this->test('Precondition: component language loaded in de-DE',
+                Text::_('COM_J2STORE_CLEANUP_BUTTON_REMOVE') === 'Ausgewählte Erweiterungen entfernen');
+
+            $patterns = getIssuePatterns();
+
+            $issue = describeIssue(['type' => 'joomla', 'detail' => 'JFactory', 'removedIn' => 6]);
+            $this->test('A finding is described in German', $issue === 'JFactory (entfernt in Joomla 6)', $issue);
+
+            $core = classifyExtension((object) ['version' => '4.0.20', 'author' => 'J2Commerce'],
+                (object) ['element' => 'com_j2store', 'type' => 'component', 'folder' => '', 'client_id' => 1], $patterns);
+            $this->test('The core component is described in German',
+                $core['reason'] === 'Kernkomponente (Version 4.0.20)', $core['reason']);
+
+            $missing = classifyExtension((object) ['version' => '1.0', 'author' => 'Test'],
+                (object) ['element' => 'plg_nonexistent_xyz', 'type' => 'plugin', 'folder' => 'j2store', 'client_id' => 0], $patterns);
+            $this->test('Missing files are described in German',
+                $missing['reason'] === 'Dateien nicht auf dem Server gefunden (Test, Version 1.0)', $missing['reason']);
+        } finally {
+            Factory::$application = $previousApplication;
+
+            if ($hasLanguageProperty) {
+                Factory::$language = $previousLanguage;
+            }
+        }
+    }
+
+    /**
+     * Directory holding language/<tag>/<extension>.ini from the package under
+     * test (/tmp/extension.zip), as a base path for Language::load().
+     */
+    private function packageLanguageDir(string $extension, string $tag): string
+    {
+        $dir = $this->tmpDir . '/package-language';
+        @mkdir($dir . '/language/' . $tag, 0755, true);
+
+        $zip = new \ZipArchive();
+
+        if ($zip->open('/tmp/extension.zip') === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = (string) $zip->getNameIndex($i);
+
+                if (str_ends_with($name, $tag . '/' . $extension . '.ini')) {
+                    file_put_contents($dir . '/language/' . $tag . '/' . $extension . '.ini', (string) $zip->getFromIndex($i));
+                    break;
+                }
+            }
+
+            $zip->close();
+        }
+
+        return $dir;
     }
 
     private function removeDir(string $dir): void

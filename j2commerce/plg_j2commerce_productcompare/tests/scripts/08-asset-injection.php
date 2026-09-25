@@ -1,9 +1,11 @@
 <?php
 /**
- * Asset Injection Tests — onAfterDispatch() / onAfterRender()
+ * Asset Injection Tests — onBeforeCompileHead() / onAfterRender()
  *
- * Verifies that assets are registered in frontend context and skipped
- * in admin context. Uses Joomla's real application/document stack.
+ * Verifies that assets, compare bar and modal are added only to site HTML pages
+ * on which a compare button was rendered (the button is rendered through the
+ * plugin's real storefront event handler), and that com_ajax requests and
+ * non-HTML documents stay untouched. Uses Joomla's real application/document stack.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -13,9 +15,12 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 require_once __DIR__ . '/bootstrap-app.php';
 
+use Joomla\CMS\Event\GenericEvent;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Document\Document;
 use Joomla\CMS\Document\FactoryInterface as DocumentFactoryInterface;
 use Joomla\CMS\Document\HtmlDocument;
+use Joomla\Database\DatabaseInterface;
 use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
@@ -65,14 +70,53 @@ class AssetInjectionTest
 
     private function makePlugin(array $paramValues = []): \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare
     {
-        $dispatcher = new Dispatcher();
         $params     = new Registry(array_merge(['max_products' => 4], $paramValues));
         $group      = getenv('J2COMMERCE_STACK') === 'j6' ? 'j2commerce' : 'j2store';
 
-        return new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
-            $dispatcher,
+        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
             ['params' => $params, 'type' => $group, 'name' => 'productcompare']
         );
+        $plugin->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
+
+        return $plugin;
+    }
+
+    /**
+     * Render one compare button through the plugin's storefront event handler,
+     * dispatched like the shop does (J2Commerce 6 list item on Joomla 6,
+     * J2Store 4 add-to-cart hook in the product list on Joomla 5).
+     */
+    private function renderButton(object $plugin, int $productId = 424242): string
+    {
+        $dispatcher = new Dispatcher();
+        $dispatcher->addSubscriber($plugin);
+
+        if (getenv('J2COMMERCE_STACK') === 'j6') {
+            $event = new GenericEvent('onJ2CommerceAfterProductListItemDisplay', [
+                (object) ['j2commerce_product_id' => $productId], 'com_j2commerce.products', [],
+            ]);
+        } else {
+            $event = new GenericEvent('onJ2StoreAfterAddToCartButton', [
+                (object) ['j2store_product_id' => $productId], 'j2store.site.products.default_cart',
+            ]);
+        }
+
+        $dispatcher->dispatch($event->getName(), $event);
+
+        return implode('', (array) $event->getArgument('result', []));
+    }
+
+    private function attachDocument(object $app, Document $doc): void
+    {
+        $rp = new ReflectionProperty($app, 'document');
+        $rp->setValue($app, $doc);
+
+        // SiteApplication::dispatch() also registers the page document with
+        // Factory; Joomla 5 Text::script() writes joomla.jtext through it.
+        // Joomla 6 no longer has the property.
+        if (property_exists(Factory::class, 'document')) {
+            Factory::$document = $doc;
+        }
     }
 
     private function makeHtmlDocument(): HtmlDocument
@@ -98,11 +142,23 @@ class AssetInjectionTest
     private function attachHtmlDocument(object $app): HtmlDocument
     {
         $doc = $this->makeHtmlDocument();
-        $rp  = new ReflectionProperty($app, 'document');
-        $rp->setAccessible(true);
-        $rp->setValue($app, $doc);
+        $this->attachDocument($app, $doc);
+        $this->ensureSession($app);
 
         return $doc;
+    }
+
+    /**
+     * The CLI test application has no session; the plugin passes the form token
+     * of the session to the script, as on every site page.
+     */
+    private function ensureSession(object $app): void
+    {
+        try {
+            $app->getSession();
+        } catch (\Throwable $e) {
+            $app->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
+        }
     }
 
     private function testFrontendAssets(): void
@@ -112,7 +168,7 @@ class AssetInjectionTest
         try {
             $app = bootstrapSiteApplication();
         } catch (\Throwable $e) {
-            $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
+            $this->test('onBeforeCompileHead() runs without error in frontend', false, $e->getMessage());
             return;
         }
 
@@ -122,20 +178,25 @@ class AssetInjectionTest
         $this->test('Frontend document type is html', $doc->getType() === 'html');
 
         $plugin = $this->makePlugin(['max_products' => 3]);
+        $plugin->setApplication($app);
 
-        $rc = new ReflectionClass($plugin);
-        if ($rc->hasMethod('setApplication')) {
-            $plugin->setApplication($app);
-        }
+        // Without a rendered button the page stays untouched.
+        $plugin->onBeforeCompileHead();
+        $this->test('No button rendered → no script options added',
+            empty($doc->getScriptOptions('plg_j2commerce_productcompare')));
+
+        $button = $this->renderButton($plugin);
+        $this->test('Storefront event rendered a compare button',
+            strpos($button, 'data-product-id="424242"') !== false, $button);
 
         try {
             ob_start();
-            $plugin->onAfterDispatch();
+            $plugin->onBeforeCompileHead();
             ob_end_clean();
-            $this->test('onAfterDispatch() runs without error in frontend', true);
+            $this->test('onBeforeCompileHead() runs without error in frontend', true);
         } catch (\Throwable $e) {
             ob_end_clean();
-            $this->test('onAfterDispatch() runs without error in frontend', false, $e->getMessage());
+            $this->test('onBeforeCompileHead() runs without error in frontend', false, $e->getMessage());
             return;
         }
 
@@ -148,6 +209,12 @@ class AssetInjectionTest
         if (!empty($options)) {
             $this->test('maxProducts in script options',
                 isset($options['maxProducts']) && (int)$options['maxProducts'] === 3);
+            $this->test('form token in script options',
+                isset($options['token']) && preg_match('/^[a-f0-9]{32}$/', (string) $options['token']) === 1);
+            $texts = $doc->getScriptOptions('joomla.jtext');
+            $this->test('JS texts registered for Joomla.Text (translated, not raw keys)',
+                is_array($texts) && isset($texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE']) && $texts['PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE'] !== 'PLG_J2COMMERCE_PRODUCTCOMPARE_JS_REMOVE',
+                'joomla.jtext: ' . json_encode($texts));
             $this->test('ajaxUrl in script options',
                 isset($options['ajaxUrl']) && strpos($options['ajaxUrl'], 'com_ajax') !== false);
         }
@@ -170,14 +237,37 @@ class AssetInjectionTest
         $this->test('Render document type is html', $doc->getType() === 'html');
 
         $plugin = $this->makePlugin();
-        $rc     = new ReflectionClass($plugin);
-        if ($rc->hasMethod('setApplication')) {
-            $plugin->setApplication($app);
-        }
+        $plugin->setApplication($app);
 
         // Set a body with </body> marker
         $original = '<html><body><p>Content</p></body></html>';
         $app->setBody($original);
+
+        // Without a rendered button the body stays unchanged.
+        $plugin->onAfterRender();
+        $this->test('No button rendered → body unchanged', $app->getBody() === $original);
+
+        $this->renderButton($plugin);
+
+        // com_ajax responses stay untouched even after a button was rendered.
+        $input          = $app->getInput();
+        $previousOption = $input->getCmd('option');
+        $input->set('option', 'com_ajax');
+        $plugin->onAfterRender();
+        $this->test('com_ajax request → body unchanged', $app->getBody() === $original);
+        $input->set('option', $previousOption);
+
+        // Non-HTML documents stay untouched.
+        try {
+            $jsonDoc = Factory::getContainer()->get(DocumentFactoryInterface::class)->createDocument('json');
+            $this->attachDocument($app, $jsonDoc);
+            $plugin->onAfterRender();
+            $this->test('JSON document → body unchanged', $app->getBody() === $original);
+        } catch (\Throwable $e) {
+            $this->test('JSON document → body unchanged', false, $e->getMessage());
+        }
+
+        $this->attachDocument($app, $doc);
 
         try {
             ob_start();

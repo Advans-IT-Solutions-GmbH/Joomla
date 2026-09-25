@@ -30,6 +30,7 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
     {
         public array $lifetime = [];
         public ?object $stubApp = null;
+        public ?RecordingMailerFactory $mailerFactory = null;
         public string $mailState = 'sent';
         public bool $realMail = false;
 
@@ -52,6 +53,15 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
             FeedbackTestApp::$log[] = ['mail', $customerEmail, $languageTag];
 
             return $this->mailState;
+        }
+
+        protected function createMailer()
+        {
+            if ($this->mailerFactory !== null) {
+                return $this->mailerFactory->createMailer();
+            }
+
+            return parent::createMailer();
         }
 
         public function call(string $method, ...$args)
@@ -123,18 +133,6 @@ class MailTestApp
     public function getContainer()
     {
         return $this->container;
-    }
-}
-
-class RecordingContainer
-{
-    public function __construct(private object $factory)
-    {
-    }
-
-    public function get($id)
-    {
-        return $this->factory;
     }
 }
 
@@ -391,10 +389,8 @@ class DataAnonymizationTest
             $anonymized = false;
             try {
                 $db         = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
-                $dispatcher = new \Joomla\Event\Dispatcher();
                 $plugin     = new AnonymizationTestPlugin(
-                    $dispatcher,
-                    ['params' => new \Joomla\Registry\Registry([])]
+                    ['params' => new \Joomla\Registry\Registry(['admin_notifications' => 1, 'admin_email' => 'admin@example.invalid'])]
                 );
                 $plugin->setDatabase($db);
                 $plugin->lifetime = [$lifetimeOrder->order_id];
@@ -409,9 +405,9 @@ class DataAnonymizationTest
 
                 $plugin->onPrivacyRemoveData(null, $user);
                 $anonymized = true;
-                $this->test('onPrivacyRemoveData() ran through the plugin', true);
+                $this->test('onPrivacyRemoveData() ran through the plugin with admin notifications enabled', true);
             } catch (\Throwable $e) {
-                $this->test('onPrivacyRemoveData() ran through the plugin', false, $e->getMessage());
+                $this->test('onPrivacyRemoveData() ran through the plugin with admin notifications enabled', false, $e->getMessage());
             }
 
             if ($anonymized) {
@@ -551,11 +547,76 @@ class DataAnonymizationTest
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($orderinfosTable) . ' WHERE ' . $this->db->quoteName($orderinfoPkCol) . ' = ' . (int) $infoPk)->execute();
         $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($ordersTable) . ' WHERE ' . $this->db->quoteName($orderPkCol) . ' = ' . (int) $orderPk)->execute();
 
+        $this->testActivityLogKeys();
+
         echo "\n=== Data Anonymization Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Every action the plugin logs writes an entry with its own language key into
+     * Joomla's User Actions Log, and that key is translated in every language, so
+     * the log never shows a raw key. An action without a key writes no entry.
+     */
+    private function testActivityLogKeys(): void
+    {
+        echo "\n--- User Actions Log keys ---\n";
+
+        $plugin = new AnonymizationTestPlugin(['params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
+        $plugin->setDatabase($this->db);
+
+        $expected = [
+            'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+            'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
+            'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
+            'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',
+            'orders_anonymized'             => 'PLG_PRIVACY_J2COMMERCE_LOG_ORDERS_ANONYMIZED',
+        ];
+        $userId = 987654;
+
+        $readKeys = function () use ($userId): array {
+            return array_map('strval', $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('message_language_key') . ' FROM ' . $this->db->quoteName('#__action_logs')
+                . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                . ' AND ' . $this->db->quoteName('user_id') . ' = ' . (int) $userId
+            )->loadColumn() ?: []);
+        };
+        $cleanup = function () use ($userId): void {
+            $this->db->setQuery(
+                'DELETE FROM ' . $this->db->quoteName('#__action_logs')
+                . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                . ' AND ' . $this->db->quoteName('user_id') . ' = ' . (int) $userId
+            )->execute();
+        };
+
+        $cleanup();
+
+        try {
+            foreach ($expected as $action => $key) {
+                $plugin->call('logActivity', $action, $userId, 'test');
+            }
+            $plugin->call('logActivity', 'no_such_action', $userId, 'test');
+
+            $written = $readKeys();
+            sort($written);
+            $wanted = array_values($expected);
+            sort($wanted);
+
+            $this->test('Each logged action writes its own language key', $written === $wanted, implode(', ', $written));
+            $this->test('An action without a language key writes no entry', count($written) === count($expected));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $missing = array_values(array_filter($wanted, fn ($key) => empty($values[$key])));
+                $this->test("$tag translates every User Actions Log key", $missing === [], implode(', ', $missing));
+            }
+        } finally {
+            $cleanup();
+        }
     }
 
     /**
@@ -897,8 +958,8 @@ class DataAnonymizationTest
         // The real sendCustomerRetentionNotice(): address check, customer language, mail result.
         $plugin->realMail = true;
         $factory          = new RecordingMailerFactory();
+        $plugin->mailerFactory = $factory;
         $app              = new MailTestApp();
-        $app->container   = new RecordingContainer($factory);
         $lifetime         = [['order_number' => 'FB-2', 'order_date' => '01.02.2010']];
 
         $this->test('real mail path: invalid request address is reported as invalid, no mailer created',
@@ -922,6 +983,7 @@ class DataAnonymizationTest
         $joomlaApp->container = Factory::getContainer();
         $previous             = Factory::$application;
         Factory::$application = $joomlaApp;
+        $plugin->mailerFactory = null;
 
         try {
             $this->test('real Joomla mailer with mail disabled is reported as failed',
@@ -929,6 +991,7 @@ class DataAnonymizationTest
         } finally {
             Factory::$application = $previous;
             $plugin->realMail     = false;
+            $plugin->mailerFactory = null;
         }
     }
 
