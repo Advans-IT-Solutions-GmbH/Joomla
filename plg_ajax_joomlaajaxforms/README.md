@@ -72,12 +72,27 @@ removed.
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password) — currently not evaluated, `saveProfile` is always available | Yes |
 | Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) — currently not evaluated, cart tasks are always available | Yes |
+| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
 
 ### J2Commerce Cart Compatibility
 
-The cart features support both J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The version is detected at runtime by checking whether `#__j2store_carts` exists in the database.
+The cart features support both J2Store / J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The active shop is decided once per request by the enabled component together with its cart table:
 
-If neither `#__j2store_carts` nor `#__j2commerce_carts` is found, `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
+1. `com_j2commerce` is enabled **and** `#__j2commerce_carts` exists → J2Commerce 6.x (`#__j2commerce_*` tables)
+2. otherwise `com_j2store` is enabled **and** `#__j2store_carts` exists → J2Store / J2Commerce 4.x (`#__j2store_*` tables)
+3. otherwise → no shop
+
+The tables alone never decide: after a migration from J2Store to J2Commerce 6 the `#__j2store_*` tables remain in the database and are ignored while `com_j2store` is disabled. An enabled component without its cart table does not block the next candidate: with `com_j2commerce` enabled but no `#__j2commerce_carts`, an enabled J2Store with its tables is still used.
+
+Without an active shop the plugin does not use any shop, because the cart and the profile page of a disabled shop are not reachable for the user anyway: `removeCartItem` returns an error with the `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` message and `getCartCount` returns `cartCount: 0`. Other plugin functionality is not affected.
+
+After a login without a `return` URL (only internal `return` URLs are accepted), the plugin redirects to the profile page, with and without MFA:
+
+1. the published `myprofile` menu item of the active shop, if one exists
+2. otherwise the `myprofile` view of the active shop (`com_j2commerce` or `com_j2store`)
+3. without an active shop, the Joomla user profile (`com_users`, `view=profile`)
+
+With MFA the same target is passed as an absolute URL in the `return` parameter of Joomla's captive page.
 
 **Schema differences handled automatically:**
 
@@ -107,6 +122,27 @@ if (PluginHelper::isEnabled('ajax', 'joomlaajaxforms')) {
 ```
 
 The plugin automatically initializes form handlers for login, reset, remind, and registration forms. For cart and profile operations, use the JavaScript API:
+
+#### Finding the reset and remind forms
+
+Joomla writes the task of these two views only into the form action
+(`index.php?task=reset.request`) and renders no hidden task field. With SEF
+turned on the routed address no longer carries the task, so a detection that
+reads the action stops working and the form is never converted: a visitor who
+enters a valid address then gets no answer at all.
+
+The script therefore looks for the form itself first, independently of the
+action and of any wrapper around it:
+
+1. `form[data-joomlaajaxforms="reset"]` / `…="remind"`
+2. `form.com-users-reset__form` / `form.com-users-remind__form` (the class Joomla core gives the form)
+3. the wrapper of the core view (`.com-users-reset`, `.reset`, …)
+4. `form[action*="reset.request"]`, which still covers a site without SEF
+5. a hidden `input[name="task"][value="reset.request"]`, if an override renders one
+
+**A template override that replaces the core markup should set
+`data-joomlaajaxforms="reset"` (or `"remind"`) on its `<form>`.** That is the
+one hook that survives both SEF routing and a rewritten wrapper.
 
 ```javascript
 // Remove cart item
@@ -198,7 +234,7 @@ That misleading step has been removed; see issue #98.)
 11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 12. **Uninstall** — clean removal from database and filesystem
 
-The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart`).
+The authoritative order is `TEST_SCRIPTS` in `tests/test.env` (the full-install directories additionally run `j2store-cart` and `shop-detection`).
 
 ### Full-Install Tests (J2Commerce) — authoritative cart coverage
 
@@ -216,6 +252,8 @@ each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 - Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
 **`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the commit pinned in the workflow (`J2C6_REF`, `7edb6e11ae9148bf996b06c47a0d8266865af7b2`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
+
+**Shop detection (`13-shop-detection.php`, both full-install lanes)** — the script lives in `tests-j2c6/scripts/`; `tests-j2c4/run-tests.sh` copies it. A dedicated test user gets a cart in both table sets with different quantities (5 in `#__j2commerce_*`, 7 in `#__j2store_*`), so the `cartCount` returned by the HTTP endpoint shows which tables the plugin used. In the J2C6 lane the suite adds stale `#__j2store_*` tables and a disabled `com_j2store` row (migration): the AJAX login redirects to `com_j2commerce`, `getCartCount` returns 5 and `removeCartItem` deletes only from `#__j2commerce_cartitems`; with `com_j2commerce` disabled and `com_j2store` enabled it returns 7. In the J2C4 lane it adds `#__j2commerce_*` tables and a disabled `com_j2commerce` row: the login redirects to `com_j2store` and `getCartCount` returns 7; with `com_j2commerce` enabled it returns 5. In both lanes, with both components disabled, `getCartCount` returns 0, `removeCartItem` reports that no shop is installed, and a login in a fresh session redirects to the Joomla user profile, which opens for the logged-in user. The same login with an MFA record for the test user must answer with Joomla's captive page whose `return` parameter is the same profile target as an absolute URL (the MFA code itself is not entered; the captive page is Joomla core). Then the cart tables of the other shop are renamed so they are missing: with both components enabled, the installed shop is still used (5 in the J2C6 lane, 7 in the J2C4 lane, where the enabled `com_j2commerce` without tables must not block J2Store); with only the component without tables enabled, `getCartCount` returns 0 and the login redirects to the Joomla user profile. The CSRF token is read again after the login; if that fails, the suite fails instead of falling back to the guest token. All changes (component states and rows, tables and renamed tables, user, carts, sessions, MFA record, remember-me keys, action log entries) are reverted at the end of the suite and checked afterwards.
 
 ### Running Tests Locally
 
@@ -311,6 +349,78 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - Uses `UserFactoryInterface` instead of `User::getInstance()`
 - Uses `->getInput()` instead of `->input`
 
+## Account Mails
+
+The password reset, the username reminder, the activation mail and the notice
+to the site address are sent through Joomla's `MailTemplate`, with the same
+template ids and the same data keys `com_users` uses:
+
+| Mail | Template id |
+|---|---|
+| Password reset | `com_users.password_reset` |
+| Username reminder | `com_users.reminder` |
+| Activation, self activation | `com_users.registration.user.self_activation` |
+| Activation, admin activation | `com_users.registration.user.admin_activation` |
+| Notice about a new registration | `com_users.registration.admin.new_notification` |
+
+What a site configures under System, Mail Templates therefore applies to these
+mails as well: the stored subject and body, the HTML layout with frame and
+logo, and a template of its own per language. Nothing has to be configured in
+the plugin for that.
+
+### What changes for an existing site
+
+**The wording of these mails changes on every site, not only on a site that
+styled its templates.** Joomla creates the rows in `#__mail_templates` with
+every installation, and `MailTemplate` reads the stored subject and body
+whatever the mail style is set to. From this version on, the recipient
+therefore reads Joomla's own `COM_USERS_EMAIL_…` texts, which Joomla ships
+translated, instead of the plugin's former `PLG_AJAX_JOOMLAAJAXFORMS_…` texts.
+That is the point of the change: these mails now read and look like every other
+account mail of the site, and the site can edit them in the backend like all
+the others. A site that wants its former wording back enters it in the
+corresponding mail template.
+
+The plugin's own texts are kept as a fallback only. That fallback is reached
+when `#__mail_templates` has no such row, for example after someone deleted it,
+which is why a normal installation never uses it. It writes a warning to the
+log when it does.
+
+Three details follow from the plugin answering inside `com_ajax`:
+
+- The language files of the extension the template belongs to are loaded before
+  the mail is rendered. `MailTemplate` does that only for a mail in another
+  language than the request, so without it the mail would carry the raw
+  language keys.
+- The mail is rendered in the language of the account, if the account has one
+  and the site has that language installed, otherwise in the language of the
+  request and finally in the default site language. A language the site does
+  not have is refused, because the template texts are language keys and the
+  recipient would read those keys.
+- Joomla's own helper for those language files remembers per extension that it
+  already loaded them, without regard for the language. When one request sends
+  two mails of the same extension in two languages that both differ from the
+  language of the request, the second one can therefore arrive untranslated.
+  The registration path sends the mail to the customer first and the notice to
+  the site second, so the notice is the one that would be affected.
+
+### The notice about a new registration
+
+It goes to the address of the site (`mailfrom`) in the default site language,
+and it uses `com_users.registration.admin.new_notification`, the template whose
+text says that someone has registered. It deliberately does not use
+`com_users.registration.admin.verification_request`: that is the template
+Joomla sends **after** the new account has confirmed its e-mail address, with a
+token generated at that moment for the administration to activate the account.
+Joomla's own registration flow still sends it at that point, because the
+activation link of this plugin leads into `com_users`. At the time the plugin
+sends its notice, nothing is required of the administration yet, so a text
+asking for approval, and a link carrying the customer's own confirmation token,
+would both be wrong.
+
+When the site has no valid `mailfrom` address, the notice is skipped and a
+warning is written to the log instead.
+
 ## Multi-Language Support
 
 - English (`en-GB`)
@@ -318,6 +428,14 @@ The plugin avoids all APIs deprecated in Joomla 6:
 - French (`fr-FR`)
 
 Language keys cover all UI labels, error messages, email templates, and JavaScript strings.
+
+The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PROFILE_SAVED`, `CLOSE`) from the script options `plg_ajax_joomlaajaxforms`, which the plugin adds while it renders a page. Plugins of the `ajax` group are imported by `com_ajax`, so on a page where nothing imported the plugin those options are missing; the script then fetches the texts once with a POST of `task=texts` to `index.php?option=com_ajax&plugin=joomlaajaxforms&format=json` (read-only, no form token) in the language of the request. Messages from the server are translated by the plugin itself. A site template that loads the script may also add the options itself.
+
+Keys that only site template overrides use (profile and security section of the account view) are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there.
+
+### Removed keys
+
+`PLG_AJAX_JOOMLAAJAXFORMS_J2STORE_NOT_FOUND` was removed. It was an alias of `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND` from the time of the J2Store to J2Commerce rename. The plugin only ever emits the J2Commerce key, so the alias was never resolved by anything: a language file entry has no effect unless code asks for that key. Sites that still translate the old key in a template override can delete that line. Anyone who really calls the old key from own code should switch the call to `PLG_AJAX_JOOMLAAJAXFORMS_J2COMMERCE_NOT_FOUND`.
 
 ## Support & Contact
 

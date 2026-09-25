@@ -94,6 +94,16 @@
                     <option value="1">JYES</option>
                     <option value="0">JNO</option>
                 </field>
+                <field
+                    name="debug"
+                    type="radio"
+                    label="PLG_AJAX_JOOMLAAJAXFORMS_DEBUG"
+                    description="PLG_AJAX_JOOMLAAJAXFORMS_DEBUG_DESC"
+                    default="0"
+                    class="btn-group btn-group-yesno">
+                    <option value="1">JYES</option>
+                    <option value="0">JNO</option>
+                </field>
             </fieldset>
         </fields>
     </config>

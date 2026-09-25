@@ -49,7 +49,13 @@ mapfile -t PREVIOUS < <(printf '%s\n' "$changed_json" | jq -r '.previous_filenam
 
 echo "Changed files: ${#CHANGED[@]}"
 if [ "${#CHANGED[@]}" -ge 3000 ]; then
-    echo "::warning::The pull request lists 3000 or more files; the GitHub API truncates the list."
+    # The "List pull requests files" API returns at most 3000 files, so the
+    # changed-file list is truncated here. Evaluating the incomplete list could
+    # drop an extension whose file is missing from REQUIRED and let this
+    # required check pass without validating that extension's workflow. Fail
+    # closed instead of gating on an incomplete change set.
+    echo "::error::The pull request lists 3000 or more files; the GitHub API truncates the file list, so the required extension workflows cannot be determined reliably. Failing closed."
+    exit 1
 fi
 
 # --- Pattern matching ----------------------------------------------------------
