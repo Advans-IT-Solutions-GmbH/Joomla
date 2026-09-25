@@ -14,4 +14,6 @@ Signing-Regeln:
 - Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz verifizierte Signaturen.
 - Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch signierst du, wenn ein Schlüssel vorhanden ist, der auf GitHub hinterlegt ist und zur Commit-E-Mail passt; ohne Schlüssel dürfen sie unsigniert sein. Details in `/AGENTS.md`.
 
-PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.
+PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst. Review-Befunde sofort beheben, nicht auf die CI warten.
+
+Öffentliches Repository: keine Kundendaten, Hostnamen, IP-Adressen oder internen Details — auch nicht in Commit-Nachrichten, PR-Texten und Kommentaren. Weitere festgehaltene Entscheidungen: `/AGENTS.md`, Abschnitt „Repo-spezifisch (Joomla)“.

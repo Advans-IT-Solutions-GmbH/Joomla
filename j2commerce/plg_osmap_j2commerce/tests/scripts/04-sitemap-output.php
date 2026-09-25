@@ -2,15 +2,9 @@
 /**
  * Sitemap Output Tests for OSMap J2Commerce Plugin
  *
- * Tests the plugin's product query and node generation logic directly against
- * the database, without requiring a full OSMap sitemap render. This avoids
- * the need for a configured sitemap menu item and OSMap cron/cache.
- *
- * What is tested:
- * - The DB query that getTree() uses returns the expected products
- * - The generated node structure has correct link, uid, priority, changefreq
- * - Disabled products are excluded
- * - Products without a published=-2 menu item are excluded
+ * Exercises the public getTree() entry point against the real fixture data and
+ * asserts the emitted sitemap nodes. This keeps the suite coupled to plugin
+ * behaviour instead of re-implementing its SQL in the test itself.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -19,27 +13,44 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+require_once __DIR__ . '/_osmap_bootstrap.php';
+
 use Joomla\CMS\Factory;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
+osmap_ensure_classes();
+require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
+
+class SitemapOutputCollector extends \Alledia\OSMap\Sitemap\Collector
+{
+    /** @var object[] */
+    public array $nodes = [];
+    public function __construct() {}
+    public function printNode($node): bool
+    {
+        $this->nodes[] = (object) $node;
+        return true;
+    }
+}
+
 class SitemapOutputTest
 {
-    private $db;
+    private DatabaseInterface $db;
     private int $passed = 0;
     private int $failed = 0;
     private bool $isJ6;
+    private string $option;
     private string $productsTable;
 
-    // IDs inserted by docker-entrypoint.sh fixtures
-    private const SHOP_MENU_ID    = 9001;
-    private const PRODUCT_ALPHA   = ['menu_id' => 9002, 'path' => 'shop/test-product-alpha'];
-    private const PRODUCT_BETA    = ['menu_id' => 9003, 'path' => 'shop/test-product-beta'];
+    private const SHOP_MENU_ID = 9001;
 
     public function __construct()
     {
-        $this->db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $this->isJ6  = (getenv('J2COMMERCE_STACK') === 'j6');
+        $this->db            = Factory::getContainer()->get(DatabaseInterface::class);
+        $this->isJ6          = (getenv('J2COMMERCE_STACK') === 'j6');
+        $this->option        = $this->isJ6 ? 'com_j2commerce' : 'com_j2store';
         $this->productsTable = $this->isJ6 ? '#__j2commerce_products' : '#__j2store_products';
     }
 
@@ -50,23 +61,75 @@ class SitemapOutputTest
             : $this->db->getQuery(true);
     }
 
+    private function makePlugin(): \PlgOsmapJ2commerce
+    {
+        $plugin = new \PlgOsmapJ2commerce(['params' => new Registry([])]);
+        $plugin->setDatabase($this->db);
+
+        return $plugin;
+    }
+
+    private function collect(string $query = 'view=products', ?Registry $params = null): array
+    {
+        $collector = new SitemapOutputCollector();
+        $parent = osmap_make_item([
+            'id'         => self::SHOP_MENU_ID,
+            'link'       => 'index.php?option=' . $this->option . '&' . $query,
+            'component'  => $this->option,
+            'path'       => 'shop',
+            'language'   => '*',
+            'browserNav' => 0,
+        ]);
+
+        $this->makePlugin()->getTree($collector, $parent, $params ?? new Registry([]));
+
+        return $collector->nodes;
+    }
+
+    /**
+     * @param object[] $nodes
+     * @return string[]
+     */
+    private function aliases(array $nodes): array
+    {
+        $aliases = [];
+        foreach ($nodes as $node) {
+            $aliases[] = basename(parse_url((string) $node->link, PHP_URL_PATH) ?: '');
+        }
+        sort($aliases);
+
+        return $aliases;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function expectedAliases(): array
+    {
+        $expected = ['test-product-alpha', 'test-product-beta'];
+        if (!$this->isJ6) {
+            $expected[] = 'test-product-nomenu';
+        }
+        sort($expected);
+
+        return $expected;
+    }
+
     public function run(): bool
     {
         echo "=== Sitemap Output Tests ===\n\n";
 
         $this->test('Fixture: shop menu item exists (published=1)', function () {
-            // J4: link contains com_j2store; J6: link contains com_j2commerce
-            $shopComponent = $this->isJ6 ? 'com_j2commerce' : 'com_j2store';
             $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from('#__menu')
                 ->where('id = ' . self::SHOP_MENU_ID)
                 ->where('published = 1')
-                ->where('link LIKE ' . $this->db->quote('%' . $shopComponent . '%'));
+                ->where('link LIKE ' . $this->db->quote('%' . $this->option . '%'));
             return (int) $this->db->setQuery($q)->loadResult() === 1;
         });
 
-        $this->test('Fixture: 2 product menu items exist (published=-2)', function () {
+        $this->test('Fixture: 2 hidden product menu items exist on the standard stack', function () {
             $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from('#__menu')
@@ -75,7 +138,7 @@ class SitemapOutputTest
             return (int) $this->db->setQuery($q)->loadResult() === 2;
         });
 
-        $this->test('Fixture: 2 enabled products exist (' . $this->productsTable . ')', function () {
+        $this->test('Fixture: 2 enabled products exist in the stack products table', function () {
             $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from($this->productsTable)
@@ -84,58 +147,50 @@ class SitemapOutputTest
             return (int) $this->db->setQuery($q)->loadResult() === 2;
         });
 
-        // Run the exact same query as getTree() uses, with the shop menu item as parent
-        $products = $this->runGetTreeQuery(self::SHOP_MENU_ID);
+        $nodes = $this->collect();
 
-        $this->test('getTree() query returns 2 products for shop menu item', function () use ($products) {
-            return count($products) === 2;
+        $this->test('getTree(view=products) emits the fixture product aliases', function () use ($nodes) {
+            return $this->aliases($nodes) === $this->expectedAliases();
         });
 
-        $this->test('getTree() query returns correct product paths', function () use ($products) {
-            $paths = array_column($products, 'path');
-            sort($paths);
-            return $paths === ['shop/test-product-alpha', 'shop/test-product-beta'];
+        $this->test('getTree(view=categories&id=2) emits the fixture product aliases', function () {
+            return $this->aliases($this->collect('view=categories&id=2')) === $this->expectedAliases();
         });
 
-        $this->test('Generated nodes use path-based absolute URL', function () use ($products) {
-            $root = rtrim(\Joomla\CMS\Uri\Uri::root(), '/');
-            foreach ($products as $p) {
-                $node = $this->buildNode($p, new Registry('{}'));
-                // Plugin builds absolute URL from m.path (SEF-relative path).
-                // OSMap excludes published=-2 items from its routing cache, so
-                // Itemid-based links produce empty fullLink for these items.
-                $expected = $root . '/' . ltrim($p->path, '/');
-                if ($node->link !== $expected) {
-                    echo "  Expected: {$expected}\n  Got:      {$node->link}\n";
+        $this->test('getTree(view=categoryalias&id=2) emits the fixture product aliases', function () {
+            return $this->aliases($this->collect('view=categoryalias&id=2')) === $this->expectedAliases();
+        });
+
+        $this->test('Emitted nodes use absolute URLs', function () use ($nodes) {
+            $root = rtrim(Uri::root(), '/');
+            foreach ($nodes as $node) {
+                if (!str_starts_with((string) $node->link, $root . '/')) {
+                    return false;
+                }
+            }
+            return count($nodes) > 0;
+        });
+
+        $this->test('Emitted nodes have the j2commerce.product.* uid format', function () use ($nodes) {
+            foreach ($nodes as $node) {
+                if (!preg_match('/^j2commerce\.product\.\d+$/', (string) $node->uid)) {
+                    return false;
+                }
+            }
+            return count($nodes) > 0;
+        });
+
+        $this->test('Emitted nodes use default priority 0.8', function () use ($nodes) {
+            foreach ($nodes as $node) {
+                if ((string) $node->priority !== '0.8') {
                     return false;
                 }
             }
             return true;
         });
 
-        $this->test('Generated nodes have correct uid format', function () use ($products) {
-            foreach ($products as $p) {
-                $node = $this->buildNode($p, new Registry('{}'));
-                if ($node->uid !== 'j2commerce.product.' . $p->id) {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-        $this->test('Generated nodes use default priority 0.8', function () use ($products) {
-            foreach ($products as $p) {
-                $node = $this->buildNode($p, new Registry('{}'));
-                if ((string)$node->priority !== '0.8') {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-        $this->test('Generated nodes use default changefreq weekly', function () use ($products) {
-            foreach ($products as $p) {
-                $node = $this->buildNode($p, new Registry('{}'));
+        $this->test('Emitted nodes use default changefreq weekly', function () use ($nodes) {
+            foreach ($nodes as $node) {
                 if ($node->changefreq !== 'weekly') {
                     return false;
                 }
@@ -143,108 +198,95 @@ class SitemapOutputTest
             return true;
         });
 
-        $this->test('Custom params override priority and changefreq', function () use ($products) {
-            if (empty($products)) return false;
-            $params = new Registry('{"priority":"0.5","changefreq":"daily"}');
-            $node = $this->buildNode($products[0], $params);
-            return (string)$node->priority === '0.5' && $node->changefreq === 'daily';
+        $this->test('Custom params override priority and changefreq', function () {
+            $nodes = $this->collect('view=products', new Registry('{"priority":"0.5","changefreq":"daily"}'));
+            return isset($nodes[0])
+                && (string) $nodes[0]->priority === '0.5'
+                && $nodes[0]->changefreq === 'daily';
         });
 
-        $this->test('Disabled product is excluded from query results', function () {
-            // Temporarily disable product alpha
+        $this->test('Disabled product is excluded from getTree(view=products)', function () {
             $this->db->setQuery(
-                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled=0 WHERE product_source_id=9001'
+                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled = 0 WHERE product_source_id = 9001'
             )->execute();
 
-            $products = $this->runGetTreeQuery(self::SHOP_MENU_ID);
-            $count = count($products);
-
-            // Re-enable
-            $this->db->setQuery(
-                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled=1 WHERE product_source_id=9001'
-            )->execute();
-
-            return $count === 1;
+            try {
+                return !in_array('test-product-alpha', $this->aliases($this->collect()), true);
+            } finally {
+                $this->db->setQuery(
+                    'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET enabled = 1 WHERE product_source_id = 9001'
+                )->execute();
+            }
         });
 
-        $this->test('Product without menu item is excluded from query results', function () {
-            // Temporarily remove the menu item for product beta
-            $this->db->setQuery(
-                'UPDATE #__menu SET published=0 WHERE id=9003'
-            )->execute();
+        $this->test('Unpublished articles are excluded from getTree(view=categories)', function () {
+            $this->db->setQuery('UPDATE #__content SET state = 0 WHERE id = 9001')->execute();
 
-            $products = $this->runGetTreeQuery(self::SHOP_MENU_ID);
-            $count = count($products);
+            try {
+                $aliases = $this->aliases($this->collect('view=categories&id=2'));
 
-            // Restore
-            $this->db->setQuery(
-                'UPDATE #__menu SET published=-2 WHERE id=9003'
-            )->execute();
-
-            // published=0 is not -2, so it should be excluded
-            return $count === 1;
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery('UPDATE #__content SET state = 1 WHERE id = 9001')->execute();
+            }
         });
+
+        $this->test('Invisible products are excluded from getTree(view=categoryalias)', function () {
+            $this->db->setQuery(
+                'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET visibility = 0 WHERE product_source_id = 9001'
+            )->execute();
+
+            try {
+                $aliases = $this->aliases($this->collect('view=categoryalias&id=2'));
+
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery(
+                    'UPDATE ' . $this->db->quoteName($this->productsTable) . ' SET visibility = 1 WHERE product_source_id = 9001'
+                )->execute();
+            }
+        });
+
+        $this->test('Guest-inaccessible articles are excluded from getTree(view=products)', function () {
+            $this->db->setQuery('UPDATE #__content SET access = 2 WHERE id = 9001')->execute();
+
+            try {
+                $aliases = $this->aliases($this->collect());
+
+                return !in_array('test-product-alpha', $aliases, true)
+                    && in_array('test-product-beta', $aliases, true);
+            } finally {
+                $this->db->setQuery('UPDATE #__content SET access = 1 WHERE id = 9001')->execute();
+            }
+        });
+
+        $this->test('Products stay in getTree(view=products) when a hidden child menu item is removed', function () {
+            $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id = 9003')->execute();
+
+            try {
+                return in_array('test-product-beta', $this->aliases($this->collect()), true);
+            } finally {
+                $this->db->setQuery('UPDATE #__menu SET published = -2 WHERE id = 9003')->execute();
+            }
+        });
+
+        if (!$this->isJ6) {
+            $this->test('J5 still emits every fixture product when all hidden child menu items are removed', function () {
+                $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id IN (9002, 9003)')->execute();
+
+                try {
+                    return $this->aliases($this->collect()) === $this->expectedAliases();
+                } finally {
+                    $this->db->setQuery('UPDATE #__menu SET published = -2 WHERE id IN (9002, 9003)')->execute();
+                }
+            });
+        }
 
         echo "\n=== Sitemap Output Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
-    }
-
-    /**
-     * Runs the exact same DB query as PlgOsmapJ2commerce::getTree() uses.
-     * Keeping this in sync with J2Commerce.php is intentional — if the query
-     * changes, this test must change too.
-     */
-    private function runGetTreeQuery(int $parentMenuId): array
-    {
-        $db    = $this->db;
-        $query = $this->createDbQuery()
-            ->select([
-                $db->quoteName('m.id'),
-                $db->quoteName('m.path'),
-                $db->quoteName('m.browserNav'),
-                $db->quoteName('a.modified'),
-                $db->quoteName('a.title'),
-            ])
-            ->from($db->quoteName('#__menu', 'm'))
-            ->join('INNER', $db->quoteName('#__content', 'a')
-                . ' ON (m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id, ' . $db->quote('&%') . ')'
-                . '  OR m.link LIKE CONCAT(' . $db->quote('%&id=') . ', a.id))'
-                . ' AND m.link LIKE ' . $db->quote('%com_content%view=article%'))
-            ->join('INNER', $db->quoteName($this->productsTable, 'p')
-                . ' ON p.product_source_id = a.id'
-                . ' AND p.product_source = ' . $db->quote('com_content')
-                . ' AND p.enabled = 1')
-            ->where([
-                'm.published = -2',
-                'm.parent_id = ' . (int) $parentMenuId,
-                'm.client_id = 0',
-            ])
-            ->order('a.title ASC');
-
-        return $db->setQuery($query)->loadObjectList() ?: [];
-    }
-
-    /**
-     * Replicates the node-building logic from PlgOsmapJ2commerce::printMenuPathNode().
-     * The plugin builds an absolute URL from the menu item's path field, bypassing
-     * OSMap's router (which excludes published=-2 items from its routing cache).
-     */
-    private function buildNode(object $product, Registry $params): object
-    {
-        $link = rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/' . ltrim($product->path, '/');
-
-        return (object) [
-            'id'         => $product->id,
-            'name'       => $product->title,
-            'uid'        => 'j2commerce.product.' . $product->id,
-            'modified'   => $product->modified,
-            'browserNav' => 0,
-            'priority'   => $params->get('priority', '0.8'),
-            'changefreq' => $params->get('changefreq', 'weekly'),
-            'link'       => $link,
-            'expandible' => false,
-        ];
     }
 
     private function test(string $name, callable $fn): void

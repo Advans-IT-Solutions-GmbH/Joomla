@@ -16,7 +16,6 @@ require_once JPATH_BASE . '/includes/framework.php';
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 // Register plugin namespace so the class can be resolved without a full
@@ -65,6 +64,8 @@ class GetProductsDataTest
             $this->seedFixtures();
             $this->testGetProductsData();
             $this->testDisabledProductExcluded();
+            $this->testHiddenProductsExcluded();
+            $this->testNullDateWindowStaysVisible();
             $this->testGetProductOptions();
         } finally {
             $this->cleanupFixtures();
@@ -182,6 +183,154 @@ class GetProductsDataTest
         $this->test('Disabled product not in results',
             !in_array($this->seededProductIds[2], $returnedIds),
             'Disabled product ID ' . $this->seededProductIds[2] . ' should be excluded');
+    }
+
+    /**
+     * The comparison endpoint answers without a login, so it must return only what the storefront
+     * shows a logged-out visitor: an unpublished article, one outside its publishing window and one
+     * behind a view level the visitor does not have stay out of the result.
+     */
+    private function testHiddenProductsExcluded(): void
+    {
+        echo "\n--- Hidden products excluded ---\n";
+
+        $plugin = $this->makePlugin();
+        $rc     = new ReflectionClass($plugin);
+        $method = $rc->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $future = date('Y-m-d H:i:s', time() + 86400);
+        $past   = date('Y-m-d H:i:s', time() - 86400);
+
+        $cases = [
+            'unpublished article'         => ['state' => 0, 'access' => 1, 'publish_up' => null,    'publish_down' => null],
+            'article behind a view level' => ['state' => 1, 'access' => 2, 'publish_up' => null,    'publish_down' => null],
+            'article published later'     => ['state' => 1, 'access' => 1, 'publish_up' => $future, 'publish_down' => null],
+            'article no longer published' => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => $past],
+            'invisible product'           => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'visibility' => 0],
+            // product_source_id is just a number. A product of another source whose ID
+            // matches a perfectly published article must not pick up that article and
+            // hand out its title, description, price and stock.
+            'product of another source'   => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'product_source' => 'com_somethingelse'],
+        ];
+
+        $pkCol = $this->productsPk;
+
+        foreach ($cases as $label => $case) {
+            $productId = $this->seedHiddenProduct($label, $case);
+
+            if ($productId === 0) {
+                $this->test("Fixture '$label' could be created", false);
+
+                continue;
+            }
+
+            $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+            $this->test("Not in results ($label)", $returned === [], implode(',', $returned));
+        }
+    }
+
+    /**
+     * An open publishing window is stored by Joomla either as SQL NULL or, in a
+     * database that was migrated from an older Joomla, as the driver's null-date
+     * sentinel ('0000-00-00 00:00:00'). Both mean "no limit", so a product whose
+     * article carries the sentinel is an ordinary, visible product and has to be
+     * returned. Reading only NULL as open would hide it.
+     */
+    private function testNullDateWindowStaysVisible(): void
+    {
+        echo "\n--- Open publishing window stored as the null date ---\n";
+
+        $nullDate = method_exists($this->db, 'getNullDate') ? $this->db->getNullDate() : '0000-00-00 00:00:00';
+
+        $productId = $this->seedHiddenProduct('null date window', [
+            'state'        => 1,
+            'access'       => 1,
+            'publish_up'   => $nullDate,
+            'publish_down' => $nullDate,
+        ]);
+
+        $this->test('Fixture with the null date created', $productId !== 0);
+
+        if ($productId === 0) {
+            return;
+        }
+
+        $plugin = $this->makePlugin();
+        $method = (new ReflectionClass($plugin))->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $pkCol    = $this->productsPk;
+        $returned = array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+        $this->test(
+            'Product with a null-date window is returned',
+            $returned === [$productId],
+            'returned: ' . implode(',', $returned)
+        );
+    }
+
+    /**
+     * Seed an article with the given publication state plus an enabled product pointing at it.
+     * Returns the product ID, or 0 when the fixture could not be created.
+     */
+    private function seedHiddenProduct(string $label, array $article): int
+    {
+        try {
+            $row = (object) [
+                'title'        => 'Test Product ' . $label,
+                'alias'        => 'test-product-' . md5($label . microtime(true)),
+                'introtext'    => 'Description for ' . $label,
+                'fulltext'     => '',
+                'state'        => $article['state'],
+                'catid'        => $this->ensureCatid(),
+                'created'      => date('Y-m-d H:i:s'),
+                'created_by'   => 42,
+                'modified'     => date('Y-m-d H:i:s'),
+                'access'       => $article['access'],
+                'language'     => '*',
+                'metadata'     => '{}',
+                'attribs'      => '{}',
+                'images'       => '{}',
+                'urls'         => '{}',
+                'metadesc'     => '',
+                'metakey'      => '',
+                'note'         => '',
+                'featured'     => 0,
+                'version'      => 1,
+                'ordering'     => 0,
+                'hits'         => 0,
+                'publish_up'   => $article['publish_up'],
+                'publish_down' => $article['publish_down'],
+            ];
+            $this->db->insertObject('#__content', $row, 'id');
+            $contentId                = (int) $this->db->insertid();
+            $this->seededContentIds[] = $contentId;
+
+            $product = (object) [
+                'product_source_id' => $contentId,
+                'product_source'    => $article['product_source'] ?? 'com_content',
+                'product_type'      => 'simple',
+                'visibility'        => $article['visibility'] ?? 1,
+                'enabled'           => 1,
+                'taxprofile_id'     => 0,
+                'vendor_id'         => 0,
+                'addtocart_text'    => '',
+                'up_sells'          => '',
+                'cross_sells'       => '',
+                'params'            => '{}',
+            ];
+            $this->db->insertObject($this->productsTable, $product, $this->productsPk);
+            $productId                = (int) $this->db->insertid();
+            $this->seededProductIds[] = $productId;
+
+            return $productId;
+        } catch (\Exception $e) {
+            echo '  Fixture error: ' . $e->getMessage() . "\n";
+
+            return 0;
+        }
     }
 
     private function testGetProductOptions(): void
@@ -743,12 +892,8 @@ class GetProductsDataTest
 
     private function makePlugin(): \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare
     {
-        $dispatcher = new Dispatcher();
         $params     = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
-        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
-            $dispatcher,
-            ['params' => $params]
-        );
+        $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(['params' => $params]);
         // Inject the database so getDatabase() / getProductsData() work without DI container.
         $plugin->setDatabase($this->db);
         return $plugin;

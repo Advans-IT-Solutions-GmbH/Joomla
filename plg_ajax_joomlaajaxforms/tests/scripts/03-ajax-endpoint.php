@@ -26,6 +26,7 @@ class AjaxEndpointTest
         $allPassed = $this->testPluginEnabled() && $allPassed;
         $allPassed = $this->testEndpointAccessible() && $allPassed;
         $allPassed = $this->testResponseFormat() && $allPassed;
+        $allPassed = $this->testTextsTask() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -125,6 +126,68 @@ class AjaxEndpointTest
         }
         
         echo "FAIL (HTTP $httpCode, invalid response format)\n";
+        return false;
+    }
+
+    /**
+     * The script carries no text of its own. When a page loads it without the
+     * texts in its script options, it asks the endpoint (task "texts"), which
+     * answers without a form token with the translated texts of the plugin.
+     */
+    private function testTextsTask(): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: Script texts are delivered by the endpoint without a token... ";
+
+        // Sent like the script sends it: POST to the com_ajax URL, task in the body,
+        // no form token, no session.
+        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'task=texts');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        $body     = (string) curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $payload = ajaxforms_decode_response($body);
+        $texts   = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+
+        $en = [];
+        $ini = '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.ini';
+        if (is_file($ini)) {
+            $en = parse_ini_file($ini, false, INI_SCANNER_RAW) ?: [];
+        }
+
+        $problems = [];
+
+        if ($httpCode !== 200 || ($payload['success'] ?? false) !== true) {
+            $problems[] = "HTTP $httpCode, body " . substr($body, 0, 150);
+        }
+
+        foreach (['ERROR_GENERIC', 'PROFILE_SAVED', 'CLOSE'] as $name) {
+            $value = (string) ($texts[$name] ?? '');
+
+            if ($value === '' || preg_match('/^[A-Z][A-Z0-9_]+$/', $value)) {
+                $problems[] = "$name missing or untranslated ('$value')";
+            }
+        }
+
+        if (($texts['ERROR_GENERIC'] ?? null) !== ($en['PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'] ?? '')) {
+            $problems[] = 'ERROR_GENERIC is not the text of the language file';
+        }
+
+        if ($problems === []) {
+            echo "PASS\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
         return false;
     }
 
