@@ -1024,11 +1024,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * the stored subject and body, the HTML layout with frame and logo, and the
      * language of the recipient.
      *
-     * A missing template and a failed send are told apart deliberately.
-     * MailTemplate::send() answers false in both cases, so the template is
-     * looked up first: without it the caller has to compose the mail itself,
-     * with it a failure is a transport problem and sending a second, unstyled
-     * mail would only deliver the same message twice.
+     * A missing template and a failed send both leave the recipient without a
+     * styled mail, so both return false and let the caller fall back to its
+     * plain-text mail: an unstyled mail is better than no mail. Only a template
+     * that MailTemplate::send() actually delivered returns true.
      *
      * @param   string    $templateId      Mail template id, for example com_users.password_reset
      * @param   string    $languageTag     Language the mail is rendered in
@@ -1038,8 +1037,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * @param   string    $context         Short label for the log entry
      * @param   string[]  $unsafeTags      Tags whose value is escaped in the HTML body
      *
-     * @return  bool  True when the template handled this mail, false only when
-     *                there is no such template and the caller has to fall back
+     * @return  bool  True only when the template mail was sent, false when there
+     *                is no such template or the send failed and the caller has
+     *                to fall back
      */
     protected function sendTemplateMail(
         string $templateId,
@@ -1077,6 +1077,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                     Log::ERROR,
                     'plg_ajax_joomlaajaxforms'
                 );
+
+                return false;
             }
         } catch (\Throwable $e) {
             // A \Throwable must never leave this plugin: the caller answers an
@@ -1087,6 +1089,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 Log::ERROR,
                 'plg_ajax_joomlaajaxforms'
             );
+
+            return false;
         }
 
         return true;
