@@ -54,6 +54,11 @@
 > Container setzt in keinem Fall eine feste Identität oder ein Signing-Skript — das frühere
 > `setup-git-signing.sh`, das eine feste Commit-Identität im Container erzwang, ist entfernt.
 
+## Lizenz
+- Alle Extensions stehen unter **GPL-3.0-or-later**; jede Extension liefert den unveränderten GPL-3.0-Text als `LICENSE.txt` mit.
+- Neue Dateien, die im Installationspaket ausgeliefert werden, tragen den Lizenzkopf mit `@copyright`, `@license` und `SPDX-License-Identifier: GPL-3.0-or-later` (Vorlage: `.claude/skills/joomla-extensions/references/conventions.md`). Testskripte, Docker- und CI-Hilfsdateien sind nicht Teil des Pakets und brauchen keinen Kopf.
+- Fremdcode nur mit GPL-3.0-kompatibler Lizenz übernehmen (nie GPL-2.0-only); fremde Copyright-Hinweise nie entfernen, Quelle in `THIRD-PARTY-NOTICES.txt` der Extension festhalten.
+
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 

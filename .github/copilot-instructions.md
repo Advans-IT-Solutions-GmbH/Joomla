@@ -14,4 +14,6 @@ Signing-Regeln:
 - Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz verifizierte Signaturen.
 - Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch signierst du, wenn ein Schlüssel vorhanden ist, der auf GitHub hinterlegt ist und zur Commit-E-Mail passt; ohne Schlüssel dürfen sie unsigniert sein. Details in `/AGENTS.md`.
 
+Lizenz: Alle Extensions stehen unter GPL-3.0-or-later; Kopfvorlage und Regeln für Fremdcode in `/AGENTS.md` (Abschnitt „Lizenz“).
+
 PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.

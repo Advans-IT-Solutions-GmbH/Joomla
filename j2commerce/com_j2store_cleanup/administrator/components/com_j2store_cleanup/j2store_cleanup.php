@@ -2,8 +2,9 @@
 /**
  * @package     J2Store Cleanup
  * @subpackage  Administrator
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  * @version     1.0.0
  */
 
@@ -744,7 +745,7 @@ $extensions = $db->loadObjectList();
             Developed by <a href="https://advans.ch" target="_blank">Advans IT Solutions GmbH</a>
         </p>
         <p style="margin-top: 15px; font-size: 12px; color: #666;">
-            © 2025 Advans IT Solutions GmbH. All rights reserved.
+            © 2025-2026 Advans IT Solutions GmbH. Licensed under the GNU General Public License version 3 or later.
         </p>
     </div>
 </div>

@@ -3,9 +3,10 @@
  * J2Commerce Checkout — Shipping & Payment Step
  * Template override for plg_privacy_j2commerce
  *
- * This file is a copy of the J2Commerce default template with one addition:
- * the privacy consent checkbox is rendered before the "Continue" button via
- * PluginHelper, without any HTML patching or regex.
+ * It replaces the J2Commerce 4 (J2Store 4) default template with a layout written
+ * for this plugin (not a copy of that template). It renders the privacy consent
+ * checkbox before the "Continue" button via PluginHelper, without any HTML
+ * patching or regex.
  *
  * WHY THIS OVERRIDE IS NEEDED
  * J2Commerce's eventWithHtml() only imports plugins in the 'j2store' group.
@@ -21,8 +22,9 @@
  * and adapt it to your template's markup.
  *
  * @package     J2Commerce Privacy Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 defined('_JEXEC') or die;
 

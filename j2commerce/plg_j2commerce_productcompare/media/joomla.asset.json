@@ -3,7 +3,7 @@
   "name": "plg_j2commerce_productcompare",
   "version": "1.0.0",
   "description": "J2Commerce Product Compare Plugin assets",
-  "license": "Proprietary",
+  "license": "GPL-3.0-or-later",
   "assets": [
     {
       "name": "plg_j2commerce_productcompare.css",

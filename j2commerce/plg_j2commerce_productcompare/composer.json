@@ -2,7 +2,7 @@
     "name": "advans/plg-j2commerce-productcompare",
     "description": "Product comparison plugin for J2Commerce",
     "type": "joomla-plugin",
-    "license": "GPL-2.0-or-later",
+    "license": "GPL-3.0-or-later",
     "require": {
         "php": "^8.1"
     },
