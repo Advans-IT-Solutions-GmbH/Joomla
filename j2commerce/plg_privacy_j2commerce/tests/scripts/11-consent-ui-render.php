@@ -35,8 +35,10 @@
  * for the event. The frontend options (Show Privacy Section, Show Delete
  * Address Buttons, Show Export Data, Show Delete All Data) are checked through
  * PrivacyOptions and the rendered MyProfile override. The server-side check of
- * the checkout requests is covered by 12-consent-logging.php; browser
- * interaction is not covered by the automated tests.
+ * the checkout requests is covered by 12-consent-logging.php. The J2Store 4
+ * client-side click guard's runtime blocking is covered by the executable DOM
+ * test tests/js/consent-validator.test.js; full browser interaction is not
+ * otherwise exercised by the automated tests.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -540,10 +542,10 @@ class ConsentUiRenderTest
 
             // J2Store 4 has no server-side consent check, so the client guard has to
             // cover the click on that button in the capture phase, not only a form submit.
-            // These are static source assertions (no DOM/JS engine in CI): they pin the
-            // guard's structure and blocking mechanics so a regression that keeps the file
-            // but drops the actual blocking cannot pass silently. The live browser
-            // behaviour itself is not exercised by the automated suite.
+            // These static source assertions pin the guard's structure and blocking
+            // mechanics in the Docker lane; the guard's actual runtime blocking is
+            // executed separately by tests/js/consent-validator.test.js (Node DOM test,
+            // CI job "Consent Validator (JS)").
             $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
             $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
             $this->test('Consent validator guards the #button-payment-method click in the capture phase',
