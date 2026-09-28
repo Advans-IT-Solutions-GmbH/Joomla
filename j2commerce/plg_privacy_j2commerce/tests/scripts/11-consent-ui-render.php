@@ -521,9 +521,19 @@ class ConsentUiRenderTest
         // and collects the step's hidden inputs, so they have to be in this override.
         if (!$isJ6) {
             $this->test('Checkout step carries the hidden task input',
-                strpos($checkoutHtml, 'value="shipping_payment_method_validate"') !== false);
-            $this->test('Checkout step carries the button J2Store binds to',
-                strpos($checkoutHtml, 'id="button-payment-method"') !== false);
+                (bool) preg_match('/<input type="hidden" name="task" value="shipping_payment_method_validate"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden option input',
+                (bool) preg_match('/<input type="hidden" name="option" value="com_j2store"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden view input',
+                (bool) preg_match('/<input type="hidden" name="view" value="checkout"/', $checkoutHtml));
+            // The button J2Store's script binds to must be type="button": a regression to
+            // type="submit" would break J2Store 4's click-driven step submission.
+            $this->test('Checkout step button is type="button" with id="button-payment-method"',
+                (bool) preg_match('/<button type="button" id="button-payment-method"/', $checkoutHtml),
+                'Continue button must be type="button" id="button-payment-method" for the J2Store 4 path');
+            $this->test('Checkout step button is not a plain submit',
+                strpos($checkoutHtml, 'type="submit"') === false,
+                'A type="submit" button no longer triggers J2Store 4\'s step submission');
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
