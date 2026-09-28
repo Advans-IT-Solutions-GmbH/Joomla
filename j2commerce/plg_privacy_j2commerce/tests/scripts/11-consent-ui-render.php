@@ -37,7 +37,7 @@
  * PrivacyOptions and the rendered MyProfile override. The server-side check of
  * the checkout requests is covered by 12-consent-logging.php. The J2Store 4
  * client-side click guard's runtime blocking is covered by the executable DOM
- * test tests/js/consent-validator.test.js; full browser interaction is not
+ * test at tests/js/consent-validator.test.js; full browser interaction is not
  * otherwise exercised by the automated tests.
  */
 define('_JEXEC', 1);

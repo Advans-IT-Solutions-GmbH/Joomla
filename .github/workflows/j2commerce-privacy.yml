@@ -509,6 +509,7 @@ jobs:
       - build
       - syntax-check
       - language-lint
+      - js-tests
       - test-j5
       - test-j6
       - test-production
