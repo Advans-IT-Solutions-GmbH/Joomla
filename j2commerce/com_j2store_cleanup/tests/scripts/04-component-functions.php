@@ -228,9 +228,13 @@ class ComponentFunctionsTest
 
     /**
      * The page prints no text of its own: every visible text comes from a
-     * language key, so a further language needs language files only. What is
-     * left after removing PHP output, styles and tags may only be the company
-     * name, the copyright line and separators.
+     * language key, so supporting a further language needs language files
+     * only. Two layers are checked: the literal HTML between the PHP blocks
+     * (no fixed words), and — crucially — the text emitted from PHP, because a
+     * hardcoded label inside `<?php echo ... ?>` would otherwise ship
+     * untranslated and escape a check that simply strips the PHP away. What
+     * may legitimately remain is the company name, the copyright line and
+     * separators.
      */
     private function testPageHasNoFixedText(): void
     {
@@ -246,13 +250,23 @@ class ComponentFunctionsTest
         }
 
         $markup = substr($source, $start, $end - $start);
-        $markup = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
-        $markup = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $markup);
-        $text   = html_entity_decode(strip_tags($markup), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $text   = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
-        $text   = trim(preg_replace('/\s+/u', ' ', $text));
 
-        $this->test('Page markup contains no fixed text', $text === '', "left over: '" . mb_substr($text, 0, 200) . "'");
+        // Layer 1: the literal HTML between the PHP blocks carries no words.
+        $inlineHtml = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
+        $inlineHtml = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $inlineHtml);
+        $inlineText = html_entity_decode(strip_tags($inlineHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $inlineText = $this->dropAllowedText($inlineText);
+
+        $this->test('Literal HTML contains no fixed text', $inlineText === '', "left over: '" . mb_substr($inlineText, 0, 200) . "'");
+
+        // Layer 2: nothing visible is emitted as a hardcoded string from PHP.
+        // Every echoed string literal that survives strip_tags must come from a
+        // language key (Text::…); bare labels such as the J2Store/Joomla origin
+        // badge are reported instead of being silently stripped with the block.
+        $hardcoded = $this->findEchoedFixedText($markup);
+
+        $this->test('PHP emits no hardcoded visible text', $hardcoded === [],
+            'hardcoded: ' . implode(', ', array_map(static fn ($s) => "'$s'", $hardcoded)));
 
         $this->test('Removal confirmation comes from the language file',
             str_contains($source, "Text::script('COM_J2STORE_CLEANUP_CONFIRM_REMOVE')")
@@ -260,6 +274,107 @@ class ComponentFunctionsTest
 
         $this->test('No English message is built outside the language file',
             !preg_match("/(?:enqueueMessage|\['messages'\]\[\]\s*=|'reason'\s*=>)\s*\(?\s*'[A-Za-z][^']*\s[^']*'/", $source));
+    }
+
+    /**
+     * Remove the few fixed strings the page may legitimately show: the company
+     * name, the copyright sign, the year range and separators.
+     */
+    private function dropAllowedText(string $text): string
+    {
+        $text = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
+
+        return trim(preg_replace('/\s+/u', ' ', $text));
+    }
+
+    /**
+     * Find visible text emitted as a hardcoded string literal from PHP output.
+     *
+     * Tokenises the markup and collects the string literals that an `echo`,
+     * `print` or `<?= ?>` writes out directly (parenthesis depth 0 — literals
+     * passed to Text::…, htmlspecialchars() etc. sit inside parentheses and
+     * are therefore ignored, being either localised or non-visible arguments).
+     * A literal is reported when, after stripping any HTML, real words remain
+     * that are not an allowed fixed string and not a lowercase CSS class or
+     * identifier token.
+     *
+     * @return string[]  The offending literal contents.
+     */
+    private function findEchoedFixedText(string $markup): array
+    {
+        $tokens = token_get_all($markup);
+        $found  = [];
+
+        $inEcho = false;
+        $depth  = 0;
+
+        foreach ($tokens as $token) {
+            if (is_array($token)) {
+                [$id, $text] = $token;
+
+                if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
+                    $inEcho = true;
+                    $depth  = 0;
+                    continue;
+                }
+
+                if (!$inEcho) {
+                    continue;
+                }
+
+                if ($id === T_CLOSE_TAG) {
+                    $inEcho = false;
+                    continue;
+                }
+
+                if ($id === T_CONSTANT_ENCAPSED_STRING && $depth === 0) {
+                    $value   = $this->literalValue($text);
+                    $visible = $this->dropAllowedText(
+                        html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8')
+                    );
+
+                    // Ignore empties, pure CSS-class / identifier tokens (lower
+                    // case, digits, hyphens) and anything without a real word.
+                    if ($visible !== ''
+                        && preg_match('/\p{L}/u', $visible)
+                        && !preg_match('/^[a-z0-9\-\s]+$/', $visible)) {
+                        $found[$value] = $value;
+                    }
+                }
+
+                continue;
+            }
+
+            if (!$inEcho) {
+                continue;
+            }
+
+            // Single-character tokens: track parentheses and the statement end.
+            if ($token === '(') {
+                $depth++;
+            } elseif ($token === ')') {
+                $depth--;
+            } elseif ($token === ';' && $depth === 0) {
+                $inEcho = false;
+            }
+        }
+
+        return array_values($found);
+    }
+
+    /**
+     * Decode a single or double quoted PHP string literal to its text value.
+     */
+    private function literalValue(string $literal): string
+    {
+        $quote = $literal[0] ?? "'";
+        $inner = substr($literal, 1, -1);
+
+        if ($quote === "'") {
+            return str_replace(["\\'", '\\\\'], ["'", '\\'], $inner);
+        }
+
+        return stripcslashes($inner);
     }
 
     /**
