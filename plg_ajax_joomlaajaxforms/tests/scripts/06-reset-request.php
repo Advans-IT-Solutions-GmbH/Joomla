@@ -435,6 +435,49 @@ class ResetRequestTest
     }
 
     /**
+     * Every account mail sender must route its plain-text fallback through the
+     * isolated mailText() helper. The moderate finding this closes was that the
+     * fallbacks used Text::sprintf(), which renders in the running request's
+     * language and lets the language of one recipient reach the next. A single
+     * sender slipping back to Text::sprintf() would silently reopen the bug for
+     * that mail alone, so each of the four is checked on its own, read straight
+     * from the source so the guard cannot drift from the code.
+     */
+    private function testEverySenderFallbackStaysIsolated(): void
+    {
+        echo "\n--- Every mail sender keeps its fallback language isolated ---\n";
+
+        $rc = new ReflectionClass(\Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class);
+
+        foreach (['sendResetEmail', 'sendRemindEmail', 'sendActivationEmail', 'sendAdminNotification'] as $name) {
+            if (!$rc->hasMethod($name)) {
+                $this->test("Sender $name exists", false);
+                continue;
+            }
+
+            $method = $rc->getMethod($name);
+            $lines  = file($method->getFileName());
+            $source = implode('', array_slice(
+                $lines,
+                $method->getStartLine() - 1,
+                $method->getEndLine() - $method->getStartLine() + 1
+            ));
+
+            $this->test(
+                "$name renders its fallback through mailText()",
+                str_contains($source, '$this->mailText('),
+                'mailText() call not found'
+            );
+
+            $this->test(
+                "$name does not fall back to Text::sprintf()",
+                !str_contains($source, 'Text::sprintf('),
+                'Text::sprintf() would render in the request language'
+            );
+        }
+    }
+
+    /**
      * The answer must stay the same for a known and an unknown address,
      * otherwise the form tells an attacker which addresses have an account.
      */
@@ -544,6 +587,7 @@ class ResetRequestTest
         $this->testResetMailCarriesTheSiteDesign();
         $this->testMailLanguageFollowsTheAccount();
         $this->testFallbackMailLanguageIsIsolated();
+        $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();
 
         echo "\n=== Reset Request Test Summary ===\n";

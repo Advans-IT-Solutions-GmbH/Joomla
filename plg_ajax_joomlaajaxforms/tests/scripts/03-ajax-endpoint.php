@@ -27,6 +27,7 @@ class AjaxEndpointTest
         $allPassed = $this->testEndpointAccessible() && $allPassed;
         $allPassed = $this->testResponseFormat() && $allPassed;
         $allPassed = $this->testTextsTask() && $allPassed;
+        $allPassed = $this->testErrorPayloadKeepsEnvelope() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -189,6 +190,65 @@ class AjaxEndpointTest
 
         if (($texts['ERROR_GENERIC'] ?? null) !== ($en['PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'] ?? '')) {
             $problems[] = 'ERROR_GENERIC is not the text of the language file';
+        }
+
+        if ($problems === []) {
+            echo "PASS\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * A logical error (here: a state-changing task sent without a form token)
+     * must be carried in the very same com_ajax envelope as a success. The
+     * outer envelope always reports the dispatch as success:true and puts the
+     * plugin's own payload in data[]; the rejection lives in that inner payload
+     * (success:false). testTextsTask() only proves the happy path, so this
+     * proves the error path keeps the shape onAfterRoute is meant to mirror.
+     */
+    private function testErrorPayloadKeepsEnvelope(): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: A rejected task keeps the com_ajax envelope... ";
+
+        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        // A real task that changes state, but no form token: onAjaxJoomlaajaxforms()
+        // rejects it and returns its own success:false payload.
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'task=reset');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        $body     = (string) curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $envelope = json_decode($body, true);
+
+        $problems = [];
+
+        if ($httpCode !== 200) {
+            $problems[] = "HTTP $httpCode";
+        }
+
+        // The outer envelope must be intact even for a rejection.
+        if (!is_array($envelope)
+            || ($envelope['success'] ?? null) !== true
+            || !is_array($envelope['data'] ?? null)
+        ) {
+            $problems[] = 'outer envelope shape mismatch: ' . substr($body, 0, 150);
+        }
+
+        // The rejection itself must sit in the inner plugin payload.
+        if (!ajaxforms_is_json_rejection($body)) {
+            $problems[] = 'inner payload is not a success:false rejection: ' . substr($body, 0, 150);
         }
 
         if ($problems === []) {
