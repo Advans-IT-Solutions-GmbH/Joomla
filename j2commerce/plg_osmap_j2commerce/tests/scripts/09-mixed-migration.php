@@ -171,6 +171,18 @@ class MixedMigrationTest
                 return $this->plugin()->getComponentElement() === 'com_j2store';
             });
 
+            $this->test('mixed state → OSMap serves com_j2store and skips com_j2commerce', function () {
+                // OSMap picks the plugin for a menu item by comparing
+                // getComponentElement() to the item's option
+                // (Collector::getPluginsForComponent: getComponentElement() === $option).
+                // Replicate that decision for both shop components while both are
+                // enabled: com_j2store matches (served), com_j2commerce does not
+                // (its menu items are skipped) — the documented precedence.
+                $matches = fn (string $option): bool => $this->plugin()->getComponentElement() === $option;
+
+                return $matches('com_j2store') && !$matches('com_j2commerce');
+            });
+
             $this->test('rendering a com_j2commerce item in the mixed state does not throw', function () {
                 $parent            = osmap_make_item([]);
                 $parent->id        = 9001;
