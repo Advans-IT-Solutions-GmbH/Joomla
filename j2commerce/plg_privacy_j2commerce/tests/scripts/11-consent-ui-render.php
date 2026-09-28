@@ -540,11 +540,27 @@ class ConsentUiRenderTest
 
             // J2Store 4 has no server-side consent check, so the client guard has to
             // cover the click on that button in the capture phase, not only a form submit.
+            // These are static source assertions (no DOM/JS engine in CI): they pin the
+            // guard's structure and blocking mechanics so a regression that keeps the file
+            // but drops the actual blocking cannot pass silently. The live browser
+            // behaviour itself is not exercised by the automated suite.
             $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
             $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
             $this->test('Consent validator guards the #button-payment-method click in the capture phase',
                 (bool) preg_match('/addEventListener\(\s*[\'"]click[\'"][\s\S]*button-payment-method[\s\S]*,\s*true\s*\)/', $validatorSrc),
                 $validatorJs);
+            // The guard must actually block: only when a required, unticked consent box is
+            // present does it preventDefault and stop the click reaching J2Store's handler.
+            $this->test('Consent guard reads the consent checkbox state before blocking',
+                strpos($validatorSrc, "getElementById('j2commerce_privacy_consent')") !== false
+                    && (bool) preg_match('/consent\.checked/', $validatorSrc),
+                'Guard must only block while the consent box is unticked');
+            $this->test('Consent guard cancels the default action (preventDefault)',
+                (bool) preg_match('/\be\.preventDefault\(\)/', $validatorSrc),
+                'Guard must call preventDefault to stop the step submission');
+            $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
+                strpos($validatorSrc, 'stopImmediatePropagation') !== false,
+                'Guard must stop propagation so J2Store\'s own click handler does not run');
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
