@@ -433,10 +433,11 @@ all menu item paths.
 During a migration there is a short window in which **both** `com_j2store` and
 `com_j2commerce` are installed and enabled at the same time. OSMap matches a
 single plugin element to exactly one component per request, so while both
-components are active the plugin resolves to only one of them (`com_j2store`
-takes precedence) and the shop URLs for the other component are omitted from the
-sitemap. **An empty shop sitemap during this window is expected — it is not a
-defect.**
+components are active the plugin resolves to only one of them: `com_j2store` takes
+precedence. J2Store menu items are still served, but the shop URLs of the **other**
+component (`com_j2commerce`) are omitted from the sitemap until J2Store is disabled.
+**If your live shop menu items already point to `com_j2commerce`, their URLs are
+missing during this window — that is expected, not a defect.**
 
 To avoid it, follow this order when migrating:
 

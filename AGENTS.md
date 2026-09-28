@@ -90,7 +90,7 @@ Festgehaltene Entscheidungen (Details im Skill `joomla-extensions`):
 - Deprecation-Gate in den produktionsnahen Lanes und statischer Scan nach veralteten Joomla-APIs in jeder Workflow-Datei; beide müssen grün sein.
 - Plugin-Service-Provider übergeben den Dispatcher weder im Konstruktor noch per `setDispatcher()`.
 - Pro Extension existiert nur das neueste GitHub-Release; ältere Releases und Tags löscht der Publish-Workflow bewusst.
-- OSMap: Sind J2Store und J2Commerce gleichzeitig aktiv, bleibt die Sitemap ohne Shop-Einträge (dokumentierte Einschränkung, Issue #182); abgedeckt durch die Reihenfolge der Migration.
+- OSMap: Sind J2Store und J2Commerce gleichzeitig aktiv, hat `com_j2store` Vorrang — dessen Menüeinträge werden weiter ausgeliefert, nur `com_j2commerce`-Menüeinträge werden übersprungen (Issue #182). Zeigen die Live-Shop-Menüeinträge bereits auf `com_j2commerce`, fehlen deren URLs, bis J2Store deaktiviert ist; die Migrationsreihenfolge im OSMap-README vermeidet das.
 - Lizenz: Umstellung auf GPL-3.0-or-later mit Regeln für fremden Code in einem eigenen PR (#189).
 
 Skills liegen in:
