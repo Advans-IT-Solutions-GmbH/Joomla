@@ -529,11 +529,11 @@ class ConsentUiRenderTest
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
 
             // J2Store 4 has no server-side consent check, so the client guard has to
-            // cover the click on that button, not only a form submit.
+            // cover the click on that button in the capture phase, not only a form submit.
             $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
             $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
-            $this->test('Consent validator guards #button-payment-method',
-                strpos($validatorSrc, 'button-payment-method') !== false,
+            $this->test('Consent validator guards the #button-payment-method click in the capture phase',
+                (bool) preg_match('/addEventListener\(\s*[\'"]click[\'"][\s\S]*button-payment-method[\s\S]*,\s*true\s*\)/', $validatorSrc),
                 $validatorJs);
         }
 
