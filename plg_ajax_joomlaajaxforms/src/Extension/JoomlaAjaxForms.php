@@ -68,6 +68,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * causing infinite 303 loops for com_ajax URLs with multiple
      * query parameters. This handler detects our AJAX requests
      * early and responds directly.
+     *
+     * The direct answer mirrors the envelope com_ajax's JsonResponse would
+     * have produced: a top-level success flag with message and messages, and
+     * the plugin's own JSON payload as the single entry of data[]. Answering
+     * in that exact shape keeps this shortcut and the regular com_ajax path
+     * interchangeable for the client, which reads the payload from data[0].
      */
     public function onAfterRoute(): void
     {

@@ -161,6 +161,8 @@ Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are 
 
 ### JSON Response Format
 
+The plugin's own payload has this shape:
+
 ```json
 {
     "success": true,
@@ -180,6 +182,23 @@ Error responses use J2Commerce-compatible format:
     "error": { "warning": "Error message" }
 }
 ```
+
+On the wire this payload is wrapped in the envelope `com_ajax` produces, and
+the `onAfterRoute` shortcut mirrors it exactly, so both paths answer the same
+way. The transport envelope always reports the dispatch itself as successful;
+a task that was rejected (invalid token, unknown task) still arrives here, with
+its `success: false` payload inside `data[0]`:
+
+```json
+{
+    "success": true,
+    "message": null,
+    "messages": null,
+    "data": ["{\"success\":true,\"message\":null,\"data\":{ },\"error\":null}"]
+}
+```
+
+The client reads the actual payload from `data[0]`.
 
 ## Development
 
@@ -384,7 +403,11 @@ corresponding mail template.
 The plugin's own texts are kept as a fallback only. That fallback is reached
 when `#__mail_templates` has no such row, for example after someone deleted it,
 which is why a normal installation never uses it. It writes a warning to the
-log when it does.
+log when it does. The fallback is rendered in the same language as the template
+mail it replaces — the recipient's — through a separate `Language` instance per
+language, so it never changes the language of the running request and the
+language of one recipient never reaches the next when a single request sends
+more than one mail.
 
 Three details follow from the plugin answering inside `com_ajax`:
 
