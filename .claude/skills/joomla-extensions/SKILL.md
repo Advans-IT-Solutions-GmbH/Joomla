@@ -52,3 +52,5 @@ Advans-IT-Solutions-GmbH/Joomla
 
 See `references/release-workflow.md` for the full release process.
 See `references/testing.md` for running tests locally.
+
+- **Fork-PR workflow approval (public repo):** `Joomla` is public, so GitHub gates a first-time contributor's first workflow run behind manual approval (the run sits in `action_required`, shown as "N workflows awaiting approval"). The **Copilot cloud coding agent** (actor `Copilot`) counts as first-time, so this repo's `actions/permissions/fork-pr-contributor-approval` `approval_policy` is set to `first_time_contributors_new_to_github` (least strict) so agent runs start automatically. Check/set: `gh api repos/Advans-IT-Solutions-GmbH/Joomla/actions/permissions/fork-pr-contributor-approval` (GET to check), and to set: `gh api --method PUT repos/Advans-IT-Solutions-GmbH/Joomla/actions/permissions/fork-pr-contributor-approval -f approval_policy=first_time_contributors_new_to_github`. Full rationale, values, the accepted security trade-off and the org-wide policy (private repos have no such setting; `.github` deliberately stays strict) live in the org handbook README, Section 7 "Fork-PR Contributor Approval".
