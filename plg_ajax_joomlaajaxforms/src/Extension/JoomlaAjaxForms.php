@@ -15,6 +15,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Language;
 use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -85,7 +86,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-cache, no-store, must-revalidate');
-        echo json_encode(['data' => [$result]], JSON_UNESCAPED_UNICODE);
+
+        // Mirror the envelope com_ajax's JsonResponse would have produced, so
+        // this shortcut and the regular com_ajax path answer in the exact same
+        // shape: the dispatch succeeded (success true), and the plugin's own
+        // JSON payload is the single entry of data[]. Without the success key
+        // the shape only worked by accident, because the client reads data[0].
+        echo json_encode(
+            ['success' => true, 'message' => null, 'messages' => null, 'data' => [$result]],
+            JSON_UNESCAPED_UNICODE
+        );
 
         $app->close();
     }
@@ -1274,6 +1284,40 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * A plugin string rendered in a specific language.
+     *
+     * Text::sprintf() always renders in the language of the running request, so
+     * the plain-text fallback of an account mail would leave in that language
+     * even when the recipient's account, and the template mail the fallback
+     * replaces, use another one. Sending several mails in one request (the
+     * registrant and the site owner) would then let the language of the first
+     * reach the second. A separate Language instance keeps every mail in its
+     * own language and never touches the language of the request.
+     *
+     * @param   string  $languageTag  Language the text is rendered in
+     * @param   string  $key          Language key of the plugin string
+     * @param   mixed   ...$args       sprintf arguments for the string
+     *
+     * @return  string
+     */
+    protected function mailText(string $languageTag, string $key, ...$args): string
+    {
+        try {
+            $language = Language::getInstance($languageTag);
+            $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR, $languageTag, true)
+                || $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms', $languageTag, true);
+
+            $text = $language->_($key);
+        } catch (\Throwable $e) {
+            // Without a usable Language instance the request language is still
+            // better than a raw key.
+            $text = Text::_($key);
+        }
+
+        return $args ? vsprintf($text, $args) : $text;
+    }
+
+    /**
      * An absolute, routed address for a mail.
      *
      * Route::link() gives the address the site itself would show, instead of
@@ -1326,9 +1370,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $data['link_html'] = $this->routedLink($query, true, $mode);
         $data['token']     = $token;
 
+        $language = $this->accountMailLanguage($user);
+
         if ($this->sendTemplateMail(
             'com_users.password_reset',
-            $this->accountMailLanguage($user),
+            $language,
             (string) $user->email,
             (string) $user->name,
             $data,
@@ -1341,13 +1387,15 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         // Fallback for a site without that mail template: the former plain-text
-        // mail. An unstyled mail is better than no mail.
+        // mail, in the recipient's language. An unstyled mail is better than no
+        // mail.
         try {
             $siteName = $app->get('sitename');
             $resetLink = Uri::root() . $query;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -1385,9 +1433,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $data['link_text'] = $this->routedLink($query, false, $mode);
         $data['link_html'] = $this->routedLink($query, true, $mode);
 
+        $language = $this->accountMailLanguage($user);
+
         if ($this->sendTemplateMail(
             'com_users.reminder',
-            $this->accountMailLanguage($user),
+            $language,
             (string) $user->email,
             (string) $user->name,
             $data,
@@ -1401,8 +1451,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $siteName = $app->get('sitename');
             $loginLink = Uri::root() . $query;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -1448,9 +1499,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $data['siteurl']   = Uri::root();
         $data['activate']  = $this->routedLink($query, false, $mode);
 
+        $language = $this->accountMailLanguage($user);
+
         if ($this->sendTemplateMail(
             $templateId,
-            $this->accountMailLanguage($user),
+            $language,
             (string) $user->email,
             (string) $user->name,
             $data,
@@ -1464,8 +1517,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $siteName = $app->get('sitename');
             $activationLink = Uri::root() . $query;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -1517,9 +1571,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         // The notice goes to the site's own address, so it is addressed in the
         // default site language rather than in the language of the registrant.
+        $language = $this->defaultSiteLanguage();
+
         if ($this->sendTemplateMail(
             'com_users.registration.admin.new_notification',
-            $this->defaultSiteLanguage(),
+            $language,
             $adminEmail,
             '',
             $data,
@@ -1532,8 +1588,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         try {
             $siteName = $app->get('sitename');
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_BODY',
                 $siteName,
                 $user->name,

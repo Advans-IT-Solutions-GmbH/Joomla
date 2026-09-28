@@ -382,6 +382,59 @@ class ResetRequestTest
     }
 
     /**
+     * The plain-text fallback must render in the recipient's language, and it
+     * must not change the language of the running request. Text::sprintf() would
+     * do both wrong: it renders in the request language and, when a second mail
+     * to another recipient follows, the first recipient's language would reach
+     * it. mailText() uses a separate Language instance, so it stays isolated.
+     */
+    private function testFallbackMailLanguageIsIsolated(): void
+    {
+        echo "\n--- Fallback mail language is isolated ---\n";
+
+        $plugin = ajaxforms_plugin_instance();
+        $rc     = new ReflectionClass(\Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class);
+
+        $this->test('Method mailText exists', $rc->hasMethod('mailText'));
+
+        if (!$rc->hasMethod('mailText')) {
+            return;
+        }
+
+        $method = $rc->getMethod('mailText');
+        $method->setAccessible(true);
+
+        $requestTagBefore = Factory::getApplication()->getLanguage()->getTag();
+
+        $rendered = (string) $method->invoke(
+            $plugin,
+            'en-GB',
+            'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT',
+            'Isolation Site'
+        );
+
+        $this->test(
+            'Fallback text is translated, not the raw key',
+            $rendered !== '' && !str_contains($rendered, 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT'),
+            'got ' . var_export($rendered, true)
+        );
+
+        $this->test(
+            'The sprintf argument reached the fallback text',
+            str_contains($rendered, 'Isolation Site'),
+            'got ' . var_export($rendered, true)
+        );
+
+        $requestTagAfter = Factory::getApplication()->getLanguage()->getTag();
+
+        $this->test(
+            'Rendering a mail does not change the request language',
+            $requestTagBefore === $requestTagAfter,
+            "before $requestTagBefore, after $requestTagAfter"
+        );
+    }
+
+    /**
      * The answer must stay the same for a known and an unknown address,
      * otherwise the form tells an attacker which addresses have an account.
      */
@@ -490,6 +543,7 @@ class ResetRequestTest
         $this->testFormDetection();
         $this->testResetMailCarriesTheSiteDesign();
         $this->testMailLanguageFollowsTheAccount();
+        $this->testFallbackMailLanguageIsIsolated();
         $this->testAnswerDoesNotRevealAccounts();
 
         echo "\n=== Reset Request Test Summary ===\n";

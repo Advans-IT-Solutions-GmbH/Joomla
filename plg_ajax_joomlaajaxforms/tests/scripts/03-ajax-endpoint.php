@@ -156,6 +156,10 @@ class AjaxEndpointTest
         $payload = ajaxforms_decode_response($body);
         $texts   = is_array($payload['data'] ?? null) ? $payload['data'] : [];
 
+        // The direct onAfterRoute answer must carry the same envelope com_ajax
+        // produces: a top-level success flag and the plugin payload in data[].
+        $envelope = json_decode($body, true);
+
         $en = [];
         $ini = '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.ini';
         if (is_file($ini)) {
@@ -166,6 +170,13 @@ class AjaxEndpointTest
 
         if ($httpCode !== 200 || ($payload['success'] ?? false) !== true) {
             $problems[] = "HTTP $httpCode, body " . substr($body, 0, 150);
+        }
+
+        if (!is_array($envelope)
+            || ($envelope['success'] ?? null) !== true
+            || !is_array($envelope['data'] ?? null)
+        ) {
+            $problems[] = 'envelope shape mismatch: ' . substr($body, 0, 150);
         }
 
         foreach (['ERROR_GENERIC', 'PROFILE_SAVED', 'CLOSE'] as $name) {
