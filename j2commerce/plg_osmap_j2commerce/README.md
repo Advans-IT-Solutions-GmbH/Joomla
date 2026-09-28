@@ -262,7 +262,8 @@ Order as in `tests/test.env`:
    URLs in the live sitemap
 9. **Mixed Migration State** (`09-mixed-migration.php`) — J2Store and J2Commerce 6
    registered at the same time: while both components are enabled the plugin serves
-   `com_j2store`, after `com_j2store` is disabled it serves `com_j2commerce`, and a
+   `com_j2store` and OSMap skips `com_j2commerce` menu items (documented precedence),
+   after `com_j2store` is disabled it serves `com_j2commerce`, and a
    menu item of a component without tables does not break the sitemap
 10. **Installer Messages** — shared suite: removes and reinstalls the package through
     the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated

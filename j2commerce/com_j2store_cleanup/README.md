@@ -129,7 +129,12 @@ Order as in `tests/test.env`:
 3. **Cleanup** - Extension removal, batch removal, isolation tests, and a real
    register-extension → cleanup → verify round trip that confirms the installed
    core component (`com_j2store` on J5, `com_j2commerce` on J6) is protected
-4. **Component Functions** - Main file function validation (`createDbQuery`, `cleanupExtensions`)
+4. **Component Functions** - Calls the real main-file functions (`createDbQuery`,
+   `cleanupExtensions`, `scanForIssues`, `classifyExtension`, `describeIssue`) and
+   enforces the localisation contract: the page prints no hardcoded visible text —
+   including text emitted from PHP, caught by tokenising the markup and rejecting any
+   string literal an `echo`/`print` writes out directly — and findings render in the
+   site language (the suite runs in de-DE)
 5. **Safety Checks** - Protected extensions list, edge cases, DB verification that
    the expected core component is installed
 6. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
