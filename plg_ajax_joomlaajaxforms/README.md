@@ -181,6 +181,14 @@ Error responses use J2Commerce-compatible format:
 }
 ```
 
+Every task keeps the same shape: task-specific payload lives directly under
+`data`. The `texts` task therefore answers `{"success": true, "data": {
+"ERROR_GENERIC": "…", "PROFILE_SAVED": "…", "CLOSE": "…" }}`. Because `com_ajax`
+wraps the plugin JSON string in its own `data[0]` envelope, the client unwraps
+that envelope first and then reads the payload as `data.data` (see
+`unwrapResponse()` in `media/js/joomlaajaxforms.js`); the integration test does
+the same via `ajaxforms_decode_response()`.
+
 ## Development
 
 ### Structure

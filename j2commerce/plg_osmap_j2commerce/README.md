@@ -31,9 +31,13 @@ stacks (Joomla 5 + J2Store/J2Commerce 4 and Joomla 6 + J2Commerce 6):
   J5 and J6 jobs (`docker-compose.sef.yml`, `docker-compose.joomla6-sef.yml`,
   `J2COMMERCE_SEF=1`) assert that the live sitemap emits language-prefixed SEF
   product URLs on both stacks. The J6 job additionally installs the Joomla German
-  `de-DE` pack and seeds dedicated published `de-DE` product routes, so it also
-  asserts that every `/de/shop/<alias>` URL resolves directly with HTTP 200 and
-  without a redirect.
+  `de-DE` pack, enables `plg_system_languagefilter` and seeds dedicated published
+  `de-DE` product routes, so it also asserts that every `/de/shop/<alias>` URL
+  resolves directly with HTTP 200 and without a redirect. The J5 SEF stack
+  installs no language pack, so it only proves URL *generation* and logs the live
+  status for diagnostics: without an installed language a direct `/de/` request is
+  legitimately 301-canonicalised, so a 301 there is expected and never fails the
+  suite.
 
 ## Description
 
@@ -262,8 +266,10 @@ Order as in `tests/test.env`:
    `getComponentElement()` → `getTree()` loader on both stacks
 7. **Sitemap HTTP** — full-stack HTTP request against the live sitemap endpoint
 8. **Sitemap HTTP (SEF)** — dedicated J5/J6 SEF-enabled jobs asserting SEF-formed product
-   URLs in the live sitemap; on Joomla 6 the same suite also requests every product
-   URL and requires a direct HTTP 200 without a redirect
+   URLs in the live sitemap; on Joomla 6 (with the `de-DE` pack, language filter and
+   published `de-DE` routes) the same suite also requests every product URL and requires
+   a direct HTTP 200 without a redirect. On Joomla 5 (no language pack) the live status is
+   only logged; a 301 canonicalisation of the `/de/` URL there is expected, not a failure
 9. **Mixed Migration State** (`09-mixed-migration.php`) — J2Store and J2Commerce 6
    registered at the same time: while both components are enabled the plugin serves
    `com_j2store`, after `com_j2store` is disabled it serves `com_j2commerce`, and a
