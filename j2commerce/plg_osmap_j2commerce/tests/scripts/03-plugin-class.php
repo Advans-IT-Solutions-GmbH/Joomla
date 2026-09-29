@@ -233,7 +233,22 @@ class PluginClassTest
                 && $collector->nodes[0]->uid  === 'j2commerce.product.9001';
         });
 
-        $this->test('Query failures in getTree(view=products) are caught without emitting nodes', function () {
+        // A query failure has to stay invisible to OSMap but must reach the log
+        // (issue #177). A callback logger records what the plugin writes, so a
+        // regression to a silent catch fails here and not only the node count.
+        $logged = [];
+        \Joomla\CMS\Log\Log::addLogger(
+            [
+                'logger'   => 'callback',
+                'callback' => static function ($entry) use (&$logged): void {
+                    $logged[] = (string) $entry->message;
+                },
+            ],
+            \Joomla\CMS\Log\Log::ALL,
+            ['plg_osmap_j2commerce']
+        );
+
+        $this->test('Query failures in getTree(view=products) are caught, logged and emit no node', function () use (&$logged) {
             $plugin = new class (['params' => new \Joomla\Registry\Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
                 protected string $productsTable = '#__content';
             };
@@ -247,10 +262,14 @@ class PluginClassTest
                 'path'       => 'shop',
                 'browserNav' => 0,
             ]);
-            $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
+            $before = count($logged);
             $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
 
-            return count($collector->nodes) === 0;
+            $newEntries = array_slice($logged, $before);
+
+            return count($collector->nodes) === 0
+                && $newEntries !== []
+                && str_contains(implode(' ', $newEntries), 'plg_osmap_j2commerce:');
         });
 
         echo "\n=== Plugin Class Test Summary ===\n";
