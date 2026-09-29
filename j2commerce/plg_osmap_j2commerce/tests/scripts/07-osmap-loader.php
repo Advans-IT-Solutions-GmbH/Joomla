@@ -409,6 +409,25 @@ class OsmapLoaderTest
                 $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
                 return count($links) === count(array_unique($links));
             });
+
+            // Discriminator: the two assertions above still pass if the loader
+            // ignores the category id (every fixture product lives in category 2).
+            // Dispatch the same view at a non-existent category — its nested-set
+            // subtree is empty, so an honoured filter emits nothing while an
+            // ignored id would still return alpha/beta.
+            $noMatchParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=' . $catView . '&' . $param . '=90000002',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $noMatchCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $noMatchCollector, $noMatchParent, new Registry([]));
+
+            $this->test("getTree({$catView},id=<no-match>) honours the category id (emits nothing)", function () use ($noMatchCollector) {
+                return $noMatchCollector->nodes === [];
+            });
         }
 
         // --- 6. Gate coverage (#178): unpublished / invisible / access-restricted
