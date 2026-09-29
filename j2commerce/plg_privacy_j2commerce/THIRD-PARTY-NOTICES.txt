@@ -44,7 +44,7 @@ Test fixture (not shipped in the installable package)
    (BUNDLED_CHECKOUT_OVERRIDE_HASHES) and drives the update-time retirement of
    unchanged overrides, so its bytes must not change. It therefore keeps the
    verbatim 1.5.5 file header (which predates this relicensing) and is
-   intentionally excluded from the relicensing. The layout was originally based
+   intentionally excluded from the relicensing. Its layout was originally based
    on the J2Commerce 6 checkout template
-   (components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php,
-   (C) 2024-2026 J2Commerce, LLC, GPL-2.0-or-later).
+   components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php,
+   copyright (C) 2024-2026 J2Commerce, LLC, licensed GPL-2.0-or-later.
