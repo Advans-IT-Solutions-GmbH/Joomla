@@ -734,19 +734,22 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $offsets[] = $match[0][1];
 
-        // Present is not enough: the inputs have to sit in the same container as the
-        // button, because that is what a checkout script serialises. If the <div>
-        // nesting returns to the top level anywhere between the first and the last of
-        // them, the container closed in between and the fields are outside it.
+        // Present is not enough: the button and the fields have to share one container,
+        // because that container is the narrowest scope a checkout script can serialise.
+        // Measured over the span from the first to the last of them, the <div> nesting
+        // must never fall below the level it starts at. It does as soon as the container
+        // that holds the first of them closes in between, which is exactly the shape of
+        // fields backported behind the button's wrapper.
         $from  = min($offsets);
         $to    = max($offsets);
-        $depth = substr_count(substr($code, 0, $from), '<div') - substr_count(substr($code, 0, $from), '</div>');
+        $start = substr_count(substr($code, 0, $from), '<div') - substr_count(substr($code, 0, $from), '</div>');
 
-        if ($depth < 1) {
+        if ($start < 1) {
             return false;
         }
 
-        $span = substr($code, $from, $to - $from);
+        $depth = $start;
+        $span  = substr($code, $from, $to - $from);
 
         for ($i = 0, $length = strlen($span); $i < $length; $i++) {
             if (substr($span, $i, 4) === '<div') {
@@ -754,7 +757,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             } elseif (substr($span, $i, 6) === '</div>') {
                 $depth--;
 
-                if ($depth < 1) {
+                if ($depth < $start) {
                     return false;
                 }
             }
