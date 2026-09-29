@@ -539,32 +539,51 @@ class ConsentUiRenderTest
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
-            // The inputs have to sit in the same wrapper as the button, because that
+            // The inputs have to follow the button inside its own wrapper, because that
             // wrapper is the narrowest scope a checkout script can serialise. Counting
-            // closing tags from the end is useless here: the output of
-            // AfterDisplayShippingPayment follows and brings its own <div>. The nesting
-            // depth at the position of each input is what decides it, measured from the
-            // wrapper that holds #button-payment-method.
-            $wrapperStart = strpos($checkoutHtml, '<div class="j2store-checkout-actions');
-            $insideWrapper = static function ($offset) use ($checkoutHtml, $wrapperStart): bool {
-                if ($wrapperStart === false || $offset === false || $offset <= $wrapperStart) {
-                    return false;
+            // closing tags from the end of the page is useless here, the output of
+            // AfterDisplayShippingPayment follows and brings its own <div>, and counting
+            // <div> depth alone would accept a sibling <section> holding the inputs. The
+            // wrapper element's body is therefore read by matching its own tags, and
+            // after the button nothing but the hidden inputs may stand there. Same rule
+            // as the installer's check for a deployed copy.
+            $wrapperBody = static function (string $html): string {
+                if (!preg_match('/<div[^>]*\bclass="[^"]*\bj2store-checkout-actions\b/', $html, $m, PREG_OFFSET_CAPTURE)) {
+                    return '';
                 }
 
-                $between = substr($checkoutHtml, $wrapperStart, $offset - $wrapperStart);
+                $depth = 0;
 
-                return substr_count($between, '<div') > substr_count($between, '</div>');
+                for ($i = $m[0][1], $length = strlen($html); $i < $length; $i++) {
+                    if (substr($html, $i, 6) === '</div>') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            return substr($html, $m[0][1], $i - $m[0][1]);
+                        }
+
+                        $i += 5;
+                    } elseif (substr($html, $i, 4) === '<div') {
+                        $depth++;
+                        $i += 3;
+                    }
+                }
+
+                return '';
             };
-            $tokenOffset = preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml, $tokenMatch, PREG_OFFSET_CAPTURE)
-                ? $tokenMatch[0][1]
-                : false;
-            $this->test('Hidden inputs and token sit in the wrapper of #button-payment-method',
-                $insideWrapper(strpos($checkoutHtml, 'id="button-payment-method"'))
-                    && $insideWrapper(strpos($checkoutHtml, 'name="task"'))
-                    && $insideWrapper(strpos($checkoutHtml, 'name="option"'))
-                    && $insideWrapper(strpos($checkoutHtml, 'name="view"'))
-                    && $insideWrapper($tokenOffset),
-                'The step inputs must be rendered in the same wrapper as #button-payment-method');
+            $wrapper     = $wrapperBody($checkoutHtml);
+            $afterButton = $wrapper === '' ? false : strpos($wrapper, '</button>');
+            $tail        = $afterButton === false ? '' : substr($wrapper, $afterButton + strlen('</button>'));
+            $stripped    = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
+
+            $this->test('Hidden inputs and token follow the button in its own wrapper',
+                $tail !== ''
+                    && (bool) preg_match('/<input type="hidden" name="task" value="shipping_payment_method_validate"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="option" value="com_j2store"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="view" value="checkout"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $tail)
+                    && !str_contains($stripped, '<'),
+                'The step inputs must follow #button-payment-method inside its own wrapper');
 
             // J2Store 4 has no server-side consent check, so the client guard has to
             // cover the click on that button in the capture phase, not only a form submit.
