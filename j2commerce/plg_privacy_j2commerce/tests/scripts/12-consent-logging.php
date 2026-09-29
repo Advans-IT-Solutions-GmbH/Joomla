@@ -1439,17 +1439,67 @@ class ConsentLoggingTest
             file_put_contents($withEvent, "<?php\n// custom step 4 override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
         }
 
+        // J2Store 4 checkout overrides in the same template (installer checks of the update):
+        // stale = copy of an earlier plugin version without the token, foreign = a template's
+        // own override without this plugin's marker, which must never be reported.
+        $j2store     = is_dir(JPATH_SITE . '/components/com_j2store');
+        $j2sMarker   = 'Template override for plg_privacy_j2commerce';
+        $j2sStale    = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
+
+        if ($j2store) {
+            foreach ([$j2sStale] as $file) {
+                $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+                @mkdir(dirname($file), 0755, true);
+            }
+
+            // Carries the marker and the button id, but no token and no hidden inputs:
+            // exactly the shape an update leaves behind, so it must be reported.
+            file_put_contents(
+                $j2sStale,
+                "<?php\n// $j2sMarker\n?>\n"
+                . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+            );
+        }
+
         $setEnabled(0);
 
         [$exitCode, $output, $readable] = $this->runCliUpdate($package);
         $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($readable, -400));
 
+        // The console cuts long words (paths) at its line length: compare without any
+        // whitespace. By reference: $output is replaced by the second update below.
+        $has = static function (string $needle) use (&$output): bool {
+            return str_contains($output, preg_replace('/\s+/', '', $needle));
+        };
+
+        if ($j2store) {
+            // The update leaves a deployed J2Store 4 override in place, so it has to say so.
+            $j2sOutdated = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED');
+            $j2sDiag     = mb_substr($readable, 0, 1500);
+
+            $this->test('Update warns about a stale J2Store 4 checkout override',
+                $has($j2sOutdated) && $has($relative($j2sStale)), $j2sDiag);
+            $this->test('No untranslated J2Store 4 override message',
+                $output !== '' && !$has('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE'), $j2sDiag);
+
+            if (!$j6) {
+                // Replace the stale copy with the override the package ships and update again:
+                // the warning has to disappear. That is what proves it reads the submission
+                // contract and not merely the presence of the file.
+                $shippedOverride = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
+                $this->test('Shipped J2Store 4 override available in the installed plugin', is_file($shippedOverride), $shippedOverride);
+                file_put_contents($j2sStale, (string) @file_get_contents($shippedOverride));
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Second CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('No stale-override warning once the copy carries the full contract',
+                    $output !== '' && !$has($j2sOutdated), $j2sDiag);
+            }
+        }
+
         if ($j6) {
-            // The console cuts long words (paths) at its line length: compare without any whitespace.
-            // By reference: $output is replaced by the second update below.
-            $has       = static function (string $needle) use (&$output): bool {
-                return str_contains($output, preg_replace('/\s+/', '', $needle));
-            };
             $version   = $this->getJ2CommerceVersion();
             $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
             $outdated  = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED');

@@ -665,7 +665,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 continue;
             }
 
-            if (!str_contains($content, 'form.token') || !str_contains($content, 'button-payment-method')) {
+            if (!$this->hasJ2StoreSubmissionContract($content)) {
                 $outdated[] = $relative;
             }
         }
@@ -676,6 +676,47 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 'warning'
             );
         }
+    }
+
+    /**
+     * Whether a deployed J2Store 4 checkout override carries the complete submission
+     * contract of the shipped override.
+     *
+     * A partially merged copy must not silence the warning, so every part is checked
+     * separately: the token call, the three hidden inputs, and the Continue button as
+     * type="button" with the id J2Store's checkout script binds to. Comments are
+     * removed first, so a mention in a comment cannot satisfy any of them.
+     */
+    private function hasJ2StoreSubmissionContract(string $content): bool
+    {
+        $code = '';
+
+        foreach (token_get_all($content) as $token) {
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $code .= is_array($token) ? $token[1] : $token;
+        }
+
+        $required = [
+            // The token itself: HTMLHelper::_('form.token') or Session::getFormToken().
+            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|getFormToken\s*\(/',
+            '/name=[\'"]task[\'"]\s+value=[\'"]shipping_payment_method_validate[\'"]/',
+            '/name=[\'"]option[\'"]\s+value=[\'"]com_j2store[\'"]/',
+            '/name=[\'"]view[\'"]\s+value=[\'"]checkout[\'"]/',
+            // The Continue button, in either attribute order.
+            '/<button[^>]*\btype=[\'"]button[\'"][^>]*\bid=[\'"]button-payment-method[\'"]/',
+            '/<button[^>]*\bid=[\'"]button-payment-method[\'"][^>]*\btype=[\'"]button[\'"]/',
+        ];
+
+        foreach ([0, 1, 2, 3] as $index) {
+            if (!preg_match($required[$index], $code)) {
+                return false;
+            }
+        }
+
+        return (bool) preg_match($required[4], $code) || (bool) preg_match($required[5], $code);
     }
 
     /**
