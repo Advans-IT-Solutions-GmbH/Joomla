@@ -375,6 +375,11 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
     {
         $app = $this->getApplication();
 
+        // A com_ajax request renders no page, so nothing else loads the plugin language
+        // in this call. Without it the answers below would come back as raw keys on
+        // Joomla 5, where autoloadLanguage looks for the j2store file name.
+        $this->loadPluginLanguage();
+
         if (!$this->hasValidToken()) {
             echo new JsonResponse(null, Text::_('JINVALID_TOKEN'), true);
             $app->close();
