@@ -14,6 +14,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Layout\FileLayout;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Response\JsonResponse;
 use Joomla\CMS\Session\Session;
@@ -379,26 +380,40 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             $app->close();
         }
 
+        $productIds = array_map('intval', (array) $app->getInput()->get('products', [], 'array'));
+        $productIds = array_values(array_unique(array_filter($productIds)));
+
+        // Answered directly, not through an exception: the message is meant for the
+        // visitor, and the catch below must never return an exception message.
+        if (count($productIds) < 2) {
+            echo new JsonResponse(null, Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_MIN_PRODUCTS'), true);
+            $app->close();
+
+            return;
+        }
+
+        // The configured maximum is enforced on the server too, not only in the
+        // browser: getProductsData() runs one option query per returned product,
+        // so an arbitrarily long products[] list would otherwise be amplified
+        // into as many queries.
+        $productIds = array_slice($productIds, 0, max(2, (int) $this->params->get('max_products', 4)));
+
         try {
-            $productIds = array_map('intval', (array) $app->getInput()->get('products', [], 'array'));
-            $productIds = array_values(array_unique(array_filter($productIds)));
-
-            if (count($productIds) < 2) {
-                throw new \RuntimeException(Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_MIN_PRODUCTS'));
-            }
-
-            // The configured maximum is enforced on the server too, not only in the
-            // browser: getProductsData() runs one option query per returned product,
-            // so an arbitrarily long products[] list would otherwise be amplified
-            // into as many queries.
-            $productIds = array_slice($productIds, 0, max(2, (int) $this->params->get('max_products', 4)));
-
             $products = $this->getProductsData($productIds);
             $html     = $this->renderLayout('table', ['products' => $products]);
 
             echo new JsonResponse(['html' => $html]);
-        } catch (\Exception $e) {
-            echo new JsonResponse(null, $e->getMessage(), true);
+        } catch (\Throwable $e) {
+            // An exception here can carry database or driver text. The endpoint answers
+            // without a login, so the details go to the log and the visitor receives a
+            // fixed translated message.
+            Log::add(
+                'plg_j2commerce_productcompare: comparison failed: ' . $e->getMessage(),
+                Log::ERROR,
+                'plg_j2commerce_productcompare'
+            );
+
+            echo new JsonResponse(null, Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_UNEXPECTED'), true);
         }
 
         $app->close();
