@@ -733,7 +733,10 @@ class GetProductsDataTest
             // A second, non-master variant of the same product. The comparison must keep
             // showing the product once, with the master variant's SKU and price: without
             // the is_master condition the join would return one row per variant.
-            $extra                     = clone $variant;
+            $extra = clone $variant;
+            // insertObject() writes the new key back into $variant, so the clone carries
+            // it and would collide with the row that was just inserted.
+            unset($extra->{$this->variantsPk});
             $extra->sku                = 'TEST-SKU-EXTRA-' . $i . '-' . $ts;
             $extra->price              = 99.00 + $i;
             $extra->is_master          = 0;
