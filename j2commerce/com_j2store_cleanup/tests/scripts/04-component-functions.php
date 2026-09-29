@@ -245,14 +245,53 @@ class ComponentFunctionsTest
             return;
         }
 
-        $markup = substr($source, $start, $end - $start);
-        $markup = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
+        $body = substr($source, $start, $end - $start);
+
+        // Two separate checks, because stripping the PHP blocks would hide exactly the
+        // text a PHP block prints. First the static markup between the blocks.
+        $markup = preg_replace('/<\?php.*?\?>/s', ' ', $body);
         $markup = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $markup);
         $text   = html_entity_decode(strip_tags($markup), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $text   = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
         $text   = trim(preg_replace('/\s+/u', ' ', $text));
 
-        $this->test('Page markup contains no fixed text', $text === '', "left over: '" . mb_substr($text, 0, 200) . "'");
+        $this->test('Static page markup contains no fixed text', $text === '', "left over: '" . mb_substr($text, 0, 200) . "'");
+
+        // Then the PHP blocks themselves. Every string literal of two or more words has
+        // to be the argument of a Text:: call; a literal printed anywhere else would be
+        // user-visible text outside the language file, which stripping the blocks could
+        // never see. Not counted as prose: markup, CSS and attribute values (they carry
+        // '<', ':' or '='), and all-lowercase identifier lists such as a class list
+        // ('badge badge-success'), because prose carries a capital or punctuation.
+        preg_match_all('/<\?php(.*?)(?:\?>|$)/s', $body, $blocks);
+        $prose = [];
+
+        foreach ($blocks[1] as $php) {
+            $php = preg_replace('#//[^\n]*|/\*.*?\*/#s', ' ', $php);
+            $php = preg_replace('/Text::(?:_|sprintf|script|plural)\(\s*(?:\'[^\']*\'|"[^"]*")/', ' TEXTKEY ', $php);
+
+            if (!preg_match_all('/\'([^\']*[A-Za-z]{2,}\s+[A-Za-z]{2,}[^\']*)\'|"([^"$]*[A-Za-z]{2,}\s+[A-Za-z]{2,}[^"$]*)"/', $php, $found)) {
+                continue;
+            }
+
+            foreach (array_merge($found[1], $found[2]) as $literal) {
+                $literal = trim($literal);
+
+                if ($literal === '' || str_contains($literal, '<') || str_contains($literal, ':') || str_contains($literal, '=')) {
+                    continue;
+                }
+
+                if (preg_match('/^[a-z0-9\- ]+$/', $literal)) {
+                    continue;
+                }
+
+                $prose[] = $literal;
+            }
+        }
+
+        $this->test('PHP blocks of the page print no fixed text',
+            $prose === [],
+            'literals outside a Text:: call: ' . mb_substr(implode(' | ', $prose), 0, 300));
 
         $this->test('Removal confirmation comes from the language file',
             str_contains($source, "Text::script('COM_J2STORE_CLEANUP_CONFIRM_REMOVE')")
