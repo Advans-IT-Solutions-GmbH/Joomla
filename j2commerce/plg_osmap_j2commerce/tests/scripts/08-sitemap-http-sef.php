@@ -235,9 +235,85 @@ class SitemapHttpSefTest
             return true;
         });
 
+        // Provenance: the J6 fixture also publishes routable menu items for the
+        // products, so OSMap could emit those URLs by itself. Without this check every
+        // assertion above could hold with the plugin contributing nothing. The plugin
+        // is therefore switched off, the sitemap fetched again, and the product URLs
+        // have to be gone; afterwards it is switched back on and they have to return.
+        $this->assertUrlsComeFromThePlugin($aliases, $root);
+
         echo "\n=== SEF Sitemap HTTP Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * Prove that the product URLs come from this plugin and not from the fixture's own
+     * routable menu items: with the plugin disabled they must be gone, with it enabled
+     * again they must be back. The plugin is re-enabled in every case, also on failure.
+     */
+    private function assertUrlsComeFromThePlugin(array $aliases, string $root): void
+    {
+        $extensionId = (int) $this->db->setQuery(
+            $this->query()
+                ->select($this->db->quoteName('extension_id'))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->loadResult();
+
+        $this->test('Plugin row found for the provenance check', fn (): bool => $extensionId > 0);
+
+        if ($extensionId <= 0) {
+            return;
+        }
+
+        $setEnabled = function (int $enabled) use ($extensionId): void {
+            $this->db->setQuery(
+                $this->query()
+                    ->update($this->db->quoteName('#__extensions'))
+                    ->set($this->db->quoteName('enabled') . ' = ' . $enabled)
+                    ->where($this->db->quoteName('extension_id') . ' = ' . $extensionId)
+            )->execute();
+        };
+
+        try {
+            $setEnabled(0);
+            $without = $this->extractUrls((string) $this->fetchSitemap());
+
+            $this->test('Without the plugin the sitemap carries no product URL', function () use ($without, $aliases, $root): bool {
+                foreach ($aliases as $alias) {
+                    foreach ($this->findUrls($without, $alias) as $url) {
+                        if ($url === $root . '/de/shop/' . $alias) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            });
+        } finally {
+            $setEnabled(1);
+        }
+
+        $again = $this->extractUrls((string) $this->fetchSitemap());
+
+        $this->test('With the plugin enabled again every product URL is back', function () use ($again, $aliases, $root): bool {
+            foreach ($aliases as $alias) {
+                if (!in_array($root . '/de/shop/' . $alias, $again, true)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }
+
+    /** Fresh query builder, portable across J5 and J6. */
+    private function query()
+    {
+        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
     }
 
     /**
