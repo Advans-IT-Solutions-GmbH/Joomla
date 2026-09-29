@@ -238,14 +238,17 @@ class ResetRequestTest
     {
         echo "\n--- Reset mail goes through the site's mail template ---\n";
 
+        // Installed outside the try, cleaned up inside the finally: a partly
+        // installed capture must never survive this method either.
         $reason = ajaxforms_mailcatch_install();
-        $this->test('Mail capture in place', $reason === null, (string) $reason);
-
-        if ($reason !== null) {
-            return;
-        }
 
         try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
             $selfTest = ajaxforms_mailcatch_selftest();
             $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
 
@@ -339,25 +342,139 @@ class ResetRequestTest
 
         $method = $rc->getMethod('accountMailLanguage');
         $method->setAccessible(true);
-        $plugin = $rc->newInstanceWithoutConstructor();
 
-        $chosen         = new stdClass();
-        $chosen->params = json_encode(['language' => 'fr-FR']);
+        $plugin    = ajaxforms_plugin_instance();
+        $requestTag = Factory::getApplication()->getLanguage()->getTag();
+        $installed  = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
+
+        $this->test('Site has at least one installed language', $installed !== []);
+
+        if ($installed === []) {
+            return;
+        }
+
+        // Note: the test container has one site language, which is also the
+        // language of the request, so the precedence of the account language
+        // over the request language cannot be told apart here. What can be told
+        // apart is that an unusable tag is refused, which is what this decides.
+
+        // A mail template stores subject and body as language keys. Without the
+        // matching language pack the recipient would read those keys, so a tag
+        // the site does not have must never be used.
+        $missing         = new stdClass();
+        $missing->params = json_encode(['language' => 'zz-ZZ']);
+        $fallback        = (string) $method->invoke($plugin, $missing);
 
         $this->test(
-            'Language of the account wins',
-            $method->invoke($plugin, $chosen) === 'fr-FR',
-            'got ' . var_export($method->invoke($plugin, $chosen), true)
+            'A language the site does not have is not used',
+            $fallback !== 'zz-ZZ' && in_array($fallback, $installed, true),
+            'got ' . var_export($fallback, true)
         );
 
         $none         = new stdClass();
         $none->params = '{}';
 
         $this->test(
-            'Without a choice a valid tag is still used',
-            (bool) preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', (string) $method->invoke($plugin, $none)),
-            'got ' . var_export($method->invoke($plugin, $none), true)
+            'Without a choice the language of the request is used',
+            $method->invoke($plugin, $none) === $requestTag,
+            'expected ' . $requestTag . ', got ' . var_export($method->invoke($plugin, $none), true)
         );
+    }
+
+    /**
+     * The plain-text fallback must render in the recipient's language, and it
+     * must not change the language of the running request. Text::sprintf() would
+     * do both wrong: it renders in the request language and, when a second mail
+     * to another recipient follows, the first recipient's language would reach
+     * it. mailText() uses a separate Language instance, so it stays isolated.
+     */
+    private function testFallbackMailLanguageIsIsolated(): void
+    {
+        echo "\n--- Fallback mail language is isolated ---\n";
+
+        $plugin = ajaxforms_plugin_instance();
+        $rc     = new ReflectionClass(\Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class);
+
+        $this->test('Method mailText exists', $rc->hasMethod('mailText'));
+
+        if (!$rc->hasMethod('mailText')) {
+            return;
+        }
+
+        $method = $rc->getMethod('mailText');
+        $method->setAccessible(true);
+
+        $requestTagBefore = Factory::getApplication()->getLanguage()->getTag();
+
+        $rendered = (string) $method->invoke(
+            $plugin,
+            'en-GB',
+            'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT',
+            'Isolation Site'
+        );
+
+        $this->test(
+            'Fallback text is translated, not the raw key',
+            $rendered !== '' && !str_contains($rendered, 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT'),
+            'got ' . var_export($rendered, true)
+        );
+
+        $this->test(
+            'The sprintf argument reached the fallback text',
+            str_contains($rendered, 'Isolation Site'),
+            'got ' . var_export($rendered, true)
+        );
+
+        $requestTagAfter = Factory::getApplication()->getLanguage()->getTag();
+
+        $this->test(
+            'Rendering a mail does not change the request language',
+            $requestTagBefore === $requestTagAfter,
+            "before $requestTagBefore, after $requestTagAfter"
+        );
+    }
+
+    /**
+     * Every account mail sender must route its plain-text fallback through the
+     * isolated mailText() helper. The moderate finding this closes was that the
+     * fallbacks used Text::sprintf(), which renders in the running request's
+     * language and lets the language of one recipient reach the next. A single
+     * sender slipping back to Text::sprintf() would silently reopen the bug for
+     * that mail alone, so each of the four is checked on its own, read straight
+     * from the source so the guard cannot drift from the code.
+     */
+    private function testEverySenderFallbackStaysIsolated(): void
+    {
+        echo "\n--- Every mail sender keeps its fallback language isolated ---\n";
+
+        $rc = new ReflectionClass(\Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class);
+
+        foreach (['sendResetEmail', 'sendRemindEmail', 'sendActivationEmail', 'sendAdminNotification'] as $name) {
+            if (!$rc->hasMethod($name)) {
+                $this->test("Sender $name exists", false);
+                continue;
+            }
+
+            $method = $rc->getMethod($name);
+            $lines  = file($method->getFileName());
+            $source = implode('', array_slice(
+                $lines,
+                $method->getStartLine() - 1,
+                $method->getEndLine() - $method->getStartLine() + 1
+            ));
+
+            $this->test(
+                "$name renders its fallback through mailText()",
+                str_contains($source, '$this->mailText('),
+                'mailText() call not found'
+            );
+
+            $this->test(
+                "$name does not fall back to Text::sprintf()",
+                !str_contains($source, 'Text::sprintf('),
+                'Text::sprintf() would render in the request language'
+            );
+        }
     }
 
     /**
@@ -469,6 +586,8 @@ class ResetRequestTest
         $this->testFormDetection();
         $this->testResetMailCarriesTheSiteDesign();
         $this->testMailLanguageFollowsTheAccount();
+        $this->testFallbackMailLanguageIsIsolated();
+        $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();
 
         echo "\n=== Reset Request Test Summary ===\n";

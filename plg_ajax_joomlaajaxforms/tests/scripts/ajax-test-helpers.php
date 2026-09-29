@@ -37,9 +37,20 @@ function ajaxforms_mail_binary(): string
 }
 
 /**
+ * Marks a file as this helper's capture script. A run that is killed between
+ * the installation and the clean-up leaves the script behind, and without this
+ * marker the next run would take it for the original binary, save it as the
+ * backup and write it back for good.
+ */
+const AJAXFORMS_MAILCATCH_MARKER = '# ajaxforms-mailcatch';
+
+/**
  * Put a capture script in place of that binary, so a mail the site sends is
  * written to a file instead of being delivered. The test container has no mail
  * server, so nothing is lost.
+ *
+ * Only this CLI test process triggers a capture, so the captured mails, which
+ * carry a password reset token in clear text, are readable by their owner only.
  *
  * @return  string|null  Null when the capture is in place, otherwise the reason
  */
@@ -47,11 +58,11 @@ function ajaxforms_mailcatch_install(): ?string
 {
     $dir = ajaxforms_mailcatch_dir();
 
-    if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
         return 'cannot create ' . $dir;
     }
 
-    @chmod($dir, 0777);
+    @chmod($dir, 0700);
 
     $binary = ajaxforms_mail_binary();
     $parent = \dirname($binary);
@@ -60,33 +71,55 @@ function ajaxforms_mailcatch_install(): ?string
         return 'cannot create ' . $parent;
     }
 
-    if (is_file($binary) && !is_file($binary . '.ajaxforms-backup')) {
+    $existing = is_file($binary) ? (string) @file_get_contents($binary) : '';
+    $isOwn    = $existing !== '' && strpos($existing, AJAXFORMS_MAILCATCH_MARKER) !== false;
+
+    if (is_file($binary) && !$isOwn && !is_file($binary . '.ajaxforms-backup')) {
         @copy($binary, $binary . '.ajaxforms-backup');
     }
 
     $script = <<<'SH'
 #!/bin/sh
+AJAXFORMS_MAILCATCH_MARKER
 # Test helper: keep the outgoing mail instead of delivering it.
 dir="AJAXFORMS_MAILCATCH_DIR"
 mkdir -p "$dir" 2>/dev/null
-chmod 0777 "$dir" 2>/dev/null
+chmod 0700 "$dir" 2>/dev/null
 file="$dir/mail-$$-$(date +%s%N).eml"
+umask 077
 cat > "$file"
-chmod 0666 "$file" 2>/dev/null
 exit 0
 SH;
 
-    if (@file_put_contents($binary, str_replace('AJAXFORMS_MAILCATCH_DIR', $dir, $script)) === false) {
+    $script = str_replace(
+        ['AJAXFORMS_MAILCATCH_MARKER', 'AJAXFORMS_MAILCATCH_DIR'],
+        [AJAXFORMS_MAILCATCH_MARKER, $dir],
+        $script
+    );
+
+    if (@file_put_contents($binary, $script) === false) {
         return 'cannot write ' . $binary;
     }
 
     @chmod($binary, 0755);
 
-    return is_executable($binary) ? null : $binary . ' is not executable';
+    if (!is_executable($binary)) {
+        return $binary . ' is not executable';
+    }
+
+    // A test that dies before its clean-up must not leave the capture behind.
+    static $armed = false;
+
+    if (!$armed) {
+        $armed = true;
+        register_shutdown_function('ajaxforms_mailcatch_remove');
+    }
+
+    return null;
 }
 
 /**
- * Restore whatever was there before.
+ * Restore whatever was there before. Safe to call more than once.
  */
 function ajaxforms_mailcatch_remove(): void
 {
@@ -96,7 +129,12 @@ function ajaxforms_mailcatch_remove(): void
     if (is_file($backup)) {
         @rename($backup, $binary);
     } elseif (is_file($binary)) {
-        @unlink($binary);
+        $content = (string) @file_get_contents($binary);
+
+        // Only ever delete this helper's own script.
+        if (strpos($content, AJAXFORMS_MAILCATCH_MARKER) !== false) {
+            @unlink($binary);
+        }
     }
 
     ajaxforms_mailcatch_clear();

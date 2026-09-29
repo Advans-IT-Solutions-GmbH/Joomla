@@ -204,6 +204,111 @@ function lint_swiss_spelling(string $extensionDir, callable $addError): void
     }
 }
 
+/**
+ * The file's lines with every comment blanked out, so a key that only a comment
+ * still mentions does not count as a use. After a refactor the last caller can be
+ * gone while a docblock keeps the name, and the unused-key check has to report it.
+ *
+ * PHP files go through the tokenizer, which is exact: it cannot mistake a CSS
+ * colour ("#1a1a2e"), an HTML entity ("&#9744;") or a URL ("https://...") inside a
+ * string literal for the start of a comment. For JavaScript and XML a quote-aware
+ * scanner handles "//", block comments and "<!-- -->". Line numbers are preserved,
+ * because every comment is replaced by as many blank lines as it spanned.
+ *
+ * @return string[] one entry per line of $content, comment text removed
+ */
+function lint_code_lines_without_comments(string $path, string $content): array
+{
+    if (str_ends_with(strtolower($path), '.php')) {
+        $out = '';
+
+        foreach (token_get_all($content) as $token) {
+            $text = is_array($token) ? $token[1] : $token;
+
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                // Keep the line breaks the comment spanned, drop its text.
+                $out .= str_repeat("\n", max(0, count(preg_split('/\R/', $text)) - 1));
+
+                continue;
+            }
+
+            $out .= $text;
+        }
+
+        return preg_split('/\R/', $out);
+    }
+
+    $clean          = [];
+    $inBlockComment = false;
+    $blockEnd       = '*/';
+
+    foreach (preg_split('/\R/', $content) as $line) {
+        $result = '';
+        $length = strlen($line);
+        $quote  = '';
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $line[$i];
+
+            if ($inBlockComment) {
+                if (substr($line, $i, strlen($blockEnd)) === $blockEnd) {
+                    $inBlockComment = false;
+                    $i             += strlen($blockEnd) - 1;
+                }
+
+                continue;
+            }
+
+            if ($quote !== '') {
+                $result .= $char;
+
+                if ($char === '\\') {
+                    $result .= $line[$i + 1] ?? '';
+                    $i++;
+                } elseif ($char === $quote) {
+                    $quote = '';
+                }
+
+                continue;
+            }
+
+            if ($char === '"' || $char === "'" || $char === '`') {
+                $quote   = $char;
+                $result .= $char;
+
+                continue;
+            }
+
+            if (substr($line, $i, 2) === '/*') {
+                $inBlockComment = true;
+                $blockEnd       = '*/';
+                $i++;
+
+                continue;
+            }
+
+            if (substr($line, $i, 4) === '<!--') {
+                $inBlockComment = true;
+                $blockEnd       = '-->';
+                $i             += 3;
+
+                continue;
+            }
+
+            if (substr($line, $i, 2) === '//') {
+                break;
+            }
+
+            $result .= $char;
+        }
+
+        $clean[] = $result;
+    }
+
+    return $clean;
+}
+
+
 function lint_usage(string $extensionDir, array $definedByTag, array $fileNames, callable $addError): void
 {
     if ($definedByTag === []) {
@@ -236,10 +341,18 @@ function lint_usage(string $extensionDir, array $definedByTag, array $fileNames,
     foreach (lint_code_files($extensionDir) as $path) {
         $content = (string) file_get_contents($path);
 
+        // A key named only in a comment is not a use: after a refactor the last
+        // caller can be gone while a docblock still mentions the key, and the
+        // unused-key check has to report it. The token harvest therefore reads the
+        // comment-free lines; the checks below read the original line, because they
+        // match quoted literals and are not affected by comments.
+        $codeLines = lint_code_lines_without_comments($path, $content);
+
         foreach (preg_split('/\R/', $content) as $index => $line) {
             $where = [$path, $index + 1];
+            $code  = $codeLines[$index] ?? '';
 
-            if (preg_match_all('/[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+/', $line, $m)) {
+            if (preg_match_all('/[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+/', $code, $m)) {
                 foreach ($m[0] as $token) {
                     $tokens[$token] ??= $where;
                 }
@@ -254,10 +367,29 @@ function lint_usage(string $extensionDir, array $definedByTag, array $fileNames,
                 }
             }
 
+            // Concatenation: 'PREFIX_KEY_' . $suffix
             if (preg_match_all("/['\"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_)['\"]\s*[.+]/", $line, $m)) {
                 foreach ($m[1] as $fragment) {
                     if ($isOwn(rtrim($fragment, '_'))) {
                         $addError($path, $index + 1, "language key assembled at runtime from '$fragment' (write the keys out in full)");
+                    }
+                }
+            }
+
+            // Interpolation: "PREFIX_KEY_{$suffix}" or "PREFIX_KEY_$suffix"
+            if (preg_match_all('/"([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_)(?:\{\$|\$[A-Za-z_])/', $line, $m)) {
+                foreach ($m[1] as $fragment) {
+                    if ($isOwn(rtrim($fragment, '_'))) {
+                        $addError($path, $index + 1, "language key interpolated at runtime from '$fragment' (write the keys out in full)");
+                    }
+                }
+            }
+
+            // Format strings: sprintf('PREFIX_KEY_%s', $suffix)
+            if (preg_match_all("/['\"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_)%[0-9.\\-]*[a-zA-Z]/", $line, $m)) {
+                foreach ($m[1] as $fragment) {
+                    if ($isOwn(rtrim($fragment, '_'))) {
+                        $addError($path, $index + 1, "language key built with a format string from '$fragment' (write the keys out in full)");
                     }
                 }
             }

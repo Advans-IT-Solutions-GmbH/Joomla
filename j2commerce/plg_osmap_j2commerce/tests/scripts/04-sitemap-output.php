@@ -20,7 +20,7 @@ use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
-osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . (osmap_ensure_classes() ? 'yes' : 'NO (stubs)') . PHP_EOL;
 require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
 
 class SitemapOutputCollector extends \Alledia\OSMap\Sitemap\Collector
@@ -159,6 +159,21 @@ class SitemapOutputTest
 
         $this->test('getTree(view=categoryalias&id=2) emits the fixture product aliases', function () {
             return $this->aliases($this->collect('view=categoryalias&id=2')) === $this->expectedAliases();
+        });
+
+        // The two tests above would also pass if the plugin ignored the category
+        // id and simply emitted every product (all fixtures live in category 2).
+        // Prove the id is actually honoured by pointing the same menu views at a
+        // non-existent category: its nested-set subtree is empty, so a filter that
+        // is applied emits nothing, whereas an ignored id would still return all.
+        $noSuchCategory = 90000002;
+
+        $this->test('getTree(view=categories) honours the category id (no match → no products)', function () use ($noSuchCategory) {
+            return $this->aliases($this->collect('view=categories&id=' . $noSuchCategory)) === [];
+        });
+
+        $this->test('getTree(view=categoryalias) honours the category id (no match → no products)', function () use ($noSuchCategory) {
+            return $this->aliases($this->collect('view=categoryalias&id=' . $noSuchCategory)) === [];
         });
 
         $this->test('Emitted nodes use absolute URLs', function () use ($nodes) {

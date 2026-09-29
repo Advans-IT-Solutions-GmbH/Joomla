@@ -89,6 +89,6 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 
 ## Security
 
-- All AJAX handlers validate `Session::checkToken()`
+- All AJAX handlers validate the form token. `Session::checkToken()` itself is not usable in a JSON endpoint: for a request without a session it **redirects and then returns true**, so the client receives a 3xx instead of a JSON rejection. AJAX Forms and Product Compare therefore compare the request token with `Session::getFormToken()` themselves (`hasValidToken()`, `hash_equals` for the `X-CSRF-Token` header) and answer with a JSON error. Every handler must go through such a check.
 - No secrets, API keys, or credentials in code or commits
 - `script.php` must define `minimumJoomla` and `minimumPhp`

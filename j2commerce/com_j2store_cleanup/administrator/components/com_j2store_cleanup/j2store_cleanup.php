@@ -758,7 +758,7 @@ $cleanupVersion = getCleanupVersion($db);
                                 <ul style="margin: 5px 0; padding-left: 20px; font-size: 12px;">
                                 <?php foreach ($ext->_issues as $issue): ?>
                                     <li>
-                                        <span class="badge <?php echo $issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>"><?php echo $issue['type'] === 'j2store' ? 'J2Store' : 'Joomla'; ?></span>
+                                        <span class="badge <?php echo $issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>"><?php echo Text::_($issue['type'] === 'j2store' ? 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_J2STORE' : 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_JOOMLA'); ?></span>
                                         <?php echo htmlspecialchars(describeIssue($issue)); ?>
                                     </li>
                                 <?php endforeach; ?>

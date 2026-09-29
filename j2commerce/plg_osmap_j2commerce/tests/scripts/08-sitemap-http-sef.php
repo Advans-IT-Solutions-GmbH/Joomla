@@ -26,6 +26,15 @@ define('_JEXEC', 1);
 // non-SEF J5/J6 stacks where SEF is intentionally disabled and it would fail.
 // Skip cleanly (exit 0) unless the SEF environment flag (J2COMMERCE_SEF=1) is set.
 if (getenv('J2COMMERCE_SEF') !== '1') {
+    // CI sets TEST_STRICT_SKIP=1 and runs this suite only against the SEF stacks,
+    // where J2COMMERCE_SEF is always set. Without this branch a lost J2COMMERCE_SEF
+    // would turn the two SEF jobs, and the official-* gates that need them, green
+    // without running a single assertion.
+    if (getenv('TEST_STRICT_SKIP') === '1') {
+        fwrite(STDERR, "FAILED: this suite needs J2COMMERCE_SEF=1, but it is not set (TEST_STRICT_SKIP=1)\n");
+        exit(1);
+    }
+
     fwrite(STDOUT, "skipped: SEF env not set (J2COMMERCE_SEF=1 required)\n");
     exit(0);
 }
@@ -136,28 +145,48 @@ class SitemapHttpSefTest
             // too, so a missing prefix on that path cannot leave this lane green.
             $aliases[] = 'test-product-nomenu';
         }
-        $productUrls = [];
+        $productUrls    = [];
+        $productUrlsAll = [];
 
         foreach ($aliases as $alias) {
-            $productUrls[$alias] = $this->findUrl($urls, $alias);
+            // Every <loc> of this product, not only the first one. The sitemap can
+            // hold a second entry for the same product (a published menu item at the
+            // same path, or a de-duplication that keys on something else). Checking
+            // only the first match would make the prefix assertion below depend on
+            // OSMap's traversal order and would miss an unprefixed duplicate — which
+            // is exactly the #176 defect shape.
+            $productUrlsAll[$alias] = $this->findUrls($urls, $alias);
+            $productUrls[$alias]    = $productUrlsAll[$alias][0] ?? null;
             $this->test("Sitemap contains {$alias}", function () use ($productUrls, $alias) {
                 return $productUrls[$alias] !== null;
             });
         }
 
-        $this->test('Every product URL carries the /de/ language SEF prefix (#176/#183)', function () use ($productUrls, $root) {
-            foreach ($productUrls as $alias => $url) {
-                if ($url !== $root . '/de/shop/' . $alias) {
+        $this->test('Every product URL carries the /de/ language SEF prefix (#176/#183)', function () use ($productUrlsAll, $root) {
+            foreach ($productUrlsAll as $alias => $matches) {
+                if ($matches === []) {
                     return false;
+                }
+
+                foreach ($matches as $url) {
+                    if ($url !== $root . '/de/shop/' . $alias) {
+                        return false;
+                    }
                 }
             }
             return true;
         });
 
-        $this->test('Product URLs contain no index.php and no option=com_ query', function () use ($productUrls) {
-            foreach ($productUrls as $url) {
-                if ($url === null || str_contains($url, 'index.php') || str_contains($url, 'option=com_')) {
+        $this->test('Product URLs contain no index.php and no option=com_ query', function () use ($productUrlsAll) {
+            foreach ($productUrlsAll as $matches) {
+                if ($matches === []) {
                     return false;
+                }
+
+                foreach ($matches as $url) {
+                    if (str_contains($url, 'index.php') || str_contains($url, 'option=com_')) {
+                        return false;
+                    }
                 }
             }
             return true;
@@ -207,14 +236,22 @@ class SitemapHttpSefTest
         return $this->failed === 0;
     }
 
-    private function findUrl(array $urls, string $needle): ?string
+    /**
+     * Every sitemap URL that mentions the needle, in document order.
+     *
+     * @return string[]
+     */
+    private function findUrls(array $urls, string $needle): array
     {
+        $matches = [];
+
         foreach ($urls as $u) {
             if (str_contains($u, $needle)) {
-                return $u;
+                $matches[] = $u;
             }
         }
-        return null;
+
+        return $matches;
     }
 
     /**
