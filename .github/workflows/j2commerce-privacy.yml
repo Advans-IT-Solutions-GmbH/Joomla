@@ -84,6 +84,21 @@ jobs:
       - name: Scan for deprecated Joomla APIs
         run: php shared/tests/deprecated-api-scan.php j2commerce/plg_privacy_j2commerce
 
+  js-tests:
+    name: Consent Validator (JS)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Run consent-validator DOM tests
+        run: node j2commerce/plg_privacy_j2commerce/tests/js/consent-validator.test.js
+
   test-j5:
     name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
@@ -494,6 +509,7 @@ jobs:
       - build
       - syntax-check
       - language-lint
+      - js-tests
       - test-j5
       - test-j6
       - test-production
