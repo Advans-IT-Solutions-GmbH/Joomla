@@ -714,8 +714,11 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $code = (string) preg_replace('/<!--.*$/s', '', $code);
 
         $required = [
-            // The token itself: HTMLHelper::_('form.token') or Session::getFormToken().
-            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|getFormToken\s*\(/',
+            // The token has to be rendered as a field, not merely fetched: either through
+            // HTMLHelper::_('form.token'), which emits the input itself, or as an <input>
+            // whose name comes from getFormToken(). A bare getFormToken() call emits
+            // nothing, so the step would still go out without a token.
+            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
             '/name=[\'"]task[\'"]\s+value=[\'"]shipping_payment_method_validate[\'"]/',
             '/name=[\'"]option[\'"]\s+value=[\'"]com_j2store[\'"]/',
             '/name=[\'"]view[\'"]\s+value=[\'"]checkout[\'"]/',
