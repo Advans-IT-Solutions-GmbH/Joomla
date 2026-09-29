@@ -32,13 +32,24 @@ function assert(name, cond) {
 }
 
 // ── Minimal DOM that models capture-phase click dispatch ────────────────────
+// parentElement models the real ancestor chain: a click inside the Continue
+// button has one of its children (text span, icon) as e.target, so the guard has
+// to find the button through closest() walking upwards.
 function makeElement(id, extra) {
     return Object.assign({
         id: id,
         dataset: {},
         checked: false,
+        parentElement: null,
         focus() {},
-        closest(sel) { return sel === '#' + this.id ? this : null; },
+        closest(sel) {
+            for (let node = this; node; node = node.parentElement) {
+                if (sel === '#' + node.id) {
+                    return node;
+                }
+            }
+            return null;
+        },
     }, extra || {});
 }
 
@@ -151,6 +162,28 @@ console.log('consent-validator.js — capture-phase click guard');
     const r = runScenario([VALIDATOR, consent, BUTTON, other], 'some-other-button');
     assert('D: a click on another element is not blocked', r.event.defaultPrevented === false);
     assert('D: a click on another element reaches its handler', r.reachedJ2StoreHandler === true);
+}
+
+// Scenario E: the click target is a CHILD of the Continue button (the normal case
+// when the button contains a label span or an icon) → still blocked.
+{
+    const consent = makeElement('j2commerce_privacy_consent', { checked: false });
+    const button = makeElement('button-payment-method');
+    const label = makeElement('button-payment-method-label', { parentElement: button });
+    const r = runScenario([VALIDATOR, consent, button, label], 'button-payment-method-label');
+    assert('E: a click on a child of the button is prevented', r.event.defaultPrevented === true);
+    assert('E: a click on a child of the button never reaches J2Store handler', r.reachedJ2StoreHandler === false);
+}
+
+// Scenario F: the script must not register the guard twice when it is loaded
+// twice in the same page (window.j2commercePrivacyClickGuard).
+{
+    const dom = makeDom([VALIDATOR, makeElement('j2commerce_privacy_consent', { checked: false }), BUTTON]);
+    const sandbox = { document: dom.document, window: {}, alert() {} };
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
+    vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
+    assert('F: loading the script twice registers the click guard once', dom.captureClickListeners.length === 1);
 }
 
 if (failures > 0) {

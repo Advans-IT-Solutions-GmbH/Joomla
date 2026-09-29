@@ -548,21 +548,35 @@ class ConsentUiRenderTest
             // CI job "Consent Validator (JS)").
             $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
             $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
+            // Each assertion below reads the body of one specific construct, never the
+            // whole file: the file already contained a consent check, a preventDefault
+            // and a form-submit listener before the click guard existed, so a file-wide
+            // search would pass without the guard.
+            $clickListener = preg_match(
+                '/addEventListener\(\s*[\'"]click[\'"]\s*,\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*,\s*true\s*\)/s',
+                $validatorSrc,
+                $m
+            ) ? $m[1] : '';
+            $blockFunction = preg_match(
+                '/function\s+j2commercePrivacyBlocked\s*\([^)]*\)\s*\{(.*?)\n\}/s',
+                $validatorSrc,
+                $m
+            ) ? $m[1] : '';
             $this->test('Consent validator guards the #button-payment-method click in the capture phase',
-                (bool) preg_match('/addEventListener\(\s*[\'"]click[\'"][\s\S]*button-payment-method[\s\S]*,\s*true\s*\)/', $validatorSrc),
-                $validatorJs);
+                strpos($clickListener, 'button-payment-method') !== false,
+                $validatorJs . ': no capture-phase click listener for #button-payment-method');
             // The guard must actually block: only when a required, unticked consent box is
             // present does it preventDefault and stop the click reaching J2Store's handler.
             $this->test('Consent guard reads the consent checkbox state before blocking',
-                strpos($validatorSrc, "getElementById('j2commerce_privacy_consent')") !== false
-                    && (bool) preg_match('/consent\.checked/', $validatorSrc),
-                'Guard must only block while the consent box is unticked');
+                strpos($blockFunction, "getElementById('j2commerce_privacy_consent')") !== false
+                    && strpos($blockFunction, 'consent.checked') !== false,
+                'j2commercePrivacyBlocked() must only block while the consent box is unticked');
             $this->test('Consent guard cancels the default action (preventDefault)',
-                (bool) preg_match('/\be\.preventDefault\(\)/', $validatorSrc),
-                'Guard must call preventDefault to stop the step submission');
+                strpos($blockFunction, 'e.preventDefault()') !== false,
+                'j2commercePrivacyBlocked() must call preventDefault to stop the step submission');
             $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
-                strpos($validatorSrc, 'stopImmediatePropagation') !== false,
-                'Guard must stop propagation so J2Store\'s own click handler does not run');
+                strpos($clickListener, 'stopImmediatePropagation') !== false,
+                'The click listener must stop propagation so J2Store\'s own click handler does not run');
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
