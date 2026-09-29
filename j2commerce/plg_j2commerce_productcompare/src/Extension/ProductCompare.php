@@ -622,9 +622,14 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 $db->quoteName('c') . '.' . $db->quoteName('introtext'),
             ])
             ->from($db->quoteName($productsT, 'p'))
+            // Only the master variant: a product with several variants would otherwise
+            // produce one row per variant and appear as many times in the comparison,
+            // each with a different SKU and price. A product without a master variant
+            // still appears, with an empty SKU and price, because the join stays LEFT.
             ->join('LEFT', $db->quoteName($variantsT, 'v')
                 . ' ON ' . $db->quoteName('v') . '.' . $db->quoteName('product_id')
-                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName($productsPk))
+                . ' = ' . $db->quoteName('p') . '.' . $db->quoteName($productsPk)
+                . ' AND ' . $db->quoteName('v') . '.' . $db->quoteName('is_master') . ' = 1')
             ->join('LEFT', $db->quoteName($quantitiesT, 'pq')
                 . ' ON ' . $db->quoteName('pq') . '.' . $db->quoteName('variant_id')
                 . ' = ' . $db->quoteName('v') . '.' . $db->quoteName($variantsPk))
