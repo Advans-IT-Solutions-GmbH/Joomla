@@ -718,12 +718,14 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // whose name comes from getFormToken(). A bare getFormToken() call emits
             // nothing, so the step would still go out without a token.
             '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
-            '/name=[\'"]task[\'"]\s+value=[\'"]shipping_payment_method_validate[\'"]/',
-            '/name=[\'"]option[\'"]\s+value=[\'"]com_j2store[\'"]/',
-            '/name=[\'"]view[\'"]\s+value=[\'"]checkout[\'"]/',
+            // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
+            // data-* attribute: data-name="task" would otherwise count as the real field.
+            '/(?<![-\w])name=[\'"]task[\'"]\s+value=[\'"]shipping_payment_method_validate[\'"]/',
+            '/(?<![-\w])name=[\'"]option[\'"]\s+value=[\'"]com_j2store[\'"]/',
+            '/(?<![-\w])name=[\'"]view[\'"]\s+value=[\'"]checkout[\'"]/',
             // The Continue button, in either attribute order.
-            '/<button[^>]*\btype=[\'"]button[\'"][^>]*\bid=[\'"]button-payment-method[\'"]/',
-            '/<button[^>]*\bid=[\'"]button-payment-method[\'"][^>]*\btype=[\'"]button[\'"]/',
+            '/<button[^>]*(?<![-\w])type=[\'"]button[\'"][^>]*(?<![-\w])id=[\'"]button-payment-method[\'"]/',
+            '/<button[^>]*(?<![-\w])id=[\'"]button-payment-method[\'"][^>]*(?<![-\w])type=[\'"]button[\'"]/',
         ];
 
         // Present is not enough: all five have to be inside the shipped wrapper.
