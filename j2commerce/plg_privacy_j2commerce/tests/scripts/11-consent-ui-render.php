@@ -539,30 +539,32 @@ class ConsentUiRenderTest
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
-            // The inputs have to sit inside the step container, next to the button a
-            // script serialises from. The output of AfterDisplayShippingPayment follows
-            // that container and brings its own <div>, so the last </div> of the page is
-            // not the container's. What decides it is the nesting depth at the position
-            // of each input: still open means inside.
-            $containerStart = strpos($checkoutHtml, '<div class="j2store-checkout-shipping-payment"');
-            $insideStep     = static function ($offset) use ($checkoutHtml, $containerStart): bool {
-                if ($containerStart === false || $offset === false || $offset <= $containerStart) {
+            // The inputs have to sit in the same wrapper as the button, because that
+            // wrapper is the narrowest scope a checkout script can serialise. Counting
+            // closing tags from the end is useless here: the output of
+            // AfterDisplayShippingPayment follows and brings its own <div>. The nesting
+            // depth at the position of each input is what decides it, measured from the
+            // wrapper that holds #button-payment-method.
+            $wrapperStart = strpos($checkoutHtml, '<div class="j2store-checkout-actions');
+            $insideWrapper = static function ($offset) use ($checkoutHtml, $wrapperStart): bool {
+                if ($wrapperStart === false || $offset === false || $offset <= $wrapperStart) {
                     return false;
                 }
 
-                $between = substr($checkoutHtml, $containerStart, $offset - $containerStart);
+                $between = substr($checkoutHtml, $wrapperStart, $offset - $wrapperStart);
 
                 return substr_count($between, '<div') > substr_count($between, '</div>');
             };
             $tokenOffset = preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml, $tokenMatch, PREG_OFFSET_CAPTURE)
                 ? $tokenMatch[0][1]
                 : false;
-            $this->test('Hidden inputs and token sit inside the step container',
-                $insideStep(strpos($checkoutHtml, 'name="task"'))
-                    && $insideStep(strpos($checkoutHtml, 'name="option"'))
-                    && $insideStep(strpos($checkoutHtml, 'name="view"'))
-                    && $insideStep($tokenOffset),
-                'The step inputs must be rendered inside the container that holds #button-payment-method');
+            $this->test('Hidden inputs and token sit in the wrapper of #button-payment-method',
+                $insideWrapper(strpos($checkoutHtml, 'id="button-payment-method"'))
+                    && $insideWrapper(strpos($checkoutHtml, 'name="task"'))
+                    && $insideWrapper(strpos($checkoutHtml, 'name="option"'))
+                    && $insideWrapper(strpos($checkoutHtml, 'name="view"'))
+                    && $insideWrapper($tokenOffset),
+                'The step inputs must be rendered in the same wrapper as #button-payment-method');
 
             // J2Store 4 has no server-side consent check, so the client guard has to
             // cover the click on that button in the capture phase, not only a form submit.
