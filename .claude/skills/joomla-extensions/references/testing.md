@@ -203,7 +203,25 @@ Notable test details:
 ## CI
 
 - **Triggers:** each `Build & Test` workflow runs on push and pull request to `main` for
-  `<extension path>/**`, `shared/**` and its own workflow file, and manually (`workflow_dispatch`).
+  `<extension path>/**`, the files under `shared/` the extension really uses and its own workflow
+  file, and manually (`workflow_dispatch`).
+- **Narrowed shared paths:** no workflow lists `shared/**` as a whole. The build scripts,
+  `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
+  `shared-install-messages.php` are used by all six extensions and start all six.
+  `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
+  are used only by AJAX Forms, OSMap and Privacy (update lane and production-like lane) and start
+  only those three. `shared/tests/Dockerfile.template`, `shared/tests/scripts/docker-entrypoint.sh`
+  and `shared/tests/scripts/install-extension.php` are templates that every extension has copied into
+  its own `tests/` tree; no lane reads them from `shared/`, so they start nothing. The workflow
+  `Shared Path Coverage` (`shared-path-coverage.yml`, running
+  `.github/scripts/check-shared-path-coverage.sh`) fails if a file under `shared/` is matched by no
+  workflow and is not on that script's `UNCOVERED_ON_PURPOSE` list. **A new file under `shared/` has
+  to be added to the workflows that use it, otherwise that check fails.**
+- **Concurrency:** every `Build & Test` workflow cancels a superseded run of the same branch or pull
+  request (`concurrency` group of workflow plus ref, `cancel-in-progress: true`). On `main` the group
+  key is the unique run id, so no run on the default branch is ever cancelled, and the publish and
+  release workflows have no concurrency group at all. Nothing else changed: every suite keeps its own
+  job on every lane, and a pull request runs the same full matrix as `main`.
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
   extension; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,

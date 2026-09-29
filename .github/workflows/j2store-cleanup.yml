@@ -6,16 +6,38 @@ on:
     branches: [main]
     paths:
       - 'j2commerce/com_j2store_cleanup/**'
-      - 'shared/**'
+      - 'shared/build/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-install-messages.php'
       - '.github/workflows/j2store-cleanup.yml'
   pull_request:
     branches: [main]
     paths:
       - 'j2commerce/com_j2store_cleanup/**'
-      - 'shared/**'
+      - 'shared/build/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-install-messages.php'
       - '.github/workflows/j2store-cleanup.yml'
 
 permissions: {}
+
+# Supersede an outdated run of this workflow instead of letting it finish: a new
+# push to a pull request or branch cancels the previous run of the same ref.
+# `github.ref` is `refs/pull/<n>/merge` on a pull request, so runs of different
+# pull requests never cancel each other. On `main` the group key is the unique
+# run id, so no run on the default branch is ever cancelled. The publish and
+# release workflows deliberately have no concurrency group at all.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
