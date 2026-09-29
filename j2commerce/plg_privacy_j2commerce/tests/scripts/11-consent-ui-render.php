@@ -539,6 +539,17 @@ class ConsentUiRenderTest
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
+            // The inputs have to sit inside the step container, next to the button a
+            // script serialises from. Nothing of the step may dangle behind the
+            // container's last closing tag.
+            $afterContainer = strrpos($checkoutHtml, '</div>');
+            $trailing       = $afterContainer === false ? $checkoutHtml : substr($checkoutHtml, $afterContainer);
+            $this->test('Hidden inputs and token sit inside the step container',
+                strpos($trailing, 'name="task"') === false
+                    && strpos($trailing, 'name="option"') === false
+                    && strpos($trailing, 'name="view"') === false
+                    && !preg_match('/name="[0-9a-f]{32}"/', $trailing),
+                'The step inputs must not be rendered after the container that holds #button-payment-method');
 
             // J2Store 4 has no server-side consent check, so the client guard has to
             // cover the click on that button in the capture phase, not only a form submit.

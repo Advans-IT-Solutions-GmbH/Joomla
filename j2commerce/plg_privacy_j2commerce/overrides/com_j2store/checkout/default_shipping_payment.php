@@ -120,20 +120,28 @@ if ($_showConsent && $_privacyArticleId) {
 
     <?php // ── Continue button ───────────────────────────────────────────── ?>
     <?php // J2Store's own checkout script (checkout/default.php) submits this step when
-          // #button-payment-method is clicked and collects the step's inputs, the hidden
-          // ones below included. A plain submit button has no form to submit here. ?>
+          // #button-payment-method is clicked and collects the step's inputs. A plain
+          // submit button has no form to submit here. ?>
     <div class="j2store-checkout-actions mt-3">
         <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button">
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
     </div>
 
+    <?php // The step posts itself through these inputs. They stay inside this
+          // container, next to #button-payment-method: a script that serialises the
+          // step relative to the clicked button finds them here, and a script that
+          // serialises the whole enclosing form finds them here too. Outside the
+          // container only the second case would work, and the third-party output of
+          // AfterDisplayShippingPayment would sit between the button and its inputs.
+          // J2Store 4.1.8 checks the form token on shipping_payment_method_validate
+          // and answers "Invalid Token" without it. The token is rendered
+          // unconditionally, also while the consent checkbox is switched off. ?>
+    <input type="hidden" name="task" value="shipping_payment_method_validate" />
+    <input type="hidden" name="option" value="com_j2store" />
+    <input type="hidden" name="view" value="checkout" />
+    <?php echo HTMLHelper::_('form.token'); ?>
+
 </div>
 
 <?php echo J2Store::plugin()->eventWithHtml('AfterDisplayShippingPayment', [$this->order]); ?>
-
-<input type="hidden" name="task" value="shipping_payment_method_validate" />
-<input type="hidden" name="option" value="com_j2store" />
-<input type="hidden" name="view" value="checkout" />
-<?php // J2Store 4.1.8 checks the form token on shipping_payment_method_validate. ?>
-<?php echo HTMLHelper::_('form.token'); ?>
