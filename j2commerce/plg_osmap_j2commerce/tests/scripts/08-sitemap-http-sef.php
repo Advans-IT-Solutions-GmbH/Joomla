@@ -145,20 +145,18 @@ class SitemapHttpSefTest
             // too, so a missing prefix on that path cannot leave this lane green.
             $aliases[] = 'test-product-nomenu';
         }
-        $productUrls    = [];
         $productUrlsAll = [];
 
         foreach ($aliases as $alias) {
             // Every <loc> of this product, not only the first one. The sitemap can
             // hold a second entry for the same product (a published menu item at the
             // same path, or a de-duplication that keys on something else). Checking
-            // only the first match would make the prefix assertion below depend on
-            // OSMap's traversal order and would miss an unprefixed duplicate — which
-            // is exactly the #176 defect shape.
+            // only the first match would make the assertions below depend on OSMap's
+            // traversal order and would miss an unprefixed or unreachable duplicate,
+            // which is exactly the #176 defect shape.
             $productUrlsAll[$alias] = $this->findUrls($urls, $alias);
-            $productUrls[$alias]    = $productUrlsAll[$alias][0] ?? null;
-            $this->test("Sitemap contains {$alias}", function () use ($productUrls, $alias) {
-                return $productUrls[$alias] !== null;
+            $this->test("Sitemap contains {$alias}", function () use ($productUrlsAll, $alias) {
+                return $productUrlsAll[$alias] !== [];
             });
         }
 
@@ -200,26 +198,32 @@ class SitemapHttpSefTest
         // therefore proves URL *generation* only; its live status is logged for
         // diagnostics. The #176/#183 regression itself — a missing /de/ language
         // prefix — is caught by the URL-form assertions above on both stacks.
-        foreach ($productUrls as $alias => $url) {
-            if ($url === null) {
-                continue;
+        // Every <loc> of a product is fetched, not only the first one. A second entry
+        // for the same product would otherwise never be requested, and a redirect or
+        // a 404 on it would stay invisible although the requirement is that every
+        // sitemap product URL resolves directly.
+        foreach ($productUrlsAll as $alias => $matches) {
+            foreach ($matches as $position => $url) {
+                $label = count($matches) > 1
+                    ? $alias . ' [' . ($position + 1) . '/' . count($matches) . ']'
+                    : $alias;
+
+                $response = $this->httpResponse($url);
+                echo "  (info) {$label}: {$response['status']}"
+                    . ($response['location'] !== null ? " -> {$response['location']}" : '') . "\n";
+
+                if (!$this->isJ6) {
+                    continue;
+                }
+
+                $this->test("Product {$label} URL resolves directly with HTTP 200 (#183/#185)", function () use ($response) {
+                    return $response['status'] === 200;
+                });
+
+                $this->test("Product {$label} URL resolves without a redirect (no 301, no Location header) (#183/#185)", function () use ($response) {
+                    return $response['status'] !== 301 && $response['location'] === null;
+                });
             }
-
-            $response = $this->httpResponse($url);
-            echo "  (info) {$alias}: {$response['status']}"
-                . ($response['location'] !== null ? " -> {$response['location']}" : '') . "\n";
-
-            if (!$this->isJ6) {
-                continue;
-            }
-
-            $this->test("Product {$alias} URL resolves directly with HTTP 200 (#183/#185)", function () use ($response) {
-                return $response['status'] === 200;
-            });
-
-            $this->test("Product {$alias} URL resolves without a redirect (no 301, no Location header) (#183/#185)", function () use ($response) {
-                return $response['status'] !== 301 && $response['location'] === null;
-            });
         }
 
         $this->test('Disabled product is not in the SEF sitemap', function () use ($urls) {
