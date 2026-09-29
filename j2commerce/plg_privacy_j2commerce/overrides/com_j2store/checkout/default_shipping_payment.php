@@ -126,21 +126,22 @@ if ($_showConsent && $_privacyArticleId) {
         <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button">
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
-    </div>
 
-    <?php // The step posts itself through these inputs. They stay inside this
-          // container, next to #button-payment-method: a script that serialises the
-          // step relative to the clicked button finds them here, and a script that
-          // serialises the whole enclosing form finds them here too. Outside the
-          // container only the second case would work, and the third-party output of
-          // AfterDisplayShippingPayment would sit between the button and its inputs.
-          // J2Store 4.1.8 checks the form token on shipping_payment_method_validate
-          // and answers "Invalid Token" without it. The token is rendered
-          // unconditionally, also while the consent checkbox is switched off. ?>
-    <input type="hidden" name="task" value="shipping_payment_method_validate" />
-    <input type="hidden" name="option" value="com_j2store" />
-    <input type="hidden" name="view" value="checkout" />
-    <?php echo HTMLHelper::_('form.token'); ?>
+        <?php // The step posts itself through these inputs. They stay in this wrapper,
+              // directly next to #button-payment-method, because that is the narrowest
+              // scope a checkout script can serialise: a script that collects the
+              // button's own container finds them, and one that serialises the whole
+              // enclosing form finds them too. Further out only the second case would
+              // work, and the third-party output of AfterDisplayShippingPayment would
+              // sit between the button and its inputs. J2Store 4.1.8 checks the form
+              // token on shipping_payment_method_validate and answers "Invalid Token"
+              // without it. The token is rendered unconditionally, also while the
+              // consent checkbox is switched off. ?>
+        <input type="hidden" name="task" value="shipping_payment_method_validate" />
+        <input type="hidden" name="option" value="com_j2store" />
+        <input type="hidden" name="view" value="checkout" />
+        <?php echo HTMLHelper::_('form.token'); ?>
+    </div>
 
 </div>
 
