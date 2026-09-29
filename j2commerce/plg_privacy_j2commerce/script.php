@@ -101,6 +101,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->warnIfJ2CommerceTooOld();
             $this->retireBundledCheckoutOverrides();
             $this->warnOutdatedCheckoutOverrides();
+            $this->warnOutdatedJ2StoreCheckoutOverrides();
 
             $this->installTaskPlugin($packageSource, $type);
             $this->installConsentSystemPlugin($packageSource);
@@ -629,6 +630,49 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         if ($outdated !== []) {
             Factory::getApplication()->enqueueMessage(
                 Text::sprintf('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED', htmlspecialchars(implode(', ', $outdated))),
+                'warning'
+            );
+        }
+    }
+
+    /**
+     * Warn about deployed J2Store 4 checkout overrides of an earlier plugin version.
+     *
+     * Such a copy is never overwritten on update, and J2Store 4.1.8 rejects the step with
+     * "Invalid Token" unless the override sends the Joomla form token. Only copies carrying
+     * this plugin's marker are reported, so a template's own override is left alone.
+     */
+    private function warnOutdatedJ2StoreCheckoutOverrides(): void
+    {
+        if (!is_dir(JPATH_SITE . '/components/com_j2store')) {
+            return;
+        }
+
+        $db       = Factory::getContainer()->get(DatabaseInterface::class);
+        $outdated = [];
+
+        foreach ($this->getFrontendTemplates($db) as $template) {
+            $relative = $template . '/html/com_j2store/checkout/default_shipping_payment.php';
+            $file     = JPATH_SITE . '/templates/' . $relative;
+
+            if (!is_file($file)) {
+                continue;
+            }
+
+            $content = (string) @file_get_contents($file);
+
+            if (!str_contains($content, self::BUNDLED_OVERRIDE_MARKER)) {
+                continue;
+            }
+
+            if (!str_contains($content, 'form.token') || !str_contains($content, 'button-payment-method')) {
+                $outdated[] = $relative;
+            }
+        }
+
+        if ($outdated !== []) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED', htmlspecialchars(implode(', ', $outdated))),
                 'warning'
             );
         }
