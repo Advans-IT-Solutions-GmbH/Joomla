@@ -648,6 +648,10 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             // hand out title, description, price and stock of a hidden product.
             ->where($db->quoteName('c') . '.' . $db->quoteName('state') . ' = 1')
             ->whereIn($db->quoteName('c') . '.' . $db->quoteName('access'), $this->viewLevels())
+            // Same language rule as a storefront list view: the language of the request
+            // plus '*'. Without it the comparison could show an article of another
+            // content language that the shop hides from this visitor.
+            ->whereIn($db->quoteName('c') . '.' . $db->quoteName('language'), $this->contentLanguages(), ParameterType::STRING)
             ->where($this->publicationBound('publish_up', '<=', ':nowup'))
             ->where($this->publicationBound('publish_down', '>=', ':nowdown'))
             ->bind(':nowup', $now)
@@ -680,6 +684,24 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
         }
 
         return $levels === [] ? [1] : array_values(array_unique($levels));
+    }
+
+    /**
+     * Content languages the visitor may see: the language of the request plus the
+     * language-independent marker. Same rule as a Joomla list view, so the comparison
+     * cannot show an article of another content language that the storefront hides.
+     *
+     * @return  string[]
+     */
+    private function contentLanguages(): array
+    {
+        try {
+            $tag = (string) $this->getApplication()->getLanguage()->getTag();
+        } catch (\Throwable $e) {
+            $tag = '';
+        }
+
+        return $tag === '' ? ['*'] : array_values(array_unique([$tag, '*']));
     }
 
     /**
