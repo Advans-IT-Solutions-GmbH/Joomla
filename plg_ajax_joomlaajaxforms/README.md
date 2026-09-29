@@ -23,7 +23,7 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
-Login, registration, password reset and username reminder can be disabled individually via plugin parameters. `logout`, `saveProfile`, `removeCartItem` and `getCartCount` are always available: the parameters `enable_profile` and `enable_j2store_cart` exist in the configuration but are currently not evaluated.
+Login, registration, password reset, username reminder, the profile save and the J2Store cart tasks can be disabled individually via plugin parameters (`enable_login`, `enable_registration`, `enable_reset`, `enable_remind`, `enable_profile`, `enable_j2store_cart`); a disabled task answers with the message of `PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED`. Only `logout` is always available.
 
 ## Requirements
 
@@ -70,8 +70,8 @@ removed.
 | Enable Registration | AJAX user registration | Yes |
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
-| Enable Profile Editing | AJAX profile save (name, email, password) — currently not evaluated, `saveProfile` is always available | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) — currently not evaluated, cart tasks are always available | Yes |
+| Enable Profile Editing | AJAX profile save (name, email, password); `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
+| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
 | Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
 
 ### J2Commerce Cart Compatibility
@@ -157,29 +157,48 @@ JoomlaAjaxForms.logout(returnUrl);
 
 ### Request handling
 
-Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
+Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task except the read-only `texts` task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
 
 ### JSON Response Format
+
+The plugin's own payload carries `success` plus whatever the handler adds. A
+success answer usually carries a `message`, a data answer a `data` object:
 
 ```json
 {
     "success": true,
-    "message": "Success message",
-    "data": { },
-    "error": null
+    "message": "Success message"
 }
 ```
 
-Error responses use J2Commerce-compatible format:
+An error answer carries `success: false` and the translated message:
 
 ```json
 {
     "success": false,
-    "message": null,
-    "data": null,
-    "error": { "warning": "Error message" }
+    "message": "Error message"
 }
 ```
+
+There is no `error` key: the client also tolerates a J2Commerce-shaped
+`error.warning` payload, but this plugin never produces one.
+
+On the wire this payload is wrapped in the envelope `com_ajax` produces, and
+the `onAfterRoute` shortcut mirrors it exactly, so both paths answer the same
+way. The transport envelope always reports the dispatch itself as successful;
+a task that was rejected (invalid token, unknown task) still arrives here, with
+its `success: false` payload inside `data[0]`:
+
+```json
+{
+    "success": true,
+    "message": null,
+    "messages": null,
+    "data": ["{\"success\":false,\"message\":\"The most recent request was denied because it contained an invalid security token.\"}"]
+}
+```
+
+The client reads the actual payload from `data[0]`.
 
 ## Development
 
@@ -368,21 +387,62 @@ mails as well: the stored subject and body, the HTML layout with frame and
 logo, and a template of its own per language. Nothing has to be configured in
 the plugin for that.
 
-Two details follow from the plugin answering inside `com_ajax`:
+### What changes for an existing site
+
+**The wording of these mails changes on every site, not only on a site that
+styled its templates.** Joomla creates the rows in `#__mail_templates` with
+every installation, and `MailTemplate` reads the stored subject and body
+whatever the mail style is set to. From this version on, the recipient
+therefore reads Joomla's own `COM_USERS_EMAIL_…` texts, which Joomla ships
+translated, instead of the plugin's former `PLG_AJAX_JOOMLAAJAXFORMS_…` texts.
+That is the point of the change: these mails now read and look like every other
+account mail of the site, and the site can edit them in the backend like all
+the others. A site that wants its former wording back enters it in the
+corresponding mail template.
+
+The plugin's own texts are kept as a fallback only. That fallback is reached
+when `#__mail_templates` has no such row, for example after someone deleted it,
+which is why a normal installation never uses it. It writes a warning to the
+log when it does. The fallback is rendered in the same language as the template
+mail it replaces — the recipient's — through a separate `Language` instance per
+language, so it never changes the language of the running request and the
+language of one recipient never reaches the next when a single request sends
+more than one mail.
+
+Three details follow from the plugin answering inside `com_ajax`:
 
 - The language files of the extension the template belongs to are loaded before
   the mail is rendered. `MailTemplate` does that only for a mail in another
   language than the request, so without it the mail would carry the raw
   language keys.
-- The mail is rendered in the language of the account, if the account has one,
-  otherwise in the language of the request and finally in the default site
-  language. The notice about a new registration goes to the site itself and is
-  written in the default site language.
+- The mail is rendered in the language of the account, if the account has one
+  and the site has that language installed, otherwise in the language of the
+  request and finally in the default site language. A language the site does
+  not have is refused, because the template texts are language keys and the
+  recipient would read those keys.
+- Joomla's own helper for those language files remembers per extension that it
+  already loaded them, without regard for the language. When one request sends
+  two mails of the same extension in two languages that both differ from the
+  language of the request, the second one can therefore arrive untranslated.
+  The registration path sends the mail to the customer first and the notice to
+  the site second, so the notice is the one that would be affected.
 
-A site whose `#__mail_templates` has no such template still gets its mail: the
-plugin then falls back to its own plain-text mail from
-`PLG_AJAX_JOOMLAAJAXFORMS_*_EMAIL_SUBJECT` and `..._EMAIL_BODY` and writes a
-warning to the log.
+### The notice about a new registration
+
+It goes to the address of the site (`mailfrom`) in the default site language,
+and it uses `com_users.registration.admin.new_notification`, the template whose
+text says that someone has registered. It deliberately does not use
+`com_users.registration.admin.verification_request`: that is the template
+Joomla sends **after** the new account has confirmed its e-mail address, with a
+token generated at that moment for the administration to activate the account.
+Joomla's own registration flow still sends it at that point, because the
+activation link of this plugin leads into `com_users`. At the time the plugin
+sends its notice, nothing is required of the administration yet, so a text
+asking for approval, and a link carrying the customer's own confirmation token,
+would both be wrong.
+
+When the site has no valid `mailfrom` address, the notice is skipped and a
+warning is written to the log instead.
 
 ## Multi-Language Support
 

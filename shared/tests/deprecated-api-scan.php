@@ -381,6 +381,15 @@ foreach ($parsed as $path => [$tokens, $structure]) {
                 $add('get-instance', $line, "$short::getInstance() is deprecated (use the MVC factory or instantiate the class)");
             }
 
+            if ($call && $method === 'getinstance' && $resolved === 'joomla\\cms\\language\\language') {
+                $add(
+                    'language-get-instance',
+                    $line,
+                    'Language::getInstance() is deprecated (use Factory::getContainer()'
+                    . '->get(LanguageFactoryInterface::class)->createLanguage($tag))'
+                );
+            }
+
             if ($call && $resolved === 'joomla\\cms\\html\\htmlhelper' && in_array($method, ['script', 'stylesheet'], true)) {
                 $add('htmlhelper-asset', $line, "HTMLHelper::{$member[1]}() is deprecated (use the WebAssetManager)");
             }

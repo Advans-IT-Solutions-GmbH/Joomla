@@ -265,14 +265,17 @@ class RemindRequestTest
     {
         echo "\n--- Reminder mail goes through the site's mail template ---\n";
 
+        // Installed outside the try, cleaned up inside the finally: a partly
+        // installed capture must never survive this method either.
         $reason = ajaxforms_mailcatch_install();
-        $this->test('Mail capture in place', $reason === null, (string) $reason);
-
-        if ($reason !== null) {
-            return;
-        }
 
         try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
             $selfTest = ajaxforms_mailcatch_selftest();
             $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
 

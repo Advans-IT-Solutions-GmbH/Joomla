@@ -35,8 +35,10 @@
  * for the event. The frontend options (Show Privacy Section, Show Delete
  * Address Buttons, Show Export Data, Show Delete All Data) are checked through
  * PrivacyOptions and the rendered MyProfile override. The server-side check of
- * the checkout requests is covered by 12-consent-logging.php; browser
- * interaction is not covered by the automated tests.
+ * the checkout requests is covered by 12-consent-logging.php. The J2Store 4
+ * client-side click guard's runtime blocking is covered by the executable DOM
+ * test at tests/js/consent-validator.test.js; full browser interaction is not
+ * otherwise exercised by the automated tests.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -521,20 +523,60 @@ class ConsentUiRenderTest
         // and collects the step's hidden inputs, so they have to be in this override.
         if (!$isJ6) {
             $this->test('Checkout step carries the hidden task input',
-                strpos($checkoutHtml, 'value="shipping_payment_method_validate"') !== false);
-            $this->test('Checkout step carries the button J2Store binds to',
-                strpos($checkoutHtml, 'id="button-payment-method"') !== false);
+                (bool) preg_match('/<input type="hidden" name="task" value="shipping_payment_method_validate"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden option input',
+                (bool) preg_match('/<input type="hidden" name="option" value="com_j2store"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden view input',
+                (bool) preg_match('/<input type="hidden" name="view" value="checkout"/', $checkoutHtml));
+            // The button J2Store's script binds to must be type="button": a regression to
+            // type="submit" would break J2Store 4's click-driven step submission.
+            $this->test('Checkout step button is type="button" with id="button-payment-method"',
+                (bool) preg_match('/<button type="button" id="button-payment-method"/', $checkoutHtml),
+                'Continue button must be type="button" id="button-payment-method" for the J2Store 4 path');
+            $this->test('Checkout step button is not a plain submit',
+                strpos($checkoutHtml, 'type="submit"') === false,
+                'A type="submit" button no longer triggers J2Store 4\'s step submission');
             $this->test('Checkout step carries a Joomla form token',
                 (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
                 'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
 
             // J2Store 4 has no server-side consent check, so the client guard has to
-            // cover the click on that button, not only a form submit.
+            // cover the click on that button in the capture phase, not only a form submit.
+            // These static source assertions pin the guard's structure and blocking
+            // mechanics in the Docker lane; the guard's actual runtime blocking is
+            // executed separately by tests/js/consent-validator.test.js (Node DOM test,
+            // CI job "Consent Validator (JS)").
             $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
             $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
-            $this->test('Consent validator guards #button-payment-method',
-                strpos($validatorSrc, 'button-payment-method') !== false,
-                $validatorJs);
+            // Each assertion below reads the body of one specific construct, never the
+            // whole file: the file already contained a consent check, a preventDefault
+            // and a form-submit listener before the click guard existed, so a file-wide
+            // search would pass without the guard.
+            $clickListener = preg_match(
+                '/addEventListener\(\s*[\'"]click[\'"]\s*,\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*,\s*true\s*\)/s',
+                $validatorSrc,
+                $m
+            ) ? $m[1] : '';
+            $blockFunction = preg_match(
+                '/function\s+j2commercePrivacyBlocked\s*\([^)]*\)\s*\{(.*?)\n\}/s',
+                $validatorSrc,
+                $m
+            ) ? $m[1] : '';
+            $this->test('Consent validator guards the #button-payment-method click in the capture phase',
+                strpos($clickListener, 'button-payment-method') !== false,
+                $validatorJs . ': no capture-phase click listener for #button-payment-method');
+            // The guard must actually block: only when a required, unticked consent box is
+            // present does it preventDefault and stop the click reaching J2Store's handler.
+            $this->test('Consent guard reads the consent checkbox state before blocking',
+                strpos($blockFunction, "getElementById('j2commerce_privacy_consent')") !== false
+                    && strpos($blockFunction, 'consent.checked') !== false,
+                'j2commercePrivacyBlocked() must only block while the consent box is unticked');
+            $this->test('Consent guard cancels the default action (preventDefault)',
+                strpos($blockFunction, 'e.preventDefault()') !== false,
+                'j2commercePrivacyBlocked() must call preventDefault to stop the step submission');
+            $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
+                strpos($clickListener, 'stopImmediatePropagation') !== false,
+                'The click listener must stop propagation so J2Store\'s own click handler does not run');
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
