@@ -23,7 +23,7 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
-Login, registration, password reset and username reminder can be disabled individually via plugin parameters. `logout`, `saveProfile`, `removeCartItem` and `getCartCount` are always available: the parameters `enable_profile` and `enable_j2store_cart` exist in the configuration but are currently not evaluated.
+Login, registration, password reset, username reminder, the profile save and the J2Store cart tasks can be disabled individually via plugin parameters (`enable_login`, `enable_registration`, `enable_reset`, `enable_remind`, `enable_profile`, `enable_j2store_cart`); a disabled task answers with the message of `PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED`. Only `logout` is always available.
 
 ## Requirements
 
@@ -70,8 +70,8 @@ removed.
 | Enable Registration | AJAX user registration | Yes |
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
-| Enable Profile Editing | AJAX profile save (name, email, password) — currently not evaluated, `saveProfile` is always available | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x) — currently not evaluated, cart tasks are always available | Yes |
+| Enable Profile Editing | AJAX profile save (name, email, password); `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
+| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
 | Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
 
 ### J2Commerce Cart Compatibility
@@ -157,31 +157,31 @@ JoomlaAjaxForms.logout(returnUrl);
 
 ### Request handling
 
-Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
+Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task except the read-only `texts` task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
 
 ### JSON Response Format
 
-The plugin's own payload has this shape:
+The plugin's own payload carries `success` plus whatever the handler adds. A
+success answer usually carries a `message`, a data answer a `data` object:
 
 ```json
 {
     "success": true,
-    "message": "Success message",
-    "data": { },
-    "error": null
+    "message": "Success message"
 }
 ```
 
-Error responses use J2Commerce-compatible format:
+An error answer carries `success: false` and the translated message:
 
 ```json
 {
     "success": false,
-    "message": null,
-    "data": null,
-    "error": { "warning": "Error message" }
+    "message": "Error message"
 }
 ```
+
+There is no `error` key: the client also tolerates a J2Commerce-shaped
+`error.warning` payload, but this plugin never produces one.
 
 On the wire this payload is wrapped in the envelope `com_ajax` produces, and
 the `onAfterRoute` shortcut mirrors it exactly, so both paths answer the same
@@ -194,7 +194,7 @@ its `success: false` payload inside `data[0]`:
     "success": true,
     "message": null,
     "messages": null,
-    "data": ["{\"success\":true,\"message\":null,\"data\":{ },\"error\":null}"]
+    "data": ["{\"success\":false,\"message\":\"The most recent request was denied because it contained an invalid security token.\"}"]
 }
 ```
 

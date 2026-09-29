@@ -15,7 +15,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -597,6 +597,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleRemoveCartItem(): string
     {
+        if (!$this->params->get('enable_j2store_cart', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
         if (!$user || $user->guest) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
@@ -678,6 +682,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleGetCartCount(): string
     {
+        if (!$this->params->get('enable_j2store_cart', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
 
         if (!$user || $user->guest) {
@@ -924,6 +932,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleSaveProfile(): string
     {
+        if (!$this->params->get('enable_profile', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
         if (!$user || $user->guest) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
@@ -980,10 +992,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             }
 
             if (!$user->save(true)) {
+                // User::getErrors() can carry untranslated database or driver text.
+                // It goes to the log for the administrator, never to the client.
                 $errors = $user->getErrors();
-                $errorMsg = !empty($errors) ? implode(' ', array_map('strval', $errors)) : Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED');
-                Log::add('Profile save failed: ' . $errorMsg, Log::ERROR, 'plg_ajax_joomlaajaxforms');
-                return $this->jsonError($errorMsg);
+                Log::add(
+                    'Profile save failed: ' . ($errors ? implode(' ', array_map('strval', $errors)) : 'no error message'),
+                    Log::ERROR,
+                    'plg_ajax_joomlaajaxforms'
+                );
+
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
             }
 
             return $this->jsonSuccess([
@@ -1309,7 +1327,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function mailText(string $languageTag, string $key, ...$args): string
     {
         try {
-            $language = Language::getInstance($languageTag);
+            $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($languageTag);
             $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR, $languageTag, true)
                 || $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms', $languageTag, true);
 

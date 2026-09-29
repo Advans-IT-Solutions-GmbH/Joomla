@@ -381,11 +381,17 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
 
         try {
             $productIds = array_map('intval', (array) $app->getInput()->get('products', [], 'array'));
-            $productIds = array_filter($productIds);
+            $productIds = array_values(array_unique(array_filter($productIds)));
 
             if (count($productIds) < 2) {
                 throw new \RuntimeException(Text::_('PLG_J2COMMERCE_PRODUCTCOMPARE_ERROR_MIN_PRODUCTS'));
             }
+
+            // The configured maximum is enforced on the server too, not only in the
+            // browser: getProductsData() runs one option query per returned product,
+            // so an arbitrarily long products[] list would otherwise be amplified
+            // into as many queries.
+            $productIds = array_slice($productIds, 0, max(2, (int) $this->params->get('max_products', 4)));
 
             $products = $this->getProductsData($productIds);
             $html     = $this->renderLayout('table', ['products' => $products]);

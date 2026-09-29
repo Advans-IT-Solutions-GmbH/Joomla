@@ -657,8 +657,13 @@ const JoomlaAjaxForms = {
      */
     showMessage: function(container, message, type) {
         // No translated text available (neither from the server nor from the
-        // page): show nothing rather than a text in another language.
+        // page): show nothing rather than a text in another language. Clear the
+        // container first, otherwise a message of an earlier request stays on
+        // screen next to a result it does not belong to.
         if (!message) {
+            container.className = 'ajax-message';
+            container.innerHTML = '';
+            container.style.display = 'none';
             return;
         }
 
