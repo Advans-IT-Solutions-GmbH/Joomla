@@ -718,14 +718,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // whose name comes from getFormToken(). A bare getFormToken() call emits
             // nothing, so the step would still go out without a token.
             '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
+            // One <input> carrying both attributes, in any order and with any other
+            // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
             // data-* attribute: data-name="task" would otherwise count as the real field.
-            '/(?<![-\w])name=[\'"]task[\'"]\s+value=[\'"]shipping_payment_method_validate[\'"]/',
-            '/(?<![-\w])name=[\'"]option[\'"]\s+value=[\'"]com_j2store[\'"]/',
-            '/(?<![-\w])name=[\'"]view[\'"]\s+value=[\'"]checkout[\'"]/',
-            // The Continue button, in either attribute order.
-            '/<button[^>]*(?<![-\w])type=[\'"]button[\'"][^>]*(?<![-\w])id=[\'"]button-payment-method[\'"]/',
-            '/<button[^>]*(?<![-\w])id=[\'"]button-payment-method[\'"][^>]*(?<![-\w])type=[\'"]button[\'"]/',
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]task[\'"])(?=[^>]*(?<![-\w])value=[\'"]shipping_payment_method_validate[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]option[\'"])(?=[^>]*(?<![-\w])value=[\'"]com_j2store[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]view[\'"])(?=[^>]*(?<![-\w])value=[\'"]checkout[\'"])[^>]*>/',
+            // The Continue button, likewise in any attribute order.
+            '/<button\b(?=[^>]*(?<![-\w])type=[\'"]button[\'"])(?=[^>]*(?<![-\w])id=[\'"]button-payment-method[\'"])[^>]*>/',
         ];
 
         // Present is not enough: all five have to be inside the shipped wrapper.
@@ -739,7 +740,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
-        if (!preg_match($required[4], $wrapper) && !preg_match($required[5], $wrapper)) {
+        if (!preg_match($required[4], $wrapper)) {
             return false;
         }
 
