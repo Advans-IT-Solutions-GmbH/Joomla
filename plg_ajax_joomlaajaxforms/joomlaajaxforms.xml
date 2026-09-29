@@ -16,6 +16,7 @@
         <folder plugin="joomlaajaxforms">services</folder>
         <folder>src</folder>
         <folder>language</folder>
+        <filename>LICENSE.txt</filename>
     </files>
 
     <media destination="plg_ajax_joomlaajaxforms" folder="media">

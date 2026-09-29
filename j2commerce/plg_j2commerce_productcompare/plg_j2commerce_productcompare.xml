@@ -24,6 +24,7 @@
         <folder>language</folder>
         <folder>tmpl</folder>
         <folder>media</folder>
+        <filename>LICENSE.txt</filename>
     </files>
 
     <media destination="plg_j2commerce_productcompare" folder="media">

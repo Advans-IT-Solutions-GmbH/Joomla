@@ -23,6 +23,7 @@
             <folder>services</folder>
             <folder>src</folder>
             <folder>tmpl</folder>
+            <filename>LICENSE.txt</filename>
         </files>
         
         <languages folder="administrator/language">

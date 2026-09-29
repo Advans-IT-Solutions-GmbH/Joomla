@@ -17,6 +17,7 @@
         <folder plugin="j2commerceprivacy">services</folder>
         <folder>src</folder>
         <folder>language</folder>
+        <filename>LICENSE.txt</filename>
     </files>
 
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />

@@ -22,6 +22,8 @@
         <folder>overrides</folder>
         <folder>layouts</folder>
         <folder>media</folder>
+        <filename>LICENSE.txt</filename>
+        <filename>THIRD-PARTY-NOTICES.txt</filename>
     </files>
 
     <media destination="plg_privacy_j2commerce" folder="media">

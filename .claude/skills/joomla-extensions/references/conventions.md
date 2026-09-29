@@ -58,6 +58,8 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
 
 All extensions are licensed under **GPL-3.0-or-later**. Every extension directory ships the unmodified GPL-3.0 text (https://www.gnu.org/licenses/gpl-3.0.txt) as `LICENSE.txt`, identical to the repository root.
 
+- Every manifest declares `LICENSE.txt` in the `<files>` list that installs it, and the file exists at that source path: next to the manifest for a plugin, inside the `folder="administrator/components/<com>"` of `<administration><files>` for a component, and in its own directory for a bundled sub-plugin (the privacy plugin's system and task plugins). Joomla copies only the entries of that list, so a `LICENSE.txt` that merely sits in the ZIP never reaches the installed extension although `<license>` and every source header point at it. The privacy plugin declares `THIRD-PARTY-NOTICES.txt` the same way. `php shared/tests/requirements-check.php <extension dir>` (CI job `Language Files`) fails on a missing declaration, a declared file that does not exist, and a `LICENSE.txt` that differs from the repository root.
+
 - Manifests: `<license>GNU General Public License version 3 or later; see LICENSE.txt</license>` and `<copyright>(C) <year> Advans IT Solutions GmbH</copyright>` (no "All rights reserved").
 - `composer.json` and `joomla.asset.json`: `"license": "GPL-3.0-or-later"`.
 - Header for new PHP/JS/CSS files that ship in an installation package. Test scripts, Docker entry points and CI helpers are excluded from the package by `shared/build/build.sh` and need no header:
