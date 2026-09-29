@@ -684,8 +684,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      *
      * A partially merged copy must not silence the warning, so every part is checked
      * separately: the token call, the three hidden inputs, and the Continue button as
-     * type="button" with the id J2Store's checkout script binds to. Comments are
-     * removed first, so a mention in a comment cannot satisfy any of them.
+     * type="button" with the id J2Store's checkout script binds to. PHP comments are
+     * removed by the tokenizer and HTML comments afterwards, so markup that only sits
+     * in a comment and never reaches the browser cannot satisfy any of them.
      */
     private function hasJ2StoreSubmissionContract(string $content): bool
     {
@@ -698,6 +699,11 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             $code .= is_array($token) ? $token[1] : $token;
         }
+
+        // An <!-- ... --> block is inline HTML for the tokenizer, but the browser never
+        // submits what is inside it. An unterminated opening marker hides the rest.
+        $code = (string) preg_replace('/<!--.*?-->/s', '', $code);
+        $code = (string) preg_replace('/<!--.*$/s', '', $code);
 
         $required = [
             // The token itself: HTMLHelper::_('form.token') or Session::getFormToken().

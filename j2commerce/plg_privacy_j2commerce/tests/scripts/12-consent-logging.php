@@ -1440,11 +1440,12 @@ class ConsentLoggingTest
         }
 
         // J2Store 4 checkout overrides in the same template (installer checks of the update):
-        // stale = copy of an earlier plugin version without the token, foreign = a template's
-        // own override without this plugin's marker, which must never be reported.
-        $j2store     = is_dir(JPATH_SITE . '/components/com_j2store');
-        $j2sMarker   = 'Template override for plg_privacy_j2commerce';
-        $j2sStale    = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
+        // The same path is used for three shapes in turn: a copy of an earlier plugin
+        // version (marker, incomplete contract) must be reported, a template's own
+        // override (no marker) must not, and the override this package ships must not.
+        $j2store   = is_dir(JPATH_SITE . '/components/com_j2store');
+        $j2sMarker = 'Template override for plg_privacy_j2commerce';
+        $j2sStale  = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
 
         if ($j2store) {
             foreach ([$j2sStale] as $file) {
@@ -1483,9 +1484,23 @@ class ConsentLoggingTest
                 $output !== '' && !$has('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE'), $j2sDiag);
 
             if (!$j6) {
-                // Replace the stale copy with the override the package ships and update again:
-                // the warning has to disappear. That is what proves it reads the submission
-                // contract and not merely the presence of the file.
+                // Same file without the marker: a template's own override. It is just as
+                // incomplete, so only the marker filter can keep it out of the warning.
+                file_put_contents(
+                    $j2sStale,
+                    "<?php\n// the template's own checkout override\n?>\n"
+                    . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+                );
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Second CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('Update does not report an override without the plugin marker',
+                    $output !== '' && !$has($j2sOutdated), $j2sDiag);
+
+                // Replace it with the override the package ships: the warning has to stay
+                // away for the other reason, the complete submission contract.
                 $shippedOverride = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
                 $this->test('Shipped J2Store 4 override available in the installed plugin', is_file($shippedOverride), $shippedOverride);
                 file_put_contents($j2sStale, (string) @file_get_contents($shippedOverride));
@@ -1493,7 +1508,7 @@ class ConsentLoggingTest
                 [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
                 $j2sDiag = mb_substr($readable, 0, 1500);
                 clearstatcache();
-                $this->test('Second CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('Third CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
                 $this->test('No stale-override warning once the copy carries the full contract',
                     $output !== '' && !$has($j2sOutdated), $j2sDiag);
             }
