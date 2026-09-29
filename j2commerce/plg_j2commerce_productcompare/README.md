@@ -93,7 +93,7 @@ Uninstall via **System → Manage → Extensions**. The plugin creates no databa
 4. Click "View Comparison" to see modal
 5. Compare attributes side-by-side
 
-The comparison data comes from the public `com_ajax` endpoint of the plugin, so it returns only what the storefront shows the visitor asking: the product must be enabled and visible in the shop (`enabled = 1`, `visibility = 1`) and its article published, inside its publishing window and readable with the visitor's view levels. A guessed product ID of a hidden product returns nothing.
+The comparison data comes from the public `com_ajax` endpoint of the plugin, so it returns only what the storefront shows the visitor asking: the product must be enabled and visible in the shop (`enabled = 1`, `visibility = 1`), its article published, inside its publishing window, readable with the visitor's view levels and in the content language of the request or `*`, and the article is joined only for a product whose `product_source` is `com_content`. A guessed product ID of a hidden product returns nothing. The endpoint also enforces the configured **Max Products** on the server, not only in the browser.
 
 ## Development
 

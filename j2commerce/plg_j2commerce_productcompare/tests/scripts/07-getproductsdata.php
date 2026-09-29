@@ -212,6 +212,9 @@ class GetProductsDataTest
             // matches a perfectly published article must not pick up that article and
             // hand out its title, description, price and stock.
             'product of another source'   => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'product_source' => 'com_somethingelse'],
+            // A storefront list view hides an article of another content language, so the
+            // comparison must hide it too.
+            'article of another language'  => ['state' => 1, 'access' => 1, 'publish_up' => null,    'publish_down' => null, 'language' => 'xx-XX'],
         ];
 
         $pkCol = $this->productsPk;
@@ -289,7 +292,7 @@ class GetProductsDataTest
                 'created_by'   => 42,
                 'modified'     => date('Y-m-d H:i:s'),
                 'access'       => $article['access'],
-                'language'     => '*',
+                'language'     => $article['language'] ?? '*',
                 'metadata'     => '{}',
                 'attribs'      => '{}',
                 'images'       => '{}',

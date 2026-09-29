@@ -576,16 +576,43 @@ class ConsentUiRenderTest
             // whole file: the file already contained a consent check, a preventDefault
             // and a form-submit listener before the click guard existed, so a file-wide
             // search would pass without the guard.
-            $clickListener = preg_match(
-                '/addEventListener\(\s*[\'"]click[\'"]\s*,\s*function\s*\([^)]*\)\s*\{(.*?)\}\s*,\s*true\s*\)/s',
-                $validatorSrc,
-                $m
-            ) ? $m[1] : '';
-            $blockFunction = preg_match(
-                '/function\s+j2commercePrivacyBlocked\s*\([^)]*\)\s*\{(.*?)\n\}/s',
-                $validatorSrc,
-                $m
-            ) ? $m[1] : '';
+            // Brace-aware extraction: a non-greedy regex would stop at the first inner
+            // closing brace and cut the body short, which would make the assertions
+            // below fail although the guard is correct. Indentation is irrelevant here.
+            $bodyAfter = static function (string $source, string $needle): string {
+                $start = strpos($source, $needle);
+
+                if ($start === false) {
+                    return '';
+                }
+
+                $open = strpos($source, '{', $start);
+
+                if ($open === false) {
+                    return '';
+                }
+
+                $depth = 0;
+
+                for ($i = $open, $length = strlen($source); $i < $length; $i++) {
+                    if ($source[$i] === '{') {
+                        $depth++;
+                    } elseif ($source[$i] === '}') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            return substr($source, $open + 1, $i - $open - 1);
+                        }
+                    }
+                }
+
+                return '';
+            };
+            $clickListener = $bodyAfter($validatorSrc, "addEventListener('click'");
+            $blockFunction = $bodyAfter($validatorSrc, 'function j2commercePrivacyBlocked');
+            $this->test('Consent validator registers the click guard in the capture phase',
+                $clickListener !== '' && (bool) preg_match('/\}\s*,\s*true\s*\)\s*;/', $validatorSrc),
+                $validatorJs . ': the click listener must be registered with useCapture = true');
             $this->test('Consent validator guards the #button-payment-method click in the capture phase',
                 strpos($clickListener, 'button-payment-method') !== false,
                 $validatorJs . ': no capture-phase click listener for #button-payment-method');
