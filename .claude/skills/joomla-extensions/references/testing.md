@@ -138,7 +138,9 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | AJAX Forms `tests-j2c4/`, `tests-j2c6/` | `./run-tests.sh all` (own `test.env` with the right container) |
 
 `all` runs every entry of `TEST_SCRIPTS`. For OSMap this includes `sitemap-http-sef`, which CI runs
-only against the SEF stack; run suites by name to mirror the CI matrix.
+only against the SEF stacks; run suites by name to mirror the CI matrix. Without `J2COMMERCE_SEF=1`
+that suite skips, and with `TEST_STRICT_SKIP=1` it fails instead of skipping, so do not combine
+`TEST_STRICT_SKIP=1` with `all` on a non-SEF OSMap stack.
 
 Production-like lane for Privacy and OSMap (`tests/docker-compose.production.yml`, needs
 `tests/j2commerce6.zip` from the pin `7edb6e11…`), commands from the workflow:

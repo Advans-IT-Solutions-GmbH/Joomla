@@ -20,7 +20,7 @@ use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
-osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . (osmap_ensure_classes() ? 'yes' : 'NO (stubs)') . PHP_EOL;
 require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
 
 class SitemapOutputCollector extends \Alledia\OSMap\Sitemap\Collector
