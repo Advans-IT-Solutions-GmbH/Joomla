@@ -90,8 +90,11 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 # J5 SEF stack (docker-compose.sef.yml, J2COMMERCE_SEF=1) enables rewrite URLs
 # so 08-sitemap-http-sef.php can assert that every emitted product URL carries
 # the correct language SEF prefix (e.g. /de/shop/...) in the live sitemap. The
-# end-to-end HTTP-200 resolution check needs a full multilingual stack and is
-# tracked as follow-up #185.
+# split between the two SEF lanes is deliberate: this J5 lane installs no site
+# language pack and therefore proves URL *generation* only, its live status is
+# logged for diagnostics. The J6 SEF lane builds the full multilingual stack
+# (de-DE language pack, plg_system_languagefilter, published de-DE routes) and
+# asserts there that every product URL resolves directly with HTTP 200 (#185).
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Enabling SEF URLs (J2COMMERCE_SEF=1)..."
     mysql -h mysql -u joomla -pjoomla_pass joomla_db \
