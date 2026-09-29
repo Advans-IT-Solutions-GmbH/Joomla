@@ -735,31 +735,34 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
-        foreach ([0, 1, 2, 3] as $index) {
-            if (!preg_match($required[$index], $wrapper)) {
-                return false;
-            }
-        }
-
         if (!preg_match($required[4], $wrapper) && !preg_match($required[5], $wrapper)) {
             return false;
         }
 
-        // Inside the wrapper the fields have to follow the button directly. Anything
-        // else between them, for example a <section> around the button and a sibling
-        // one around the inputs, would let a serialiser scoped to the button's element
-        // miss the fields. Only the hidden inputs and PHP blocks may stand there.
         $afterButton = strpos($wrapper, '</button>');
 
         if ($afterButton === false) {
             return false;
         }
 
-        $between = substr($wrapper, $afterButton + strlen('</button>'));
-        $between = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $between);
-        $between = (string) preg_replace('/<input\b[^>]*>/s', ' ', $between);
+        // The fields have to follow the button, as the shipped override renders them and
+        // as the documentation describes the hand merge. A copy that puts them before the
+        // button is not what a button-scoped serialiser collects.
+        $tail = substr($wrapper, $afterButton + strlen('</button>'));
 
-        return !str_contains($between, '<');
+        foreach ([0, 1, 2, 3] as $index) {
+            if (!preg_match($required[$index], $tail)) {
+                return false;
+            }
+        }
+
+        // And nothing else may stand between the button and them: a <section> around the
+        // button with a sibling one around the inputs would let a serialiser scoped to
+        // the button's element miss the fields. Only hidden inputs and PHP blocks pass.
+        $tail = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $tail);
+        $tail = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
+
+        return !str_contains($tail, '<');
     }
 
     /**
