@@ -688,6 +688,13 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * type="button" with the id J2Store's checkout script binds to. PHP comments are
      * removed by the tokenizer and HTML comments afterwards, so markup that only sits
      * in a comment and never reaches the browser cannot satisfy any of them.
+     *
+     * All five have to sit in the shipped `j2store-checkout-actions` wrapper, because
+     * that wrapper is the narrowest scope a checkout script can serialise. The wrapper
+     * is read as the text up to the first closing tag after it, without interpreting
+     * the markup any further. The check is therefore fail-closed: a copy whose
+     * structure differs from the shipped one is reported rather than assumed to work,
+     * which is the right direction for a message that asks for a replacement.
      */
     private function hasJ2StoreSubmissionContract(string $content): bool
     {
@@ -717,53 +724,75 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             '/<button[^>]*\bid=[\'"]button-payment-method[\'"][^>]*\btype=[\'"]button[\'"]/',
         ];
 
-        $offsets = [];
+        // Present is not enough: all five have to be inside the shipped wrapper.
+        if (!preg_match('/<div[^>]*\bclass=[\'"][^\'"]*\bj2store-checkout-actions\b/', $code, $match, PREG_OFFSET_CAPTURE)) {
+            return false;
+        }
+
+        $wrapper = $this->elementBody($code, $match[0][1]);
+
+        if ($wrapper === null) {
+            return false;
+        }
 
         foreach ([0, 1, 2, 3] as $index) {
-            if (!preg_match($required[$index], $code, $match, PREG_OFFSET_CAPTURE)) {
+            if (!preg_match($required[$index], $wrapper)) {
                 return false;
             }
-
-            $offsets[] = $match[0][1];
         }
 
-        if (!preg_match($required[4], $code, $match, PREG_OFFSET_CAPTURE)
-            && !preg_match($required[5], $code, $match, PREG_OFFSET_CAPTURE)) {
+        if (!preg_match($required[4], $wrapper) && !preg_match($required[5], $wrapper)) {
             return false;
         }
 
-        $offsets[] = $match[0][1];
+        // Inside the wrapper the fields have to follow the button directly. Anything
+        // else between them, for example a <section> around the button and a sibling
+        // one around the inputs, would let a serialiser scoped to the button's element
+        // miss the fields. Only the hidden inputs and PHP blocks may stand there.
+        $afterButton = strpos($wrapper, '</button>');
 
-        // Present is not enough: the button and the fields have to share one container,
-        // because that container is the narrowest scope a checkout script can serialise.
-        // Measured over the span from the first to the last of them, the <div> nesting
-        // must never fall below the level it starts at. It does as soon as the container
-        // that holds the first of them closes in between, which is exactly the shape of
-        // fields backported behind the button's wrapper.
-        $from  = min($offsets);
-        $to    = max($offsets);
-        $start = substr_count(substr($code, 0, $from), '<div') - substr_count(substr($code, 0, $from), '</div>');
-
-        if ($start < 1) {
+        if ($afterButton === false) {
             return false;
         }
 
-        $depth = $start;
-        $span  = substr($code, $from, $to - $from);
+        $between = substr($wrapper, $afterButton + strlen('</button>'));
+        $between = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $between);
+        $between = (string) preg_replace('/<input\b[^>]*>/s', ' ', $between);
 
-        for ($i = 0, $length = strlen($span); $i < $length; $i++) {
-            if (substr($span, $i, 4) === '<div') {
-                $depth++;
-            } elseif (substr($span, $i, 6) === '</div>') {
+        return !str_contains($between, '<');
+    }
+
+    /**
+     * Content of the element that opens at $offset, found by counting the opening and
+     * closing tags of that element name only. Null when it is never closed.
+     */
+    private function elementBody(string $code, int $offset): ?string
+    {
+        if (!preg_match('/^<([a-zA-Z][a-zA-Z0-9]*)/', substr($code, $offset, 32), $match)) {
+            return null;
+        }
+
+        $name  = strtolower($match[1]);
+        $open  = '<' . $name;
+        $close = '</' . $name;
+        $depth = 0;
+
+        for ($i = $offset, $length = strlen($code); $i < $length; $i++) {
+            if (strtolower(substr($code, $i, strlen($close))) === $close) {
                 $depth--;
 
-                if ($depth < $start) {
-                    return false;
+                if ($depth === 0) {
+                    return substr($code, $offset, $i - $offset);
                 }
+
+                $i += strlen($close) - 1;
+            } elseif (strtolower(substr($code, $i, strlen($open))) === $open) {
+                $depth++;
+                $i += strlen($open) - 1;
             }
         }
 
-        return true;
+        return null;
     }
 
     /**
