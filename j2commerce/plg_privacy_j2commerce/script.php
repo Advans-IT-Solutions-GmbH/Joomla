@@ -717,13 +717,50 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             '/<button[^>]*\bid=[\'"]button-payment-method[\'"][^>]*\btype=[\'"]button[\'"]/',
         ];
 
+        $offsets = [];
+
         foreach ([0, 1, 2, 3] as $index) {
-            if (!preg_match($required[$index], $code)) {
+            if (!preg_match($required[$index], $code, $match, PREG_OFFSET_CAPTURE)) {
                 return false;
+            }
+
+            $offsets[] = $match[0][1];
+        }
+
+        if (!preg_match($required[4], $code, $match, PREG_OFFSET_CAPTURE)
+            && !preg_match($required[5], $code, $match, PREG_OFFSET_CAPTURE)) {
+            return false;
+        }
+
+        $offsets[] = $match[0][1];
+
+        // Present is not enough: the inputs have to sit in the same container as the
+        // button, because that is what a checkout script serialises. If the <div>
+        // nesting returns to the top level anywhere between the first and the last of
+        // them, the container closed in between and the fields are outside it.
+        $from  = min($offsets);
+        $to    = max($offsets);
+        $depth = substr_count(substr($code, 0, $from), '<div') - substr_count(substr($code, 0, $from), '</div>');
+
+        if ($depth < 1) {
+            return false;
+        }
+
+        $span = substr($code, $from, $to - $from);
+
+        for ($i = 0, $length = strlen($span); $i < $length; $i++) {
+            if (substr($span, $i, 4) === '<div') {
+                $depth++;
+            } elseif (substr($span, $i, 6) === '</div>') {
+                $depth--;
+
+                if ($depth < 1) {
+                    return false;
+                }
             }
         }
 
-        return (bool) preg_match($required[4], $code) || (bool) preg_match($required[5], $code);
+        return true;
     }
 
     /**

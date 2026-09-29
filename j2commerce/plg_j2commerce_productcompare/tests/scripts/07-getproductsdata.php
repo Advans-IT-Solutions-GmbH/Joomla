@@ -91,8 +91,17 @@ class GetProductsDataTest
         $products = $method->invoke($plugin, $this->seededProductIds);
 
         $this->test('Returns array', is_array($products));
-        $this->test('Returns 2 products (enabled only)', count($products) === 2,
+        // Every seeded product has a master variant and a second, non-master one, so this
+        // count also proves the variant join does not multiply a product into one row
+        // per variant.
+        $this->test('Returns 2 products (enabled only, one row per product)', count($products) === 2,
             'Got ' . count($products));
+        $this->test('Returns the master variant, not another one of the same product',
+            $products !== [] && !array_filter(
+                $products,
+                static fn (object $row): bool => str_contains((string) ($row->sku ?? ''), 'TEST-SKU-EXTRA-')
+            ),
+            'SKUs: ' . implode(', ', array_map(static fn (object $row): string => (string) ($row->sku ?? ''), $products)));
 
         if (!empty($products)) {
             $p   = $products[0];
@@ -719,6 +728,18 @@ class GetProductsDataTest
                 'isdefault'            => 1,
             ];
             $this->db->insertObject($this->variantsTable, $variant, $this->variantsPk);
+            $this->seededVariantIds[] = (int)$this->db->insertid();
+
+            // A second, non-master variant of the same product. The comparison must keep
+            // showing the product once, with the master variant's SKU and price: without
+            // the is_master condition the join would return one row per variant.
+            $extra                     = clone $variant;
+            $extra->sku                = 'TEST-SKU-EXTRA-' . $i . '-' . $ts;
+            $extra->price              = 99.00 + $i;
+            $extra->is_master          = 0;
+            $extra->isdefault_variant  = 0;
+            $extra->isdefault          = 0;
+            $this->db->insertObject($this->variantsTable, $extra, $this->variantsPk);
             $this->seededVariantIds[] = (int)$this->db->insertid();
         }
 
