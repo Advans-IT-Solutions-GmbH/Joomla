@@ -86,17 +86,39 @@ echo "Enabling plugins..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db \
     -e "UPDATE ${DB_PREFIX}extensions SET enabled=1 WHERE type='plugin' AND enabled=0;" 2>/dev/null
 
-# Disable SEF URLs so OSMap generates plain index.php?... URLs (simpler to assert)
-mysql -h mysql -u joomla -pjoomla_pass joomla_db \
-    -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '$.sef', 0) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
-# Also set via configuration.php
-php -r "
+# Default fixture: keep SEF off for the standard J5 suite. The dedicated
+# J5 SEF stack (docker-compose.sef.yml, J2COMMERCE_SEF=1) enables rewrite URLs
+# so 08-sitemap-http-sef.php can assert that every emitted product URL carries
+# the correct language SEF prefix (e.g. /de/shop/...) in the live sitemap. The
+# end-to-end HTTP-200 resolution check needs a full multilingual stack and is
+# tracked as follow-up #185.
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Enabling SEF URLs (J2COMMERCE_SEF=1)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+        -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '$.sef', 1) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
+    php -r "
+\$f = '/var/www/html/configuration.php';
+\$c = file_get_contents(\$f);
+\$c = preg_replace('/public \\\$sef = [^;]+;/', 'public \$sef = true;', \$c);
+\$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = true;', \$c);
+file_put_contents(\$f, \$c);
+" 2>/dev/null || true
+    a2enmod rewrite >/dev/null 2>&1 || true
+    if [ -f /var/www/html/htaccess.txt ] && [ ! -f /var/www/html/.htaccess ]; then
+        cp /var/www/html/htaccess.txt /var/www/html/.htaccess
+    fi
+else
+    echo "Disabling SEF URLs (default J5 mode)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db \
+        -e "UPDATE ${DB_PREFIX}extensions SET params=JSON_SET(COALESCE(params,'{}'), '$.sef', 0) WHERE element='com_config' AND type='component' LIMIT 1;" 2>/dev/null || true
+    php -r "
 \$f = '/var/www/html/configuration.php';
 \$c = file_get_contents(\$f);
 \$c = preg_replace('/public \\\$sef = [^;]+;/', 'public \$sef = false;', \$c);
 \$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = false;', \$c);
 file_put_contents(\$f, \$c);
 " 2>/dev/null || true
+fi
 
 echo "Inserting fixtures..."
 COM_CONTENT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
@@ -169,9 +191,9 @@ VALUES
     (9003, 9003, 'DISABLED',  19.00, 1),
     (9004, 9004, 'NOMENU',    29.00, 1);
 
--- SEF menu items (published=-2, children of shop 9001)
--- published=-2 = hidden from navigation but routable; OSMap includes these in sitemaps
--- Only Alpha (9002) and Beta (9003) — disabled and nomenu have no SEF item
+-- Hidden product menu items exist on both J5 fixtures. The dedicated J5 SEF
+-- lane still needs them so the live sitemap request traverses the real
+-- multilingual hidden-child paths that previously 301-redirected.
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level, component_id, language, access, params, lft, rgt)
 VALUES
@@ -201,6 +223,27 @@ SET rgt = (SELECT max_rgt FROM (SELECT MAX(rgt) + 1 AS max_rgt FROM ${DB_PREFIX}
 WHERE lft = 0;
 EOSQL
 echo "Menu nested set expanded"
+
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+INSERT IGNORE INTO ${DB_PREFIX}languages
+    (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)
+VALUES
+    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
+
+UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+-- Only the menu-less product's article (9004) gets de-DE so the direct-query
+-- lane (mechanism 2) carries its /de/ prefix from the article language. The
+-- articles behind the hidden children (9001, 9002) stay '*' on purpose: their
+-- /de/ prefix must come from the hidden child menu item's own language
+-- (mechanism 1, printMenuPathNode). Making them de-DE too would let the
+-- direct-query fallback re-emit them with a /de/ prefix even if the hidden-child
+-- path broke, masking exactly the regression this lane must catch.
+UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id = 9004;
+EOSQL
+    echo "Multilingual SEF fixture applied"
+fi
 
 # Create OSMap sitemap and link it to mainmenu so the HTTP test can call
 # index.php?option=com_osmap&view=xml&id=1

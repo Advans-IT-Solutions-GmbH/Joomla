@@ -101,6 +101,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->warnIfJ2CommerceTooOld();
             $this->retireBundledCheckoutOverrides();
             $this->warnOutdatedCheckoutOverrides();
+            $this->warnOutdatedJ2StoreCheckoutOverrides();
 
             $this->installTaskPlugin($packageSource, $type);
             $this->installConsentSystemPlugin($packageSource);
@@ -382,7 +383,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      * The privacy plugin group is not imported during the J2Commerce checkout, so checkout
      * consent is validated and recorded by this system plugin. It is enabled on first
      * installation only; an administrator's later choice to disable it survives updates.
-     */    private function installConsentSystemPlugin(string $packageSource): void
+     */
+    private function installConsentSystemPlugin(string $packageSource): void
     {
         $source = $packageSource . '/plugins/system/j2commerceprivacy';
 
@@ -632,6 +634,174 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 'warning'
             );
         }
+    }
+
+    /**
+     * Warn about deployed J2Store 4 checkout overrides of an earlier plugin version.
+     *
+     * Such a copy is never overwritten on update, and J2Store 4.1.8 rejects the step with
+     * "Invalid Token" unless the override sends the Joomla form token. Only copies carrying
+     * this plugin's marker are reported, so a template's own override is left alone.
+     */
+    private function warnOutdatedJ2StoreCheckoutOverrides(): void
+    {
+        if (!is_dir(JPATH_SITE . '/components/com_j2store')) {
+            return;
+        }
+
+        $db       = Factory::getContainer()->get(DatabaseInterface::class);
+        $outdated = [];
+
+        foreach ($this->getFrontendTemplates($db) as $template) {
+            $relative = $template . '/html/com_j2store/checkout/default_shipping_payment.php';
+            $file     = JPATH_SITE . '/templates/' . $relative;
+
+            if (!is_file($file)) {
+                continue;
+            }
+
+            $content = (string) @file_get_contents($file);
+
+            if (!str_contains($content, self::BUNDLED_OVERRIDE_MARKER)) {
+                continue;
+            }
+
+            if (!$this->hasJ2StoreSubmissionContract($content)) {
+                $outdated[] = $relative;
+            }
+        }
+
+        if ($outdated !== []) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED', htmlspecialchars(implode(', ', $outdated))),
+                'warning'
+            );
+        }
+    }
+
+    /**
+     * Whether a deployed J2Store 4 checkout override carries the complete submission
+     * contract of the shipped override.
+     *
+     * A partially merged copy must not silence the warning, so every part is checked
+     * separately: the token call, the three hidden inputs, and the Continue button as
+     * type="button" with the id J2Store's checkout script binds to. PHP comments are
+     * removed by the tokenizer and HTML comments afterwards, so markup that only sits
+     * in a comment and never reaches the browser cannot satisfy any of them.
+     *
+     * All five have to sit in the shipped `j2store-checkout-actions` wrapper, because
+     * that wrapper is the narrowest scope a checkout script can serialise. The wrapper
+     * is read as the text up to the first closing tag after it, without interpreting
+     * the markup any further. The check is therefore fail-closed: a copy whose
+     * structure differs from the shipped one is reported rather than assumed to work,
+     * which is the right direction for a message that asks for a replacement.
+     */
+    private function hasJ2StoreSubmissionContract(string $content): bool
+    {
+        $code = '';
+
+        foreach (token_get_all($content) as $token) {
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $code .= is_array($token) ? $token[1] : $token;
+        }
+
+        // An <!-- ... --> block is inline HTML for the tokenizer, but the browser never
+        // submits what is inside it. An unterminated opening marker hides the rest.
+        $code = (string) preg_replace('/<!--.*?-->/s', '', $code);
+        $code = (string) preg_replace('/<!--.*$/s', '', $code);
+
+        $required = [
+            // The token has to be rendered as a field, not merely fetched: either through
+            // HTMLHelper::_('form.token'), which emits the input itself, or as an <input>
+            // whose name comes from getFormToken(). A bare getFormToken() call emits
+            // nothing, so the step would still go out without a token.
+            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
+            // One <input> carrying both attributes, in any order and with any other
+            // attribute in between, because neither affects what the browser submits.
+            // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
+            // data-* attribute: data-name="task" would otherwise count as the real field.
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]task[\'"])(?=[^>]*(?<![-\w])value=[\'"]shipping_payment_method_validate[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]option[\'"])(?=[^>]*(?<![-\w])value=[\'"]com_j2store[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]view[\'"])(?=[^>]*(?<![-\w])value=[\'"]checkout[\'"])[^>]*>/',
+            // The Continue button, likewise in any attribute order.
+            '/<button\b(?=[^>]*(?<![-\w])type=[\'"]button[\'"])(?=[^>]*(?<![-\w])id=[\'"]button-payment-method[\'"])[^>]*>/',
+        ];
+
+        // Present is not enough: all five have to be inside the shipped wrapper.
+        if (!preg_match('/<div[^>]*\bclass=[\'"][^\'"]*\bj2store-checkout-actions\b/', $code, $match, PREG_OFFSET_CAPTURE)) {
+            return false;
+        }
+
+        $wrapper = $this->elementBody($code, $match[0][1]);
+
+        if ($wrapper === null) {
+            return false;
+        }
+
+        if (!preg_match($required[4], $wrapper)) {
+            return false;
+        }
+
+        $afterButton = strpos($wrapper, '</button>');
+
+        if ($afterButton === false) {
+            return false;
+        }
+
+        // The fields have to follow the button, as the shipped override renders them and
+        // as the documentation describes the hand merge. A copy that puts them before the
+        // button is not what a button-scoped serialiser collects.
+        $tail = substr($wrapper, $afterButton + strlen('</button>'));
+
+        foreach ([0, 1, 2, 3] as $index) {
+            if (!preg_match($required[$index], $tail)) {
+                return false;
+            }
+        }
+
+        // And nothing else may stand between the button and them: a <section> around the
+        // button with a sibling one around the inputs would let a serialiser scoped to
+        // the button's element miss the fields. Only hidden inputs and PHP blocks pass.
+        $tail = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $tail);
+        $tail = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
+
+        return !str_contains($tail, '<');
+    }
+
+    /**
+     * Content of the element that opens at $offset, found by counting the opening and
+     * closing tags of that element name only. Null when it is never closed.
+     */
+    private function elementBody(string $code, int $offset): ?string
+    {
+        if (!preg_match('/^<([a-zA-Z][a-zA-Z0-9]*)/', substr($code, $offset, 32), $match)) {
+            return null;
+        }
+
+        $name  = strtolower($match[1]);
+        $open  = '<' . $name;
+        $close = '</' . $name;
+        $depth = 0;
+
+        for ($i = $offset, $length = strlen($code); $i < $length; $i++) {
+            if (strtolower(substr($code, $i, strlen($close))) === $close) {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($code, $offset, $i - $offset);
+                }
+
+                $i += strlen($close) - 1;
+            } elseif (strtolower(substr($code, $i, strlen($open))) === $open) {
+                $depth++;
+                $i += strlen($open) - 1;
+            }
+        }
+
+        return null;
     }
 
     /**

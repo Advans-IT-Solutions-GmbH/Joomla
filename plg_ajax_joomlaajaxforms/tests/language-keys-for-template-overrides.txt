@@ -1,0 +1,21 @@
+# Language keys this plugin provides for site template overrides.
+#
+# No code of this plugin uses them itself; a site template can print them in its
+# own override of the account / profile view that submits through this plugin
+# (section titles, hints, MFA status, profile save messages).
+# shared/tests/lang-lint.php accepts a key that no code uses only when it is
+# listed here, and fails when a listed key is not defined. Keep the list short:
+# remove a key here and in the language files once no template needs it.
+
+PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_TITLE
+PLG_AJAX_JOOMLAAJAXFORMS_PASSWORD_HINT
+PLG_AJAX_JOOMLAAJAXFORMS_SECURITY_TITLE
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_LABEL
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_ACTIVE
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_DESCRIPTION
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_MANAGE
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_SETUP
+PLG_AJAX_JOOMLAAJAXFORMS_MFA_INACTIVE
+PLG_AJAX_JOOMLAAJAXFORMS_USERNAME_READONLY
+PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_ERROR
+PLG_AJAX_JOOMLAAJAXFORMS_UNEXPECTED_ERROR

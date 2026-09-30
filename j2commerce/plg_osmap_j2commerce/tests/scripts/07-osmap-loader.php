@@ -152,8 +152,8 @@ class OsmapLoaderTest
             if (!class_exists($className)) {
                 continue;
             }
-            // Construct the plugin the way Joomla's plugin loader (PluginHelper /
-            // CMSPlugin) does: pass the dispatcher/subject plus a config array
+            // Construct the plugin the way the service provider does: pass only a config array
+            // (the dispatcher is set separately since Joomla 5.4),
             // carrying the DB-provided params, name and type from #__extensions,
             // so params/name/type are available during construction rather than
             // being attached only afterwards.
@@ -163,7 +163,7 @@ class OsmapLoaderTest
                 'type'   => $row->folder,
                 'params' => $pluginParams,
             ];
-            $instance = new $className(new \Joomla\Event\Dispatcher(), $config);
+            $instance = new $className($config);
             if (
                 method_exists($instance, 'getComponentElement')
                 && $instance->getComponentElement() === $option
@@ -204,6 +204,30 @@ class OsmapLoaderTest
         return null;
     }
 
+    private function pluginEnabled(): int
+    {
+        return (int) $this->db->setQuery(
+            $this->qb()
+                ->select($this->db->quoteName('enabled'))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->loadResult();
+    }
+
+    private function setPluginEnabled(int $enabled): void
+    {
+        $this->db->setQuery(
+            $this->qb()
+                ->update($this->db->quoteName('#__extensions'))
+                ->set($this->db->quoteName('enabled') . ' = ' . $enabled)
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->execute();
+    }
+
     public function run(): bool
     {
         echo "=== Real OSMap Loader Tests ===\n";
@@ -238,6 +262,18 @@ class OsmapLoaderTest
         $this->test("OSMap loader does NOT match plugin for {$this->otherOption} (single-element)", function () use ($otherPlugins) {
             return $this->findOurPlugin($otherPlugins) === null;
         });
+
+        $initialEnabled = $this->pluginEnabled();
+        $this->test('Disabled plugin is not matched by the OSMap loader', function () {
+            $this->setPluginEnabled(0);
+
+            try {
+                return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) === null;
+            } finally {
+                $this->setPluginEnabled(1);
+            }
+        });
+        $this->setPluginEnabled($initialEnabled);
 
         if ($ourPlugin === null) {
             echo "\nFATAL: plugin not matched by loader — cannot continue dispatch tests\n";
@@ -372,6 +408,25 @@ class OsmapLoaderTest
             $this->test("getTree({$catView},id=2) emits each product once", function () use ($catCollector) {
                 $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
                 return count($links) === count(array_unique($links));
+            });
+
+            // Discriminator: the two assertions above still pass if the loader
+            // ignores the category id (every fixture product lives in category 2).
+            // Dispatch the same view at a non-existent category — its nested-set
+            // subtree is empty, so an honoured filter emits nothing while an
+            // ignored id would still return alpha/beta.
+            $noMatchParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=' . $catView . '&' . $param . '=90000002',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $noMatchCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $noMatchCollector, $noMatchParent, new Registry([]));
+
+            $this->test("getTree({$catView},id=<no-match>) honours the category id (emits nothing)", function () use ($noMatchCollector) {
+                return $noMatchCollector->nodes === [];
             });
         }
 

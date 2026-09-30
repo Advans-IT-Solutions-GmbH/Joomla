@@ -66,6 +66,39 @@ class ComponentStructureTest
         $this->assertClass('View\\Dashboard\\HtmlView', 'Joomla\\CMS\\MVC\\View\\HtmlView');
         $this->assertClass('Extension\\J2CommerceImportExportComponent', null);
 
+        // --- 2b. Declared dependencies ---
+        // A class that calls getDatabase() must be database-aware. Joomla's
+        // MVCFactory injects a database into models but never into views
+        // (createView() sets only form factory, dispatcher, router, cache
+        // controller and user factory), so a view also has to resolve one
+        // itself. Without this the dashboard answered HTTP 500 with
+        // "Call to undefined method ... HtmlView::getDatabase()".
+        echo "\n--- Declared dependencies ---\n";
+        foreach ([
+            'View\\Dashboard\\HtmlView',
+            'Model\\ExportModel',
+            'Model\\ImportModel',
+        ] as $relClass) {
+            $this->test("$relClass is database-aware",
+                $this->usesDatabase($relClass),
+                'calls getDatabase() without Joomla\\Database\\DatabaseAwareInterface');
+        }
+
+        // --- 2c. The component has exactly one view ---
+        // Import and export are controller tasks, not views. DisplayController
+        // maps both names onto the dashboard so they no longer end in Joomla's
+        // "View not found" (HTTP 404).
+        echo "\n--- Single-view design ---\n";
+        $displaySource = (string) @file_get_contents($this->basePath . '/src/Controller/DisplayController.php');
+        foreach (['import', 'export'] as $feature) {
+            $this->test("DisplayController answers view=$feature",
+                str_contains($displaySource, "'$feature'"),
+                'the feature name is not mapped onto the default view');
+        }
+        $this->test('Only the dashboard view class is shipped',
+            count(glob($this->basePath . '/src/View/*/HtmlView.php') ?: []) === 1,
+            'a second view class needs its own coverage in shared-backend-views.php');
+
         // --- 3. Controller capability assertions (more than existence) ---
         echo "\n--- Controller capabilities ---\n";
         $this->test('ExportController::export() is public', $this->methodIsPublic('Controller\\ExportController', 'export'));
@@ -131,6 +164,33 @@ class ComponentStructureTest
                 is_subclass_of($fqcn, $expectedParent),
                 "expected subclass of $expectedParent");
         }
+    }
+
+    /**
+     * True when the class can answer getDatabase(): it is a DatabaseAwareInterface
+     * (BaseDatabaseModel is one) or, at the very least, brings the trait along.
+     */
+    private function usesDatabase(string $relClass): bool
+    {
+        $fqcn = $this->nsPrefix . $relClass;
+
+        if (!class_exists($fqcn)) {
+            return false;
+        }
+
+        if (is_subclass_of($fqcn, 'Joomla\\Database\\DatabaseAwareInterface')) {
+            return true;
+        }
+
+        $rc = new ReflectionClass($fqcn);
+
+        do {
+            if (in_array('Joomla\\Database\\DatabaseAwareTrait', $rc->getTraitNames(), true)) {
+                return true;
+            }
+        } while ($rc = $rc->getParentClass());
+
+        return false;
     }
 
     private function hasMethod(string $relClass, string $method): bool

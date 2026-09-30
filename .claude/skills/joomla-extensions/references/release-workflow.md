@@ -24,6 +24,8 @@ prepare version + PR       review          squash         tag + GitHub release
   (`feat!:`, `fix!:`, …) **or a breaking-change footer** → major. **Anything else
   (`docs:`, `chore:`, `refactor:`, `test:`, no prefix) → `none`, and no release
   PR is opened.**
+- Raising the minimum Joomla version (currently 5.4) is released as a patch;
+  a higher bump is only chosen when the maintainer wants it.
 - Each extension has a paired `release-*.yml` / `publish-*.yml` with its own
   `{prefix}-v*` tag prefix.
 - **Only the latest release per extension exists — intentionally.** After

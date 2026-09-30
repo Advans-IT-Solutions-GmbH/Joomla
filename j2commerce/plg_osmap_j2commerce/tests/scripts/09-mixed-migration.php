@@ -23,10 +23,9 @@ require_once __DIR__ . '/_osmap_bootstrap.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
-osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . (osmap_ensure_classes() ? 'yes' : 'NO (stubs)') . PHP_EOL;
 
 spl_autoload_register(function (string $class): void {
     $prefix = 'Advans\\Plugin\\Osmap\\J2Commerce\\';
@@ -89,7 +88,7 @@ class MixedMigrationTest
 
     private function plugin(): \PlgOsmapJ2commerce
     {
-        $plugin = new \PlgOsmapJ2commerce(new Dispatcher(), ['params' => new Registry([])]);
+        $plugin = new \PlgOsmapJ2commerce(['params' => new Registry([])]);
         $plugin->setDatabase($this->db);
 
         return $plugin;
@@ -171,6 +170,14 @@ class MixedMigrationTest
             $this->test('both components enabled → plugin serves com_j2store', function () {
                 return $this->plugin()->getComponentElement() === 'com_j2store';
             });
+
+            // The documented precedence (OSMap serves com_j2store and skips
+            // com_j2commerce while both are enabled) is asserted where OSMap really
+            // decides it: 07-osmap-loader.php drives
+            // General::getPluginsForComponent() with the real OSMap code. Comparing
+            // getComponentElement() with both option names here would only compare a
+            // single constant return value with itself, so it could not fail unless
+            // the test above already failed.
 
             $this->test('rendering a com_j2commerce item in the mixed state does not throw', function () {
                 $parent            = osmap_make_item([]);

@@ -144,6 +144,42 @@ MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
     -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
+# Standard J6 stack: two hidden product children (published=-2) nested inside
+# the shop interval so getTree() traverses the hidden-child menu path
+# (mechanism 1). The dedicated SEF stack omits them and nests two published
+# de-DE product routes (9011/9012) instead, so the live sitemap exercises the
+# direct product-query path (mechanism 2) while those routes stay resolvable
+# for the live-routing assertions.
+# Either way exactly two child rows follow the shop row, so the shop interval
+# is @max_rgt + 1 .. @max_rgt + 6 on both stacks. Shop and children share one
+# @max_rgt in a single statement batch so the children land inside that
+# interval; recomputing @max_rgt after the shop row (and the root expansion)
+# would push them outside it.
+SHOP_RGT_OFFSET=6
+SHOP_CHILD_ROWS=""
+SHOP_LIVE_ROUTE_ROWS=""
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    SHOP_LIVE_ROUTE_ROWS=",
+    (9011, 'mainmenu', 'Live Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9011',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     @max_rgt + 2, @max_rgt + 3),
+    (9012, 'mainmenu', 'Live Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9012',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
+     @max_rgt + 4, @max_rgt + 5)"
+else
+    SHOP_CHILD_ROWS=",
+    (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9002',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     @max_rgt + 2, @max_rgt + 3),
+    (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9003',
+     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
+     @max_rgt + 4, @max_rgt + 5)"
+fi
+
 mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 -- Content articles
 INSERT IGNORE INTO ${DB_PREFIX}content
@@ -163,8 +199,10 @@ VALUES
     (9001, 9001, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}'),
     (9002, 9002, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}');
 
--- Menu items: shop parent (published=1) + product children (published=-2)
--- published=-2 = hidden from navigation but routable; OSMap includes these in sitemaps
+-- Menu items: shop parent (published=1) plus either hidden product children on
+-- the standard stack or dedicated published product routes on the SEF stack.
+-- All rows share one @max_rgt so the children/routes nest inside the shop
+-- [lft,rgt] interval; the global root rgt is then expanded once to include them.
 SET @max_rgt = (SELECT COALESCE(MAX(rgt), 10) FROM ${DB_PREFIX}menu);
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -173,15 +211,7 @@ VALUES
     (9001, 'mainmenu', 'Shop', 'shop', 'shop',
      'index.php?option=com_j2commerce&view=products',
      'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2COMMERCE_ID}, '*', 1, 0, '{}',
-     @max_rgt + 1, @max_rgt + 6),
-    (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
-     'index.php?option=com_content&view=article&id=9001&Itemid=9002',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
-     @max_rgt + 2, @max_rgt + 3),
-    (9003, 'mainmenu', 'Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
-     'index.php?option=com_content&view=article&id=9002&Itemid=9003',
-     'component', -2, 9001, 2, ${COM_CONTENT_ID}, '*', 1, 0, '{}',
-     @max_rgt + 4, @max_rgt + 5);
+     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET})${SHOP_CHILD_ROWS}${SHOP_LIVE_ROUTE_ROWS};
 
 -- Expand global root rgt to include new items
 UPDATE ${DB_PREFIX}menu
@@ -191,16 +221,11 @@ EOSQL
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Give the hidden product child menu items a real
-# content language (de-DE) and add the matching #__languages row (sef=de,
-# published=1). OSMap builds each product URL from #__languages.sef + the menu
-# path (it deliberately bypasses the Joomla router for published=-2 items), so
-# this alone makes the generated URLs carry the /de/ prefix — no language pack
-# or language-filter plugin required. It makes 08's prefix assertion meaningful:
-# a single-language fixture has no prefix that could go missing, which is exactly
-# how the #176 regression slipped through. The parent Shop menu stays language='*'
-# so OSMap still traverses it, and the non-SEF stacks keep '*' (07 asserts the
-# unprefixed /shop/... form there).
+# runs 08-sitemap-http-sef.php). Register the matching #__languages row (sef=de)
+# and mark the product articles as de-DE so the direct product-query path emits
+# /de/shop/... URLs. The stack also carries separate published product routes
+# (9011/9012) so live-routing tests can coexist with the direct-query coverage
+# that still depends on the absence of published=-2 hidden children.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
@@ -209,7 +234,7 @@ INSERT IGNORE INTO ${DB_PREFIX}languages
 VALUES
     ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
 
-UPDATE ${DB_PREFIX}menu SET language='de-DE' WHERE id IN (9002, 9003);
+UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id IN (9001, 9002);
 EOSQL
     echo "Multilingual SEF fixture applied"
 fi
@@ -248,7 +273,7 @@ echo "OSMap sitemap created"
 
 echo "Verifying fixtures..."
 mysql -h mysql -u joomla -pjoomla_pass joomla_db -e "
-    SELECT id, title, published FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003);
+    SELECT id, title, published, language FROM ${DB_PREFIX}menu WHERE id IN (9001,9002,9003,9011,9012);
     SELECT j2commerce_product_id, product_source_id, enabled FROM ${DB_PREFIX}j2commerce_products WHERE j2commerce_product_id IN (9001,9002);
 " 2>/dev/null || echo "WARNING: fixture verification failed"
 
