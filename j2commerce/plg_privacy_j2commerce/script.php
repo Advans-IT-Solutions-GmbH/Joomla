@@ -55,6 +55,14 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /** Marker line in the header of every checkout override this plugin shipped */
     private const BUNDLED_OVERRIDE_MARKER = 'Template override for plg_privacy_j2commerce';
 
+    /**
+     * Placeholders the contract scan injects where the file renders the CSRF token
+     * through a real call. They carry a NUL byte so they can never collide with markup
+     * or attribute text and never introduce a stray '<'.
+     */
+    private const FORM_TOKEN_HELPER_SENTINEL = "\x00J2S_FORM_TOKEN_HELPER\x00";
+    private const FORM_TOKEN_RAW_SENTINEL    = "\x00J2S_FORM_TOKEN_RAW\x00";
+
     /** Suffix of a retired checkout override (Joomla no longer loads the file) */
     public const RETIRED_OVERRIDE_SUFFIX = '.plg_privacy_j2commerce-disabled';
 
@@ -685,9 +693,18 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      *
      * A partially merged copy must not silence the warning, so every part is checked
      * separately: the token call, the three hidden inputs, and the Continue button as
-     * type="button" with the id J2Store's checkout script binds to. PHP comments are
-     * removed by the tokenizer and HTML comments afterwards, so markup that only sits
-     * in a comment and never reaches the browser cannot satisfy any of them.
+     * type="button" with the id J2Store's checkout script binds to.
+     *
+     * Only markup the file actually emits may satisfy the contract. token_get_all()
+     * keeps the text of PHP string literals (T_CONSTANT_ENCAPSED_STRING) verbatim, so a
+     * copy could otherwise pass every check with the whole contract hidden in a string
+     * literal or a never-reached branch while the browser receives nothing. We therefore
+     * rebuild only what leaves PHP as markup — inline HTML (T_INLINE_HTML) — and add a
+     * NUL-guarded sentinel wherever the file renders the CSRF token through a real
+     * HTMLHelper::_('form.token') / JHtml::_('form.token') or getFormToken() call. PHP
+     * code, and crucially the contents of string literals, contribute nothing. HTML
+     * comments are stripped afterwards, so markup that only sits in a comment cannot
+     * satisfy any check either.
      *
      * All five have to sit in the shipped `j2store-checkout-actions` wrapper, because
      * that wrapper is the narrowest scope a checkout script can serialise. The wrapper
@@ -698,14 +715,31 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
      */
     private function hasJ2StoreSubmissionContract(string $content): bool
     {
-        $code = '';
+        $tokens = token_get_all($content);
+        $code   = '';
 
-        foreach (token_get_all($content) as $token) {
-            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+        for ($i = 0, $count = count($tokens); $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            // Only inline HTML reaches the browser as markup; anything else (PHP code and
+            // string-literal contents) must not count towards the tag checks.
+            if (is_array($token) && $token[0] === T_INLINE_HTML) {
+                $code .= $token[1];
                 continue;
             }
 
-            $code .= is_array($token) ? $token[1] : $token;
+            // A real form-token render — through a call, not a string literal that merely
+            // spells one out — is represented by a sentinel at that emit position. The
+            // name may be unqualified (T_STRING) or (fully) qualified, which PHP 8 emits
+            // as a single T_NAME_QUALIFIED / T_NAME_FULLY_QUALIFIED token.
+            if (is_array($token)
+                && in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+                $sentinel = $this->formTokenSentinel($tokens, $i);
+
+                if ($sentinel !== null) {
+                    $code .= $sentinel;
+                }
+            }
         }
 
         // An <!-- ... --> block is inline HTML for the tokenizer, but the browser never
@@ -715,10 +749,12 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $required = [
             // The token has to be rendered as a field, not merely fetched: either through
-            // HTMLHelper::_('form.token'), which emits the input itself, or as an <input>
-            // whose name comes from getFormToken(). A bare getFormToken() call emits
-            // nothing, so the step would still go out without a token.
-            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
+            // HTMLHelper::_('form.token'), which emits the input itself (helper sentinel),
+            // or as an <input> whose name comes from getFormToken() (raw sentinel inside
+            // the input). A bare getFormToken() call emits nothing, so it never lands in
+            // an <input> and the step would still go out without a token.
+            '/' . preg_quote(self::FORM_TOKEN_HELPER_SENTINEL, '/')
+                . '|<input\b[^>]*' . preg_quote(self::FORM_TOKEN_RAW_SENTINEL, '/') . '[^>]*>/',
             // One <input> carrying both attributes, in any order and with any other
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
@@ -764,11 +800,112 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         // And nothing else may stand between the button and them: a <section> around the
         // button with a sibling one around the inputs would let a serialiser scoped to
-        // the button's element miss the fields. Only hidden inputs and PHP blocks pass.
-        $tail = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $tail);
+        // the button's element miss the fields. Only hidden inputs and the token render
+        // pass. $tail holds inline HTML and token sentinels but no PHP, so the sentinels
+        // are removed here rather than the PHP blocks the previous version stripped.
         $tail = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
+        $tail = str_replace([self::FORM_TOKEN_HELPER_SENTINEL, self::FORM_TOKEN_RAW_SENTINEL], ' ', $tail);
 
         return !str_contains($tail, '<');
+    }
+
+    /**
+     * Sentinel for a real CSRF-token render starting at token $i, or null when the
+     * T_STRING there does not begin one. Detected as a call token sequence, never as
+     * text inside a string literal:
+     *   - HTMLHelper::_('form.token') / JHtml::_('form.token') -> helper sentinel, and
+     *   - getFormToken(                                        -> raw sentinel.
+     */
+    private function formTokenSentinel(array $tokens, int $i): ?string
+    {
+        // Last backslash-separated segment, so unqualified and (fully) qualified names
+        // are treated alike: HTMLHelper, Joomla\CMS\HTML\HTMLHelper and the leading-slash
+        // form all resolve to HTMLHelper.
+        $name = ltrim((string) strrchr('\\' . $tokens[$i][1], '\\'), '\\');
+
+        if ($name === 'getFormToken') {
+            // A definition (function getFormToken) is not a render; a call is.
+            $prev = $this->meaningfulToken($tokens, $i, -1);
+
+            if (is_array($prev) && $prev[0] === T_FUNCTION) {
+                return null;
+            }
+
+            return $this->tokenText($this->meaningfulToken($tokens, $i, 1)) === '('
+                ? self::FORM_TOKEN_RAW_SENTINEL
+                : null;
+        }
+
+        if ($name !== 'HTMLHelper' && $name !== 'JHtml') {
+            return null;
+        }
+
+        // HTMLHelper :: _ ( 'form.token'
+        $j = $i;
+
+        $double = $this->meaningfulToken($tokens, $j, 1);
+
+        if (!is_array($double) || $double[0] !== T_DOUBLE_COLON) {
+            return null;
+        }
+
+        $j = $this->meaningfulIndex($tokens, $j, 1);
+        $method = $this->meaningfulToken($tokens, $j, 1);
+
+        if (!is_array($method) || $method[0] !== T_STRING || $method[1] !== '_') {
+            return null;
+        }
+
+        $j = $this->meaningfulIndex($tokens, $j, 1);
+
+        if ($this->tokenText($this->meaningfulToken($tokens, $j, 1)) !== '(') {
+            return null;
+        }
+
+        $j = $this->meaningfulIndex($tokens, $j, 1);
+        $arg = $this->meaningfulToken($tokens, $j, 1);
+
+        if (!is_array($arg) || $arg[0] !== T_CONSTANT_ENCAPSED_STRING) {
+            return null;
+        }
+
+        return trim($arg[1], '\'"') === 'form.token' ? self::FORM_TOKEN_HELPER_SENTINEL : null;
+    }
+
+    /** The token $step meaningful (non-whitespace, non-comment) steps from $i, or null. */
+    private function meaningfulToken(array $tokens, int $i, int $step)
+    {
+        $index = $this->meaningfulIndex($tokens, $i, $step);
+
+        return $index === null ? null : $tokens[$index];
+    }
+
+    /** Index of the token $step meaningful steps from $i, or null past the ends. */
+    private function meaningfulIndex(array $tokens, int $i, int $step): ?int
+    {
+        $count = count($tokens);
+
+        for ($index = $i + $step; $index >= 0 && $index < $count; $index += ($step <=> 0)) {
+            $token = $tokens[$index];
+
+            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            return $index;
+        }
+
+        return null;
+    }
+
+    /** Literal text of a token (single-char tokens are plain strings). */
+    private function tokenText($token): string
+    {
+        if ($token === null) {
+            return '';
+        }
+
+        return is_array($token) ? $token[1] : $token;
     }
 
     /**

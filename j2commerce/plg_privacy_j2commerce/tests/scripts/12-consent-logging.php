@@ -1621,6 +1621,31 @@ class ConsentLoggingTest
                 $this->test('Third CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
                 $this->test('No stale-override warning once the copy carries the full contract',
                     $output !== '' && !$has($j2sOutdated), $j2sDiag);
+
+                // A copy that hides the whole contract in a PHP string literal while it
+                // echoes only an unrelated button must still be reported. token_get_all()
+                // keeps string-literal text verbatim, so a scan over the raw token text
+                // would find every tag and a real form.token call and wrongly stay silent,
+                // even though the browser receives no token and no hidden inputs. Only
+                // actually-emitted markup may satisfy the contract.
+                $j2sForged = "<?php\n// $j2sMarker\n"
+                    . "use Joomla\\CMS\\HTML\\HTMLHelper;\n"
+                    . "\$markup = '<div class=\"j2store-checkout-actions\">'\n"
+                    . "    . '<button type=\"button\" id=\"button-payment-method\">Go</button>'\n"
+                    . "    . '<input type=\"hidden\" name=\"task\" value=\"shipping_payment_method_validate\">'\n"
+                    . "    . '<input type=\"hidden\" name=\"option\" value=\"com_j2store\">'\n"
+                    . "    . '<input type=\"hidden\" name=\"view\" value=\"checkout\">';\n"
+                    . "echo HTMLHelper::_('form.token');\n"
+                    . "?>\n"
+                    . '<button type="submit">Pay</button>' . "\n";
+                file_put_contents($j2sStale, $j2sForged);
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Fourth CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('Contract hidden in a PHP string literal is still reported as outdated',
+                    $has($j2sOutdated) && $has($relative($j2sStale)), $j2sDiag);
             }
         }
 
