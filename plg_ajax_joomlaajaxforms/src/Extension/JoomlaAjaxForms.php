@@ -110,8 +110,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * Pass language strings to JavaScript via Joomla script options.
      *
      * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
-     * off by default, so a production site prints no traces during normal use;
-     * a failed request is still reported with console.error.
+     * off by default, so a production site prints no traces during normal use.
+     * A failed request is still reported with console.error.
+     *
+     * This handler only runs when something imported the ajax plugin group, so
+     * on a normal page the script finds no options here. The "texts" task of
+     * the endpoint carries the same `debug` value for exactly that case.
      */
     public function onBeforeRender(): void
     {
@@ -163,8 +167,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // "texts" only returns the public texts the script shows (no user data, no
         // state change), so it is answered without a form token: a page without
         // any form still needs them.
+        //
+        // The answer carries the "debug" option as well. On a normal page the
+        // ajax plugin group is imported by com_ajax only, so onBeforeRender()
+        // does not run and the script finds no script options: without this the
+        // option could never take effect on a live storefront. The flag says
+        // nothing about the site beyond the state of a developer switch.
         if ($task === 'texts') {
-            $result = $this->jsonSuccess(['data' => $this->scriptTexts()]);
+            $result = $this->jsonSuccess([
+                'data'  => $this->scriptTexts(),
+                'debug' => (bool) $this->params->get('debug', 0),
+            ]);
 
             if ($event) {
                 $event->addResult($result);

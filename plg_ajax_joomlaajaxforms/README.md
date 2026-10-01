@@ -72,7 +72,7 @@ removed.
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password); `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
 | Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
-| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
+| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible. The script learns the setting from the script options, or, on a page that carries none, from the `texts` answer of the endpoint; traces from before that answer arrives are not printed | No |
 
 ### J2Commerce Cart Compatibility
 
@@ -453,6 +453,8 @@ warning is written to the log instead.
 Language keys cover all UI labels, error messages, email templates, and JavaScript strings.
 
 The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PROFILE_SAVED`, `CLOSE`) from the script options `plg_ajax_joomlaajaxforms`, which the plugin adds while it renders a page. Plugins of the `ajax` group are imported by `com_ajax`, so on a page where nothing imported the plugin those options are missing; the script then fetches the texts once with a POST of `task=texts` to `index.php?option=com_ajax&plugin=joomlaajaxforms&format=json` (read-only, no form token) in the language of the request. Messages from the server are translated by the plugin itself. A site template that loads the script may also add the options itself.
+
+That same `texts` answer carries the state of the `Debug Output` option, because the script options are missing on exactly the pages where the option would otherwise never take effect.
 
 Keys that only site template overrides use (profile and security section of the account view) are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there.
 
