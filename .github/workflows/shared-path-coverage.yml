@@ -27,8 +27,11 @@ on:
 
 permissions: {}
 
+# On `main` and for a manual run the group key is the unique run id, so no run on
+# the default branch is ever cancelled and a manual run never cancels another one:
+# a dispatch is started deliberately and nothing supersedes it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:

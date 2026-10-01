@@ -223,10 +223,12 @@ Notable test details:
   The assignment above stays the record of which workflow consumes what. **A new file under
   `shared/` has to be added to the workflows that use it, otherwise that check fails.**
 - **Concurrency:** every `Build & Test` workflow cancels a superseded run of the same branch or pull
-  request (`concurrency` group of workflow plus ref, `cancel-in-progress: true`). On `main` the group
-  key is the unique run id, so no run on the default branch is ever cancelled, and the publish and
-  release workflows have no concurrency group at all. Nothing else changed: every suite keeps its own
-  job on every lane, and a pull request runs the same full matrix as `main`.
+  request (`concurrency` group of workflow plus ref, `cancel-in-progress: true`). On `main` and for a
+  manual run (`workflow_dispatch`) the group key is the unique run id instead, so no run on the
+  default branch is ever cancelled and no manual run cancels another one: a dispatch is started
+  deliberately, nothing supersedes it, and it may carry its own inputs (OSMap's `j2commerce6_ref`).
+  The publish and release workflows have no concurrency group at all. Nothing else changed: every
+  suite keeps its own job on every lane, and a pull request runs the same full matrix as `main`.
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
   extension; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
