@@ -763,7 +763,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             //
             // Assigning first and echoing the variable later is not recognised and raises the
             // warning although it works. Fail-closed again, like the rest of this check.
-            '/(?:echo|print|<\?=)[^;]*(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*(?:echo|print|<\?=)[^>]*getFormToken\s*\(/',
+            //
+            // The direct-input alternative only counts when getFormToken() emits the NAME of the
+            // hidden field, which is exactly how Joomla's form.token renders: a hidden input whose
+            // name attribute is a PHP echo of getFormToken(). Anchoring the call to the name=
+            // attribute stops a stray getFormToken() parked in value= or a data-* attribute from
+            // satisfying the contract while no token field is emitted, which would again leave
+            // J2Store 4.1.8 answering "Invalid Token". (?<![-\w]) keeps data-name out, and the
+            // negated class holds the match inside the one attribute value.
+            '/(?:echo|print|<\?=)[^;]*(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*(?<![-\w])name=[\'"][^\'">]*(?:echo|print|<\?=)[^\'">]*getFormToken\s*\(/',
             // One <input> carrying both attributes, in any order and with any other
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a

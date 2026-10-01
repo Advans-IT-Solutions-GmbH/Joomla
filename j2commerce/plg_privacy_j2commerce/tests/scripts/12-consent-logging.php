@@ -1453,6 +1453,32 @@ class ConsentLoggingTest
             $legacyName !== $base && $accepts($legacyName)
         );
 
+        // The direct-input alternative is valid only when getFormToken() generates the hidden
+        // field's name, the way Joomla's form.token renders. An override that inlines the token
+        // field this way, instead of calling HTMLHelper, is correct and must be accepted.
+        $inlineToken = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="<?php echo Joomla\\CMS\\Session\\Session::getFormToken(); ?>" value="1" />',
+            $base
+        );
+        $this->test(
+            'Copy inlining the token field via getFormToken() in the name is accepted',
+            $inlineToken !== $base && $accepts($inlineToken)
+        );
+
+        // Counterpart: a getFormToken() call parked in another attribute (here data-note) emits no
+        // token field. With the real HTMLHelper call dropped, such a copy carries no token and must
+        // still be reported, or J2Store 4.1.8 answers "Invalid Token".
+        $strayToken = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="decoy" value="1" data-note="<?php echo Joomla\\CMS\\Session\\Session::getFormToken(); ?>" />',
+            $base
+        );
+        $this->test(
+            'Copy with getFormToken() in a non-name attribute is refused',
+            $strayToken !== $base && !$accepts($strayToken)
+        );
+
         // The short open tag emits just as well as echo, so a copy using it is correct and must
         // not be reported. It is asserted separately because the PHP-block cleanup further down
         // used to match only the long opening tag, which left the short block in place and failed
