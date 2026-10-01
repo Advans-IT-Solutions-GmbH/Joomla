@@ -409,6 +409,14 @@ language, so it never changes the language of the running request and the
 language of one recipient never reaches the next when a single request sends
 more than one mail.
 
+A refused send leaves a trace as well. Joomla's mailer does not only throw, it
+also returns `false`, for instance while the site has mail switched off or when
+the recipient is rejected. Every plain-text fallback therefore evaluates that
+return value and writes an error to the log when the send was not confirmed. The
+request still answers success, because the account was created or the token was
+stored, so the log is the only place where a lost account mail or a lost
+registration notice to the merchant becomes visible.
+
 Three details follow from the plugin answering inside `com_ajax`:
 
 - The language files of the extension the template belongs to are loaded before

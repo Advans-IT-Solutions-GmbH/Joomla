@@ -1445,8 +1445,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Reset email');
+        } catch (\Throwable $e) {
             Log::add('Reset email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1503,8 +1503,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Remind email');
+        } catch (\Throwable $e) {
             Log::add('Remind email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1569,8 +1569,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Activation email');
+        } catch (\Throwable $e) {
             Log::add('Activation email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1639,10 +1639,38 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Admin notification');
+        } catch (\Throwable $e) {
             Log::add('Admin notification error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
+    }
+
+    /**
+     * Log a plain-text mail that the mailer refused to send.
+     *
+     * Joomla's mailer does not only throw: it returns false when the site has
+     * mail switched off, and PHPMailer returns false for a rejected recipient.
+     * Every plain-text fallback here is the last attempt to reach the recipient,
+     * so a false return must leave a trace. Without it the request answers
+     * success and nobody learns that the account mail, or the merchant's
+     * registration notice, never went out.
+     *
+     * @param   mixed   $sent     Whatever the mailer's Send() returned
+     * @param   string  $context  Short label for the log entry
+     *
+     * @return  void
+     */
+    protected function logFailedMail($sent, string $context): void
+    {
+        if ($sent === true) {
+            return;
+        }
+
+        Log::add(
+            $context . ' was not sent: the mailer did not confirm the send',
+            Log::ERROR,
+            'plg_ajax_joomlaajaxforms'
+        );
     }
 
     /**

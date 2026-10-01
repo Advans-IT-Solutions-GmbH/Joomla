@@ -474,6 +474,23 @@ class ResetRequestTest
                 !str_contains($source, 'Text::sprintf('),
                 'Text::sprintf() would render in the request language'
             );
+
+            // The plain-text fallback is the last attempt to reach the recipient.
+            // Joomla's mailer does not only throw, it also returns false (site
+            // mail switched off, recipient rejected), so a discarded return value
+            // loses the mail without a trace. Read from the source for the same
+            // reason as above: a sender that drops the check again is caught here.
+            $this->test(
+                "$name reports a refused fallback mail",
+                str_contains($source, '$this->logFailedMail($mailer->Send(),'),
+                'the return value of Send() is not evaluated'
+            );
+
+            $this->test(
+                "$name does not discard the result of Send()",
+                !preg_match('/\$mailer->Send\(\)\s*;/i', $source),
+                'a bare $mailer->Send(); throws away the failure'
+            );
         }
     }
 
