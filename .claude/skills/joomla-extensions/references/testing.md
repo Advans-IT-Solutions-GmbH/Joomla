@@ -205,7 +205,7 @@ Notable test details:
 - **Triggers:** each `Build & Test` workflow runs on push and pull request to `main` for
   `<extension path>/**`, the files under `shared/` the extension really uses and its own workflow
   file, and manually (`workflow_dispatch`).
-- **Narrowed shared paths:** no workflow lists `shared/**` as a whole. The build scripts,
+- **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
   `shared-install-messages.php` are used by all six extensions and start all six.
   `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
@@ -214,9 +214,14 @@ Notable test details:
   and `shared/tests/scripts/install-extension.php` are templates that every extension has copied into
   its own `tests/` tree; no lane reads them from `shared/`, so they start nothing. The workflow
   `Shared Path Coverage` (`shared-path-coverage.yml`, running
-  `.github/scripts/check-shared-path-coverage.sh`) fails if a file under `shared/` is matched by no
-  workflow and is not on that script's `UNCOVERED_ON_PURPOSE` list. **A new file under `shared/` has
-  to be added to the workflows that use it, otherwise that check fails.**
+  `.github/scripts/check-shared-path-coverage.sh`) is the one workflow that still watches
+  `shared/**`, because it has to see every change there. It fails if a file under `shared/` is
+  matched by the `pull_request.paths` of no other workflow and is not on that script's
+  `UNCOVERED_ON_PURPOSE` list. It requires one match, not every workflow that uses the file: it
+  skips itself (`SELF_WORKFLOW`) so its own `shared/**` does not make everything look covered,
+  ignores workflows without a `paths` filter, and cannot tell whether a lane really reads the file.
+  The assignment above stays the record of which workflow consumes what. **A new file under
+  `shared/` has to be added to the workflows that use it, otherwise that check fails.**
 - **Concurrency:** every `Build & Test` workflow cancels a superseded run of the same branch or pull
   request (`concurrency` group of workflow plus ref, `cancel-in-progress: true`). On `main` the group
   key is the unique run id, so no run on the default branch is ever cancelled, and the publish and

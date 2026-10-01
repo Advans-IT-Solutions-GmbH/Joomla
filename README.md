@@ -48,7 +48,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, the shared files below, own workflow file |
 | `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, the shared files below, own workflow file |
 
-**Shared trigger paths.** No workflow watches `shared/**` as a whole; each one lists the files it really uses, so a change to a shared file starts only the extensions that consume it.
+**Shared trigger paths.** No `Build & Test` workflow watches `shared/**` as a whole; each one lists the files it really uses, so a change to a shared file starts only the extensions that consume it. The guard below is the one workflow that still watches `shared/**`, because it has to see every change there.
 
 | File under `shared/` | Starts |
 |---|---|
@@ -61,7 +61,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
 
-`Shared Path Coverage` (`shared-path-coverage.yml`) fails if a file under `shared/` is matched by no workflow and is not on the documented exception list in `.github/scripts/check-shared-path-coverage.sh`. **A new file under `shared/` has to be added to the workflows that use it, otherwise that check fails.**
+`Shared Path Coverage` (`shared-path-coverage.yml`) fails if a file under `shared/` is matched by the `pull_request.paths` of no other workflow and is not on the documented exception list in `.github/scripts/check-shared-path-coverage.sh`. It requires one match, not every workflow that uses the file: it excludes itself from the search and ignores workflows without a `paths` filter, and it cannot tell whether a lane really reads the file. The table above stays the record of which workflow consumes what. **A new file under `shared/` has to be added to the workflows that use it, otherwise that check fails.**
 
 **Superseded runs are cancelled.** Every `Build & Test` workflow has a `concurrency` group of workflow plus ref with `cancel-in-progress: true`, so a new push to a pull request or branch cancels the previous run of that same ref instead of letting it finish. Runs of different pull requests never cancel each other, on `main` the group key is the unique run id so nothing on the default branch is ever cancelled, and the publish and release workflows have no concurrency group at all.
 

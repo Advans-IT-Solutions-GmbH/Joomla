@@ -55,7 +55,8 @@ See `references/testing.md` for running tests locally.
 
 - **Shared trigger paths and concurrency** (details: `references/testing.md`, section "CI"): no
   `Build & Test` workflow watches `shared/**` as a whole, each lists the files it really uses, and
-  `shared-path-coverage.yml` fails if a file under `shared/` is matched by no workflow. Each of these
+  `shared-path-coverage.yml`, the one workflow that still watches `shared/**`, fails if a file under
+  `shared/` is matched by the `pull_request.paths` of no other workflow. Each of these
   workflows also cancels a superseded run of the same branch or pull request, never on `main` and
   never in the publish or release workflows. The suite matrices are unchanged: one job per suite and
   lane, and a pull request runs the same full matrix as `main`.
