@@ -1421,6 +1421,15 @@ class ConsentLoggingTest
             // drops the dependency on the consent settings) have to be refused.
             'without the fail-closed disabled'         => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ''],
             'with disabled hardcoded'                  => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ' disabled'],
+            // The disabled attribute has to depend on BOTH consent settings, the way the shipped
+            // override gates it. A copy that ties it to $_consentRequired alone disables the button
+            // with show_consent_checkbox=0 and consent_required=1, where the validator never loads,
+            // stranding every checkout; that shape has to be refused.
+            'with disabled tied to consent_required alone' => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", "<?php echo \$_consentRequired ? ' disabled' : ''; ?>"],
+            // Markup parked inside a control structure is not emitted on every render. A copy that
+            // wraps a routing field in `if (false) { ... }` submits no task parameter, so the inline
+            // HTML inside the dead block has to be blanked and the copy refused.
+            'with the task field inside dead control flow' => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', '<?php if (false) { ?><input type="hidden" name="task" value="shipping_payment_method_validate" /><?php } ?>'],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {

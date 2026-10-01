@@ -739,6 +739,20 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 continue;
             }
 
+            // Inline HTML inside a control structure is not emitted on every render either.
+            // The blanking above only removes the NAME of a nested call; the markup itself is a
+            // T_INLINE_HTML token, so a copy that parks the routing inputs or the Continue button
+            // behind `if (false)`, a never-run loop or the alternative syntax (`if (false): … endif;`)
+            // would still carry that markup into the patterns below and read as satisfied, although
+            // that request shape submits no task/option/view and shows no button. Blanking the
+            // markup to equal-length spaces drops it from the matched text while every later offset
+            // stays put. The shipped override emits its actions block at the top level, outside
+            // every such construct, so it is never blanked and stays accepted.
+            if (isset($nested[$index]) && $token[0] === T_INLINE_HTML) {
+                $code .= str_repeat(' ', strlen($token[1]));
+                continue;
+            }
+
             // A string literal is neither emitted markup nor an executed call. Without this, a stale
             // copy could park the whole contract in an unused $markup = '<input …>' inside the
             // wrapper: every pattern would match, the PHP cleanup further down would remove the block
@@ -843,19 +857,26 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
-        // The button also has to carry the fail-closed disabled attribute, tied to the consent
+        // The button also has to carry the fail-closed disabled attribute, tied to BOTH consent
         // settings. Without it a marker-bearing copy can hold every field, the right button type
         // and the right id, pass this check, and still let an unticked required consent advance
         // the step as soon as the deferred validator is blocked — J2Store 4 has no server-side
         // consent check to catch that.
         //
         // What is required is the dependency, not a spelling: the opening tag has to mention
-        // $_consentRequired and disabled. The attribute is emitted from a PHP block, whose
-        // closing tag carries a ">", so the tag cannot be matched with one [^>]* expression;
-        // the text up to </button> is searched instead.
+        // $_showConsent, $_consentRequired and disabled. Both flags matter, because the shipped
+        // override gates the attribute on `$_showConsent && $_consentRequired`: the validator that
+        // re-enables the button only loads while the checkbox is shown and required. A copy that
+        // ties disabled to $_consentRequired alone disables the button with show_consent_checkbox=0
+        // and consent_required=1, where no validator ever loads, stranding every checkout — so that
+        // shape is reported rather than accepted. The attribute is emitted from a PHP block, whose
+        // closing tag carries a ">", so the tag cannot be matched with one [^>]* expression; the
+        // text up to </button> is searched instead.
         $buttonPart = substr($wrapper, 0, $afterButton);
 
-        if (!str_contains($buttonPart, '$_consentRequired') || !str_contains($buttonPart, 'disabled')) {
+        if (!str_contains($buttonPart, '$_showConsent')
+            || !str_contains($buttonPart, '$_consentRequired')
+            || !str_contains($buttonPart, 'disabled')) {
             return false;
         }
 
