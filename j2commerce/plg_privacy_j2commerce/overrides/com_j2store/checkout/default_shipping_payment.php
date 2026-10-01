@@ -126,9 +126,12 @@ if ($_showConsent && $_privacyArticleId) {
           // consent validator re-enables it once the box is ticked. If that deferred
           // script is blocked or fails to load, the button stays disabled and the step
           // cannot advance — the path fails closed. J2Store 4 has no server-side
-          // consent check, so this is the safe default. ?>
+          // consent check, so this is the safe default. This is gated on $_showConsent
+          // too: with the checkbox hidden the validator never loads, so disabling the
+          // button would strand every checkout (J2Commerce treats a hidden checkbox as
+          // no consent requirement). ?>
     <div class="j2store-checkout-actions mt-3">
-        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button"<?php echo $_consentRequired ? ' disabled' : ''; ?>>
+        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button"<?php echo ($_showConsent && $_consentRequired) ? ' disabled' : ''; ?>>
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
 
