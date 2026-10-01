@@ -438,6 +438,7 @@ class ConsentLoggingTest
 
         $this->cleanup();
 
+        $this->runJ2StoreContractTests();
         $this->runUpdatePathTests($extension);
 
         echo "\n=== Consent Logging Test Summary ===\n";
@@ -1453,6 +1454,110 @@ class ConsentLoggingTest
             );
             $this->test("[$component] override returns early when the privacy section is off", str_contains($source, "get('show_privacy_section', 1)"));
         }
+    }
+
+    /**
+     * Every part of the J2Store 4 submission contract on its own.
+     *
+     * `warnOutdatedJ2StoreCheckoutOverrides()` asks a deployed copy for five
+     * separate parts and for their placement. The update path below exercises
+     * only one incomplete shape, so dropping a single one of those rules would
+     * stay green there. Every case here derives from the shipped override by one
+     * targeted change, so the cases cannot drift away from the file they
+     * describe: the shipped content has to be accepted, and each single change
+     * has to be refused. A case whose change did not apply fails instead of
+     * passing silently.
+     *
+     * The check reads a file as text and asks nothing about the installed shop,
+     * so this runs on both lanes.
+     */
+    private function runJ2StoreContractTests(): void
+    {
+        echo "\n-- J2Store 4 submission contract, part by part --\n";
+
+        $script  = JPATH_PLUGINS . '/privacy/j2commerce/script.php';
+        $shipped = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
+
+        if (!is_file($script) || !is_file($shipped)) {
+            $this->test('Installer script and shipped J2Store 4 override available', false, "$script / $shipped");
+
+            return;
+        }
+
+        if (!class_exists('Plgprivacyj2commerceInstallerScript')) {
+            require_once $script;
+        }
+
+        // PHP 8.1 or later is required, so reflection reaches a private method
+        // without setAccessible().
+        try {
+            $method    = new \ReflectionMethod('Plgprivacyj2commerceInstallerScript', 'hasJ2StoreSubmissionContract');
+            $installer = new \Plgprivacyj2commerceInstallerScript();
+        } catch (\Throwable $e) {
+            $this->test('Contract check reachable through reflection', false, $e->getMessage());
+
+            return;
+        }
+
+        $base    = (string) file_get_contents($shipped);
+        $accepts = static function (string $content) use ($method, $installer): bool {
+            return (bool) $method->invoke($installer, $content);
+        };
+
+        $this->test('Shipped J2Store 4 override satisfies the contract', $accepts($base));
+
+        $cases = [
+            'without the form token'                   => ["<?php echo HTMLHelper::_('form.token'); ?>", ''],
+            'without the task field'                   => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', ''],
+            'without the option field'                 => ['<input type="hidden" name="option" value="com_j2store" />', ''],
+            'without the view field'                   => ['<input type="hidden" name="view" value="checkout" />', ''],
+            'with a submit button'                     => ['<button type="button" id="button-payment-method"', '<button type="submit" id="button-payment-method"'],
+            'with another button id'                   => ['id="button-payment-method"', 'id="button-confirm-order"'],
+            'without the shipped wrapper'              => ['<div class="j2store-checkout-actions mt-3">', '<div class="mt-3">'],
+            'with an element between button and fields' => ['<input type="hidden" name="task"', '<section><input type="hidden" name="task"'],
+        ];
+
+        foreach ($cases as $label => [$search, $replace]) {
+            $variant = str_replace($search, $replace, $base);
+
+            if ($variant === $base) {
+                $this->test("Case prepared: $label", false, "the shipped override does not contain: $search");
+
+                continue;
+            }
+
+            $this->test("Copy $label is refused", !$accepts($variant), $label);
+        }
+
+        // The same parts, but before the Continue button instead of after it.
+        // Built from offsets rather than a replacement, because only the order
+        // changes and nothing is added or removed.
+        $buttonStart = strpos($base, '<button type="button" id="button-payment-method"');
+        $buttonEnd   = strpos($base, '</button>');
+        $fieldsStart = strpos($base, '<input type="hidden" name="task"');
+        $tokenCall   = "<?php echo HTMLHelper::_('form.token'); ?>";
+        $fieldsEnd   = strpos($base, $tokenCall);
+
+        if ($buttonStart === false || $buttonEnd === false || $fieldsStart === false || $fieldsEnd === false
+            || !($buttonStart < $buttonEnd && $buttonEnd < $fieldsStart && $fieldsStart < $fieldsEnd)) {
+            $this->test('Case prepared: fields before the button', false, 'button and field block not found in the expected order');
+
+            return;
+        }
+
+        $buttonEnd  += strlen('</button>');
+        $fieldsEnd  += strlen($tokenCall);
+        $buttonBlock = substr($base, $buttonStart, $buttonEnd - $buttonStart);
+        $fieldsBlock = substr($base, $fieldsStart, $fieldsEnd - $fieldsStart);
+        $between     = substr($base, $buttonEnd, $fieldsStart - $buttonEnd);
+
+        $swapped = substr($base, 0, $buttonStart)
+            . $fieldsBlock
+            . $between
+            . $buttonBlock
+            . substr($base, $fieldsEnd);
+
+        $this->test('Copy with the fields before the button is refused', !$accepts($swapped));
     }
 
     private function runUpdatePathTests(?object $extension): void
