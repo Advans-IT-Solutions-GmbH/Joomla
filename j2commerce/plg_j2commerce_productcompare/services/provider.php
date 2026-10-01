@@ -11,6 +11,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Extension\PluginInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\Database\DatabaseInterface;
 use Joomla\DI\Container;
 use Joomla\DI\ServiceProviderInterface;
 use Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare;
@@ -37,6 +38,7 @@ return new class implements ServiceProviderInterface
                 // PluginHelper sets the dispatcher when it boots the plugin; passing it to the constructor or calling setDispatcher() here is deprecated since Joomla 5.2.
                 $plugin = new ProductCompare((array) $pluginData);
                 $plugin->setApplication(Factory::getApplication());
+                $plugin->setDatabase($container->get(DatabaseInterface::class));
 
                 return $plugin;
             }

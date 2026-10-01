@@ -8,14 +8,14 @@
     {
       "name": "plg_j2commerce_productcompare.css",
       "type": "style",
-      "uri": "plg_j2commerce_productcompare/css/productcompare.css",
+      "uri": "plg_j2commerce_productcompare/productcompare.css",
       "version": "auto"
     },
     {
       "name": "plg_j2commerce_productcompare",
       "type": "script",
-      "uri": "plg_j2commerce_productcompare/js/productcompare.js",
-      "dependencies": [],
+      "uri": "plg_j2commerce_productcompare/productcompare.js",
+      "dependencies": ["core"],
       "attributes": {
         "defer": true
       },

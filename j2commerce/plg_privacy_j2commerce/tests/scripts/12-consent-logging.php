@@ -18,7 +18,8 @@
  *   - the consent is captured on checkout.confirmPayment (form token for POST, gateway return GET) and
  *     recorded after J2Commerce accepted the order of the consent cart; once per order
  *   - legacy records of an earlier template override are only anonymized (never assigned, not shown);
- *     consent evidence of records outside the retention period and of deleted or anonymized orders is removed
+ *     consent evidence of records outside the retention period and of deleted or anonymized orders is
+ *     removed, the evidence-removed body written in the default site language, not the acting person's
  *   - the privacy tab layout links to com_privacy (logged-in) or mailto (guest), one button per
  *     enabled request type (Show Export Data / Show Delete All Data)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
@@ -37,7 +38,9 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Language\Text;
 use Joomla\Event\Dispatcher;
 use Joomla\Event\Event;
@@ -435,6 +438,7 @@ class ConsentLoggingTest
 
         $this->cleanup();
 
+        $this->runJ2StoreContractTests();
         $this->runUpdatePathTests($extension);
 
         echo "\n=== Consent Logging Test Summary ===\n";
@@ -700,8 +704,8 @@ class ConsentLoggingTest
             '<p>Einwilligung zur Datenschutzerklärung während des J2Commerce-Checkouts. E-Mail: <strong>' . htmlspecialchars($email) . '</strong></p>'
             . '<p>IP-Adresse: <strong>' . $ip . '</strong></p><p>User-Agent:<br/>' . htmlspecialchars($ua) . '</p>';
         $ids    = [];
-        $insert = function (string $key, int $userId, string $when, string $text) use (&$ids): void {
-            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $when, 'subject' => ConsentRepository::LEGACY_SUBJECT, 'body' => $text, 'remind' => 0, 'token' => ''];
+        $insert = function (string $key, int $userId, string $when, string $text, string $subject = ConsentRepository::LEGACY_SUBJECT) use (&$ids): void {
+            $row = (object) ['user_id' => $userId, 'state' => 1, 'created' => $when, 'subject' => $subject, 'body' => $text, 'remind' => 0, 'token' => ''];
             $this->db->insertObject('#__privacy_consents', $row, 'id');
             $ids[$key] = (int) $row->id;
         };
@@ -713,7 +717,9 @@ class ConsentLoggingTest
         $insert('guestOther', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-other@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
         $insert('oldBody', 102, Factory::getDate('-5 days')->toSql(), 'Consent given during J2Commerce checkout');
 
-        $load = fn (string $key): ?object => $this->loadConsent($ids[$key]);
+        $load = function (string $key) use (&$ids): ?object {
+            return $this->loadConsent($ids[$key]);
+        };
         $isAnonymized = function (?object $row, array $gone): bool {
             if (!$row || $row->subject !== ConsentRepository::LEGACY_DONE_SUBJECT
                 || !str_contains($row->body, ConsentRepository::LEGACY_MARKER)
@@ -733,22 +739,63 @@ class ConsentLoggingTest
             return true;
         };
 
+        // Resolve the default site language tag the same way the plugin does. In this CLI harness
+        // there is no application, so ComponentHelper::getParams() is unavailable and the tag falls
+        // back to en-GB, exactly like ConsentRepository::defaultSiteLanguageTag().
         try {
+            $siteTag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            $siteTag = 'en-GB';
+        }
+        $siteLang   = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($siteTag);
+        $siteLang->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, $siteTag)
+            || $siteLang->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', $siteTag);
+        $expectedBodyPrefix = (string) $siteLang->_(ConsentRepository::LEGACY_BODY_KEY);
+
+        try {
+            // An already-anonymized legacy row of another user that still stores the raw body key.
+            // A scoped removal request must not repair it (that would touch records outside the
+            // request scope and inflate the count); the unscoped cleanup below repairs it.
+            $insert(
+                'otherRawKey',
+                900,
+                Factory::getDate('-6 days')->toSql(),
+                ConsentRepository::LEGACY_BODY_KEY . ConsentRepository::LEGACY_MARKER . ConsentRepository::EVIDENCE_REMOVED_MARKER,
+                ConsentRepository::LEGACY_DONE_SUBJECT
+            );
+
             // Removal request of user 100 (account e-mail legacy-own@...): own records and guest
             // records with that e-mail address, nothing else.
             $scoped = $repository->anonymizeLegacyConsents(self::USER_ID, ['legacy-own@example.invalid', '']);
             $this->test('Removal request anonymizes the user\'s records and guest records with the user\'s e-mail', $scoped === 3, "changed $scoped");
             $this->test('Guest record with another e-mail is not touched by that request', $load('guestOther')->subject === ConsentRepository::LEGACY_SUBJECT);
             $this->test('Record of another user is not touched by that request', $load('oldBody')->subject === ConsentRepository::LEGACY_SUBJECT);
+            $this->test('Scoped removal request does not repair another user\'s already-anonymized record', str_contains((string) ($load('otherRawKey')->body ?? ''), ConsentRepository::LEGACY_BODY_KEY));
 
+            $insert(
+                'rawKey',
+                0,
+                Factory::getDate('-4 days')->toSql(),
+                ConsentRepository::LEGACY_BODY_KEY . ConsentRepository::LEGACY_MARKER . ConsentRepository::EVIDENCE_REMOVED_MARKER,
+                ConsentRepository::LEGACY_DONE_SUBJECT
+            );
             $all = $repository->anonymizeLegacyConsents();
-            $this->test('Cleanup anonymizes the remaining legacy records', $all === 2, "changed $all");
+            $this->test('Cleanup anonymizes the remaining legacy records and repairs already key-based legacy bodies', $all === 4, "changed $all");
+            $this->test('Unscoped cleanup repairs the other user\'s already-anonymized record', !str_contains((string) ($load('otherRawKey')->body ?? ''), ConsentRepository::LEGACY_BODY_KEY));
 
             foreach (['profile' => ['test@example.com', '198.51.100.40', 'LegacyAgent'], 'checkout' => ['198.51.100.41'], 'guestOwn' => ['legacy-own@', '198.51.100.42'], 'guestOther' => ['legacy-other@', '198.51.100.43'], 'oldBody' => ['Consent given during']] as $key => $gone) {
                 $row = $load($key);
                 $this->test("[$key] anonymized, never assigned to an order, neutral text", $isAnonymized($row, $gone), $row->body ?? '');
-                $this->test("[$key] created, user_id and state unchanged", $row && (int) $row->state === 1);
+                $this->test("[$key] created and invalidated for com_privacy lists", $row && (int) $row->state === -1);
+                $this->test("[$key] body uses the default site language", $row && str_starts_with((string) $row->body, $expectedBodyPrefix), $row->body ?? '');
+                // The record is evidence, so it keeps the text it was written with and names its
+                // language. Nothing of the wording comes from the code.
+                $this->test("[$key] body names the language it is written in",
+                    $row && ConsentRepository::extractLanguageTag((string) $row->body) === $siteTag, $row->body ?? '');
             }
+            $rawKey = $load('rawKey');
+            $this->test('[rawKey] already anonymized key-based legacy body is repaired', $isAnonymized($rawKey, [ConsentRepository::LEGACY_BODY_KEY]), $rawKey->body ?? '');
+            $this->test('[rawKey] repaired legacy row is invalidated for com_privacy lists', $rawKey && (int) $rawKey->state === -1);
 
             $this->test('Legacy anonymization never creates a checkout consent for the order', $this->countOrderConsents($userOrder) === 0);
             $this->test('Second run changes nothing', $repository->anonymizeLegacyConsents() === 0);
@@ -838,6 +885,70 @@ class ConsentLoggingTest
             }
 
             $this->test('Second run changes nothing', $repository->removeStaleEvidence(Factory::getDate('-10 years')->toSql(), [$this->ordersTable]) === 0);
+
+            // The evidence-removed body is written while an administrator or the cleanup task
+            // processes the order, so it must use the website's default site language, not the
+            // language of the acting person. Force the acting person's (current) language to
+            // German while the site language stays the CLI default (en-GB) and assert the evidence
+            // body follows the site language, not the acting person's. Without the fix
+            // buildEvidenceRemovedBody() would build the German (acting person's) text and fail.
+            $siteRemoved   = 'after its retention period';           // en-GB CONSENT_BODY_EVIDENCE_REMOVED
+            $editorRemoved = 'nach Ablauf ihrer Aufbewahrungsfrist'; // de-DE CONSENT_BODY_EVIDENCE_REMOVED
+            $editorBody    = 'der Datenschutzerklärung zugestimmt';  // de-DE CONSENT_BODY
+
+            $editorLang = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage('de-DE');
+            $stubApp    = new class ($editorLang) {
+                private $language;
+
+                public function __construct($language)
+                {
+                    $this->language = $language;
+                }
+
+                public function getLanguage()
+                {
+                    return $this->language;
+                }
+            };
+            $previousApp          = Factory::$application;
+            Factory::$application = $stubApp;
+
+            try {
+                $actingBody   = $repository->buildBody($live, '', 'StaleAgent/1.0');
+                $evidenceBody = $repository->buildEvidenceRemovedBody($live);
+                $this->test(
+                    'Acting person language is German for this check (evidence-language anchor)',
+                    str_contains($actingBody, $editorBody),
+                    $actingBody
+                );
+                $this->test(
+                    'Evidence-removed body uses the default site language, not the acting person\'s language',
+                    str_contains($evidenceBody, $siteRemoved) && !str_contains($evidenceBody, $editorRemoved),
+                    $evidenceBody
+                );
+                // Every stored body names its language, so the record says which wording the
+                // customer saw.
+                $this->test(
+                    'Checkout body names the language it was written in',
+                    ConsentRepository::extractLanguageTag($actingBody) === 'de-DE',
+                    $actingBody
+                );
+                $this->test(
+                    'Evidence-removed body names the site language it was written in',
+                    ConsentRepository::extractLanguageTag($evidenceBody) === 'en-GB',
+                    $evidenceBody
+                );
+                // No body text is built into the code: the class carries no visible wording.
+                $source  = (string) @file_get_contents(JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php');
+                $code    = implode("\n", array_filter(explode("\n", $source), static fn (string $line): bool => !preg_match('#^\s*(\*|//)#', $line)));
+                $this->test(
+                    'ConsentRepository stores no wording of its own',
+                    $source !== '' && !preg_match('#[\'"]<(p|strong|br|div|span)[ >/]#i', $code),
+                    'HTML text literal in ConsentRepository'
+                );
+            } finally {
+                Factory::$application = $previousApp;
+            }
         } catch (\Throwable $e) {
             $this->test('Stale evidence cleanup runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
@@ -1345,6 +1456,110 @@ class ConsentLoggingTest
         }
     }
 
+    /**
+     * Every part of the J2Store 4 submission contract on its own.
+     *
+     * `warnOutdatedJ2StoreCheckoutOverrides()` asks a deployed copy for five
+     * separate parts and for their placement. The update path below exercises
+     * only one incomplete shape, so dropping a single one of those rules would
+     * stay green there. Every case here derives from the shipped override by one
+     * targeted change, so the cases cannot drift away from the file they
+     * describe: the shipped content has to be accepted, and each single change
+     * has to be refused. A case whose change did not apply fails instead of
+     * passing silently.
+     *
+     * The check reads a file as text and asks nothing about the installed shop,
+     * so this runs on both lanes.
+     */
+    private function runJ2StoreContractTests(): void
+    {
+        echo "\n-- J2Store 4 submission contract, part by part --\n";
+
+        $script  = JPATH_PLUGINS . '/privacy/j2commerce/script.php';
+        $shipped = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
+
+        if (!is_file($script) || !is_file($shipped)) {
+            $this->test('Installer script and shipped J2Store 4 override available', false, "$script / $shipped");
+
+            return;
+        }
+
+        if (!class_exists('Plgprivacyj2commerceInstallerScript')) {
+            require_once $script;
+        }
+
+        // PHP 8.1 or later is required, so reflection reaches a private method
+        // without setAccessible().
+        try {
+            $method    = new \ReflectionMethod('Plgprivacyj2commerceInstallerScript', 'hasJ2StoreSubmissionContract');
+            $installer = new \Plgprivacyj2commerceInstallerScript();
+        } catch (\Throwable $e) {
+            $this->test('Contract check reachable through reflection', false, $e->getMessage());
+
+            return;
+        }
+
+        $base    = (string) file_get_contents($shipped);
+        $accepts = static function (string $content) use ($method, $installer): bool {
+            return (bool) $method->invoke($installer, $content);
+        };
+
+        $this->test('Shipped J2Store 4 override satisfies the contract', $accepts($base));
+
+        $cases = [
+            'without the form token'                   => ["<?php echo HTMLHelper::_('form.token'); ?>", ''],
+            'without the task field'                   => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', ''],
+            'without the option field'                 => ['<input type="hidden" name="option" value="com_j2store" />', ''],
+            'without the view field'                   => ['<input type="hidden" name="view" value="checkout" />', ''],
+            'with a submit button'                     => ['<button type="button" id="button-payment-method"', '<button type="submit" id="button-payment-method"'],
+            'with another button id'                   => ['id="button-payment-method"', 'id="button-confirm-order"'],
+            'without the shipped wrapper'              => ['<div class="j2store-checkout-actions mt-3">', '<div class="mt-3">'],
+            'with an element between button and fields' => ['<input type="hidden" name="task"', '<section><input type="hidden" name="task"'],
+        ];
+
+        foreach ($cases as $label => [$search, $replace]) {
+            $variant = str_replace($search, $replace, $base);
+
+            if ($variant === $base) {
+                $this->test("Case prepared: $label", false, "the shipped override does not contain: $search");
+
+                continue;
+            }
+
+            $this->test("Copy $label is refused", !$accepts($variant), $label);
+        }
+
+        // The same parts, but before the Continue button instead of after it.
+        // Built from offsets rather than a replacement, because only the order
+        // changes and nothing is added or removed.
+        $buttonStart = strpos($base, '<button type="button" id="button-payment-method"');
+        $buttonEnd   = strpos($base, '</button>');
+        $fieldsStart = strpos($base, '<input type="hidden" name="task"');
+        $tokenCall   = "<?php echo HTMLHelper::_('form.token'); ?>";
+        $fieldsEnd   = strpos($base, $tokenCall);
+
+        if ($buttonStart === false || $buttonEnd === false || $fieldsStart === false || $fieldsEnd === false
+            || !($buttonStart < $buttonEnd && $buttonEnd < $fieldsStart && $fieldsStart < $fieldsEnd)) {
+            $this->test('Case prepared: fields before the button', false, 'button and field block not found in the expected order');
+
+            return;
+        }
+
+        $buttonEnd  += strlen('</button>');
+        $fieldsEnd  += strlen($tokenCall);
+        $buttonBlock = substr($base, $buttonStart, $buttonEnd - $buttonStart);
+        $fieldsBlock = substr($base, $fieldsStart, $fieldsEnd - $fieldsStart);
+        $between     = substr($base, $buttonEnd, $fieldsStart - $buttonEnd);
+
+        $swapped = substr($base, 0, $buttonStart)
+            . $fieldsBlock
+            . $between
+            . $buttonBlock
+            . substr($base, $fieldsEnd);
+
+        $this->test('Copy with the fields before the button is refused', !$accepts($swapped));
+    }
+
     private function runUpdatePathTests(?object $extension): void
     {
         echo "\n-- Update path (CLI reinstall of the package) --\n";
@@ -1426,30 +1641,159 @@ class ConsentLoggingTest
         $fixture   = (string) @file_get_contents(__DIR__ . '/fixture-checkout-override-1.5.5.php');
         $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
 
+        // The unchanged 1.5.5 copy is deployed on every lane, not only where
+        // com_j2commerce is installed: on a lane without that component it serves
+        // as the negative case of the mixed-install assertion below.
+        foreach ([$legacy, $retired] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
+        }
+
+        $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
+        file_put_contents($legacy, $fixture);
+        @unlink($retired);
+
         if ($j6) {
-            foreach ([$legacy, $retired, $noEvent, $withEvent] as $file) {
+            foreach ([$noEvent, $withEvent] as $file) {
                 $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
                 @mkdir(dirname($file), 0755, true);
             }
 
-            $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
-            file_put_contents($legacy, $fixture);
-            @unlink($retired);
             file_put_contents($noEvent, "<?php\n// custom step 4 override without the consent event\n");
             file_put_contents($withEvent, "<?php\n// custom step 4 override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
         }
+
+        // J2Store 4 checkout overrides in the same template (installer checks of the update):
+        // The same path is used for three shapes in turn: a copy of an earlier plugin
+        // version (marker, incomplete contract) must be reported, a template's own
+        // override (no marker) must not, and the override this package ships must not.
+        $j2store   = is_dir(JPATH_SITE . '/components/com_j2store');
+        $j2sMarker = 'Template override for plg_privacy_j2commerce';
+        $j2sStale  = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
+
+        // Deployed on every lane for the same reason as the 1.5.5 copy above.
+        foreach ([$j2sStale] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
+        }
+
+        // Carries the marker and the button id, but no token and no hidden inputs:
+        // exactly the shape an update leaves behind, so it must be reported.
+        file_put_contents(
+            $j2sStale,
+            "<?php\n// $j2sMarker\n?>\n"
+            . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+        );
 
         $setEnabled(0);
 
         [$exitCode, $output, $readable] = $this->runCliUpdate($package);
         $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($readable, -400));
 
+        // The console cuts long words (paths) at its line length: compare without any
+        // whitespace. By reference: $output is replaced by the second update below.
+        $has = static function (string $needle) use (&$output): bool {
+            return str_contains($output, preg_replace('/\s+/', '', $needle));
+        };
+
+        // Mixed install (J2Store 4 and J2Commerce 6 installed at the same time).
+        // No CI lane carries both components, so the property that makes a mixed
+        // install the plain union of the two single cases is asserted from the other
+        // side: each of the two installer checks is reached only through its own
+        // component directory and reads only its own override path. Both deployed
+        // copies exist on every lane, so on this lane the one belonging to the
+        // missing component has to stay unreported although its file is there and
+        // carries the same plugin marker. Without that independence a mixed install
+        // could report the wrong shop's override, or none at all.
+        if (!$j2store) {
+            $this->test(
+                'No J2Store 4 override warning while com_j2store is absent, although the copy is deployed',
+                is_file($j2sStale)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
+
+        if (!$j6) {
+            $this->test(
+                'No J2Commerce 6 checkout override message while com_j2commerce is absent, although the 1.5.5 copy is deployed',
+                is_file($legacy)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
+
+        if ($j2store) {
+            // The update leaves a deployed J2Store 4 override in place, so it has to say so.
+            $j2sOutdated = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED');
+            $j2sDiag     = mb_substr($readable, 0, 1500);
+
+            $this->test('Update warns about a stale J2Store 4 checkout override',
+                $has($j2sOutdated) && $has($relative($j2sStale)), $j2sDiag);
+            $this->test('No untranslated J2Store 4 override message',
+                $output !== '' && !$has('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE'), $j2sDiag);
+
+            if (!$j6) {
+                // Same file without the marker: a template's own override. It is just as
+                // incomplete, so only the marker filter can keep it out of the warning.
+                file_put_contents(
+                    $j2sStale,
+                    "<?php\n// the template's own checkout override\n?>\n"
+                    . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+                );
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Second CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('Update does not report an override without the plugin marker',
+                    $output !== '' && !$has($j2sOutdated), $j2sDiag);
+
+                // Replace it with the override the package ships: the warning has to stay
+                // away for the other reason, the complete submission contract.
+                $shippedOverride = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
+                $this->test('Shipped J2Store 4 override available in the installed plugin', is_file($shippedOverride), $shippedOverride);
+                file_put_contents($j2sStale, (string) @file_get_contents($shippedOverride));
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Third CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('No stale-override warning once the copy carries the full contract',
+                    $output !== '' && !$has($j2sOutdated), $j2sDiag);
+
+                // A copy that hides the whole contract in a PHP string literal while it
+                // echoes only an unrelated button must still be reported. token_get_all()
+                // keeps string-literal text verbatim, so a scan over the raw token text
+                // would find every tag and a real form.token call and wrongly stay silent,
+                // even though the browser receives no token and no hidden inputs. Only
+                // actually-emitted markup may satisfy the contract.
+                $j2sForged = "<?php\n// $j2sMarker\n"
+                    . "use Joomla\\CMS\\HTML\\HTMLHelper;\n"
+                    . "\$markup = '<div class=\"j2store-checkout-actions\">'\n"
+                    . "    . '<button type=\"button\" id=\"button-payment-method\">Go</button>'\n"
+                    . "    . '<input type=\"hidden\" name=\"task\" value=\"shipping_payment_method_validate\">'\n"
+                    . "    . '<input type=\"hidden\" name=\"option\" value=\"com_j2store\">'\n"
+                    . "    . '<input type=\"hidden\" name=\"view\" value=\"checkout\">';\n"
+                    . "echo HTMLHelper::_('form.token');\n"
+                    . "?>\n"
+                    . '<button type="submit">Pay</button>' . "\n";
+                file_put_contents($j2sStale, $j2sForged);
+
+                [$j2sExit, $output, $readable] = $this->runCliUpdate($package);
+                $j2sDiag = mb_substr($readable, 0, 1500);
+                clearstatcache();
+                $this->test('Fourth CLI update succeeds (J2Store lane)', $j2sExit === 0, $j2sDiag);
+                $this->test('Contract hidden in a PHP string literal is still reported as outdated',
+                    $has($j2sOutdated) && $has($relative($j2sStale)), $j2sDiag);
+            }
+        }
+
         if ($j6) {
-            // The console cuts long words (paths) at its line length: compare without any whitespace.
-            // By reference: $output is replaced by the second update below.
-            $has       = static function (string $needle) use (&$output): bool {
-                return str_contains($output, preg_replace('/\s+/', '', $needle));
-            };
             $version   = $this->getJ2CommerceVersion();
             $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
             $outdated  = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED');

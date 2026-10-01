@@ -116,7 +116,7 @@ logic is exercised with the actual core component present in each:
   (`EXPECTED_CORE_COMPONENT=com_j2commerce`).
 
 Both stacks run the **same full suite** from `tests/test.env` (installation, scanning,
-cleanup, component functions, safety checks, installer messages, uninstall). The
+cleanup, component functions, safety checks, backend views, installer messages, uninstall). The
 `official-j5-j2c4` job runs the safety checks against J2Store 4 as expected core
 component; `official-j6-j2c6` asserts that the Joomla 6 matrix passed.
 
@@ -129,13 +129,22 @@ Order as in `tests/test.env`:
 3. **Cleanup** - Extension removal, batch removal, isolation tests, and a real
    register-extension → cleanup → verify round trip that confirms the installed
    core component (`com_j2store` on J5, `com_j2commerce` on J6) is protected
-4. **Component Functions** - Main file function validation (`createDbQuery`, `cleanupExtensions`)
+4. **Component Functions** - Calls the real main-file functions (`createDbQuery`,
+   `cleanupExtensions`, `scanForIssues`, `classifyExtension`, `describeIssue`) and
+   enforces the localisation contract: the page prints no hardcoded visible text —
+   including text emitted from PHP, caught by tokenising the markup and rejecting any
+   string literal an `echo`/`print` writes out directly — and findings render in the
+   site language (the suite runs in de-DE)
 5. **Safety Checks** - Protected extensions list, edge cases, DB verification that
    the expected core component is installed
-6. **Installer Messages** - shared suite: removes and reinstalls the package through the
+6. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
+   and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
+   error page, no untranslated language key, and at least one string of the component's own
+   language file on the page
+7. **Installer Messages** - shared suite: removes and reinstalls the package through the
    Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language
    keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-7. **Uninstall** - Component removal, verification
+8. **Uninstall** - Component removal, verification
 
 ### Running Tests Locally
 
@@ -301,7 +310,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Most UI texts of the component page are currently hard-coded in English; the menu entry and the removal result messages use language keys. Users can add additional language files by creating new language folders following Joomla's language structure:
+Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages and the confirmation before removal (passed to the browser with `Text::script()`). Generic words use Joomla core keys (`JENABLED`, `JDISABLED`, `JGLOBAL_CHECK_ALL`). A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../../README.md#languages)):
 ```
 administrator/language/{language-tag}/com_j2store_cleanup.ini
 administrator/language/{language-tag}/com_j2store_cleanup.sys.ini
