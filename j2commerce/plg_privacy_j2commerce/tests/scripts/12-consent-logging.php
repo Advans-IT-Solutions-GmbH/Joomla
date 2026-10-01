@@ -1410,6 +1410,9 @@ class ConsentLoggingTest
             'with the token call only as a string'      => ["<?php echo HTMLHelper::_('form.token'); ?>", '<?php $markup = "HTMLHelper::_(\'form.token\')"; ?>'],
             'with a similarly named token helper'       => ["HTMLHelper::_('form.token')", "FooHTMLHelper::_('form.token')"],
             'with a similarly named legacy helper'      => ["HTMLHelper::_('form.token')", "NotJHtml::_('form.token')"],
+            'with the import only inside a string'     => ["use Joomla\\CMS\\HTML\\HTMLHelper;", '$x = \'use Joomla\\CMS\\HTML\\HTMLHelper;\';'],
+            'with the import only in a comment'        => ["use Joomla\\CMS\\HTML\\HTMLHelper;", '// use Joomla\\CMS\\HTML\\HTMLHelper;'],
+            'with the import aliased to another name'  => ["use Joomla\\CMS\\HTML\\HTMLHelper;", "use Joomla\\CMS\\HTML\\HTMLHelper as H;"],
             'with the token call never echoed'         => ["<?php echo HTMLHelper::_('form.token'); ?>", "<?php HTMLHelper::_('form.token'); ?>"],
         ];
 

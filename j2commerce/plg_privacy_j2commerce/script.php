@@ -699,6 +699,12 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     {
         $code = '';
 
+        // Whether the file really imports HTMLHelper. Decided on the tokens, never on the text:
+        // a literal such as 'use Joomla\CMS\HTML\HTMLHelper;' carries no "<", no "::" and no
+        // getFormToken, so the filter below keeps it, and a text search would then accept a file
+        // that has no import at all while the unqualified call fatals at render time.
+        $importsHelper = $this->importsHtmlHelper($content);
+
         foreach (token_get_all($content) as $token) {
             if (!is_array($token)) {
                 $code .= $token;
@@ -811,7 +817,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // That is the safe direction: one warning too many costs a glance, one too few costs the
         // checkout.
         if (preg_match('/(?<![\\\\\w])HTMLHelper::_\(\s*[\'"]form\.token[\'"]\s*\)/', $tail) === 1
-            && preg_match('/\buse\s+Joomla\\\\CMS\\\\HTML\\\\HTMLHelper\s*(?:as\s+HTMLHelper\s*)?;/i', $code) !== 1) {
+            && !$importsHelper) {
             return false;
         }
 
@@ -827,6 +833,80 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $tail = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
 
         return !str_contains($tail, '<');
+    }
+
+    /**
+     * Whether the file imports Joomla\CMS\HTML\HTMLHelper under that very name.
+     *
+     * Decided on the token stream, not on the source text. A text search accepts a string literal
+     * that merely spells the import out, and the filter in hasJ2StoreSubmissionContract() keeps
+     * such a literal because it carries no "<", no "::" and no getFormToken. A copy without the
+     * real import would then pass the contract and fatal at render time on the unqualified call.
+     *
+     * Only the exact name counts: an alias to anything other than HTMLHelper leaves the short name
+     * undefined, and a group import (use Joomla\CMS\HTML\{HTMLHelper};) is reported rather than
+     * parsed, which is the same fail-closed direction the rest of the check takes.
+     *
+     * @param   string  $content  Full source of the override.
+     *
+     * @return  bool
+     */
+    private function importsHtmlHelper(string $content): bool
+    {
+        $tokens = token_get_all($content);
+        $count  = \count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_USE) {
+                continue;
+            }
+
+            // Collect the name that follows, in whichever shape the tokenizer produces it, and
+            // stop at the end of this import clause.
+            $name  = '';
+            $alias = null;
+            $inAs  = false;
+
+            for ($j = $i + 1; $j < $count; $j++) {
+                $t = $tokens[$j];
+
+                if (!is_array($t)) {
+                    if ($t === ';' || $t === ',' || $t === '{' || $t === '(') {
+                        break;
+                    }
+                    continue;
+                }
+
+                if ($t[0] === T_WHITESPACE) {
+                    continue;
+                }
+
+                if ($t[0] === T_AS) {
+                    $inAs = true;
+                    continue;
+                }
+
+                if ($inAs) {
+                    $alias = $t[1];
+                    continue;
+                }
+
+                $name .= $t[1];
+            }
+
+            $name = ltrim(str_replace('\\\\', '\\', $name), '\\');
+
+            if (strcasecmp($name, 'Joomla\\CMS\\HTML\\HTMLHelper') !== 0) {
+                continue;
+            }
+
+            // No alias means the short name is HTMLHelper. An alias has to be that same name.
+            if ($alias === null || strcasecmp($alias, 'HTMLHelper') === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
