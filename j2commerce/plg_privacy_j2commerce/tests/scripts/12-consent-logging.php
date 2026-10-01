@@ -1414,6 +1414,7 @@ class ConsentLoggingTest
             'with the import only in a comment'        => ["use Joomla\\CMS\\HTML\\HTMLHelper;", '// use Joomla\\CMS\\HTML\\HTMLHelper;'],
             'with the import aliased to another name'  => ["use Joomla\\CMS\\HTML\\HTMLHelper;", "use Joomla\\CMS\\HTML\\HTMLHelper as H;"],
             'with the token call never echoed'         => ["<?php echo HTMLHelper::_('form.token'); ?>", "<?php HTMLHelper::_('form.token'); ?>"],
+            'with visible task/option/view inputs'     => ['type="hidden" name=', 'type="text" name='],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {

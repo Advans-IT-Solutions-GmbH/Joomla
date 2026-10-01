@@ -768,9 +768,14 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
             // data-* attribute: data-name="task" would otherwise count as the real field.
-            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]task[\'"])(?=[^>]*(?<![-\w])value=[\'"]shipping_payment_method_validate[\'"])[^>]*>/',
-            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]option[\'"])(?=[^>]*(?<![-\w])value=[\'"]com_j2store[\'"])[^>]*>/',
-            '/<input\b(?=[^>]*(?<![-\w])name=[\'"]view[\'"])(?=[^>]*(?<![-\w])value=[\'"]checkout[\'"])[^>]*>/',
+            //
+            // type="hidden" is required too: the documented contract renders these as hidden
+            // routing fields. A visible text input for task/option/view would let the shopper
+            // edit the task and routing parameters before submission, so a copy that drops the
+            // hidden type is reported rather than accepted.
+            '/<input\b(?=[^>]*(?<![-\w])type=[\'"]hidden[\'"])(?=[^>]*(?<![-\w])name=[\'"]task[\'"])(?=[^>]*(?<![-\w])value=[\'"]shipping_payment_method_validate[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])type=[\'"]hidden[\'"])(?=[^>]*(?<![-\w])name=[\'"]option[\'"])(?=[^>]*(?<![-\w])value=[\'"]com_j2store[\'"])[^>]*>/',
+            '/<input\b(?=[^>]*(?<![-\w])type=[\'"]hidden[\'"])(?=[^>]*(?<![-\w])name=[\'"]view[\'"])(?=[^>]*(?<![-\w])value=[\'"]checkout[\'"])[^>]*>/',
             // The Continue button, likewise in any attribute order.
             '/<button\b(?=[^>]*(?<![-\w])type=[\'"]button[\'"])(?=[^>]*(?<![-\w])id=[\'"]button-payment-method[\'"])[^>]*>/',
         ];
