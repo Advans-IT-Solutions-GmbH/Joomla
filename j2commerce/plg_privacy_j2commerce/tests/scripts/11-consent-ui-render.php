@@ -102,9 +102,20 @@ class RenderHarnessApp
     {
         return new RenderHarnessMenu();
     }
+    /**
+     * Return a guest user (id 0) rather than null.
+     *
+     * HTMLHelper::_('form.token') resolves through Session::getFormToken(), which calls
+     * Factory::getUser() and dereferences the returned user's id. Answering with a guest
+     * user object keeps that path deterministic so the render cannot fatal before the
+     * token assertions run; a null identity would risk a "property id of null" error.
+     */
     public function getIdentity()
     {
-        return null;
+        return new class {
+            public $id = 0;
+            public $guest = 1;
+        };
     }
 
     /**
