@@ -747,7 +747,17 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // which would name an undefined helper and fatal when rendered while this contract
             // read as satisfied. The optional Joomla\CMS\HTML\ prefix keeps the fully qualified
             // call accepted, mirroring the import check below.
-            '/(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
+            //
+            // The call also has to be EMITTED. A hand merge that opens a PHP block and writes
+            // HTMLHelper::_('form.token'); without echo throws the returned markup away: the
+            // contract would read as satisfied, the browser would receive no token, and J2Store
+            // 4.1.8 answers "Invalid Token". The emitting forms are echo, print and the short
+            // open tag, and [^;]* in between keeps a concatenation such as
+            // echo $prefix . HTMLHelper::_(...) while stopping at the end of the statement.
+            //
+            // Assigning first and echoing the variable later is not recognised and raises the
+            // warning although it works. Fail-closed again, like the rest of this check.
+            '/(?:echo|print|<\?=)[^;]*(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*(?:echo|print|<\?=)[^>]*getFormToken\s*\(/',
             // One <input> carrying both attributes, in any order and with any other
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
@@ -808,7 +818,12 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // And nothing else may stand between the button and them: a <section> around the
         // button with a sibling one around the inputs would let a serialiser scoped to
         // the button's element miss the fields. Only hidden inputs and PHP blocks pass.
-        $tail = (string) preg_replace('/<\?php.*?(?:\?>|$)/s', ' ', $tail);
+        //
+        // The short open tag counts as a PHP block too. Matching only the long opening tag left
+        // a short-tag block behind, its leading "<" then failed the final check, and an override
+        // that emits its token through the short tag was reported as outdated although it is
+        // correct. (A closing tag cannot be spelled out in this comment: it would end the block.)
+        $tail = (string) preg_replace('/<\?(?:php\b|=)?.*?(?:\?>|$)/s', ' ', $tail);
         $tail = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
 
         return !str_contains($tail, '<');

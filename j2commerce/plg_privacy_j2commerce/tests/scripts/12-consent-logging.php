@@ -1410,6 +1410,7 @@ class ConsentLoggingTest
             'with the token call only as a string'      => ["<?php echo HTMLHelper::_('form.token'); ?>", '<?php $markup = "HTMLHelper::_(\'form.token\')"; ?>'],
             'with a similarly named token helper'       => ["HTMLHelper::_('form.token')", "FooHTMLHelper::_('form.token')"],
             'with a similarly named legacy helper'      => ["HTMLHelper::_('form.token')", "NotJHtml::_('form.token')"],
+            'with the token call never echoed'         => ["<?php echo HTMLHelper::_('form.token'); ?>", "<?php HTMLHelper::_('form.token'); ?>"],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {
@@ -1446,6 +1447,20 @@ class ConsentLoggingTest
         $this->test(
             'Copy without the import but using JHtml is accepted',
             $legacyName !== $base && $accepts($legacyName)
+        );
+
+        // The short open tag emits just as well as echo, so a copy using it is correct and must
+        // not be reported. It is asserted separately because the PHP-block cleanup further down
+        // used to match only the long opening tag, which left the short block in place and failed
+        // the final "nothing else between button and fields" check.
+        $shortTag = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            "<?= HTMLHelper::_('form.token') ?>",
+            $base
+        );
+        $this->test(
+            'Copy emitting the token through the short open tag is accepted',
+            $shortTag !== $base && $accepts($shortTag)
         );
 
         // The same parts, but before the Continue button instead of after it.
