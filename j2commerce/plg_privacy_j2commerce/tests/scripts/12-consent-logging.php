@@ -1426,15 +1426,24 @@ class ConsentLoggingTest
         $fixture   = (string) @file_get_contents(__DIR__ . '/fixture-checkout-override-1.5.5.php');
         $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
 
+        // The unchanged 1.5.5 copy is deployed on every lane, not only where
+        // com_j2commerce is installed: on a lane without that component it serves
+        // as the negative case of the mixed-install assertion below.
+        foreach ([$legacy, $retired] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
+        }
+
+        $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
+        file_put_contents($legacy, $fixture);
+        @unlink($retired);
+
         if ($j6) {
-            foreach ([$legacy, $retired, $noEvent, $withEvent] as $file) {
+            foreach ([$noEvent, $withEvent] as $file) {
                 $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
                 @mkdir(dirname($file), 0755, true);
             }
 
-            $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
-            file_put_contents($legacy, $fixture);
-            @unlink($retired);
             file_put_contents($noEvent, "<?php\n// custom step 4 override without the consent event\n");
             file_put_contents($withEvent, "<?php\n// custom step 4 override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
         }
@@ -1447,20 +1456,19 @@ class ConsentLoggingTest
         $j2sMarker = 'Template override for plg_privacy_j2commerce';
         $j2sStale  = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
 
-        if ($j2store) {
-            foreach ([$j2sStale] as $file) {
-                $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
-                @mkdir(dirname($file), 0755, true);
-            }
-
-            // Carries the marker and the button id, but no token and no hidden inputs:
-            // exactly the shape an update leaves behind, so it must be reported.
-            file_put_contents(
-                $j2sStale,
-                "<?php\n// $j2sMarker\n?>\n"
-                . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
-            );
+        // Deployed on every lane for the same reason as the 1.5.5 copy above.
+        foreach ([$j2sStale] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
         }
+
+        // Carries the marker and the button id, but no token and no hidden inputs:
+        // exactly the shape an update leaves behind, so it must be reported.
+        file_put_contents(
+            $j2sStale,
+            "<?php\n// $j2sMarker\n?>\n"
+            . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+        );
 
         $setEnabled(0);
 
@@ -1472,6 +1480,37 @@ class ConsentLoggingTest
         $has = static function (string $needle) use (&$output): bool {
             return str_contains($output, preg_replace('/\s+/', '', $needle));
         };
+
+        // Mixed install (J2Store 4 and J2Commerce 6 installed at the same time).
+        // No CI lane carries both components, so the property that makes a mixed
+        // install the plain union of the two single cases is asserted from the other
+        // side: each of the two installer checks is reached only through its own
+        // component directory and reads only its own override path. Both deployed
+        // copies exist on every lane, so on this lane the one belonging to the
+        // missing component has to stay unreported although its file is there and
+        // carries the same plugin marker. Without that independence a mixed install
+        // could report the wrong shop's override, or none at all.
+        if (!$j2store) {
+            $this->test(
+                'No J2Store 4 override warning while com_j2store is absent, although the copy is deployed',
+                is_file($j2sStale)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
+
+        if (!$j6) {
+            $this->test(
+                'No J2Commerce 6 checkout override message while com_j2commerce is absent, although the 1.5.5 copy is deployed',
+                is_file($legacy)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
 
         if ($j2store) {
             // The update leaves a deployed J2Store 4 override in place, so it has to say so.
