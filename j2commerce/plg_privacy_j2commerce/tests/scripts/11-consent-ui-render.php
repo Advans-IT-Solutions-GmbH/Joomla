@@ -649,6 +649,29 @@ class ConsentUiRenderTest
             $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
                 strpos($clickListener, 'stopImmediatePropagation') !== false,
                 'The click listener must stop propagation so J2Store\'s own click handler does not run');
+
+            // ── Fail-closed Continue button ─────────────────────────────────
+            // type="button" drops the browser's native required-checkbox validation,
+            // so the override renders the button disabled while consent is required
+            // and only the validator re-enables it once the box is ticked. If the
+            // deferred validator asset never loads, the button stays disabled and the
+            // step cannot advance: the path fails closed. J2Store 4 has no server-side
+            // consent check to fall back on.
+            $overrideSrc = is_file($checkoutFile) ? (string) file_get_contents($checkoutFile) : '';
+            $this->test('Continue button is rendered disabled while consent is required',
+                (bool) preg_match('/id="button-payment-method"[^>]*\$_consentRequired[^>]*disabled/', $overrideSrc),
+                'The override must render #button-payment-method disabled when $_consentRequired so the path fails closed');
+            $syncBody = $bodyAfter($validatorSrc, 'function j2commercePrivacySyncButton');
+            $this->test('Consent validator toggles the button from the checkbox state',
+                $syncBody !== ''
+                    && strpos($syncBody, "getElementById('button-payment-method')") !== false
+                    && strpos($syncBody, 'button.disabled') !== false
+                    && strpos($syncBody, 'consent.checked') !== false,
+                $validatorJs . ': j2commercePrivacySyncButton() must set #button-payment-method disabled from the consent box');
+            $changeListener = $bodyAfter($validatorSrc, "addEventListener('change'");
+            $this->test('Consent validator re-syncs the button on checkbox change',
+                $changeListener !== '' && strpos($changeListener, 'j2commercePrivacySyncButton') !== false,
+                $validatorJs . ': a change on the consent box must re-sync the Continue button state');
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────

@@ -122,8 +122,13 @@ if ($_showConsent && $_privacyArticleId) {
     <?php // J2Store's own checkout script (checkout/default.php) submits this step when
           // #button-payment-method is clicked and collects the step's inputs. A plain
           // submit button has no form to submit here. ?>
+    <?php // When consent is required the button is rendered disabled and only the
+          // consent validator re-enables it once the box is ticked. If that deferred
+          // script is blocked or fails to load, the button stays disabled and the step
+          // cannot advance — the path fails closed. J2Store 4 has no server-side
+          // consent check, so this is the safe default. ?>
     <div class="j2store-checkout-actions mt-3">
-        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button">
+        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button"<?php echo $_consentRequired ? ' disabled' : ''; ?>>
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
 
