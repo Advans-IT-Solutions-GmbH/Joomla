@@ -1408,6 +1408,8 @@ class ConsentLoggingTest
             'without the HTMLHelper import'            => ["use Joomla\\CMS\\HTML\\HTMLHelper;", ''],
             'with the contract only inside a PHP string' => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', '<?php $markup = \'<input type="hidden" name="task" value="shipping_payment_method_validate" />\'; ?>'],
             'with the token call only as a string'      => ["<?php echo HTMLHelper::_('form.token'); ?>", '<?php $markup = "HTMLHelper::_(\'form.token\')"; ?>'],
+            'with a similarly named token helper'       => ["HTMLHelper::_('form.token')", "FooHTMLHelper::_('form.token')"],
+            'with a similarly named legacy helper'      => ["HTMLHelper::_('form.token')", "NotJHtml::_('form.token')"],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {

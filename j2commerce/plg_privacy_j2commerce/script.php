@@ -741,7 +741,13 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // HTMLHelper::_('form.token'), which emits the input itself, or as an <input>
             // whose name comes from getFormToken(). A bare getFormToken() call emits
             // nothing, so the step would still go out without a token.
-            '/(?:HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
+            //
+            // Only the exact helper names count. (?<![\\\w]) stops HTMLHelper and JHtml from
+            // matching as the tail of a different class (FooHTMLHelper::_(), NotJHtml::_()),
+            // which would name an undefined helper and fatal when rendered while this contract
+            // read as satisfied. The optional Joomla\CMS\HTML\ prefix keeps the fully qualified
+            // call accepted, mirroring the import check below.
+            '/(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*getFormToken\s*\(/',
             // One <input> carrying both attributes, in any order and with any other
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
