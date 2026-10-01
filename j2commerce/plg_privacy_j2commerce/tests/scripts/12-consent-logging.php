@@ -1405,6 +1405,7 @@ class ConsentLoggingTest
             'with another button id'                   => ['id="button-payment-method"', 'id="button-confirm-order"'],
             'without the shipped wrapper'              => ['<div class="j2store-checkout-actions mt-3">', '<div class="mt-3">'],
             'with an element between button and fields' => ['<input type="hidden" name="task"', '<section><input type="hidden" name="task"'],
+            'without the HTMLHelper import'            => ["use Joomla\\CMS\\HTML\\HTMLHelper;", ''],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {
@@ -1418,6 +1419,30 @@ class ConsentLoggingTest
 
             $this->test("Copy $label is refused", !$accepts($variant), $label);
         }
+
+        // Gegenprobe zum Importfall: ohne den use, aber mit voll qualifiziertem Aufruf ist
+        // HTMLHelper aufgeloest, und die Ueberschreibung ist gueltig. Der Vertrag darf hier
+        // keine Warnung ausloesen, sonst meldet er die haeufigste korrekte Schreibweise als
+        // Fehler. Dasselbe gilt fuer den Altnamen JHtml, der global verfuegbar ist.
+        $qualifiziert = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
+            ['', "\\Joomla\\CMS\\HTML\\HTMLHelper::_('form.token')"],
+            $base
+        );
+        $this->test(
+            'Copy without the import but with a fully qualified call is accepted',
+            $qualifiziert !== $base && $accepts($qualifiziert)
+        );
+
+        $altname = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
+            ['', "JHtml::_('form.token')"],
+            $base
+        );
+        $this->test(
+            'Copy without the import but using JHtml is accepted',
+            $altname !== $base && $accepts($altname)
+        );
 
         // The same parts, but before the Continue button instead of after it.
         // Built from offsets rather than a replacement, because only the order
