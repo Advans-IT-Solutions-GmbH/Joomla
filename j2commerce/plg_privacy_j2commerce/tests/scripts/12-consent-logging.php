@@ -1420,28 +1420,28 @@ class ConsentLoggingTest
             $this->test("Copy $label is refused", !$accepts($variant), $label);
         }
 
-        // Gegenprobe zum Importfall: ohne den use, aber mit voll qualifiziertem Aufruf ist
-        // HTMLHelper aufgeloest, und die Ueberschreibung ist gueltig. Der Vertrag darf hier
-        // keine Warnung ausloesen, sonst meldet er die haeufigste korrekte Schreibweise als
-        // Fehler. Dasselbe gilt fuer den Altnamen JHtml, der global verfuegbar ist.
-        $qualifiziert = str_replace(
+        // Counterpart to the import case: without the use but with a fully qualified call,
+        // HTMLHelper resolves and the override is valid. The contract must not warn here, or it
+        // would report the most common correct spelling as an error. The same holds for the legacy
+        // name JHtml, which is globally available.
+        $qualified = str_replace(
             ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
             ['', "\\Joomla\\CMS\\HTML\\HTMLHelper::_('form.token')"],
             $base
         );
         $this->test(
             'Copy without the import but with a fully qualified call is accepted',
-            $qualifiziert !== $base && $accepts($qualifiziert)
+            $qualified !== $base && $accepts($qualified)
         );
 
-        $altname = str_replace(
+        $legacyName = str_replace(
             ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
             ['', "JHtml::_('form.token')"],
             $base
         );
         $this->test(
             'Copy without the import but using JHtml is accepted',
-            $altname !== $base && $accepts($altname)
+            $legacyName !== $base && $accepts($legacyName)
         );
 
         // The same parts, but before the Continue button instead of after it.

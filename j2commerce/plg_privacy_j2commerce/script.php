@@ -761,16 +761,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             }
         }
 
-        // HTMLHelper ist in dieser namensraumlosen Vorlage nur aufgeloest, wenn die Datei den
-        // Import traegt oder den Aufruf voll qualifiziert schreibt. Eine von Hand zusammengefuehrte
-        // Ueberschreibung kann das ganze Markup enthalten und den use vergessen: dann steht der
-        // Vertrag formal da, der Kassenschritt bricht aber mit einem Fatal ab, und die Warnung
-        // bliebe genau dort aus, wo sie gebraucht wird. JHtml und der voll qualifizierte Aufruf
-        // brauchen nichts, der Blick zurueck im Muster schliesst beide aus.
+        // HTMLHelper only resolves in this namespace-less override when the file carries the import
+        // or writes the call fully qualified. A hand-merged copy can hold the complete markup and
+        // still drop the use: the contract would then read as satisfied while the checkout step dies
+        // with a fatal, and the warning would be missing exactly where it is needed. JHtml and the
+        // fully qualified call need nothing, and the lookbehind excludes both.
         //
-        // Ein Gruppenimport (use Joomla\CMS\HTML\{HTMLHelper};) faellt hier durch und loest die
-        // Warnung aus. Das ist die sichere Richtung: eine Warnung zu viel kostet einen Blick, eine
-        // zu wenig kostet die Kasse.
+        // A group import (use Joomla\CMS\HTML\{HTMLHelper};) fails this check and raises the warning.
+        // That is the safe direction: one warning too many costs a glance, one too few costs the
+        // checkout.
         if (preg_match('/(?<![\\\\\w])HTMLHelper::_\(\s*[\'"]form\.token[\'"]\s*\)/', $tail) === 1
             && preg_match('/\buse\s+Joomla\\\\CMS\\\\HTML\\\\HTMLHelper\s*(?:as\s+HTMLHelper\s*)?;/i', $code) !== 1) {
             return false;
