@@ -25,7 +25,24 @@ use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
-echo 'Real OSMap library loaded: ' . (osmap_ensure_classes() ? 'yes' : 'NO (stubs)') . PHP_EOL;
+$realOsmap = osmap_ensure_classes();
+echo 'Real OSMap library loaded: ' . ($realOsmap ? 'yes' : 'NO (stubs)') . PHP_EOL;
+
+// This suite verifies the real OSMap dispatch, so it must not fall back to the stub
+// Collector: with stubs the run would still print "NO (stubs)" and report green, hiding
+// a failed OSMap installation. Fail immediately when the real library is unavailable,
+// mirroring the real-class assertion 07-osmap-loader.php makes before it dispatches.
+if (!$realOsmap || !class_exists('\\Alledia\\OSMap\\Sitemap\\Collector', false)) {
+    fwrite(STDERR, "FATAL: real OSMap library not loaded — refusing to run the mixed-migration suite against stubs\n");
+    exit(1);
+}
+
+$collectorFile = (string) (new \ReflectionClass('\\Alledia\\OSMap\\Sitemap\\Collector'))->getFileName();
+
+if (!str_contains($collectorFile, 'com_osmap')) {
+    fwrite(STDERR, "FATAL: OSMap Collector is not the installed com_osmap class ({$collectorFile})\n");
+    exit(1);
+}
 
 spl_autoload_register(function (string $class): void {
     $prefix = 'Advans\\Plugin\\Osmap\\J2Commerce\\';
