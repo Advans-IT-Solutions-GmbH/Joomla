@@ -1,0 +1,48 @@
+name: Shared Path Coverage
+
+# The extension workflows list the individual files under `shared/` they use
+# instead of `shared/**`, so a change to a shared file starts only the workflows
+# that really consume it. This check makes sure that narrowing never loses a
+# file: every file under `shared/` must be matched by at least one workflow's
+# `pull_request.paths`, or be listed as uncovered on purpose in
+# `.github/scripts/check-shared-path-coverage.sh`.
+#
+# One cheap job, and only on pull requests that touch `shared/`, a workflow file
+# or the script behind it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'shared/**'
+      - '.github/workflows/**'
+      - '.github/scripts/check-shared-path-coverage.sh'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'shared/**'
+      - '.github/workflows/**'
+      - '.github/scripts/check-shared-path-coverage.sh'
+
+permissions: {}
+
+# On `main` and for a manual run the group key is the unique run id, so no run on
+# the default branch is ever cancelled and a manual run never cancels another one:
+# a dispatch is started deliberately and nothing supersedes it.
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Shared Path Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check that every shared file is matched by at least one workflow
+        run: bash .github/scripts/check-shared-path-coverage.sh
