@@ -703,15 +703,39 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // a literal such as 'use Joomla\CMS\HTML\HTMLHelper;' carries no "<", no "::" and no
         // getFormToken, so the filter below keeps it, and a text search would then accept a file
         // that has no import at all while the unqualified call fatals at render time.
-        $importsHelper = $this->importsHtmlHelper($content);
+        $importsHelper  = $this->importsHtmlHelper($content);
+        $importsSession = $this->importsClass($content, 'Joomla\\CMS\\Session\\Session', 'Session');
 
-        foreach (token_get_all($content) as $token) {
+        $tokens = token_get_all($content);
+        $nested = $this->nestedTokenIndexes($tokens);
+
+        foreach ($tokens as $index => $token) {
             if (!is_array($token)) {
                 $code .= $token;
                 continue;
             }
 
             if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            // A call that sits inside a control structure, a loop or a function body is not
+            // reached on every render. Blanking the NAME of such a call keeps it out of the
+            // token pattern below, so a copy that opens a PHP block after the button and
+            // writes `if (false) echo HTMLHelper::_('form.token');` in it is reported instead
+            // of accepted: the browser would submit no token and J2Store 4.1.8 would answer
+            // "Invalid Token". Only the name is blanked, the surrounding text keeps its place,
+            // so every offset the wrapper and tail arithmetic below relies on stays intact.
+            // (A closing tag cannot be spelled out in this comment: it would end the block.)
+            //
+            // The shipped override renders the token unconditionally, as its own comment
+            // says, so it is unaffected. A copy that renders the token inside a condition
+            // that is in fact always true is reported as well. Fail-closed, like the rest of
+            // this check: one warning too many costs a glance, one too few costs the
+            // checkout.
+            if (isset($nested[$index])
+                && in_array($token[0], $this->nameTokenTypes(), true)) {
+                $code .= str_repeat(' ', strlen($token[1]));
                 continue;
             }
 
@@ -771,7 +795,17 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // satisfying the contract while no token field is emitted, which would again leave
             // J2Store 4.1.8 answering "Invalid Token". (?<![-\w]) keeps data-name out, and the
             // negated class holds the match inside the one attribute value.
-            '/(?:echo|print|<\?=)[^;]*(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*(?<![-\w])name=[\'"][^\'">]*(?:echo|print|<\?=)[^\'">]*getFormToken\s*\(/',
+            //
+            // That alternative also names its class, for the same reason the helper branch does.
+            // Before, any getFormToken() satisfied it, so NoSuchClass::getFormToken() read as a
+            // valid implementation while the render died with a fatal and the warning stayed
+            // away. Only Joomla's Session counts now, unqualified or fully qualified, and the
+            // unqualified form additionally needs the import, checked further down.
+            //
+            // An instance call such as Factory::getApplication()->getSession()->getFormToken()
+            // is not recognised and raises the warning although it works. It is not the form the
+            // merge instructions describe, and fail-closed is the direction here.
+            '/(?:echo|print|<\?=)[^;]*(?<![\\\\\w])(?:(?:\\\\?Joomla\\\\CMS\\\\HTML\\\\)?HTMLHelper|JHtml)::_\(\s*[\'"]form\.token[\'"]\s*\)|<input\b[^>]*(?<![-\w])name=[\'"][^\'">]*(?:echo|print|<\?=)[^\'">]*(?<![\\\\\w])(?:\\\\?Joomla\\\\CMS\\\\Session\\\\)?Session::getFormToken\s*\(/',
             // One <input> carrying both attributes, in any order and with any other
             // attribute in between, because neither affects what the browser submits.
             // (?<![-\w]) instead of \b, because \b also matches after the hyphen of a
@@ -850,6 +884,15 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
+        // Same rule for the direct-input alternative: the unqualified Session only resolves
+        // with the import, so a copy that renders the token field through Session::getFormToken()
+        // without `use Joomla\CMS\Session\Session;` would read as satisfied and fatal at render
+        // time. The fully qualified call needs nothing, and the lookbehind excludes it.
+        if (preg_match('/(?<![\\\\\w])Session::getFormToken\s*\(/', $tail) === 1
+            && !$importsSession) {
+            return false;
+        }
+
         // And nothing else may stand between the button and them: a <section> around the
         // button with a sibling one around the inputs would let a serialiser scoped to
         // the button's element miss the fields. Only hidden inputs and PHP blocks pass.
@@ -867,20 +910,201 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /**
      * Whether the file imports Joomla\CMS\HTML\HTMLHelper under that very name.
      *
-     * Decided on the token stream, not on the source text. A text search accepts a string literal
-     * that merely spells the import out, and the filter in hasJ2StoreSubmissionContract() keeps
-     * such a literal because it carries no "<", no "::" and no getFormToken. A copy without the
-     * real import would then pass the contract and fatal at render time on the unqualified call.
-     *
-     * Only the exact name counts: an alias to anything other than HTMLHelper leaves the short name
-     * undefined, and a group import (use Joomla\CMS\HTML\{HTMLHelper};) is reported rather than
-     * parsed, which is the same fail-closed direction the rest of the check takes.
-     *
      * @param   string  $content  Full source of the override.
      *
      * @return  bool
      */
     private function importsHtmlHelper(string $content): bool
+    {
+        return $this->importsClass($content, 'Joomla\\CMS\\HTML\\HTMLHelper', 'HTMLHelper');
+    }
+
+    /**
+     * Token types that carry a class or function name.
+     *
+     * Kept in one place because hasJ2StoreSubmissionContract() blanks exactly these when they
+     * sit inside a control structure, and PHP 8 splits a qualified name into its own types.
+     *
+     * @return  int[]
+     */
+    private function nameTokenTypes(): array
+    {
+        $types = [T_STRING];
+
+        foreach (['T_NAME_QUALIFIED', 'T_NAME_FULLY_QUALIFIED', 'T_NAME_RELATIVE'] as $name) {
+            if (\defined($name)) {
+                $types[] = \constant($name);
+            }
+        }
+
+        return $types;
+    }
+
+    /**
+     * Indexes of the tokens that sit inside a control structure, a loop or a function body.
+     *
+     * A template renders top to bottom, so only a statement outside every such construct runs on
+     * every render. hasJ2StoreSubmissionContract() uses this to tell a token call that is really
+     * emitted from one that merely stands in the file, for example behind `if (false)` or in a
+     * function nobody calls.
+     *
+     * Three shapes of body are tracked: a brace block, the alternative syntax (`if (…): … endif;`)
+     * and a brace-less single statement (`if (…) echo …;`). Every brace counts, including the one
+     * of a closure and the one of a string interpolation, because the closing brace of an
+     * interpolation is an ordinary token and the depth would otherwise drift. Counting too much
+     * only makes the contract stricter, which is the direction this check errs in.
+     *
+     * @param   array  $tokens  Output of token_get_all()
+     *
+     * @return  array<int, true>
+     */
+    private function nestedTokenIndexes(array $tokens): array
+    {
+        $count  = \count($tokens);
+        $nested = [];
+
+        $braceDepth = 0;
+        $altDepth   = 0;
+        $parenDepth = 0;
+        $pending    = [];   // brace depths at which a brace-less body is still open
+
+        $bodyOwners  = [T_IF, T_ELSEIF, T_ELSE, T_FOR, T_FOREACH, T_WHILE, T_SWITCH, T_DO];
+        $braceOwners = [T_FUNCTION, T_CLASS, T_TRY, T_CATCH, T_FINALLY];
+        $altEnds     = [T_ENDIF, T_ENDFOR, T_ENDFOREACH, T_ENDWHILE, T_ENDSWITCH];
+        $skippable   = [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT];
+
+        foreach (['T_FN', 'T_MATCH'] as $name) {
+            if (\defined($name)) {
+                $braceOwners[] = \constant($name);
+            }
+        }
+
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            if ($braceDepth > 0 || $altDepth > 0 || $pending !== []) {
+                $nested[$i] = true;
+            }
+
+            if (!\is_array($token)) {
+                if ($token === '{') {
+                    $braceDepth++;
+                } elseif ($token === '}') {
+                    $braceDepth = max(0, $braceDepth - 1);
+                } elseif ($token === '(') {
+                    $parenDepth++;
+                } elseif ($token === ')') {
+                    $parenDepth = max(0, $parenDepth - 1);
+                } elseif ($token === ';' && $parenDepth === 0) {
+                    // The statement ends here, so every brace-less body opened at this depth ends.
+                    while ($pending !== [] && end($pending) >= $braceDepth) {
+                        array_pop($pending);
+                    }
+                }
+
+                continue;
+            }
+
+            if (\in_array($token[0], [T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES], true)) {
+                $braceDepth++;
+                continue;
+            }
+
+            if (\in_array($token[0], $altEnds, true)) {
+                $altDepth = max(0, $altDepth - 1);
+                continue;
+            }
+
+            if (\in_array($token[0], $braceOwners, true)) {
+                continue;   // its brace is counted when it arrives
+            }
+
+            if (!\in_array($token[0], $bodyOwners, true)) {
+                continue;
+            }
+
+            // Step over the construct's own condition, then look at what opens its body.
+            $j     = $i + 1;
+            $depth = 0;
+
+            for (; $j < $count; $j++) {
+                $next = $tokens[$j];
+
+                if (!\is_array($next)) {
+                    if ($next === '(') {
+                        $depth++;
+                        continue;
+                    }
+
+                    if ($next === ')') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            $j++;
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if ($depth === 0) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if ($depth === 0 && !\in_array($next[0], $skippable, true)) {
+                    break;      // else and do carry no condition
+                }
+            }
+
+            for (; $j < $count; $j++) {
+                $next = $tokens[$j];
+
+                if (\is_array($next) && \in_array($next[0], $skippable, true)) {
+                    continue;
+                }
+
+                break;
+            }
+
+            $opener = $tokens[$j] ?? null;
+
+            if ($opener === '{') {
+                continue;       // the brace counter has it
+            }
+
+            if ($opener === ':') {
+                $altDepth++;
+                continue;
+            }
+
+            $pending[] = $braceDepth;
+        }
+
+        return $nested;
+    }
+
+    /**
+     * Whether the file imports $fqn under the short name $shortName.
+     *
+     * Decided on the token stream, not on the source text. A text search accepts a string literal
+     * that merely spells the import out, and the filter in hasJ2StoreSubmissionContract() keeps
+     * such a literal because it carries no "<", no "::" and no getFormToken. A copy without the
+     * real import would then pass the contract and fatal at render time on the unqualified call.
+     *
+     * Only the exact name counts: an alias to anything else leaves the short name undefined, and a
+     * group import (use Joomla\CMS\HTML\{HTMLHelper};) is reported rather than parsed, which is the
+     * same fail-closed direction the rest of the check takes.
+     *
+     * @param   string  $content    Full source of the override.
+     * @param   string  $fqn        Fully qualified class name, without a leading backslash.
+     * @param   string  $shortName  Name the call uses.
+     *
+     * @return  bool
+     */
+    private function importsClass(string $content, string $fqn, string $shortName): bool
     {
         $tokens = token_get_all($content);
         $count  = \count($tokens);
@@ -925,12 +1149,13 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             $name = ltrim(str_replace('\\\\', '\\', $name), '\\');
 
-            if (strcasecmp($name, 'Joomla\\CMS\\HTML\\HTMLHelper') !== 0) {
+            if (strcasecmp($name, $fqn) !== 0) {
                 continue;
             }
 
-            // No alias means the short name is HTMLHelper. An alias has to be that same name.
-            if ($alias === null || strcasecmp($alias, 'HTMLHelper') === 0) {
+            // No alias means the short name is the class name itself. An alias has to be that
+            // same name, otherwise the short name the call uses stays undefined.
+            if ($alias === null || strcasecmp($alias, $shortName) === 0) {
                 return true;
             }
         }

@@ -1485,6 +1485,64 @@ class ConsentLoggingTest
             $strayToken !== $base && !$accepts($strayToken)
         );
 
+        // The direct-input alternative also has to name a class that exists. Before, any
+        // getFormToken() satisfied it, so this copy read as a valid implementation while the
+        // render died on the undefined class and no warning was shown.
+        $unknownHelper = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="<?php echo NoSuchClass::getFormToken(); ?>" value="1" />',
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through an undefined class is refused',
+            $unknownHelper !== $base && !$accepts($unknownHelper)
+        );
+
+        // Unqualified Session needs its import, the same rule the HTMLHelper call follows.
+        $sessionNoImport = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "<?php echo HTMLHelper::_('form.token'); ?>"],
+            ['', '<input type="hidden" name="<?php echo Session::getFormToken(); ?>" value="1" />'],
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through Session without the import is refused',
+            $sessionNoImport !== $base && !$accepts($sessionNoImport)
+        );
+
+        // With the import it is correct and must be accepted, otherwise the rule would report a
+        // working copy.
+        $sessionImported = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "<?php echo HTMLHelper::_('form.token'); ?>"],
+            ['use Joomla\\CMS\\Session\\Session;', '<input type="hidden" name="<?php echo Session::getFormToken(); ?>" value="1" />'],
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through Session with the import is accepted',
+            $sessionImported !== $base && $accepts($sessionImported)
+        );
+
+        // Standing in the file is not the same as being rendered. Each of these copies carries the
+        // complete, correctly spelled call after the button, but behind control flow that does not
+        // run on a normal render, so the browser submits no token and J2Store 4.1.8 answers
+        // "Invalid Token". Four shapes, because the tracker has to recognise a brace-less body, a
+        // brace block, the alternative syntax and a function body alike.
+        $unreached = [
+            'behind a brace-less if (false)' => "<?php if (false) echo HTMLHelper::_('form.token'); ?>",
+            'inside an if (false) block'     => "<?php if (false) { echo HTMLHelper::_('form.token'); } ?>",
+            'inside an alternative-syntax if' => "<?php if (false): ?><?php echo HTMLHelper::_('form.token'); ?><?php endif; ?>",
+            'inside a function nobody calls' => "<?php function privacyTokenNeverCalled() { echo HTMLHelper::_('form.token'); } ?>",
+        ];
+
+        foreach ($unreached as $label => $replacement) {
+            $variant = str_replace("<?php echo HTMLHelper::_('form.token'); ?>", $replacement, $base);
+
+            $this->test(
+                "Copy with the token call $label is refused",
+                $variant !== $base && !$accepts($variant),
+                $label
+            );
+        }
+
         // The short open tag emits just as well as echo, so a copy using it is correct and must
         // not be reported. It is asserted separately because the PHP-block cleanup further down
         // used to match only the long opening tag, which left the short block in place and failed
