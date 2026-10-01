@@ -23,7 +23,6 @@ require_once __DIR__ . '/_osmap_bootstrap.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 osmap_ensure_classes();
@@ -89,7 +88,7 @@ class MixedMigrationTest
 
     private function plugin(): \PlgOsmapJ2commerce
     {
-        $plugin = new \PlgOsmapJ2commerce(new Dispatcher(), ['params' => new Registry([])]);
+        $plugin = new \PlgOsmapJ2commerce(['params' => new Registry([])]);
         $plugin->setDatabase($this->db);
 
         return $plugin;

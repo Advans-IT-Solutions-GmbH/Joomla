@@ -183,9 +183,10 @@ Shared suites (`shared/tests/scripts/`):
 
 | Suite | Where | What it checks |
 |---|---|---|
+| `backend-views` (`shared-backend-views.php`) | every **component's** `test.env`, before `install-messages` | Logs into `/administrator` and really renders every backend view of the component: the entry point without a view, every `View\<Name>\HtmlView` class, every `tmpl/<name>` folder and every name in `BACKEND_VIEWS_EXTRA` (set in `test.env`). Each response must be HTTP 200, without a PHP error or Joomla error page, without an untranslated language key, and must contain at least one string of the extension's own language file. Reflection and `file_exists()` never open a page — this suite exists because a view calling `getDatabase()` without being database-aware answered HTTP 500 while every other suite stayed green. |
 | `install-messages` (`shared-install-messages.php`) | every extension's `test.env`, before `uninstall` | Removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then installs once more over it (update). Fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings/notices/fatal errors or a non-zero exit code. |
 | `shared-update-from-previous.php` | CI job `Update from previous release (J6)` (Privacy, OSMap, AJAX Forms) | Installed previous release with an update site that still uses the former organisation name; the package under test is installed over it. Checks new manifest/installer script and version, exactly one update site with the current organisation name, bundled plugins installed and enabled, no untranslated key or error in the installer output. |
-| `shared-deprecations.php` | CI production-like lane | Lints the package with the container's PHP and reads the PHP error log of all previous suites; any deprecation, warning or error from a file of the extension fails. |
+| `shared-deprecations.php` | CI production-like lane | `--arm` (before the suites) installs `shared-deprecation-tracer.php` as `auto_prepend_file`, enables Joomla's deprecation log and proves with a CLI and HTTP canary that logging works. After the suites it repeats the canary, lints the package with the container's PHP and reads the PHP error log, the tracer log (call stacks, also for @-suppressed deprecations) and Joomla's `deprecated.php`. A deprecation fails when extension code calls the deprecated function directly; calls made inside Joomla's libraries are listed as Joomla's own. |
 
 Notable test details:
 
@@ -208,10 +209,16 @@ Notable test details:
   extension; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
   keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
-  fr-FR without missing accents) followed by `php shared/tests/requirements-check.php <extension dir>`
+  fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
+  every defined key is used by the code, derived from a `langConstPrefix` or listed in
+  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, and no `ß` in
+  text the shipped PHP/JS/XML hard-codes) followed by
+  `php shared/tests/requirements-check.php <extension dir>`
   (`minimumJoomla '5.4'`/`minimumPhp '8.1'` in `script.php`, `preflight()` calls the parent, every
   manifest and `update.xml` `targetplatform`/`php_minimum`, the release workflow `targetplatform`, and
-  that the expression accepts 5.4.x/6.x and rejects 4.x and 5.0 to 5.3); the Joomla 5 and Joomla 6 suite matrices; the
+  that the expression accepts 5.4.x/6.x and rejects 4.x and 5.0 to 5.3) and
+  `php shared/tests/deprecated-api-scan.php <extension dir>` (static scan for deprecated Joomla APIs);
+  the Joomla 5 and Joomla 6 suite matrices; the
   `official-j5-j2c4` / `official-j6-j2c6` gates; and a final job `<Extension> / all jobs` that fails
   unless every job succeeded (`failure`, `cancelled` and `skipped` count as failed).
 - **Privacy, OSMap, AJAX Forms** additionally run:

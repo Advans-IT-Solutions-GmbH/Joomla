@@ -35,8 +35,10 @@
  * for the event. The frontend options (Show Privacy Section, Show Delete
  * Address Buttons, Show Export Data, Show Delete All Data) are checked through
  * PrivacyOptions and the rendered MyProfile override. The server-side check of
- * the checkout requests is covered by 12-consent-logging.php; browser
- * interaction is not covered by the automated tests.
+ * the checkout requests is covered by 12-consent-logging.php. The J2Store 4
+ * client-side click guard's runtime blocking is covered by the executable DOM
+ * test at tests/js/consent-validator.test.js; full browser interaction is not
+ * otherwise exercised by the automated tests.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -83,6 +85,9 @@ class RenderHarnessApp
 {
     /** @var Registry|null Lazily-loaded real Joomla configuration. */
     private $config = null;
+
+    /** @var object|null Lazily-created session double (see getSession()). */
+    private $session = null;
 
     public function getDocument()
     {
@@ -140,6 +145,45 @@ class RenderHarnessApp
     public function getLanguage()
     {
         return Factory::getLanguage();
+    }
+
+    /**
+     * Minimal session double.
+     *
+     * The J2Store 4 checkout override renders HTMLHelper::_('form.token'), which goes
+     * through Session::getFormToken() to Factory::getUser() and
+     * Factory::getApplication()->getSession()->getToken(). Without this method the render
+     * would fatal on the undefined method instead of producing the token input. A fixed
+     * token string is enough: getFormToken() hashes it, so the markup keeps the usual
+     * 32-character name. get('user') answering null makes Factory::getUser() fall back to
+     * a guest user, which is what the render harness represents.
+     */
+    public function getSession()
+    {
+        if ($this->session === null) {
+            $this->session = new class {
+                private array $data = [];
+
+                public function getToken($forceNew = false)
+                {
+                    return 'plg-privacy-j2commerce-render-harness';
+                }
+
+                public function get($key, $default = null)
+                {
+                    return $this->data[$key] ?? $default;
+                }
+
+                public function set($key, $value = null)
+                {
+                    $this->data[$key] = $value;
+
+                    return $value;
+                }
+            };
+        }
+
+        return $this->session;
     }
 }
 
@@ -473,6 +517,140 @@ class ConsentUiRenderTest
         $this->test('Consent checkbox has name="j2commerce_privacy_consent"',
             strpos($checkoutHtml, 'name="j2commerce_privacy_consent"') !== false);
 
+        // ── J2Store 4: the step must post itself, with a CSRF token ──────────
+        // J2Store 4.1.8 checks the form token on shipping_payment_method_validate.
+        // J2Store's checkout script posts the step on a click on #button-payment-method
+        // and collects the step's hidden inputs, so they have to be in this override.
+        if (!$isJ6) {
+            $this->test('Checkout step carries the hidden task input',
+                (bool) preg_match('/<input type="hidden" name="task" value="shipping_payment_method_validate"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden option input',
+                (bool) preg_match('/<input type="hidden" name="option" value="com_j2store"/', $checkoutHtml));
+            $this->test('Checkout step carries the hidden view input',
+                (bool) preg_match('/<input type="hidden" name="view" value="checkout"/', $checkoutHtml));
+            // The button J2Store's script binds to must be type="button": a regression to
+            // type="submit" would break J2Store 4's click-driven step submission.
+            $this->test('Checkout step button is type="button" with id="button-payment-method"',
+                (bool) preg_match('/<button type="button" id="button-payment-method"/', $checkoutHtml),
+                'Continue button must be type="button" id="button-payment-method" for the J2Store 4 path');
+            $this->test('Checkout step button is not a plain submit',
+                strpos($checkoutHtml, 'type="submit"') === false,
+                'A type="submit" button no longer triggers J2Store 4\'s step submission');
+            $this->test('Checkout step carries a Joomla form token',
+                (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $checkoutHtml),
+                'No 32-char token input in the rendered step (J2Store 4.1.8 answers Invalid Token)');
+            // The inputs have to follow the button inside its own wrapper, because that
+            // wrapper is the narrowest scope a checkout script can serialise. Counting
+            // closing tags from the end of the page is useless here, the output of
+            // AfterDisplayShippingPayment follows and brings its own <div>, and counting
+            // <div> depth alone would accept a sibling <section> holding the inputs. The
+            // wrapper element's body is therefore read by matching its own tags, and
+            // after the button nothing but the hidden inputs may stand there. Same rule
+            // as the installer's check for a deployed copy.
+            $wrapperBody = static function (string $html): string {
+                if (!preg_match('/<div[^>]*\bclass="[^"]*\bj2store-checkout-actions\b/', $html, $m, PREG_OFFSET_CAPTURE)) {
+                    return '';
+                }
+
+                $depth = 0;
+
+                for ($i = $m[0][1], $length = strlen($html); $i < $length; $i++) {
+                    if (substr($html, $i, 6) === '</div>') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            return substr($html, $m[0][1], $i - $m[0][1]);
+                        }
+
+                        $i += 5;
+                    } elseif (substr($html, $i, 4) === '<div') {
+                        $depth++;
+                        $i += 3;
+                    }
+                }
+
+                return '';
+            };
+            $wrapper     = $wrapperBody($checkoutHtml);
+            $afterButton = $wrapper === '' ? false : strpos($wrapper, '</button>');
+            $tail        = $afterButton === false ? '' : substr($wrapper, $afterButton + strlen('</button>'));
+            $stripped    = (string) preg_replace('/<input\b[^>]*>/s', ' ', $tail);
+
+            $this->test('Hidden inputs and token follow the button in its own wrapper',
+                $tail !== ''
+                    && (bool) preg_match('/<input type="hidden" name="task" value="shipping_payment_method_validate"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="option" value="com_j2store"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="view" value="checkout"/', $tail)
+                    && (bool) preg_match('/<input type="hidden" name="[0-9a-f]{32}" value="1"/', $tail)
+                    && !str_contains($stripped, '<'),
+                'The step inputs must follow #button-payment-method inside its own wrapper');
+
+            // J2Store 4 has no server-side consent check, so the client guard has to
+            // cover the click on that button in the capture phase, not only a form submit.
+            // These static source assertions pin the guard's structure and blocking
+            // mechanics in the Docker lane; the guard's actual runtime blocking is
+            // executed separately by tests/js/consent-validator.test.js (Node DOM test,
+            // CI job "Consent Validator (JS)").
+            $validatorJs = JPATH_SITE . '/media/plg_privacy_j2commerce/js/consent-validator.js';
+            $validatorSrc = is_file($validatorJs) ? (string) file_get_contents($validatorJs) : '';
+            // Each assertion below reads the body of one specific construct, never the
+            // whole file: the file already contained a consent check, a preventDefault
+            // and a form-submit listener before the click guard existed, so a file-wide
+            // search would pass without the guard.
+            // Brace-aware extraction: a non-greedy regex would stop at the first inner
+            // closing brace and cut the body short, which would make the assertions
+            // below fail although the guard is correct. Indentation is irrelevant here.
+            $bodyAfter = static function (string $source, string $needle): string {
+                $start = strpos($source, $needle);
+
+                if ($start === false) {
+                    return '';
+                }
+
+                $open = strpos($source, '{', $start);
+
+                if ($open === false) {
+                    return '';
+                }
+
+                $depth = 0;
+
+                for ($i = $open, $length = strlen($source); $i < $length; $i++) {
+                    if ($source[$i] === '{') {
+                        $depth++;
+                    } elseif ($source[$i] === '}') {
+                        $depth--;
+
+                        if ($depth === 0) {
+                            return substr($source, $open + 1, $i - $open - 1);
+                        }
+                    }
+                }
+
+                return '';
+            };
+            $clickListener = $bodyAfter($validatorSrc, "addEventListener('click'");
+            $blockFunction = $bodyAfter($validatorSrc, 'function j2commercePrivacyBlocked');
+            $this->test('Consent validator registers the click guard in the capture phase',
+                $clickListener !== '' && (bool) preg_match('/\}\s*,\s*true\s*\)\s*;/', $validatorSrc),
+                $validatorJs . ': the click listener must be registered with useCapture = true');
+            $this->test('Consent validator guards the #button-payment-method click in the capture phase',
+                strpos($clickListener, 'button-payment-method') !== false,
+                $validatorJs . ': no capture-phase click listener for #button-payment-method');
+            // The guard must actually block: only when a required, unticked consent box is
+            // present does it preventDefault and stop the click reaching J2Store's handler.
+            $this->test('Consent guard reads the consent checkbox state before blocking',
+                strpos($blockFunction, "getElementById('j2commerce_privacy_consent')") !== false
+                    && strpos($blockFunction, 'consent.checked') !== false,
+                'j2commercePrivacyBlocked() must only block while the consent box is unticked');
+            $this->test('Consent guard cancels the default action (preventDefault)',
+                strpos($blockFunction, 'e.preventDefault()') !== false,
+                'j2commercePrivacyBlocked() must call preventDefault to stop the step submission');
+            $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
+                strpos($clickListener, 'stopImmediatePropagation') !== false,
+                'The click listener must stop propagation so J2Store\'s own click handler does not run');
+        }
+
         // ── Render myprofile override → assert real Privacy tab markup ───────
         echo "\n-- MyProfile: Privacy tab --\n";
         $view2          = new RenderHarnessView();
@@ -549,7 +727,30 @@ class ConsentUiRenderTest
             $this->test("[$component] address delete button depends on \"Show Delete Address Buttons\"",
                 str_contains($addresses, '$_privacyOptions::showDeleteAddress()')
                 && substr_count($addresses, 'if ($_privacyEnabled)') >= 2);
+
+            // Every key the override prints is translated in the installed language
+            // files, so the button never shows a raw key such as
+            // PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN.
+            preg_match_all("/Text::_\('(PLG_PRIVACY_J2COMMERCE_[A-Z0-9_]+)'\)/", $addresses, $keys);
+            $this->test("[$component] address override prints the delete button label key",
+                in_array('PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN', $keys[1] ?? [], true));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $untranslated = array_values(array_filter(array_unique($keys[1] ?? []), fn ($key) => empty($values[$key])));
+
+                $this->test("[$component] $tag translates every key of the address override",
+                    ($keys[1] ?? []) !== [] && $untranslated === [], implode(', ', $untranslated));
+            }
         }
+
+        $this->test('de-DE delete address button reads "Adresse löschen"', (function () {
+            $ini = JPATH_BASE . '/plugins/privacy/j2commerce/language/de-DE/plg_privacy_j2commerce.ini';
+            $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+
+            return ($values['PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN'] ?? '') === 'Adresse löschen';
+        })());
 
         echo "\n=== Consent-UI Render Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

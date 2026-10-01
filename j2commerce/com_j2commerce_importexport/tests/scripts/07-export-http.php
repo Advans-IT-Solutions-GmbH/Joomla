@@ -178,12 +178,24 @@ class ExportHttpTest
         // The form token is the same session-wide; try the component dashboard
         // first, then fall back to the admin home page (which always injects the
         // csrf.token script option). Emit diagnostics if neither yields a token.
+        //
+        // The fallback used to hide a broken dashboard: a component page that
+        // answered HTTP 500 simply carried no token, the admin home page
+        // supplied one, and the suite went on and passed. The dashboard status
+        // is therefore asserted here, and shared-backend-views.php renders every
+        // backend view of the component in its own suite.
         $urls = [
             $this->baseUrl . '/administrator/index.php?option=com_j2commerce_importexport',
             $this->baseUrl . '/administrator/index.php',
         ];
+        $first = true;
         foreach ($urls as $url) {
-            $r     = $this->request($url, [], true);
+            $r = $this->request($url, [], true);
+            if ($first) {
+                $this->test('Component dashboard returns HTTP 200', $r['code'] === 200,
+                    "got HTTP {$r['code']} from $url");
+                $first = false;
+            }
             $token = $this->extractToken($r['body']);
             if ($token) {
                 return $token;

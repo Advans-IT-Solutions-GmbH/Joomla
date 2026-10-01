@@ -260,7 +260,8 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 return Status::KNOCKOUT;
             }
 
-            return Status::OK;        } catch (\Throwable $e) {
+            return Status::OK;
+        } catch (\Throwable $e) {
             $this->logTask('Fatal error: ' . $e->getMessage(), 'error');
 
             return Status::KNOCKOUT;

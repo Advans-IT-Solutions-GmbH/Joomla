@@ -40,7 +40,7 @@ class ImportModel extends BaseDatabaseModel
     public function importProductFull(array $data, array $options = []): array
     {
         if (trim((string) ($data['title'] ?? '')) === '') {
-            throw new \InvalidArgumentException('Product title is required for import.');
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_TITLE_REQUIRED'));
         }
 
         $db = $this->getDatabase();
@@ -1013,11 +1013,11 @@ class ImportModel extends BaseDatabaseModel
         } elseif ($ext === 'csv') {
             $data = $this->parseCSV($filePath);
         } else {
-            throw new \RuntimeException('Unsupported file format: ' . $ext);
+            throw new \RuntimeException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UNSUPPORTED_FORMAT', $ext));
         }
 
         if (empty($data)) {
-            return ['total' => 0, 'imported' => 0, 'updated' => 0, 'failed' => 0, 'errors' => ['No data found in file']];
+            return ['total' => 0, 'imported' => 0, 'updated' => 0, 'failed' => 0, 'errors' => [Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_NO_DATA')]];
         }
 
         $results = ['total' => count($data), 'imported' => 0, 'updated' => 0, 'failed' => 0, 'errors' => []];
@@ -1030,7 +1030,9 @@ class ImportModel extends BaseDatabaseModel
                 }
             } catch (\Exception $e) {
                 $results['failed']++;
-                $results['errors'][] = 'Row ' . ($index + 1) . ': ' . $e->getMessage();
+                // Shown to the administrator: the row frame is translated, the reason is the
+                // exception message (translated where this model raises it).
+                $results['errors'][] = Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ROW', $index + 1, $e->getMessage());
             }
         }
 

@@ -15,9 +15,12 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageFactoryInterface;
+use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
+use Joomla\CMS\Mail\MailTemplate;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
@@ -29,6 +32,8 @@ use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Event\DispatcherInterface;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Registry\Registry;
+use Joomla\Utilities\ArrayHelper;
 
 class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 {
@@ -63,6 +68,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * causing infinite 303 loops for com_ajax URLs with multiple
      * query parameters. This handler detects our AJAX requests
      * early and responds directly.
+     *
+     * The direct answer mirrors the envelope com_ajax's JsonResponse would
+     * have produced: a top-level success flag with message and messages, and
+     * the plugin's own JSON payload as the single entry of data[]. Answering
+     * in that exact shape keeps this shortcut and the regular com_ajax path
+     * interchangeable for the client, which reads the payload from data[0].
      */
     public function onAfterRoute(): void
     {
@@ -81,32 +92,60 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-cache, no-store, must-revalidate');
-        echo json_encode(['data' => [$result]], JSON_UNESCAPED_UNICODE);
+
+        // Mirror the envelope com_ajax's JsonResponse would have produced, so
+        // this shortcut and the regular com_ajax path answer in the exact same
+        // shape: the dispatch succeeded (success true), and the plugin's own
+        // JSON payload is the single entry of data[]. Without the success key
+        // the shape only worked by accident, because the client reads data[0].
+        echo json_encode(
+            ['success' => true, 'message' => null, 'messages' => null, 'data' => [$result]],
+            JSON_UNESCAPED_UNICODE
+        );
 
         $app->close();
     }
 
     /**
-     * Pass language strings to JavaScript via Joomla script options
+     * Pass language strings to JavaScript via Joomla script options.
+     *
+     * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
+     * off by default, so a production site prints no traces during normal use.
+     * A failed request is still reported with console.error.
+     *
+     * This handler only runs when something imported the ajax plugin group, so
+     * on a normal page the script finds no options here. The "texts" task of
+     * the endpoint carries the same `debug` value for exactly that case.
      */
     public function onBeforeRender(): void
     {
         $doc = $this->getApplication()->getDocument();
         if (method_exists($doc, 'addScriptOptions')) {
-            $doc->addScriptOptions('plg_ajax_joomlaajaxforms', [
-                'ERROR_GENERIC'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
-                'MFA_SELECT_METHOD'      => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_SELECT_METHOD'),
-                'MFA_ENTER_CODE'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_ENTER_CODE'),
-                'MFA_METHOD'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_METHOD'),
-                'MFA_CODE_LABEL'         => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_LABEL'),
-                'MFA_CANCEL'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CANCEL'),
-                'MFA_VERIFY'             => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_VERIFY'),
-                'MFA_CODE_INVALID_LENGTH' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_MFA_CODE_INVALID_LENGTH'),
-                'PROFILE_SAVED'          => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
-            ]);
+            $doc->addScriptOptions(
+                'plg_ajax_joomlaajaxforms',
+                array_merge(['debug' => (bool) $this->params->get('debug', 0)], $this->scriptTexts())
+            );
         }
     }
 
+    /**
+     * Texts the script shows itself, in the language of the current request.
+     *
+     * The script never carries a text of its own. Plugins of the ajax group are
+     * imported by com_ajax, so on a normal page onBeforeRender() runs only when
+     * something imported the plugin; the script then asks the endpoint for these
+     * texts (task "texts") instead of falling back to a fixed language.
+     *
+     * @return  array<string, string>
+     */
+    private function scriptTexts(): array
+    {
+        return [
+            'ERROR_GENERIC' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'),
+            'PROFILE_SAVED' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
+            'CLOSE'         => Text::_('JCLOSE'),
+        ];
+    }
 
 
     /**
@@ -122,9 +161,23 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     public function onAjaxJoomlaajaxforms($event = null): string
     {
-        // Validate CSRF token
-        if (!Session::checkToken('get') && !Session::checkToken('post') && !Session::checkToken()) {
-            $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
+        $input = $this->getApplication()->getInput();
+        $task = $input->getCmd('task', '');
+
+        // "texts" only returns the public texts the script shows (no user data, no
+        // state change), so it is answered without a form token: a page without
+        // any form still needs them.
+        //
+        // The answer carries the "debug" option as well. On a normal page the
+        // ajax plugin group is imported by com_ajax only, so onBeforeRender()
+        // does not run and the script finds no script options: without this the
+        // option could never take effect on a live storefront. The flag says
+        // nothing about the site beyond the state of a developer switch.
+        if ($task === 'texts') {
+            $result = $this->jsonSuccess([
+                'data'  => $this->scriptTexts(),
+                'debug' => (bool) $this->params->get('debug', 0),
+            ]);
 
             if ($event) {
                 $event->addResult($result);
@@ -133,8 +186,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $result;
         }
 
-        $input = $this->getApplication()->getInput();
-        $task = $input->getCmd('task', '');
+        // Validate CSRF token
+        if (!$this->hasValidToken()) {
+            $result = $this->jsonError(Text::_('JINVALID_TOKEN'));
+
+            if ($event) {
+                $event->addResult($result);
+            }
+
+            return $result;
+        }
 
         switch ($task) {
             case 'login':
@@ -227,14 +288,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $session = $this->getApplication()->getSession();
                 $session->set('application.queue', []);
 
-                // Find the profile page URL via a direct DB query.
-                // Direct DB query instead of Menu::getItems() to avoid loading the full menu tree.
-                $profileUrl = Uri::base();
-                $profileItemId = $this->getMyProfileMenuItemId();
-                if ($profileItemId) {
-                    $sefPath = Route::_('index.php?Itemid=' . $profileItemId, false);
-                    $profileUrl = rtrim(Uri::base(), '/') . '/' . ltrim($sefPath, '/');
-                }
+                // Same target as without MFA (see getProfileRedirect()), as an
+                // absolute URL because it is stored as the return URL of the
+                // captive page.
+                $profileUrl = $this->getProfileRedirect(true);
                 $session->set('com_users.return_url', $profileUrl);
 
                 // Pass return URL as query parameter so the captive template
@@ -271,10 +328,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $session->set('com_users.return_url', '');
 
             if (empty($redirect)) {
-                $profileItemId = $this->getMyProfileMenuItemId();
-                $redirect = $profileItemId
-                    ? Route::_('index.php?Itemid=' . $profileItemId, false)
-                    : Route::_('index.php?option=' . ($this->isJ2Commerce4($this->getDatabase()) ? 'com_j2store' : 'com_j2commerce') . '&view=myprofile', false);
+                $redirect = $this->getProfileRedirect();
             }
 
             // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
@@ -556,6 +610,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleRemoveCartItem(): string
     {
+        if (!$this->params->get('enable_j2store_cart', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
         if (!$user || $user->guest) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
@@ -577,7 +635,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             }
 
             if ($this->isJ2Commerce4($db)) {
-                // J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
+                // J2Store / J2Commerce 4.x — tables: #__j2store_carts / #__j2store_cartitems
                 // FK in #__j2store_cartitems to #__j2store_carts is `cart_id` (not j2store_cart_id)
                 // $userId is (int) — safe to inline in subquery; bind() on subquery objects is lost
                 // when the subquery is cast to string and embedded in the outer query's WHERE clause.
@@ -637,6 +695,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleGetCartCount(): string
     {
+        if (!$this->params->get('enable_j2store_cart', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
 
         if (!$user || $user->guest) {
@@ -662,24 +724,68 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Returns true if any supported version of J2Commerce is installed.
+     * Whether the request carries the form token of the current session (POST
+     * field, query parameter or X-CSRF-Token header).
+     *
+     * Session::checkToken() is not used: for a new session it redirects to the
+     * home page instead of returning false, so the script would get an empty
+     * redirect instead of the JSON error it shows to the user.
      */
+    private function hasValidToken(): bool
+    {
+        $input = $this->getApplication()->getInput();
+        $token = Session::getFormToken();
+
+        return hash_equals($token, (string) $input->server->get('HTTP_X_CSRF_TOKEN', '', 'alnum'))
+            || $input->post->get($token, '', 'alnum') !== ''
+            || $input->get->get($token, '', 'alnum') !== '';
+    }
+
     /**
-     * Returns the menu item ID for the J2Store/J2Commerce "myprofile" view,
-     * or null if no such menu item exists.
+     * Profile page to open after a login (with and without MFA):
+     * the "myprofile" menu item of the active shop, otherwise the
+     * "myprofile" view of the active shop, otherwise (no active shop)
+     * the Joomla user profile.
+     *
+     * @param   bool  $absolute  Return an absolute URL instead of a routed path.
+     */
+    private function getProfileRedirect(bool $absolute = false): string
+    {
+        $profileItemId = $this->getMyProfileMenuItemId();
+        $shop          = $this->getActiveShop($this->getDatabase());
+
+        if ($profileItemId) {
+            $url = 'index.php?Itemid=' . $profileItemId;
+        } elseif ($shop !== null) {
+            $url = 'index.php?option=com_' . $shop . '&view=myprofile';
+        } else {
+            // No active shop: the Joomla user profile is the only profile page.
+            $url = 'index.php?option=com_users&view=profile';
+        }
+
+        return Route::_($url, false, Route::TLS_IGNORE, $absolute);
+    }
+
+    /**
+     * Returns the menu item ID for the "myprofile" view of the active shop
+     * (see getActiveShop()), or null if no shop is active or no such menu
+     * item exists.
      *
      * Uses a direct DB query instead of Menu::getItems() to avoid loading
      * the full menu tree. Works on J4/J5/J6.
      */
     private function getMyProfileMenuItemId(): ?int
     {
-        $db = $this->getDatabase();
-        $j4 = $this->isJ2Commerce4($db);
+        $db   = $this->getDatabase();
+        $shop = $this->getActiveShop($db);
 
-        $option = $j4 ? 'com_j2store' : 'com_j2commerce';
-        $link   = 'index.php?option=' . $option . '&view=myprofile';
+        if ($shop === null) {
+            return null;
+        }
 
-        $q = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        $link = 'index.php?option=com_' . $shop . '&view=myprofile';
+
+        $q = $this->createDbQuery($db)
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('link') . ' = :link')
@@ -694,37 +800,91 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         return $id ? (int) $id : null;
     }
 
-    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    /**
+     * Result of getActiveShop() for this request.
+     *
+     * @var  string|null
+     */
+    private ?string $activeShop = null;
+
+    /**
+     * Whether getActiveShop() has already been resolved for this request.
+     *
+     * @var  bool
+     */
+    private bool $activeShopResolved = false;
+
+    /**
+     * Active shop: 'j2commerce' when com_j2commerce is enabled and #__j2commerce_carts
+     * exists, otherwise 'j2store' when com_j2store is enabled and #__j2store_carts exists,
+     * otherwise null.
+     *
+     * Tables alone do not decide: after a migration the #__j2store_* tables remain.
+     * A component alone does not decide either: an enabled component without its
+     * cart table is skipped and the next candidate is checked.
+     * Without an active shop AJAX Forms does not use any shop: the cart and the
+     * profile of a disabled shop are not reachable for the user anyway.
+     */
+    private function getActiveShop(DatabaseInterface $db): ?string
     {
-        static $installed = null;
-        if ($installed === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix    = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $j4 = $db->loadResult() !== null;
-            if (!$j4) {
-                $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2commerce_carts'));
-                $j6 = $db->loadResult() !== null;
-            }
-            $installed = $j4 || (!$j4 && ($j6 ?? false));
+        if ($this->activeShopResolved) {
+            return $this->activeShop;
         }
-        return $installed;
+
+        $this->activeShopResolved = true;
+        $this->activeShop         = null;
+
+        try {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('enabled') . ' = 1')
+                ->whereIn($db->quoteName('element'), ['com_j2commerce', 'com_j2store'], ParameterType::STRING);
+            $enabled = $db->setQuery($query)->loadColumn() ?: [];
+
+            // Priority order: J2Commerce 6 first, then J2Store / J2Commerce 4.
+            foreach (['j2commerce', 'j2store'] as $shop) {
+                if (!in_array('com_' . $shop, $enabled, true)) {
+                    continue;
+                }
+
+                // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
+                // escape(..., true) escapes the LIKE wildcards ('_' and '%') so the
+                // pattern matches the exact table name and not a similarly named table.
+                $like = $db->quote($db->escape($db->getPrefix() . $shop . '_carts', true), false);
+                $db->setQuery('SHOW TABLES LIKE ' . $like);
+
+                if ($db->loadResult() !== null) {
+                    $this->activeShop = $shop;
+                    break;
+                }
+
+                // Enabled but without its cart table: try the next candidate.
+            }
+        } catch (\Throwable $e) {
+            Log::add('Shop detection error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+        }
+
+        return $this->activeShop;
     }
 
     /**
-     * Returns true if J2Commerce 4.x is installed (uses #__j2store_* tables).
-     * Returns false for J2Commerce 6.x (uses #__j2commerce_* tables).
+     * Returns true if a supported shop is active (see getActiveShop()).
+     */
+    private function isJ2CommerceInstalled(DatabaseInterface $db): bool
+    {
+        return $this->getActiveShop($db) !== null;
+    }
+
+    /**
+     * Returns true if J2Store / J2Commerce 4.x is the active shop (#__j2store_* tables),
+     * false for J2Commerce 6.x (#__j2commerce_* tables) or when no shop is active.
+     * Decided by the enabled component, not by the tables (see getActiveShop()).
      */
     private function isJ2Commerce4(DatabaseInterface $db): bool
     {
-        static $result = null;
-        if ($result === null) {
-            // SHOW TABLES LIKE avoids the stale in-memory cache of getTableList().
-            $prefix = $db->getPrefix();
-            $db->setQuery('SHOW TABLES LIKE ' . $db->quote($prefix . 'j2store_carts'));
-            $result = $db->loadResult() !== null;
-        }
-        return $result;
+        return $this->getActiveShop($db) === 'j2store';
     }
 
     /**
@@ -785,6 +945,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function handleSaveProfile(): string
     {
+        if (!$this->params->get('enable_profile', 1)) {
+            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+        }
+
         $user = $this->getApplication()->getIdentity();
         if (!$user || $user->guest) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NOT_LOGGED_IN'));
@@ -841,10 +1005,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             }
 
             if (!$user->save(true)) {
+                // User::getErrors() can carry untranslated database or driver text.
+                // It goes to the log for the administrator, never to the client.
                 $errors = $user->getErrors();
-                $errorMsg = !empty($errors) ? implode(' ', array_map('strval', $errors)) : Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED');
-                Log::add('Profile save failed: ' . $errorMsg, Log::ERROR, 'plg_ajax_joomlaajaxforms');
-                return $this->jsonError($errorMsg);
+                Log::add(
+                    'Profile save failed: ' . ($errors ? implode(' ', array_map('strval', $errors)) : 'no error message'),
+                    Log::ERROR,
+                    'plg_ajax_joomlaajaxforms'
+                );
+
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
             }
 
             return $this->jsonSuccess([
@@ -895,6 +1065,326 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Send one of Joomla's own account mail templates.
+     *
+     * Everything the site configured under System, Mail Templates then applies:
+     * the stored subject and body, the HTML layout with frame and logo, and the
+     * language of the recipient.
+     *
+     * A missing template and a failed send both leave the recipient without a
+     * styled mail, so both return false and let the caller fall back to its
+     * plain-text mail: an unstyled mail is better than no mail. Only a template
+     * that MailTemplate::send() actually delivered returns true.
+     *
+     * @param   string    $templateId      Mail template id, for example com_users.password_reset
+     * @param   string    $languageTag     Language the mail is rendered in
+     * @param   string    $recipientEmail  Address the mail goes to
+     * @param   string    $recipientName   Name of the recipient (may be empty)
+     * @param   array     $data            Replacement data for the template tags
+     * @param   string    $context         Short label for the log entry
+     * @param   string[]  $unsafeTags      Tags whose value is escaped in the HTML body
+     *
+     * @return  bool  True only when the template mail was sent, false when there
+     *                is no such template or the send failed and the caller has
+     *                to fall back
+     */
+    protected function sendTemplateMail(
+        string $templateId,
+        string $languageTag,
+        string $recipientEmail,
+        string $recipientName,
+        array $data,
+        string $context,
+        array $unsafeTags = []
+    ): bool {
+        try {
+            if (MailTemplate::getTemplate($templateId, $languageTag) === null) {
+                Log::add(
+                    $context . ': no mail template ' . $templateId . ', composing the mail in the plugin',
+                    Log::WARNING,
+                    'plg_ajax_joomlaajaxforms'
+                );
+
+                return false;
+            }
+
+            $this->loadMailTemplateStrings($templateId, $languageTag);
+
+            $mailer = new MailTemplate($templateId, $languageTag);
+            $mailer->addTemplateData($data);
+            $mailer->addRecipient($recipientEmail, $recipientName !== '' ? $recipientName : null);
+
+            if ($unsafeTags) {
+                $mailer->addUnsafeTags($unsafeTags);
+            }
+
+            if ($mailer->send() !== true) {
+                Log::add(
+                    $context . ' could not be sent through ' . $templateId,
+                    Log::ERROR,
+                    'plg_ajax_joomlaajaxforms'
+                );
+
+                return false;
+            }
+        } catch (\Throwable $e) {
+            // A \Throwable must never leave this plugin: the caller answers an
+            // AJAX request, and an uncaught error would turn that answer into a
+            // server error instead of JSON.
+            Log::add(
+                $context . ' could not be sent through ' . $templateId . ': ' . $e->getMessage(),
+                Log::ERROR,
+                'plg_ajax_joomlaajaxforms'
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Make the strings of a mail template readable.
+     *
+     * A mail template stores subject and body as language keys of the extension
+     * it belongs to. MailTemplate loads that extension's language files only
+     * when the mail goes out in a language other than the one of the running
+     * request. This plugin answers inside com_ajax, where the strings of
+     * com_users are not loaded, so without this the mail would carry the raw
+     * language keys.
+     *
+     * @param   string  $templateId   Mail template id, the part before the dot names the extension
+     * @param   string  $languageTag  Language the mail is rendered in
+     *
+     * @return  void
+     */
+    protected function loadMailTemplateStrings(string $templateId, string $languageTag): void
+    {
+        try {
+            $language = $this->getApplication()->getLanguage();
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        if ($languageTag !== $language->getTag()) {
+            // MailTemplate builds its own language object and loads the files itself.
+            return;
+        }
+
+        $extension = strstr($templateId, '.', true);
+
+        if ($extension === false || $extension === '') {
+            return;
+        }
+
+        // The same order com_mails uses: the site files carry the mail texts,
+        // the administrator files and the .sys file carry the rest, and a
+        // template of another extension may well keep its strings there.
+        $language->load($extension, JPATH_SITE, $languageTag, true)
+            || $language->load($extension, JPATH_SITE . '/components/' . $extension, $languageTag, true);
+
+        $language->load($extension, JPATH_ADMINISTRATOR, $languageTag, true)
+            || $language->load($extension, JPATH_ADMINISTRATOR . '/components/' . $extension, $languageTag, true);
+
+        if (!$language->hasKey(strtoupper($extension))) {
+            $language->load($extension . '.sys', JPATH_ADMINISTRATOR, $languageTag, true)
+                || $language->load($extension . '.sys', JPATH_ADMINISTRATOR . '/components/' . $extension, $languageTag, true);
+        }
+    }
+
+    /**
+     * Replacement data built from a user record.
+     *
+     * The same set com_users passes, minus the credential fields: a mail
+     * template is editable in the backend, so no secret may be reachable
+     * through a tag. The link the mail needs is built separately, so dropping
+     * the stored token costs nothing. Values that are not scalar are dropped as
+     * well, because a template tag can only carry text.
+     *
+     * Named fields are removed rather than named fields kept, because the
+     * columns of #__users that must never leave the site are a short, closed
+     * list, while a site may well put any other column of its own record into
+     * its own template. An allowed-list would break exactly those templates
+     * without protecting anything more.
+     *
+     * @param   object  $user  User object or record from #__users
+     *
+     * @return  array<string, mixed>
+     */
+    protected function mailTemplateData(object $user): array
+    {
+        $data = ArrayHelper::fromObject($user, false);
+
+        unset($data['password'], $data['password_clear'], $data['otpKey'], $data['otep'], $data['activation']);
+
+        foreach ($data as $key => $value) {
+            if ($value !== null && !is_scalar($value) && !is_array($value)) {
+                unset($data[$key]);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Language tag for a mail to a user.
+     *
+     * The mail has to arrive in the language of the customer, so the language
+     * chosen in the user's own account wins, then the language of the running
+     * request, then the default site language.
+     *
+     * A language the site does not have installed is skipped: a mail template
+     * stores its subject and body as language keys, and without the matching
+     * language pack those keys would be what the recipient reads.
+     *
+     * @param   object  $user  User object or record from #__users
+     *
+     * @return  string
+     */
+    protected function accountMailLanguage(object $user): string
+    {
+        $chosen = '';
+        $params = $user->params ?? null;
+
+        if ($params instanceof Registry) {
+            $chosen = (string) $params->get('language', '');
+        } else {
+            if (is_string($params) && $params !== '') {
+                $params = json_decode($params, true);
+            }
+
+            if (is_object($params)) {
+                $params = (array) $params;
+            }
+
+            if (is_array($params)) {
+                $chosen = (string) ($params['language'] ?? '');
+            }
+        }
+
+        if ($chosen !== '' && $this->isInstalledSiteLanguage($chosen)) {
+            return $chosen;
+        }
+
+        try {
+            $tag = (string) $this->getApplication()->getLanguage()->getTag();
+
+            // The language of the running request is loaded by definition.
+            if (preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
+                return $tag;
+            }
+        } catch (\Throwable $e) {
+            // No application language available.
+        }
+
+        return $this->defaultSiteLanguage();
+    }
+
+    /**
+     * Is this language tag installed for the site?
+     *
+     * Answers false when the list cannot be read, so an unverified tag is never
+     * used for a mail.
+     *
+     * @param   string  $tag  Language tag such as de-CH
+     *
+     * @return  bool
+     */
+    protected function isInstalledSiteLanguage(string $tag): bool
+    {
+        if (!preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
+            return false;
+        }
+
+        try {
+            return \array_key_exists($tag, LanguageHelper::getInstalledLanguages(0));
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * The default language of the site. Always a well-formed tag, so it can end
+     * every language decision.
+     *
+     * @return  string
+     */
+    protected function defaultSiteLanguage(): string
+    {
+        try {
+            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Throwable $e) {
+            $tag = '';
+        }
+
+        return preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag) ? $tag : 'en-GB';
+    }
+
+    /**
+     * A plugin string rendered in a specific language.
+     *
+     * Text::sprintf() always renders in the language of the running request, so
+     * the plain-text fallback of an account mail would leave in that language
+     * even when the recipient's account, and the template mail the fallback
+     * replaces, use another one. Sending several mails in one request (the
+     * registrant and the site owner) would then let the language of the first
+     * reach the second. A separate Language instance keeps every mail in its
+     * own language and never touches the language of the request.
+     *
+     * @param   string  $languageTag  Language the text is rendered in
+     * @param   string  $key          Language key of the plugin string
+     * @param   mixed   ...$args       sprintf arguments for the string
+     *
+     * @return  string
+     */
+    protected function mailText(string $languageTag, string $key, ...$args): string
+    {
+        try {
+            $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($languageTag);
+            $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR, $languageTag, true)
+                || $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms', $languageTag, true);
+
+            $text = $language->_($key);
+        } catch (\Throwable $e) {
+            // Without a usable Language instance the request language is still
+            // better than a raw key.
+            $text = Text::_($key);
+        }
+
+        return $args ? vsprintf($text, $args) : $text;
+    }
+
+    /**
+     * An absolute, routed address for a mail.
+     *
+     * Route::link() gives the address the site itself would show, instead of
+     * the raw component URL. Without a site router, for example in a CLI
+     * context, the unrouted address is still a working link.
+     *
+     * @param   string   $query  Internal Joomla URL, starting with index.php
+     * @param   bool     $xhtml  Escape & as &amp; for the HTML body
+     * @param   int      $tls    Route::TLS_* constant
+     *
+     * @return  string
+     */
+    protected function routedLink(string $query, bool $xhtml, int $tls): string
+    {
+        try {
+            $link = Route::link('site', $query, $xhtml, $tls, true);
+
+            if (is_string($link) && $link !== '') {
+                return $link;
+            }
+        } catch (\Throwable $e) {
+            // No site router available.
+        }
+
+        $link = Uri::root() . $query;
+
+        return $xhtml ? htmlspecialchars($link, ENT_COMPAT, 'UTF-8') : $link;
+    }
+
+    /**
      * Send password reset email
      *
      * @param   object  $user   User object
@@ -904,12 +1394,45 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendResetEmail(object $user, string $token): void
     {
-        try {
-            $siteName = $this->getApplication()->get('sitename');
-            $resetLink = Uri::root() . 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&view=reset&layout=confirm&token=' . $token;
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+        // Joomla's own mail template, with the same id and the same data keys
+        // com_users uses, so the stored template, the HTML layout and the logo
+        // apply to this mail exactly as they do to every other account mail.
+        $data              = $this->mailTemplateData($user);
+        $data['sitename']  = $app->get('sitename');
+        $data['link_text'] = $this->routedLink($query, false, $mode);
+        $data['link_html'] = $this->routedLink($query, true, $mode);
+        $data['token']     = $token;
+
+        $language = $this->accountMailLanguage($user);
+
+        if ($this->sendTemplateMail(
+            'com_users.password_reset',
+            $language,
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Reset email',
+            // Both are chosen by the account holder, so they are escaped before
+            // they go into the HTML body.
+            ['name', 'username']
+        )) {
+            return;
+        }
+
+        // Fallback for a site without that mail template: the former plain-text
+        // mail, in the recipient's language. An unstyled mail is better than no
+        // mail.
+        try {
+            $siteName = $app->get('sitename');
+            $resetLink = Uri::root() . $query;
+
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_RESET_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -922,8 +1445,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Reset email');
+        } catch (\Throwable $e) {
             Log::add('Reset email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -937,12 +1460,37 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendRemindEmail(object $user): void
     {
-        try {
-            $siteName = $this->getApplication()->get('sitename');
-            $loginLink = Uri::root() . 'index.php?option=com_users&view=login';
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&view=login';
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+        // Same reasoning as sendResetEmail().
+        $data              = $this->mailTemplateData($user);
+        $data['sitename']  = $app->get('sitename');
+        $data['link_text'] = $this->routedLink($query, false, $mode);
+        $data['link_html'] = $this->routedLink($query, true, $mode);
+
+        $language = $this->accountMailLanguage($user);
+
+        if ($this->sendTemplateMail(
+            'com_users.reminder',
+            $language,
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Remind email',
+            ['name', 'username']
+        )) {
+            return;
+        }
+
+        try {
+            $siteName = $app->get('sitename');
+            $loginLink = Uri::root() . $query;
+
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_REMIND_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -955,8 +1503,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Remind email');
+        } catch (\Throwable $e) {
             Log::add('Remind email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -971,12 +1519,44 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendActivationEmail($user, $config): void
     {
-        try {
-            $siteName = $this->getApplication()->get('sitename');
-            $activationLink = Uri::root() . 'index.php?option=com_users&task=registration.activate&token=' . $user->activation;
+        $app   = $this->getApplication();
+        $query = 'index.php?option=com_users&task=registration.activate&token=' . $user->activation;
+        $mode  = $app->get('force_ssl', 0) == 2 ? Route::TLS_FORCE : Route::TLS_IGNORE;
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+        // Self-activation and admin activation have their own core template,
+        // the same split com_users makes.
+        $templateId = ((int) $config->get('useractivation') === 2)
+            ? 'com_users.registration.user.admin_activation'
+            : 'com_users.registration.user.self_activation';
+
+        $data              = $this->mailTemplateData($user);
+        $data['fromname']  = $app->get('fromname');
+        $data['mailfrom']  = $app->get('mailfrom');
+        $data['sitename']  = $app->get('sitename');
+        $data['siteurl']   = Uri::root();
+        $data['activate']  = $this->routedLink($query, false, $mode);
+
+        $language = $this->accountMailLanguage($user);
+
+        if ($this->sendTemplateMail(
+            $templateId,
+            $language,
+            (string) $user->email,
+            (string) $user->name,
+            $data,
+            'Activation email',
+            ['username', 'name']
+        )) {
+            return;
+        }
+
+        try {
+            $siteName = $app->get('sitename');
+            $activationLink = Uri::root() . $query;
+
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_ACTIVATION_EMAIL_BODY',
                 $user->name,
                 $siteName,
@@ -989,8 +1569,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Activation email');
+        } catch (\Throwable $e) {
             Log::add('Activation email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1004,12 +1584,50 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function sendAdminNotification($user): void
     {
-        try {
-            $siteName = $this->getApplication()->get('sitename');
-            $adminEmail = $this->getApplication()->get('mailfrom');
+        $app        = $this->getApplication();
+        $adminEmail = trim((string) $app->get('mailfrom'));
 
-            $subject = Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_SUBJECT', $siteName);
-            $body = Text::sprintf(
+        // Without a usable site address there is nobody to notify. Saying so in
+        // the log is better than handing an empty recipient to the mailer and
+        // reading its failure instead.
+        if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+            Log::add(
+                'Admin notification skipped: the site has no valid "mailfrom" address',
+                Log::WARNING,
+                'plg_ajax_joomlaajaxforms'
+            );
+
+            return;
+        }
+
+        $data             = $this->mailTemplateData($user);
+        $data['fromname'] = $app->get('fromname');
+        $data['mailfrom'] = $app->get('mailfrom');
+        $data['sitename'] = $app->get('sitename');
+        $data['siteurl']  = Uri::root();
+
+        // The notice goes to the site's own address, so it is addressed in the
+        // default site language rather than in the language of the registrant.
+        $language = $this->defaultSiteLanguage();
+
+        if ($this->sendTemplateMail(
+            'com_users.registration.admin.new_notification',
+            $language,
+            $adminEmail,
+            '',
+            $data,
+            'Admin notification',
+            ['username', 'name']
+        )) {
+            return;
+        }
+
+        try {
+            $siteName = $app->get('sitename');
+
+            $subject = $this->mailText($language, 'PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_SUBJECT', $siteName);
+            $body = $this->mailText(
+                $language,
                 'PLG_AJAX_JOOMLAAJAXFORMS_ADMIN_ACTIVATION_EMAIL_BODY',
                 $siteName,
                 $user->name,
@@ -1021,10 +1639,38 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Admin notification');
+        } catch (\Throwable $e) {
             Log::add('Admin notification error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
+    }
+
+    /**
+     * Log a plain-text mail that the mailer refused to send.
+     *
+     * Joomla's mailer does not only throw: it returns false when the site has
+     * mail switched off, and PHPMailer returns false for a rejected recipient.
+     * Every plain-text fallback here is the last attempt to reach the recipient,
+     * so a false return must leave a trace. Without it the request answers
+     * success and nobody learns that the account mail, or the merchant's
+     * registration notice, never went out.
+     *
+     * @param   mixed   $sent     Whatever the mailer's Send() returned
+     * @param   string  $context  Short label for the log entry
+     *
+     * @return  void
+     */
+    protected function logFailedMail($sent, string $context): void
+    {
+        if ($sent === true) {
+            return;
+        }
+
+        Log::add(
+            $context . ' was not sent: the mailer did not confirm the send',
+            Log::ERROR,
+            'plg_ajax_joomlaajaxforms'
+        );
     }
 
     /**
