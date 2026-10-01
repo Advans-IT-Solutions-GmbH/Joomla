@@ -1406,6 +1406,8 @@ class ConsentLoggingTest
             'without the shipped wrapper'              => ['<div class="j2store-checkout-actions mt-3">', '<div class="mt-3">'],
             'with an element between button and fields' => ['<input type="hidden" name="task"', '<section><input type="hidden" name="task"'],
             'without the HTMLHelper import'            => ["use Joomla\\CMS\\HTML\\HTMLHelper;", ''],
+            'with the contract only inside a PHP string' => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', '<?php $markup = \'<input type="hidden" name="task" value="shipping_payment_method_validate" />\'; ?>'],
+            'with the token call only as a string'      => ["<?php echo HTMLHelper::_('form.token'); ?>", '<?php $markup = "HTMLHelper::_(\'form.token\')"; ?>'],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {

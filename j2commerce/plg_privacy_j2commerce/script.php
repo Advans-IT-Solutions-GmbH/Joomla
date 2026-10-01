@@ -700,11 +700,35 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $code = '';
 
         foreach (token_get_all($content) as $token) {
-            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+            if (!is_array($token)) {
+                $code .= $token;
                 continue;
             }
 
-            $code .= is_array($token) ? $token[1] : $token;
+            if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            // A string literal is neither emitted markup nor an executed call. Without this, a stale
+            // copy could park the whole contract in an unused $markup = '<input …>' inside the
+            // wrapper: every pattern would match, the PHP cleanup further down would remove the block
+            // again, and the check would return true while the browser receives nothing and no
+            // warning is shown. The same applies to a literal that merely spells out a token call.
+            //
+            // Literals are dropped by what they contain, not wholesale, because the legitimate call
+            // needs its own argument: 'form.token' carries no "<", no "::" and no getFormToken, so it
+            // survives. A literal that does carry one of them is removed.
+            //
+            // A copy that echoes its markup out of such a literal is therefore reported as outdated
+            // although it works. That is the same fail-closed direction the rest of this check takes:
+            // one warning too many costs a glance, one too few costs the checkout.
+            if (in_array($token[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)
+                && preg_match('/<|::|getFormToken/', $token[1]) === 1) {
+                $code .= ' ';
+                continue;
+            }
+
+            $code .= $token[1];
         }
 
         // An <!-- ... --> block is inline HTML for the tokenizer, but the browser never
