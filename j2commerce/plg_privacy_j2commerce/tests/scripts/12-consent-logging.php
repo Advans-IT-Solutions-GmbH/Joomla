@@ -1415,6 +1415,12 @@ class ConsentLoggingTest
             'with the import aliased to another name'  => ["use Joomla\\CMS\\HTML\\HTMLHelper;", "use Joomla\\CMS\\HTML\\HTMLHelper as H;"],
             'with the token call never echoed'         => ["<?php echo HTMLHelper::_('form.token'); ?>", "<?php HTMLHelper::_('form.token'); ?>"],
             'with visible task/option/view inputs'     => ['type="hidden" name=', 'type="text" name='],
+            // The fail-closed disabled attribute is part of the contract: without it a copy can
+            // hold every field and still advance an unticked required consent once the deferred
+            // validator is blocked. Both the missing expression and a hardcoded disabled (which
+            // drops the dependency on the consent settings) have to be refused.
+            'without the fail-closed disabled'         => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ''],
+            'with disabled hardcoded'                  => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ' disabled'],
         ];
 
         foreach ($cases as $label => [$search, $replace]) {

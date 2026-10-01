@@ -809,6 +809,22 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
+        // The button also has to carry the fail-closed disabled attribute, tied to the consent
+        // settings. Without it a marker-bearing copy can hold every field, the right button type
+        // and the right id, pass this check, and still let an unticked required consent advance
+        // the step as soon as the deferred validator is blocked — J2Store 4 has no server-side
+        // consent check to catch that.
+        //
+        // What is required is the dependency, not a spelling: the opening tag has to mention
+        // $_consentRequired and disabled. The attribute is emitted from a PHP block, whose
+        // closing tag carries a ">", so the tag cannot be matched with one [^>]* expression;
+        // the text up to </button> is searched instead.
+        $buttonPart = substr($wrapper, 0, $afterButton);
+
+        if (!str_contains($buttonPart, '$_consentRequired') || !str_contains($buttonPart, 'disabled')) {
+            return false;
+        }
+
         // The fields have to follow the button, as the shipped override renders them and
         // as the documentation describes the hand merge. A copy that puts them before the
         // button is not what a button-scoped serialiser collects.
