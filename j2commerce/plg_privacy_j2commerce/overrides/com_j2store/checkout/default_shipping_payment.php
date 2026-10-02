@@ -27,6 +27,7 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
@@ -118,10 +119,36 @@ if ($_showConsent && $_privacyArticleId) {
     <?php endif; ?>
 
     <?php // ── Continue button ───────────────────────────────────────────── ?>
+    <?php // J2Store's own checkout script (checkout/default.php) submits this step when
+          // #button-payment-method is clicked and collects the step's inputs. A plain
+          // submit button has no form to submit here. ?>
+    <?php // When consent is required the button is rendered disabled and only the
+          // consent validator re-enables it once the box is ticked. If that deferred
+          // script is blocked or fails to load, the button stays disabled and the step
+          // cannot advance — the path fails closed. J2Store 4 has no server-side
+          // consent check, so this is the safe default. This is gated on $_showConsent
+          // too: with the checkbox hidden the validator never loads, so disabling the
+          // button would strand every checkout (J2Commerce treats a hidden checkbox as
+          // no consent requirement). ?>
     <div class="j2store-checkout-actions mt-3">
-        <button type="submit" class="btn btn-primary j2store-checkout-button">
+        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button"<?php echo ($_showConsent && $_consentRequired) ? ' disabled' : ''; ?>>
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
+
+        <?php // The step posts itself through these inputs. They stay in this wrapper,
+              // directly next to #button-payment-method, because that is the narrowest
+              // scope a checkout script can serialise: a script that collects the
+              // button's own container finds them, and one that serialises the whole
+              // enclosing form finds them too. Further out only the second case would
+              // work, and the third-party output of AfterDisplayShippingPayment would
+              // sit between the button and its inputs. J2Store 4.1.8 checks the form
+              // token on shipping_payment_method_validate and answers "Invalid Token"
+              // without it. The token is rendered unconditionally, also while the
+              // consent checkbox is switched off. ?>
+        <input type="hidden" name="task" value="shipping_payment_method_validate" />
+        <input type="hidden" name="option" value="com_j2store" />
+        <input type="hidden" name="view" value="checkout" />
+        <?php echo HTMLHelper::_('form.token'); ?>
     </div>
 
 </div>
