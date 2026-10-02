@@ -847,7 +847,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return false;
         }
 
-        if (!preg_match($required[4], $wrapper)) {
+        if (!preg_match($required[4], $wrapper, $button, PREG_OFFSET_CAPTURE)) {
             return false;
         }
 
@@ -869,17 +869,27 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // re-enables the button only loads while the checkbox is shown and required. A copy that
         // ties disabled to $_consentRequired alone disables the button with show_consent_checkbox=0
         // and consent_required=1, where no validator ever loads, stranding every checkout — so that
-        // shape is reported rather than accepted. The attribute is emitted from a PHP block, whose
-        // closing tag carries a ">", so the tag cannot be matched with one [^>]* expression; the
-        // text up to </button> is searched instead.
-        $buttonPart = substr($wrapper, 0, $afterButton);
+        // shape is reported rather than accepted.
+        //
+        // Only the OPENING tag counts. Searching the text up to </button> would accept a copy that
+        // leaves the button itself enabled and parks the whole expression in the button's label,
+        // where it decides nothing: the browser renders an enabled button, a blocked validator
+        // never re-enables anything, and an unticked required consent advances the step. The tag
+        // cannot be delimited with one [^>]* expression, because the attribute comes out of a PHP
+        // block whose closing tag carries a ">", so openingTag() walks to the ">" that really ends
+        // the tag and steps over PHP blocks and quoted values on the way.
+        $openingTag = $this->openingTag($wrapper, $button[0][1]);
+
+        if ($openingTag === null) {
+            return false;
+        }
 
         // The two flags have to be joined by AND, not merely both be present. With OR, a copy
         // disables the button as soon as consent is required, even when the checkbox is hidden and
         // the validator that would re-enable it never loads. The checkout then strands with no
         // warning, which is the very failure this check exists to prevent.
-        if (preg_match('/\$_showConsent\s*&&\s*\$_consentRequired/', $buttonPart) !== 1
-            || !str_contains($buttonPart, 'disabled')) {
+        if (preg_match('/\$_showConsent\s*&&\s*\$_consentRequired/', $openingTag) !== 1
+            || !str_contains($openingTag, 'disabled')) {
             return false;
         }
 
@@ -1185,6 +1195,50 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         }
 
         return false;
+    }
+
+    /**
+     * Text of the HTML opening tag that starts at $offset, from its "<" to the ">" that really
+     * ends it. A ">" inside a quoted attribute value or inside a PHP block does not end a tag,
+     * so both are stepped over: title="a > b" and the shipped
+     * <?php echo (...) ? ' disabled' : ''; ?> that emits the disabled attribute would otherwise
+     * cut the tag short. Null when the tag, a quote or a PHP block is never closed.
+     */
+    private function openingTag(string $code, int $offset): ?string
+    {
+        for ($i = $offset, $length = strlen($code); $i < $length; $i++) {
+            $char = $code[$i];
+
+            if ($char === '"' || $char === "'") {
+                $end = strpos($code, $char, $i + 1);
+
+                if ($end === false) {
+                    return null;
+                }
+
+                $i = $end;
+                continue;
+            }
+
+            // A PHP block. Its closing tag carries a ">" that belongs to the block, not the
+            // element, and the expression in between may carry one as well ($a > 1).
+            if ($char === '<' && $i > $offset && preg_match('/^<\?(?:php\b|=)?/', substr($code, $i, 6)) === 1) {
+                $end = strpos($code, '?>', $i);
+
+                if ($end === false) {
+                    return null;
+                }
+
+                $i = $end + 1;
+                continue;
+            }
+
+            if ($char === '>') {
+                return substr($code, $offset, $i - $offset + 1);
+            }
+        }
+
+        return null;
     }
 
     /**

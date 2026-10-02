@@ -1420,13 +1420,19 @@ class ConsentLoggingTest
             // validator is blocked. Both the missing expression and a hardcoded disabled (which
             // drops the dependency on the consent settings) have to be refused.
             'without the fail-closed disabled'         => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ''],
-            'with the two consent flags ORed'          => ["($_showConsent && $_consentRequired)", "($_showConsent || $_consentRequired)"],
+            'with the two consent flags ORed'          => ["(\$_showConsent && \$_consentRequired)", "(\$_showConsent || \$_consentRequired)"],
             'with disabled hardcoded'                  => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ' disabled'],
             // The disabled attribute has to depend on BOTH consent settings, the way the shipped
             // override gates it. A copy that ties it to $_consentRequired alone disables the button
             // with show_consent_checkbox=0 and consent_required=1, where the validator never loads,
             // stranding every checkout; that shape has to be refused.
             'with disabled tied to consent_required alone' => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", "<?php echo \$_consentRequired ? ' disabled' : ''; ?>"],
+            // The attribute only decides anything in the OPENING tag. A copy that closes the tag
+            // first and parks the expression in the button's label renders an enabled button, so
+            // an unticked required consent advances the step as soon as the validator is blocked.
+            // Searching the text up to </button> accepted exactly that, so both shapes are listed.
+            'with the disabled expression in the button label' => ["j2store-checkout-button\"<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>>", "j2store-checkout-button\"><?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>"],
+            'with disabled only in the button label'   => ["j2store-checkout-button\"<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>>", "j2store-checkout-button\">\$_showConsent && \$_consentRequired disabled"],
             // Markup parked inside a control structure is not emitted on every render. A copy that
             // wraps a routing field in `if (false) { ... }` submits no task parameter, so the inline
             // HTML inside the dead block has to be blanked and the copy refused.
