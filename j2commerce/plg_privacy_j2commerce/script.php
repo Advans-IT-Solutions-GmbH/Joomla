@@ -874,8 +874,11 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         // text up to </button> is searched instead.
         $buttonPart = substr($wrapper, 0, $afterButton);
 
-        if (!str_contains($buttonPart, '$_showConsent')
-            || !str_contains($buttonPart, '$_consentRequired')
+        // The two flags have to be joined by AND, not merely both be present. With OR, a copy
+        // disables the button as soon as consent is required, even when the checkbox is hidden and
+        // the validator that would re-enable it never loads. The checkout then strands with no
+        // warning, which is the very failure this check exists to prevent.
+        if (preg_match('/\$_showConsent\s*&&\s*\$_consentRequired/', $buttonPart) !== 1
             || !str_contains($buttonPart, 'disabled')) {
             return false;
         }

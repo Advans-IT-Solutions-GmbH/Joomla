@@ -1420,6 +1420,7 @@ class ConsentLoggingTest
             // validator is blocked. Both the missing expression and a hardcoded disabled (which
             // drops the dependency on the consent settings) have to be refused.
             'without the fail-closed disabled'         => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ''],
+            'with the two consent flags ORed'          => ["($_showConsent && $_consentRequired)", "($_showConsent || $_consentRequired)"],
             'with disabled hardcoded'                  => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ' disabled'],
             // The disabled attribute has to depend on BOTH consent settings, the way the shipped
             // override gates it. A copy that ties it to $_consentRequired alone disables the button
