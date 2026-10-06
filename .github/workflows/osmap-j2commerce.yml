@@ -171,6 +171,7 @@ jobs:
         with:
           name: j5-${{ matrix.script }}-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -274,6 +275,7 @@ jobs:
         with:
           name: j6-${{ matrix.script }}-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -351,6 +353,7 @@ jobs:
         with:
           name: j6-sef-sitemap-http-sef-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -429,6 +432,7 @@ jobs:
         with:
           name: production-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -583,7 +587,7 @@ jobs:
         with:
           name: all-test-logs
           path: test-artifacts/
-          retention-days: 30
+          retention-days: 3
       - name: Fail unless every job succeeded
         if: always()
         env:
