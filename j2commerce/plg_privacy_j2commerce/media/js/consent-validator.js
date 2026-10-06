@@ -1,6 +1,10 @@
 /**
  * Consent checkbox validation for J2Commerce checkout.
  * Reads the error message from a data attribute to avoid inline scripts (CSP).
+ *
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 /**
  * Blocks the step while a required consent checkbox is unticked.

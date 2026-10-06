@@ -13,6 +13,7 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 - Nie direkt auf `main`; jede Änderung über Feature-Branch + PR, der vom Maintainer gemergt wird (Squash).
 - Dieses Repo ist **öffentlich**; auf `main` verlangen das Organization-Ruleset und der Branch-Schutz **verifizierte Signaturen**. Das erfüllt der von GitHub signierte Squash-Merge. Feature-Branch-Commits signierst du, wenn ein Key vorhanden ist (Commit-E-Mail passend zum Key); ohne Key dürfen sie unsigniert sein (Details: `AGENTS.md`).
 - Conventional Commits steuern den automatischen Version-Bump (siehe Release).
+- Lizenz: alle Extensions GPL-3.0-or-later; Kopfvorlage und Regeln für Fremdcode in `AGENTS.md` (Abschnitt „Lizenz“).
 
 ## Tiefenwissen (Skills)
 
@@ -109,6 +110,8 @@ docker compose -f docker-compose.joomla6.yml down -v
 - AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
 
 Alle Extensions verlangen Joomla 5.4 oder neuer (5.4.x, 6.x) und PHP 8.1 oder neuer; `shared/tests/requirements-check.php` prüft das im CI-Job „Language Files". Die Test-Images nutzen mitlaufende offizielle Tags (`joomla:5.4-php8.3-apache` = neuestes 5.4.x, `joomla:6-php8.4-apache` = neuestes 6.x), keine gepinnte Joomla-Patch-Version. Jeder Job gibt `Tested versions: Joomla X.Y.Z, PHP A.B.C` aus; ein roter Lauf kann daher von einem neuen Joomla-Release kommen, erst die ausgegebene Version prüfen. Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results" aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results" neu starten.
+
+**Auslöser und Abbruch** (Details: Skill `joomla-extensions`, `references/testing.md`, Abschnitt „CI"). Kein `Build & Test`-Ablauf beobachtet mehr `shared/**` als Ganzes, jeder nennt die Dateien, die die Extension wirklich benutzt; `shared-path-coverage.yml` beobachtet als einziger Ablauf weiterhin `shared/**` und schlägt fehl, wenn eine Datei unter `shared/` von den `pull_request.paths` keines anderen Ablaufs erfasst wird. Der Wächter verlangt einen Treffer, nicht jeden Ablauf, der die Datei benutzt. Eine neue Datei unter `shared/` muss also den Abläufen zugeordnet werden, die sie benutzen. Jeder dieser Abläufe bricht ausserdem einen überholten Lauf desselben Zweigs oder Pull Requests ab, nie auf `main`, nie bei einem manuellen Lauf (`workflow_dispatch` wird absichtlich gestartet und kann eigene Eingaben tragen) und nie bei den Publish- und Release-Abläufen. Die Suite-Matrizen bleiben unverändert: ein Job je Suite und Spur, und ein Pull Request fährt dieselbe volle Matrix wie `main`.
 
 ## Release-Workflow
 
