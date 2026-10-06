@@ -37,16 +37,33 @@ Joomla/
 
 ## Testing
 
-Each extension has automated tests that run via GitHub Actions on pushes and pull requests to `main` that change the extension directory, `shared/**` or the extension's own workflow file. Every workflow can also be started manually.
+Each extension has automated tests that run via GitHub Actions on pushes and pull requests to `main` that change the extension directory, one of the files under `shared/` that the extension uses, or the extension's own workflow file. Every workflow can also be started manually. Every suite keeps its own job on every lane, so a red check names the suite and the lane straight away.
 
 | Workflow | Extension | Trigger paths (push/PR to `main`, plus manual dispatch) |
 |----------|-----------|---------|
-| `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**`, `shared/**`, own workflow file |
-| `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, `shared/**`, own workflow file |
-| `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, `shared/**`, own workflow file |
-| `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**`, `shared/**`, own workflow file |
-| `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, `shared/**`, own workflow file |
-| `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, `shared/**`, own workflow file |
+| `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**`, the shared files below, own workflow file |
+| `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
+| `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, the shared files below, own workflow file |
+| `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**`, the shared files below, own workflow file |
+| `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, the shared files below, own workflow file |
+| `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, the shared files below, own workflow file |
+
+**Shared trigger paths.** No `Build & Test` workflow watches `shared/**` as a whole; each one lists the files it really uses, so a change to a shared file starts only the extensions that consume it. The guard below is the one workflow that still watches `shared/**`, because it has to see every change there.
+
+| File under `shared/` | Starts |
+|---|---|
+| `build/build.sh`, `build/verify-package.sh` | all six (every `build.sh` is a wrapper) |
+| `tests/run-tests.sh` | all six (every `tests/run-tests.sh` is a wrapper) |
+| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | all six (job `Language Files`) |
+| `tests/scripts/shared-test-helpers.php` | all six (loaded by the shared suites) |
+| `tests/scripts/shared-install-messages.php` | all six (in every `test.env`) |
+| `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`) |
+| `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
+| `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
+
+`Shared Path Coverage` (`shared-path-coverage.yml`) fails if a file under `shared/` is matched by the `pull_request.paths` of no other workflow and is not on the documented exception list in `.github/scripts/check-shared-path-coverage.sh`. It requires one match, not every workflow that uses the file: it excludes itself from the search and ignores workflows without a `paths` filter, and it cannot tell whether a lane really reads the file. The table above stays the record of which workflow consumes what. **A new file under `shared/` has to be added to the workflows that use it, otherwise that check fails.**
+
+**Superseded runs are cancelled.** Every `Build & Test` workflow has a `concurrency` group of workflow plus ref with `cancel-in-progress: true`, so a new push to a pull request or branch cancels the previous run of that same ref instead of letting it finish. Runs of different pull requests never cancel each other. On `main` and for a manual run (`workflow_dispatch`) the group key is the unique run id instead, so nothing on the default branch is ever cancelled and no manual run cancels another one: a dispatch is started deliberately, nothing supersedes it, and it may carry its own inputs (the OSMap workflow takes a `j2commerce6_ref`). The publish and release workflows have no concurrency group at all.
 
 Besides the test suites, every workflow lints all PHP files of the extension and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately. The pull request check **Collect Results** (`collect-results.yml`) determines which of the workflows above are triggered by the changed files, waits for them and fails unless all succeeded; a pull request that triggers none of them passes immediately. After re-running a failed workflow, re-run *Collect Results* as well.
 
