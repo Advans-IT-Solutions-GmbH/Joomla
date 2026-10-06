@@ -235,6 +235,11 @@ class ComponentFunctionsTest
      * untranslated and escape a check that simply strips the PHP away. What
      * may legitimately remain is the company name, the copyright line and
      * separators.
+     *
+     * The GPL notice in the copyright line is one of those legitimate remains. It
+     * is a legal notice the licence requires to be kept, not user-visible prose a
+     * further language would translate, and the licence is named the same in every
+     * language. Behind a language key a translation could alter its wording.
      */
     private function testPageHasNoFixedText(): void
     {
@@ -278,11 +283,26 @@ class ComponentFunctionsTest
 
     /**
      * Remove the few fixed strings the page may legitimately show: the company
-     * name, the copyright sign, the year range and separators.
+     * name, the copyright sign, the year range, the GPL notice and separators.
+     *
+     * The copyright line goes first and as ONE exact string, so the separator between
+     * the company name and the licence notice goes with it. The exact wording, not a
+     * pattern: a typo in the notice has to fail the checks, and a second piece of fixed
+     * text that merely looks similar must not slip through.
      */
     private function dropAllowedText(string $text): string
     {
-        $text = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
+        $text = str_replace(
+            [
+                '© 2025-2026 Advans IT Solutions GmbH. Licensed under the GNU General Public License version 3 or later.',
+                'Advans IT Solutions GmbH',
+                '©',
+                '2025-2026',
+                '—',
+            ],
+            ' ',
+            $text
+        );
 
         return trim(preg_replace('/\s+/u', ' ', $text));
     }
