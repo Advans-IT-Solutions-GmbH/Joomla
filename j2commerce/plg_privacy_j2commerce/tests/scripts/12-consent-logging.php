@@ -438,6 +438,7 @@ class ConsentLoggingTest
 
         $this->cleanup();
 
+        $this->runJ2StoreContractTests();
         $this->runUpdatePathTests($extension);
 
         echo "\n=== Consent Logging Test Summary ===\n";
@@ -1455,6 +1456,264 @@ class ConsentLoggingTest
         }
     }
 
+    /**
+     * Every part of the J2Store 4 submission contract on its own.
+     *
+     * `warnOutdatedJ2StoreCheckoutOverrides()` asks a deployed copy for five
+     * separate parts and for their placement. The update path below exercises
+     * only one incomplete shape, so dropping a single one of those rules would
+     * stay green there. Every case here derives from the shipped override by one
+     * targeted change, so the cases cannot drift away from the file they
+     * describe: the shipped content has to be accepted, and each single change
+     * has to be refused. A case whose change did not apply fails instead of
+     * passing silently.
+     *
+     * The check reads a file as text and asks nothing about the installed shop,
+     * so this runs on both lanes.
+     */
+    private function runJ2StoreContractTests(): void
+    {
+        echo "\n-- J2Store 4 submission contract, part by part --\n";
+
+        $script  = JPATH_PLUGINS . '/privacy/j2commerce/script.php';
+        $shipped = JPATH_PLUGINS . '/privacy/j2commerce/overrides/com_j2store/checkout/default_shipping_payment.php';
+
+        if (!is_file($script) || !is_file($shipped)) {
+            $this->test('Installer script and shipped J2Store 4 override available', false, "$script / $shipped");
+
+            return;
+        }
+
+        if (!class_exists('Plgprivacyj2commerceInstallerScript')) {
+            require_once $script;
+        }
+
+        // PHP 8.1 or later is required, so reflection reaches a private method
+        // without setAccessible().
+        try {
+            $method    = new \ReflectionMethod('Plgprivacyj2commerceInstallerScript', 'hasJ2StoreSubmissionContract');
+            $installer = new \Plgprivacyj2commerceInstallerScript();
+        } catch (\Throwable $e) {
+            $this->test('Contract check reachable through reflection', false, $e->getMessage());
+
+            return;
+        }
+
+        $base    = (string) file_get_contents($shipped);
+        $accepts = static function (string $content) use ($method, $installer): bool {
+            return (bool) $method->invoke($installer, $content);
+        };
+
+        $this->test('Shipped J2Store 4 override satisfies the contract', $accepts($base));
+
+        $cases = [
+            'without the form token'                   => ["<?php echo HTMLHelper::_('form.token'); ?>", ''],
+            'without the task field'                   => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', ''],
+            'without the option field'                 => ['<input type="hidden" name="option" value="com_j2store" />', ''],
+            'without the view field'                   => ['<input type="hidden" name="view" value="checkout" />', ''],
+            'with a submit button'                     => ['<button type="button" id="button-payment-method"', '<button type="submit" id="button-payment-method"'],
+            'with another button id'                   => ['id="button-payment-method"', 'id="button-confirm-order"'],
+            'without the shipped wrapper'              => ['<div class="j2store-checkout-actions mt-3">', '<div class="mt-3">'],
+            'with an element between button and fields' => ['<input type="hidden" name="task"', '<section><input type="hidden" name="task"'],
+            'without the HTMLHelper import'            => ["use Joomla\\CMS\\HTML\\HTMLHelper;", ''],
+            'with the contract only inside a PHP string' => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', '<?php $markup = \'<input type="hidden" name="task" value="shipping_payment_method_validate" />\'; ?>'],
+            'with the token call only as a string'      => ["<?php echo HTMLHelper::_('form.token'); ?>", '<?php $markup = "HTMLHelper::_(\'form.token\')"; ?>'],
+            'with a similarly named token helper'       => ["HTMLHelper::_('form.token')", "FooHTMLHelper::_('form.token')"],
+            'with a similarly named legacy helper'      => ["HTMLHelper::_('form.token')", "NotJHtml::_('form.token')"],
+            'with the import only inside a string'     => ["use Joomla\\CMS\\HTML\\HTMLHelper;", '$x = \'use Joomla\\CMS\\HTML\\HTMLHelper;\';'],
+            'with the import only in a comment'        => ["use Joomla\\CMS\\HTML\\HTMLHelper;", '// use Joomla\\CMS\\HTML\\HTMLHelper;'],
+            'with the import aliased to another name'  => ["use Joomla\\CMS\\HTML\\HTMLHelper;", "use Joomla\\CMS\\HTML\\HTMLHelper as H;"],
+            'with the token call never echoed'         => ["<?php echo HTMLHelper::_('form.token'); ?>", "<?php HTMLHelper::_('form.token'); ?>"],
+            'with visible task/option/view inputs'     => ['type="hidden" name=', 'type="text" name='],
+            // The fail-closed disabled attribute is part of the contract: without it a copy can
+            // hold every field and still advance an unticked required consent once the deferred
+            // validator is blocked. Both the missing expression and a hardcoded disabled (which
+            // drops the dependency on the consent settings) have to be refused.
+            'without the fail-closed disabled'         => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ''],
+            'with the two consent flags ORed'          => ["(\$_showConsent && \$_consentRequired)", "(\$_showConsent || \$_consentRequired)"],
+            'with disabled hardcoded'                  => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", ' disabled'],
+            // The disabled attribute has to depend on BOTH consent settings, the way the shipped
+            // override gates it. A copy that ties it to $_consentRequired alone disables the button
+            // with show_consent_checkbox=0 and consent_required=1, where the validator never loads,
+            // stranding every checkout; that shape has to be refused.
+            'with disabled tied to consent_required alone' => ["<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>", "<?php echo \$_consentRequired ? ' disabled' : ''; ?>"],
+            // The attribute only decides anything in the OPENING tag. A copy that closes the tag
+            // first and parks the expression in the button's label renders an enabled button, so
+            // an unticked required consent advances the step as soon as the validator is blocked.
+            // Searching the text up to </button> accepted exactly that, so both shapes are listed.
+            'with the disabled expression in the button label' => ["j2store-checkout-button\"<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>>", "j2store-checkout-button\"><?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>"],
+            'with disabled only in the button label'   => ["j2store-checkout-button\"<?php echo (\$_showConsent && \$_consentRequired) ? ' disabled' : ''; ?>>", "j2store-checkout-button\">\$_showConsent && \$_consentRequired disabled"],
+            // Markup parked inside a control structure is not emitted on every render. A copy that
+            // wraps a routing field in `if (false) { ... }` submits no task parameter, so the inline
+            // HTML inside the dead block has to be blanked and the copy refused.
+            'with the task field inside dead control flow' => ['<input type="hidden" name="task" value="shipping_payment_method_validate" />', '<?php if (false) { ?><input type="hidden" name="task" value="shipping_payment_method_validate" /><?php } ?>'],
+        ];
+
+        foreach ($cases as $label => [$search, $replace]) {
+            $variant = str_replace($search, $replace, $base);
+
+            if ($variant === $base) {
+                $this->test("Case prepared: $label", false, "the shipped override does not contain: $search");
+
+                continue;
+            }
+
+            $this->test("Copy $label is refused", !$accepts($variant), $label);
+        }
+
+        // Counterpart to the import case: without the use but with a fully qualified call,
+        // HTMLHelper resolves and the override is valid. The contract must not warn here, or it
+        // would report the most common correct spelling as an error. The same holds for the legacy
+        // name JHtml, which is globally available.
+        $qualified = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
+            ['', "\\Joomla\\CMS\\HTML\\HTMLHelper::_('form.token')"],
+            $base
+        );
+        $this->test(
+            'Copy without the import but with a fully qualified call is accepted',
+            $qualified !== $base && $accepts($qualified)
+        );
+
+        $legacyName = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "HTMLHelper::_('form.token')"],
+            ['', "JHtml::_('form.token')"],
+            $base
+        );
+        $this->test(
+            'Copy without the import but using JHtml is accepted',
+            $legacyName !== $base && $accepts($legacyName)
+        );
+
+        // The direct-input alternative is valid only when getFormToken() generates the hidden
+        // field's name, the way Joomla's form.token renders. An override that inlines the token
+        // field this way, instead of calling HTMLHelper, is correct and must be accepted.
+        $inlineToken = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="<?php echo Joomla\\CMS\\Session\\Session::getFormToken(); ?>" value="1" />',
+            $base
+        );
+        $this->test(
+            'Copy inlining the token field via getFormToken() in the name is accepted',
+            $inlineToken !== $base && $accepts($inlineToken)
+        );
+
+        // Counterpart: a getFormToken() call parked in another attribute (here data-note) emits no
+        // token field. With the real HTMLHelper call dropped, such a copy carries no token and must
+        // still be reported, or J2Store 4.1.8 answers "Invalid Token".
+        $strayToken = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="decoy" value="1" data-note="<?php echo Joomla\\CMS\\Session\\Session::getFormToken(); ?>" />',
+            $base
+        );
+        $this->test(
+            'Copy with getFormToken() in a non-name attribute is refused',
+            $strayToken !== $base && !$accepts($strayToken)
+        );
+
+        // The direct-input alternative also has to name a class that exists. Before, any
+        // getFormToken() satisfied it, so this copy read as a valid implementation while the
+        // render died on the undefined class and no warning was shown.
+        $unknownHelper = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            '<input type="hidden" name="<?php echo NoSuchClass::getFormToken(); ?>" value="1" />',
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through an undefined class is refused',
+            $unknownHelper !== $base && !$accepts($unknownHelper)
+        );
+
+        // Unqualified Session needs its import, the same rule the HTMLHelper call follows.
+        $sessionNoImport = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "<?php echo HTMLHelper::_('form.token'); ?>"],
+            ['', '<input type="hidden" name="<?php echo Session::getFormToken(); ?>" value="1" />'],
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through Session without the import is refused',
+            $sessionNoImport !== $base && !$accepts($sessionNoImport)
+        );
+
+        // With the import it is correct and must be accepted, otherwise the rule would report a
+        // working copy.
+        $sessionImported = str_replace(
+            ["use Joomla\\CMS\\HTML\\HTMLHelper;", "<?php echo HTMLHelper::_('form.token'); ?>"],
+            ['use Joomla\\CMS\\Session\\Session;', '<input type="hidden" name="<?php echo Session::getFormToken(); ?>" value="1" />'],
+            $base
+        );
+        $this->test(
+            'Copy inlining the token through Session with the import is accepted',
+            $sessionImported !== $base && $accepts($sessionImported)
+        );
+
+        // Standing in the file is not the same as being rendered. Each of these copies carries the
+        // complete, correctly spelled call after the button, but behind control flow that does not
+        // run on a normal render, so the browser submits no token and J2Store 4.1.8 answers
+        // "Invalid Token". Four shapes, because the tracker has to recognise a brace-less body, a
+        // brace block, the alternative syntax and a function body alike.
+        $unreached = [
+            'behind a brace-less if (false)' => "<?php if (false) echo HTMLHelper::_('form.token'); ?>",
+            'inside an if (false) block'     => "<?php if (false) { echo HTMLHelper::_('form.token'); } ?>",
+            'inside an alternative-syntax if' => "<?php if (false): ?><?php echo HTMLHelper::_('form.token'); ?><?php endif; ?>",
+            'inside a function nobody calls' => "<?php function privacyTokenNeverCalled() { echo HTMLHelper::_('form.token'); } ?>",
+        ];
+
+        foreach ($unreached as $label => $replacement) {
+            $variant = str_replace("<?php echo HTMLHelper::_('form.token'); ?>", $replacement, $base);
+
+            $this->test(
+                "Copy with the token call $label is refused",
+                $variant !== $base && !$accepts($variant),
+                $label
+            );
+        }
+
+        // The short open tag emits just as well as echo, so a copy using it is correct and must
+        // not be reported. It is asserted separately because the PHP-block cleanup further down
+        // used to match only the long opening tag, which left the short block in place and failed
+        // the final "nothing else between button and fields" check.
+        $shortTag = str_replace(
+            "<?php echo HTMLHelper::_('form.token'); ?>",
+            "<?= HTMLHelper::_('form.token') ?>",
+            $base
+        );
+        $this->test(
+            'Copy emitting the token through the short open tag is accepted',
+            $shortTag !== $base && $accepts($shortTag)
+        );
+
+        // The same parts, but before the Continue button instead of after it.
+        // Built from offsets rather than a replacement, because only the order
+        // changes and nothing is added or removed.
+        $buttonStart = strpos($base, '<button type="button" id="button-payment-method"');
+        $buttonEnd   = strpos($base, '</button>');
+        $fieldsStart = strpos($base, '<input type="hidden" name="task"');
+        $tokenCall   = "<?php echo HTMLHelper::_('form.token'); ?>";
+        $fieldsEnd   = strpos($base, $tokenCall);
+
+        if ($buttonStart === false || $buttonEnd === false || $fieldsStart === false || $fieldsEnd === false
+            || !($buttonStart < $buttonEnd && $buttonEnd < $fieldsStart && $fieldsStart < $fieldsEnd)) {
+            $this->test('Case prepared: fields before the button', false, 'button and field block not found in the expected order');
+
+            return;
+        }
+
+        $buttonEnd  += strlen('</button>');
+        $fieldsEnd  += strlen($tokenCall);
+        $buttonBlock = substr($base, $buttonStart, $buttonEnd - $buttonStart);
+        $fieldsBlock = substr($base, $fieldsStart, $fieldsEnd - $fieldsStart);
+        $between     = substr($base, $buttonEnd, $fieldsStart - $buttonEnd);
+
+        $swapped = substr($base, 0, $buttonStart)
+            . $fieldsBlock
+            . $between
+            . $buttonBlock
+            . substr($base, $fieldsEnd);
+
+        $this->test('Copy with the fields before the button is refused', !$accepts($swapped));
+    }
+
     private function runUpdatePathTests(?object $extension): void
     {
         echo "\n-- Update path (CLI reinstall of the package) --\n";
@@ -1536,15 +1795,24 @@ class ConsentLoggingTest
         $fixture   = (string) @file_get_contents(__DIR__ . '/fixture-checkout-override-1.5.5.php');
         $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
 
+        // The unchanged 1.5.5 copy is deployed on every lane, not only where
+        // com_j2commerce is installed: on a lane without that component it serves
+        // as the negative case of the mixed-install assertion below.
+        foreach ([$legacy, $retired] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
+        }
+
+        $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
+        file_put_contents($legacy, $fixture);
+        @unlink($retired);
+
         if ($j6) {
-            foreach ([$legacy, $retired, $noEvent, $withEvent] as $file) {
+            foreach ([$noEvent, $withEvent] as $file) {
                 $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
                 @mkdir(dirname($file), 0755, true);
             }
 
-            $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
-            file_put_contents($legacy, $fixture);
-            @unlink($retired);
             file_put_contents($noEvent, "<?php\n// custom step 4 override without the consent event\n");
             file_put_contents($withEvent, "<?php\n// custom step 4 override\necho J2CommerceHelper::plugin()->eventWithHtml('AfterDisplayShippingPayment', [\$this->order]);\n");
         }
@@ -1557,20 +1825,19 @@ class ConsentLoggingTest
         $j2sMarker = 'Template override for plg_privacy_j2commerce';
         $j2sStale  = "$htmlBase/com_j2store/checkout/default_shipping_payment.php";
 
-        if ($j2store) {
-            foreach ([$j2sStale] as $file) {
-                $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
-                @mkdir(dirname($file), 0755, true);
-            }
-
-            // Carries the marker and the button id, but no token and no hidden inputs:
-            // exactly the shape an update leaves behind, so it must be reported.
-            file_put_contents(
-                $j2sStale,
-                "<?php\n// $j2sMarker\n?>\n"
-                . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
-            );
+        // Deployed on every lane for the same reason as the 1.5.5 copy above.
+        foreach ([$j2sStale] as $file) {
+            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
+            @mkdir(dirname($file), 0755, true);
         }
+
+        // Carries the marker and the button id, but no token and no hidden inputs:
+        // exactly the shape an update leaves behind, so it must be reported.
+        file_put_contents(
+            $j2sStale,
+            "<?php\n// $j2sMarker\n?>\n"
+            . '<button type="submit" id="button-payment-method">Continue</button>' . "\n"
+        );
 
         $setEnabled(0);
 
@@ -1582,6 +1849,37 @@ class ConsentLoggingTest
         $has = static function (string $needle) use (&$output): bool {
             return str_contains($output, preg_replace('/\s+/', '', $needle));
         };
+
+        // Mixed install (J2Store 4 and J2Commerce 6 installed at the same time).
+        // No CI lane carries both components, so the property that makes a mixed
+        // install the plain union of the two single cases is asserted from the other
+        // side: each of the two installer checks is reached only through its own
+        // component directory and reads only its own override path. Both deployed
+        // copies exist on every lane, so on this lane the one belonging to the
+        // missing component has to stay unreported although its file is there and
+        // carries the same plugin marker. Without that independence a mixed install
+        // could report the wrong shop's override, or none at all.
+        if (!$j2store) {
+            $this->test(
+                'No J2Store 4 override warning while com_j2store is absent, although the copy is deployed',
+                is_file($j2sStale)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_J2STORE_CHECKOUT_OVERRIDE_OUTDATED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
+
+        if (!$j6) {
+            $this->test(
+                'No J2Commerce 6 checkout override message while com_j2commerce is absent, although the 1.5.5 copy is deployed',
+                is_file($legacy)
+                    && $output !== ''
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED'))
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')),
+                mb_substr($readable, 0, 1500)
+            );
+        }
 
         if ($j2store) {
             // The update leaves a deployed J2Store 4 override in place, so it has to say so.

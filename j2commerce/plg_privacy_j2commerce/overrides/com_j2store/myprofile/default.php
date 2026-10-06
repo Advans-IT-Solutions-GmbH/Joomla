@@ -20,8 +20,12 @@
  * and adapt it to your template's markup.
  *
  * @package     J2Commerce Privacy Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   Copyright (c)2014-17 Ramesh Elamathi / J2Store.org
+ * @copyright   Modifications (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ *              The original J2Store 4 template is licensed under the GNU General
+ *              Public License version 3 or later; see THIRD-PARTY-NOTICES.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 defined('_JEXEC') or die;
 

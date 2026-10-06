@@ -102,9 +102,20 @@ class RenderHarnessApp
     {
         return new RenderHarnessMenu();
     }
+    /**
+     * Return a guest user (id 0) rather than null.
+     *
+     * HTMLHelper::_('form.token') resolves through Session::getFormToken(), which calls
+     * Factory::getUser() and dereferences the returned user's id. Answering with a guest
+     * user object keeps that path deterministic so the render cannot fatal before the
+     * token assertions run; a null identity would risk a "property id of null" error.
+     */
     public function getIdentity()
     {
-        return null;
+        return new class {
+            public $id = 0;
+            public $guest = 1;
+        };
     }
 
     /**
@@ -649,6 +660,51 @@ class ConsentUiRenderTest
             $this->test('Consent guard stops the click reaching J2Store (stopImmediatePropagation)',
                 strpos($clickListener, 'stopImmediatePropagation') !== false,
                 'The click listener must stop propagation so J2Store\'s own click handler does not run');
+
+            // ── Fail-closed Continue button ─────────────────────────────────
+            // type="button" drops the browser's native required-checkbox validation,
+            // so the override renders the button disabled while consent is required
+            // and only the validator re-enables it once the box is ticked. If the
+            // deferred validator asset never loads, the button stays disabled and the
+            // step cannot advance: the path fails closed. J2Store 4 has no server-side
+            // consent check to fall back on.
+            $overrideSrc = is_file($checkoutFile) ? (string) file_get_contents($checkoutFile) : '';
+            $this->test('Continue button is rendered disabled while consent is required',
+                (bool) preg_match('/id="button-payment-method"[^>]*\$_showConsent\s*&&\s*\$_consentRequired[^>]*disabled/', $overrideSrc),
+                'The override must render #button-payment-method disabled only when $_showConsent && $_consentRequired, so the path fails closed without stranding a hidden-checkbox config');
+            $syncBody = $bodyAfter($validatorSrc, 'function j2commercePrivacySyncButton');
+            $this->test('Consent validator toggles the button from the checkbox state',
+                $syncBody !== ''
+                    && strpos($syncBody, "getElementById('button-payment-method')") !== false
+                    && strpos($syncBody, 'button.disabled') !== false
+                    && strpos($syncBody, 'consent.checked') !== false,
+                $validatorJs . ': j2commercePrivacySyncButton() must set #button-payment-method disabled from the consent box');
+            $changeListener = $bodyAfter($validatorSrc, "addEventListener('change'");
+            $this->test('Consent validator re-syncs the button on checkbox change',
+                $changeListener !== '' && strpos($changeListener, 'j2commercePrivacySyncButton') !== false,
+                $validatorJs . ': a change on the consent box must re-sync the Continue button state');
+
+            // ── Hidden checkbox must not strand checkout ─────────────────────
+            // show_consent_checkbox=0 with consent_required=1 is independently allowed
+            // in j2commerce.xml. With the checkbox hidden the validator never loads, so
+            // the Continue button must NOT be rendered disabled — otherwise there is no
+            // consent change that could re-enable it and every J2Store checkout is stuck.
+            $savedPlugin = PluginHelper::getPlugin('privacy', 'j2commerce');
+            $savedParams = $savedPlugin !== null ? (string) $savedPlugin->params : null;
+            $this->seedPrivacyPlugin('{"show_consent_checkbox":0,"consent_required":1}');
+
+            try {
+                $noConsentHtml = $this->renderOverride($checkoutFile, $view);
+            } catch (\Throwable $e) {
+                $noConsentHtml = '';
+            }
+
+            $this->seedPrivacyPlugin($savedParams);
+            $this->test('Continue button stays enabled when the consent checkbox is hidden',
+                $noConsentHtml !== ''
+                    && (bool) preg_match('/<button type="button" id="button-payment-method"[^>]*>/', $noConsentHtml)
+                    && !preg_match('/<button type="button" id="button-payment-method"[^>]*\bdisabled\b/', $noConsentHtml),
+                'With show_consent_checkbox=0 the Continue button must not be disabled, the validator never loads to re-enable it');
         }
 
         // ── Render myprofile override → assert real Privacy tab markup ───────
