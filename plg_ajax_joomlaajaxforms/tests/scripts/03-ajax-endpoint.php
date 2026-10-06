@@ -192,6 +192,15 @@ class AjaxEndpointTest
             $problems[] = 'ERROR_GENERIC is not the text of the language file';
         }
 
+        // Same answer carries the state of the "Debug Output" option. On a normal
+        // page onBeforeRender() does not run, so this is the only way the option
+        // can reach the script. Default is off, and the key must be a boolean so
+        // the script does not switch traces on from a missing value.
+        if (!array_key_exists('debug', $payload) || $payload['debug'] !== false) {
+            $problems[] = 'debug flag missing or not false by default: '
+                . var_export($payload['debug'] ?? null, true);
+        }
+
         if ($problems === []) {
             echo "PASS\n";
 

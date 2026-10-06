@@ -3,9 +3,10 @@
  * J2Commerce Checkout — Shipping & Payment Step
  * Template override for plg_privacy_j2commerce
  *
- * This file is a copy of the J2Commerce default template with one addition:
- * the privacy consent checkbox is rendered before the "Continue" button via
- * PluginHelper, without any HTML patching or regex.
+ * It replaces the J2Commerce 4 (J2Store 4) default template with a layout written
+ * for this plugin (not a copy of that template). It renders the privacy consent
+ * checkbox before the "Continue" button via PluginHelper, without any HTML
+ * patching or regex.
  *
  * WHY THIS OVERRIDE IS NEEDED
  * J2Commerce's eventWithHtml() only imports plugins in the 'j2store' group.
@@ -21,8 +22,9 @@
  * and adapt it to your template's markup.
  *
  * @package     J2Commerce Privacy Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 defined('_JEXEC') or die;
 
@@ -122,8 +124,16 @@ if ($_showConsent && $_privacyArticleId) {
     <?php // J2Store's own checkout script (checkout/default.php) submits this step when
           // #button-payment-method is clicked and collects the step's inputs. A plain
           // submit button has no form to submit here. ?>
+    <?php // When consent is required the button is rendered disabled and only the
+          // consent validator re-enables it once the box is ticked. If that deferred
+          // script is blocked or fails to load, the button stays disabled and the step
+          // cannot advance — the path fails closed. J2Store 4 has no server-side
+          // consent check, so this is the safe default. This is gated on $_showConsent
+          // too: with the checkbox hidden the validator never loads, so disabling the
+          // button would strand every checkout (J2Commerce treats a hidden checkbox as
+          // no consent requirement). ?>
     <div class="j2store-checkout-actions mt-3">
-        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button">
+        <button type="button" id="button-payment-method" class="btn btn-primary j2store-checkout-button"<?php echo ($_showConsent && $_consentRequired) ? ' disabled' : ''; ?>>
             <?php echo Text::_('J2STORE_CHECKOUT_BTN_CONFIRM_ORDER'); ?>
         </button>
 

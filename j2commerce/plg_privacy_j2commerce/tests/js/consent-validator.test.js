@@ -55,6 +55,8 @@ function makeElement(id, extra) {
 
 function makeDom(elements) {
     const captureClickListeners = [];
+    const changeListeners = [];
+    const domReadyListeners = [];
     const byId = {};
     for (const el of elements) {
         byId[el.id] = el;
@@ -65,11 +67,14 @@ function makeDom(elements) {
         addEventListener(type, fn, useCapture) {
             if (type === 'click' && useCapture === true) {
                 captureClickListeners.push(fn);
+            } else if (type === 'change') {
+                changeListeners.push(fn);
+            } else if (type === 'DOMContentLoaded') {
+                domReadyListeners.push(fn);
             }
-            // DOMContentLoaded and other listeners are irrelevant to this test.
         },
     };
-    return { document, captureClickListeners };
+    return { document, captureClickListeners, changeListeners, domReadyListeners };
 }
 
 function makeClickEvent(target) {
@@ -184,6 +189,48 @@ console.log('consent-validator.js — capture-phase click guard');
     vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
     vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
     assert('F: loading the script twice registers the click guard once', dom.captureClickListeners.length === 1);
+}
+
+// Scenario G: fail-closed button state. The override renders #button-payment-method
+// disabled while consent is required; the validator must keep it disabled until the
+// box is ticked and re-disable it when it is unticked again.
+{
+    const consent = makeElement('j2commerce_privacy_consent', { checked: false });
+    const button = makeElement('button-payment-method', { disabled: true });
+    const dom = makeDom([VALIDATOR, consent, button]);
+    const sandbox = { document: dom.document, window: {}, alert() {} };
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
+    dom.domReadyListeners.forEach((fn) => fn());
+    assert('G: button stays disabled while consent is unticked', button.disabled === true);
+
+    consent.checked = true;
+    dom.changeListeners.forEach((fn) => fn({ target: consent }));
+    assert('G: ticking consent enables the button', button.disabled === false);
+
+    consent.checked = false;
+    dom.changeListeners.forEach((fn) => fn({ target: consent }));
+    assert('G: unticking consent disables the button again', button.disabled === true);
+}
+
+// Scenario H: if the validator asset is blocked/fails to load, nothing runs, so the
+// override-rendered disabled button simply stays disabled — the step fails closed.
+{
+    const button = makeElement('button-payment-method', { disabled: true });
+    assert('H: without the validator script the button stays disabled (fail-closed)', button.disabled === true);
+}
+
+// Scenario I: a change on an unrelated element must not enable the button.
+{
+    const consent = makeElement('j2commerce_privacy_consent', { checked: false });
+    const button = makeElement('button-payment-method', { disabled: true });
+    const other = makeElement('some-other-checkbox', { checked: true });
+    const dom = makeDom([VALIDATOR, consent, button, other]);
+    const sandbox = { document: dom.document, window: {}, alert() {} };
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox, { filename: 'consent-validator.js' });
+    dom.changeListeners.forEach((fn) => fn({ target: other }));
+    assert('I: a change on an unrelated element does not enable the button', button.disabled === true);
 }
 
 if (failures > 0) {

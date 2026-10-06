@@ -2,8 +2,9 @@
  * @package     Joomla.Plugin
  * @subpackage  Ajax.JoomlaAjaxForms
  *
- * @copyright   Copyright (C) 2025 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary License
+ * @copyright   (C) 2025-2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 'use strict';
@@ -32,6 +33,13 @@ function getFormsLang(key) {
  * Developer trace, printed only while the plugin option "Debug Output" is on.
  * Without it no trace is printed during normal use. Failed requests are still
  * reported with console.error, so a real problem stays visible.
+ *
+ * The flag comes from the script options the plugin adds, or, when a page
+ * loaded the script without them, from the endpoint answer that loadTexts()
+ * stores. On a normal page the second path is the only one, because plugins of
+ * the ajax group are imported by com_ajax and onBeforeRender() therefore does
+ * not run. Traces before that answer arrives are lost, so the first lines of a
+ * page load stay unprinted even with the option on.
  */
 function formsDebug() {
     var enabled = false;
@@ -39,7 +47,18 @@ function formsDebug() {
     try {
         enabled = !!(Joomla.getOptions('plg_ajax_joomlaajaxforms') || {}).debug;
     } catch (e) {
-        return;
+        enabled = false;
+    }
+
+    if (!enabled) {
+        try {
+            // JoomlaAjaxForms is a const declared below, so reading it before
+            // that line would throw. Only calls after initialisation reach a
+            // value here, every earlier one keeps the trace off.
+            enabled = !!JoomlaAjaxForms.debug;
+        } catch (e) {
+            enabled = false;
+        }
     }
 
     if (enabled && typeof console !== 'undefined' && typeof console.log === 'function') {
@@ -76,6 +95,13 @@ const JoomlaAjaxForms = {
     texts: {},
 
     /**
+     * State of the plugin option "Debug Output" as the endpoint reported it.
+     * Only used when the page carries no script options, which is the normal
+     * case on a live page. formsDebug() reads it.
+     */
+    debug: false,
+
+    /**
      * Fetch the translated texts once when the page loaded the script without
      * them (script options missing). Read-only request without a token.
      */
@@ -101,6 +127,10 @@ const JoomlaAjaxForms = {
 
             if (data && data.success && data.data && typeof data.data === 'object') {
                 JoomlaAjaxForms.texts = data.data;
+            }
+
+            if (data && data.success) {
+                JoomlaAjaxForms.debug = !!data.debug;
             }
         })
         .catch(function(error) {
