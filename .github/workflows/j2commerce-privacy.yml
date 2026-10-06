@@ -6,16 +6,46 @@ on:
     branches: [main]
     paths:
       - 'j2commerce/plg_privacy_j2commerce/**'
-      - 'shared/**'
+      - 'shared/build/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-update-from-previous.php'
+      - 'shared/tests/scripts/shared-deprecations.php'
+      - 'shared/tests/scripts/shared-deprecation-tracer.php'
       - '.github/workflows/j2commerce-privacy.yml'
   pull_request:
     branches: [main]
     paths:
       - 'j2commerce/plg_privacy_j2commerce/**'
-      - 'shared/**'
+      - 'shared/build/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-update-from-previous.php'
+      - 'shared/tests/scripts/shared-deprecations.php'
+      - 'shared/tests/scripts/shared-deprecation-tracer.php'
       - '.github/workflows/j2commerce-privacy.yml'
 
 permissions: {}
+
+# Supersede an outdated run of this workflow instead of letting it finish: a new
+# push to a pull request or branch cancels the previous run of the same ref.
+# `github.ref` is `refs/pull/<n>/merge` on a pull request, so runs of different
+# pull requests never cancel each other. On `main` and for a manual run the group
+# key is the unique run id, so no run on the default branch is ever cancelled and a
+# manual run never cancels another one: a dispatch is started deliberately, nothing
+# supersedes it, and it may carry its own inputs. The publish and release workflows
+# deliberately have no concurrency group at all.
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 env:
   # J2Commerce 6 publishes no release tags. The source is pinned to the commit
@@ -184,6 +214,7 @@ jobs:
         with:
           name: j5-${{ matrix.script }}-logs
           path: j2commerce/plg_privacy_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -294,6 +325,7 @@ jobs:
         with:
           name: j6-${{ matrix.script }}-logs
           path: j2commerce/plg_privacy_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -378,6 +410,7 @@ jobs:
         with:
           name: production-logs
           path: j2commerce/plg_privacy_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -538,7 +571,7 @@ jobs:
         with:
           name: all-test-logs
           path: test-artifacts/
-          retention-days: 30
+          retention-days: 3
       - name: Fail unless every job succeeded
         if: always()
         env:

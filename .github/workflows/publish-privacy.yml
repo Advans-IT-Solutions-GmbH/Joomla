@@ -96,6 +96,9 @@ jobs:
             - Joomla 5.4 or later (5.4.x, 6.x)
             - PHP 8.1 or higher
             - J2Commerce 4.x or higher
+
+            ### License
+            GNU General Public License version 3 or later (GPL-3.0-or-later)
         run: |
           shopt -s nullglob
           FILES=(j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }})

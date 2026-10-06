@@ -1,8 +1,9 @@
 <?php
 /**
  * @package     OSMap J2Commerce Plugin
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH
- * @license     GNU GPL v3
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 defined('_JEXEC') or die;

@@ -4,8 +4,9 @@
  * @package     Joomla.Plugin
  * @subpackage  Ajax.JoomlaAjaxForms
  *
- * @copyright   Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
- * @license     Proprietary License
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 namespace Advans\Plugin\Ajax\JoomlaAjaxForms\Extension;
@@ -110,8 +111,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * Pass language strings to JavaScript via Joomla script options.
      *
      * `debug` gates the developer traces in media/js/joomlaajaxforms.js. It is
-     * off by default, so a production site prints no traces during normal use;
-     * a failed request is still reported with console.error.
+     * off by default, so a production site prints no traces during normal use.
+     * A failed request is still reported with console.error.
+     *
+     * This handler only runs when something imported the ajax plugin group, so
+     * on a normal page the script finds no options here. The "texts" task of
+     * the endpoint carries the same `debug` value for exactly that case.
      */
     public function onBeforeRender(): void
     {
@@ -166,8 +171,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // response shape stays {success:true, data:{...texts}} like every other
         // task; the script reads it as data.data after unwrapping the com_ajax
         // envelope (see media/js/joomlaajaxforms.js unwrapResponse()).
+        //
+        // The answer carries the "debug" option as well. On a normal page the
+        // ajax plugin group is imported by com_ajax only, so onBeforeRender()
+        // does not run and the script finds no script options: without this the
+        // option could never take effect on a live storefront. The flag says
+        // nothing about the site beyond the state of a developer switch.
         if ($task === 'texts') {
-            $result = $this->jsonSuccess(['data' => $this->scriptTexts()]);
+            $result = $this->jsonSuccess([
+                'data'  => $this->scriptTexts(),
+                'debug' => (bool) $this->params->get('debug', 0),
+            ]);
 
             if ($event) {
                 $event->addResult($result);
@@ -1435,8 +1449,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Reset email');
+        } catch (\Throwable $e) {
             Log::add('Reset email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1493,8 +1507,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Remind email');
+        } catch (\Throwable $e) {
             Log::add('Remind email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1559,8 +1573,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Activation email');
+        } catch (\Throwable $e) {
             Log::add('Activation email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
     }
@@ -1629,10 +1643,38 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->Send();
-        } catch (\Exception $e) {
+            $this->logFailedMail($mailer->Send(), 'Admin notification');
+        } catch (\Throwable $e) {
             Log::add('Admin notification error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
         }
+    }
+
+    /**
+     * Log a plain-text mail that the mailer refused to send.
+     *
+     * Joomla's mailer does not only throw: it returns false when the site has
+     * mail switched off, and PHPMailer returns false for a rejected recipient.
+     * Every plain-text fallback here is the last attempt to reach the recipient,
+     * so a false return must leave a trace. Without it the request answers
+     * success and nobody learns that the account mail, or the merchant's
+     * registration notice, never went out.
+     *
+     * @param   mixed   $sent     Whatever the mailer's Send() returned
+     * @param   string  $context  Short label for the log entry
+     *
+     * @return  void
+     */
+    protected function logFailedMail($sent, string $context): void
+    {
+        if ($sent === true) {
+            return;
+        }
+
+        Log::add(
+            $context . ' was not sent: the mailer did not confirm the send',
+            Log::ERROR,
+            'plg_ajax_joomlaajaxforms'
+        );
     }
 
     /**

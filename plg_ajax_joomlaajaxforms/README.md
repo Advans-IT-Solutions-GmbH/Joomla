@@ -72,7 +72,7 @@ removed.
 | Enable Username Reminder | AJAX username reminder | Yes |
 | Enable Profile Editing | AJAX profile save (name, email, password); `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
 | Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
-| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible | No |
+| Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible. The script learns the setting from the script options, or, on a page that carries none, from the `texts` answer of the endpoint; traces from before that answer arrives are not printed | No |
 
 ### J2Commerce Cart Compatibility
 
@@ -212,6 +212,7 @@ the same via `ajaxforms_decode_response()`.
 
 ```
 plg_ajax_joomlaajaxforms/
+├── LICENSE.txt
 ├── joomlaajaxforms.xml
 ├── build.sh
 ├── script.php
@@ -415,6 +416,14 @@ language, so it never changes the language of the running request and the
 language of one recipient never reaches the next when a single request sends
 more than one mail.
 
+A refused send leaves a trace as well. Joomla's mailer does not only throw, it
+also returns `false`, for instance while the site has mail switched off or when
+the recipient is rejected. Every plain-text fallback therefore evaluates that
+return value and writes an error to the log when the send was not confirmed. The
+request still answers success, because the account was created or the token was
+stored, so the log is the only place where a lost account mail or a lost
+registration notice to the merchant becomes visible.
+
 Three details follow from the plugin answering inside `com_ajax`:
 
 - The language files of the extension the template belongs to are loaded before
@@ -460,6 +469,8 @@ Language keys cover all UI labels, error messages, email templates, and JavaScri
 
 The script carries no text of its own. It reads its texts (`ERROR_GENERIC`, `PROFILE_SAVED`, `CLOSE`) from the script options `plg_ajax_joomlaajaxforms`, which the plugin adds while it renders a page. Plugins of the `ajax` group are imported by `com_ajax`, so on a page where nothing imported the plugin those options are missing; the script then fetches the texts once with a POST of `task=texts` to `index.php?option=com_ajax&plugin=joomlaajaxforms&format=json` (read-only, no form token) in the language of the request. Messages from the server are translated by the plugin itself. A site template that loads the script may also add the options itself.
 
+That same `texts` answer carries the state of the `Debug Output` option, because the script options are missing on exactly the pages where the option would otherwise never take effect.
+
 Keys that only site template overrides use (profile and security section of the account view) are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there.
 
 ### Removed keys
@@ -478,4 +489,8 @@ https://advans.ch
 
 ## License
 
-Proprietary software. Copyright (C) 2026 Advans IT Solutions GmbH. All rights reserved.
+Copyright (C) 2026 Advans IT Solutions GmbH
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE.txt](LICENSE.txt) for the full license text.
+
+SPDX-License-Identifier: `GPL-3.0-or-later`

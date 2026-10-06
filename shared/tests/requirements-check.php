@@ -1,6 +1,6 @@
 <?php
 /**
- * Compatibility requirements check for one extension.
+ * Packaging requirements check for one extension.
  *
  * Usage: php shared/tests/requirements-check.php <extension-directory>
  *
@@ -16,6 +16,16 @@
  *   - the release workflow that writes update.xml: the same targetplatform
  *
  * The targetplatform expression is also evaluated against sample versions.
+ *
+ * It also checks that every manifest actually installs its license text.
+ * Joomla copies only the entries of the installed <files> list, so a
+ * LICENSE.txt that merely sits in the ZIP never reaches the installed
+ * extension, although <license> and every source header point at it.
+ * Every manifest must therefore declare LICENSE.txt in the <files> list that
+ * installs it, the declared file must exist next to the manifest (or inside
+ * the folder="…" the list names), and it must be the same unmodified GPL-3.0
+ * text as the repository root LICENSE.txt.
+ *
  * Exits with 1 when any place differs.
  */
 
@@ -108,6 +118,59 @@ if ($checkedTarget === 0) {
     $fail("$dir: no targetplatform found in any manifest or update.xml");
 }
 
+// LICENSE.txt must be installed, not merely packed into the ZIP.
+$rootLicense = "$root/LICENSE.txt";
+$rootHash    = is_file($rootLicense) ? hash_file('sha256', $rootLicense) : '';
+
+if ($rootHash === '') {
+    $fail('LICENSE.txt is missing in the repository root');
+}
+
+$checkedLicense = 0;
+
+foreach ($xmlFiles as $path) {
+    $content = (string) file_get_contents($path);
+
+    if (!str_contains($content, '<extension')) {
+        continue;
+    }
+
+    $checkedLicense++;
+    $base     = dirname($path);
+    $declared = [];
+
+    preg_match_all('#<files\b([^>]*)>(.*?)</files>#s', $content, $blocks, PREG_SET_ORDER);
+
+    foreach ($blocks as $block) {
+        if (!preg_match('#<filename>\s*LICENSE\.txt\s*</filename>#', $block[2])) {
+            continue;
+        }
+
+        $folder     = preg_match('/\bfolder="([^"]*)"/', $block[1], $f) ? trim($f[1], '/') : '';
+        $declared[] = $base . ($folder === '' ? '' : '/' . $folder) . '/LICENSE.txt';
+    }
+
+    if (!$declared) {
+        $fail("$path: <files> does not declare <filename>LICENSE.txt</filename>, so the installed "
+            . 'extension has no license text although <license> refers to it');
+
+        continue;
+    }
+
+    foreach ($declared as $license) {
+        if (!is_file($license)) {
+            $fail("$path declares LICENSE.txt, but $license does not exist");
+        } elseif ($rootHash !== '' && hash_file('sha256', $license) !== $rootHash) {
+            $fail("$license differs from the repository root LICENSE.txt "
+                . '(every extension ships the unmodified GPL-3.0 text)');
+        }
+    }
+}
+
+if ($checkedLicense === 0) {
+    $fail("$dir: no extension manifest found");
+}
+
 // Release workflow writing update.xml for this extension
 // The CI passes the extension path relative to the repository root, e.g.
 // j2commerce/plg_osmap_j2commerce; release workflows use it as EXT_PATH.
@@ -156,5 +219,6 @@ if ($failures) {
 }
 
 echo "Requirements OK: Joomla " . MIN_JOOMLA . "+ (" . TARGET_REGEX . "), PHP " . MIN_PHP . "+ in script.php, "
-    . count($xmlFiles) . " manifest/update file(s) and the release workflow\n";
+    . count($xmlFiles) . " manifest/update file(s) and the release workflow; LICENSE.txt installed by "
+    . $checkedLicense . " manifest(s)\n";
 exit(0);
