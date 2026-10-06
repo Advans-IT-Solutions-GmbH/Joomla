@@ -184,6 +184,7 @@ jobs:
         with:
           name: j5-${{ matrix.script }}-logs
           path: j2commerce/plg_j2commerce_productcompare/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -286,6 +287,7 @@ jobs:
         with:
           name: j6-${{ matrix.script }}-logs
           path: j2commerce/plg_j2commerce_productcompare/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -360,7 +362,7 @@ jobs:
         with:
           name: all-test-logs
           path: test-artifacts/
-          retention-days: 30
+          retention-days: 3
       - name: Fail unless every job succeeded
         if: always()
         env:

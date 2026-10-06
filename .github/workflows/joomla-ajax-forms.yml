@@ -80,7 +80,7 @@ jobs:
         with:
           name: extension-package
           path: plg_ajax_joomlaajaxforms/plg_ajax_joomlaajaxforms_*.zip
-          retention-days: 7
+          retention-days: 3
 
   validate:
     name: Validate Package
@@ -224,7 +224,7 @@ jobs:
         with:
           name: j5-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests/test-results/*.txt
-          retention-days: 7
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -310,7 +310,7 @@ jobs:
         with:
           name: j6-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests/test-results/*.txt
-          retention-days: 7
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -412,7 +412,7 @@ jobs:
         with:
           name: j2c4-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests-j2c4/test-results/
-          retention-days: 7
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -532,7 +532,7 @@ jobs:
         with:
           name: j2c6-${{ matrix.script }}-logs
           path: plg_ajax_joomlaajaxforms/tests-j2c6/test-results/
-          retention-days: 7
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -624,7 +624,7 @@ jobs:
         with:
           name: production-logs
           path: plg_ajax_joomlaajaxforms/tests-j2c6/test-results/
-          retention-days: 7
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |
@@ -758,7 +758,7 @@ jobs:
         with:
           name: all-test-logs
           path: test-artifacts/
-          retention-days: 30
+          retention-days: 3
       - name: Fail unless every job succeeded
         if: always()
         env:
