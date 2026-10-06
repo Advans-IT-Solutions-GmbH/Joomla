@@ -230,7 +230,12 @@ class ComponentFunctionsTest
      * The page prints no text of its own: every visible text comes from a
      * language key, so a further language needs language files only. What is
      * left after removing PHP output, styles and tags may only be the company
-     * name, the copyright line and separators.
+     * name, the copyright line, the GPL notice and separators.
+     *
+     * The GPL notice is exempt on purpose. It is a legal notice the licence requires
+     * to be kept, not user-visible prose that a further language would translate, and
+     * the licence is named the same in every language. Putting it behind a language key
+     * would make a translator able to alter the wording of the notice.
      */
     private function testPageHasNoFixedText(): void
     {
@@ -252,7 +257,21 @@ class ComponentFunctionsTest
         $markup = preg_replace('/<\?php.*?\?>/s', ' ', $body);
         $markup = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $markup);
         $text   = html_entity_decode(strip_tags($markup), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $text   = str_replace(['Advans IT Solutions GmbH', '©', '2025-2026', '—'], ' ', $text);
+        // The copyright line is removed as ONE exact string, first, so the separator
+        // between the company name and the licence notice goes with it. The exact
+        // wording, not a pattern: a typo in the notice has to fail this check, and a
+        // second piece of fixed text that merely looks similar must not slip through.
+        $text   = str_replace(
+            [
+                '© 2025-2026 Advans IT Solutions GmbH. Licensed under the GNU General Public License version 3 or later.',
+                'Advans IT Solutions GmbH',
+                '©',
+                '2025-2026',
+                '—',
+            ],
+            ' ',
+            $text
+        );
         $text   = trim(preg_replace('/\s+/u', ' ', $text));
 
         $this->test('Static page markup contains no fixed text', $text === '', "left over: '" . mb_substr($text, 0, 200) . "'");
