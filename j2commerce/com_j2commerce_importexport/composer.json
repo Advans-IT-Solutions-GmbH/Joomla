@@ -2,7 +2,7 @@
     "name": "advans/com-j2commerce-importexport",
     "description": "Import/Export component for J2Commerce",
     "type": "joomla-component",
-    "license": "GPL-2.0-or-later",
+    "license": "GPL-3.0-or-later",
     "require": {
         "php": "^8.1"
     },

@@ -98,6 +98,9 @@ jobs:
             - PHP 8.1 or higher
             - J2Commerce 4.x or later
             - OSMap Free 5.x or later
+
+            ### License
+            GNU General Public License version 3 or later (GPL-3.0-or-later)
         run: |
           shopt -s nullglob
           FILES=(j2commerce/plg_osmap_j2commerce/${{ steps.package.outputs.file }})
