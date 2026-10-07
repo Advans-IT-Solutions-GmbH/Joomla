@@ -251,15 +251,14 @@ class SecurityTest
             "Got HTTP $code2, body: " . substr($body2, 0, 200)
         );
 
-        // 3. Der Vertrag, ausgeschrieben, damit ihn niemand aus Versehen "verschaerft": in Joomla ist
-        //    der Token der FELDNAME, nicht der Wert. Session::checkToken() fragt
-        //    $input->$method->get($token, '', 'alnum') und verlangt allein einen nicht leeren Wert
-        //    (joomla-cms 5.4-dev, libraries/src/Session/Session.php Zeile 75). Der Feldname ist ein
-        //    HMAC aus Sitzungskennung und Benutzer, das ist das Geheimnis. JFormToken schreibt
-        //    value="1", gueltig ist aber jeder nicht leere Wert, und hasValidToken() spiegelt den
-        //    Kern genau.
+        // 3. The contract, written down so nobody "tightens" it by mistake: in Joomla the token is
+        //    the FIELD NAME, not the value. Session::checkToken() asks
+        //    $input->$method->get($token, '', 'alnum') and only requires a non-empty value
+        //    (joomla-cms 5.4-dev, libraries/src/Session/Session.php line 75). The field name is an
+        //    HMAC of session id and user, and that is the secret. JFormToken renders value="1", but
+        //    any non-empty value is valid, and hasValidToken() mirrors core exactly.
         //
-        //    Gemessen mit einer echten Sitzung, damit der Feldname der richtige ist.
+        //    Measured with a real session so the field name is the right one.
         [$echtCookie, $echtToken] = $this->getSessionAndToken();
         $echtCookies = [];
 
@@ -284,8 +283,8 @@ class SecurityTest
             "Got HTTP $code3, body: " . substr($body3, 0, 200)
         );
 
-        // 4. Dieselbe echte Sitzung, aber der Feldname verdreht: jetzt muss abgewiesen werden. Das
-        //    trennt "irgendein Feld ist da" von "das richtige Feld ist da".
+        // 4. The same real session, but with the field name reversed: now it must be refused. That
+        //    separates "some field is present" from "the right field is present".
         $falscherName = strrev($echtToken) === $echtToken
             ? str_repeat('b', \strlen($echtToken))
             : strrev($echtToken);
