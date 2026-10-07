@@ -853,7 +853,7 @@ $cleanupVersion = getCleanupVersion($db);
             <?php echo Text::sprintf('COM_J2STORE_CLEANUP_FOOTER_DEVELOPED_BY', '<a href="https://advans.ch" target="_blank">Advans IT Solutions GmbH</a>'); ?>
         </p>
         <p style="margin-top: 15px; font-size: 12px; color: #666;">
-            © 2025-2026 Advans IT Solutions GmbH. Licensed under the GNU General Public License version 3 or later.
+            <?php echo Text::sprintf('COM_J2STORE_CLEANUP_FOOTER_COPYRIGHT', '2025-2026', 'Advans IT Solutions GmbH'); ?>
         </p>
     </div>
 </div>
