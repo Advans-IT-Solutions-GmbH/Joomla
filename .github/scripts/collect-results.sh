@@ -45,27 +45,26 @@ fi
 changed_json="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" \
     --jq '.[] | {filename, previous_filename}')"
 
-# Die Auswertung laeuft in einer Befehlssubstitution, nicht in einer Prozesssubstitution:
-# `mapfile -t X < <(... | jq ...)` verbirgt einen Fehler von jq, weil der Rueckgabewert einer
-# Prozesssubstitution nicht zum Aufrufer wandert und `pipefail` ueber diese Grenze nicht wirkt.
-# mapfile endete dann mit 0 und einem leeren Feld, und dieses Skript nimmt ein leeres Feld fuer
-# "kein Erweiterungs-Workflow betroffen" und meldet den Pflicht-Check gruen. Bei der Zuweisung
-# unten bricht `set -e` an genau diesem Fehler ab.
+# The evaluation runs in a COMMAND substitution, not a process substitution:
+# `mapfile -t X < <(... | jq ...)` hides a jq failure, because the exit status of a process
+# substitution never reaches the caller and `pipefail` does not cross that boundary. mapfile would
+# then exit 0 with an empty array, and an empty array means "no extension workflow is affected" to
+# this script, so the required check would report success without evaluating a single workflow. In
+# the assignments below, `set -e` aborts on exactly that failure.
 changed_list="$(printf '%s\n' "$changed_json" | jq -r '.filename' | sort -u)"
 previous_list="$(printf '%s\n' "$changed_json" | jq -r '.previous_filename // empty' | sort -u)"
 
 if [ -z "$changed_list" ]; then
-    # Einen Pull Request ohne eine einzige Datei gibt es nicht. Eine leere Liste heisst also, dass
-    # die Abfrage oder ihre Auswertung gescheitert ist, und darauf darf dieser Pflicht-Check nicht
-    # gruen melden.
+    # A pull request without a single file does not exist. An empty list therefore means the API
+    # request or its evaluation failed, and this required check must not report success on that.
     echo "::error::The pull request reports no changed files at all; the API request or its evaluation failed, so the required extension workflows cannot be determined. Failing closed."
     exit 1
 fi
 
 mapfile -t CHANGED <<<"$changed_list"
 
-# Umbenennungen sind der Normalfall "keine". Ein here-string aus einer leeren Zeichenkette ergaebe
-# ein Feld mit einem leeren Eintrag, deshalb bleibt das Feld dann ausdruecklich leer.
+# Renames are normally absent. A here-string built from an empty string would yield an array with
+# one empty element, so the array is left explicitly empty in that case.
 PREVIOUS=()
 if [ -n "$previous_list" ]; then
     mapfile -t PREVIOUS <<<"$previous_list"
