@@ -288,14 +288,16 @@ WHERE id IN (9001, 9002);
 EOSQL
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
 START TRANSACTION;
+-- Bewusst ohne Einschraenkung auf menutype und parent_id. Die Einfuegung unten setzt die festen
+-- Kennungen 9011 und 9012 und die festen Aliasse. Eine Altzeile mit einer dieser Kennungen unter
+-- einem anderen Eltern oder in einem anderen Menue bliebe bei einer eingeschraenkten Loeschung
+-- stehen, und die Einfuegung scheiterte am Primaerschluessel oder hinterliesse eine zweite Route
+-- auf denselben Alias. Alle hier genannten Werte gehoeren allein zu dieser Testvorrichtung: die
+-- Kennungen liegen im Bereich ab 9000, die Aliasse und Pfade tragen das Praefix test-product.
 DELETE FROM ${DB_PREFIX}menu
-WHERE menutype = 'mainmenu'
-  AND parent_id = 9001
-  AND (
-      id IN (9002, 9003, 9011, 9012)
-      OR alias IN ('test-product-alpha', 'test-product-beta')
-      OR path IN ('shop/test-product-alpha', 'shop/test-product-beta')
-  );
+WHERE id IN (9002, 9003, 9011, 9012)
+   OR alias IN ('test-product-alpha', 'test-product-beta')
+   OR path IN ('shop/test-product-alpha', 'shop/test-product-beta');
 
 INSERT INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,

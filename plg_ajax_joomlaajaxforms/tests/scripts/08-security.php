@@ -240,15 +240,64 @@ class SecurityTest
             "Got HTTP $codeP, body: " . substr($bodyP, 0, 200)
         );
 
-        // 2. POST with a fabricated (wrong) token
+        // 2. POST with a fabricated token FIELD NAME, new session.
         [$code2, $body2] = $this->http('POST', $url, [
             'task'              => 'getCartCount',
-            str_repeat('a', 32) => '1',   // fake 32-char hex token
+            str_repeat('a', 32) => '1',   // fake 32-char hex token name
         ], [], false);
         $this->test(
-            'Fake-token POST is rejected with JSON success=false (no redirect)',
+            'POST with a wrong token field name is rejected with JSON success=false (no redirect)',
             $code2 === 200 && ajaxforms_is_json_rejection($body2),
             "Got HTTP $code2, body: " . substr($body2, 0, 200)
+        );
+
+        // 3. Der Vertrag, ausgeschrieben, damit ihn niemand aus Versehen "verschaerft": in Joomla ist
+        //    der Token der FELDNAME, nicht der Wert. Session::checkToken() fragt
+        //    $input->$method->get($token, '', 'alnum') und verlangt allein einen nicht leeren Wert
+        //    (joomla-cms 5.4-dev, libraries/src/Session/Session.php Zeile 75). Der Feldname ist ein
+        //    HMAC aus Sitzungskennung und Benutzer, das ist das Geheimnis. JFormToken schreibt
+        //    value="1", gueltig ist aber jeder nicht leere Wert, und hasValidToken() spiegelt den
+        //    Kern genau.
+        //
+        //    Gemessen mit einer echten Sitzung, damit der Feldname der richtige ist.
+        [$echtCookie, $echtToken] = $this->getSessionAndToken();
+        $echtCookies = [];
+
+        if ($echtCookie && str_contains($echtCookie, '=')) {
+            [$cName, $cVal] = explode('=', $echtCookie, 2);
+            $echtCookies[$cName] = $cVal;
+        }
+
+        if ($echtToken === '') {
+            echo "  SKIP: no CSRF token found on the front page, token-name cases skipped\n";
+
+            return;
+        }
+
+        [$code3, $body3] = $this->http('POST', $url, [
+            'task'     => 'getCartCount',
+            $echtToken => 'irgendwas',
+        ], $echtCookies, false);
+        $this->test(
+            'POST with the right token name and an arbitrary value is accepted, like Joomla core',
+            $code3 === 200 && !ajaxforms_is_json_rejection($body3),
+            "Got HTTP $code3, body: " . substr($body3, 0, 200)
+        );
+
+        // 4. Dieselbe echte Sitzung, aber der Feldname verdreht: jetzt muss abgewiesen werden. Das
+        //    trennt "irgendein Feld ist da" von "das richtige Feld ist da".
+        $falscherName = strrev($echtToken) === $echtToken
+            ? str_repeat('b', \strlen($echtToken))
+            : strrev($echtToken);
+
+        [$code4, $body4] = $this->http('POST', $url, [
+            'task'        => 'getCartCount',
+            $falscherName => '1',
+        ], $echtCookies, false);
+        $this->test(
+            'POST with an altered token name is refused even in an established session',
+            $code4 === 200 && ajaxforms_is_json_rejection($body4),
+            "Got HTTP $code4, body: " . substr($body4, 0, 200)
         );
     }
 
