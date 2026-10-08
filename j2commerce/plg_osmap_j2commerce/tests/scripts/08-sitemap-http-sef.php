@@ -268,9 +268,9 @@ class SitemapHttpSefTest
      * asserted at the source: `getTree()` is dispatched directly, exactly as OSMap does it, and
      * the nodes it hands to the collector are examined.
      *
-     * Only the PATH is compared. This runs in CLI, where `Uri::root()` resolves the host
-     * differently than in a web request; the language prefix and the menu path, which are what
-     * #176 was about, sit in the path.
+     * Only the PATH is compared, and the part of it that CLI adds is cut off first: outside a web
+     * request `Uri::root()` resolves to the directory of this script. What remains is the language
+     * prefix and the menu path, which is what #176 was about.
      */
     private function assertPluginEmitsThePrefix(): void
     {
@@ -292,6 +292,14 @@ class SitemapHttpSefTest
         $plugin = new $klasse(['params' => new \Joomla\Registry\Registry([])]);
         $plugin->setDatabase($this->db);
 
+        // The parent's language comes from the fixture itself, it is not written in here. Row 9001
+        // carries the wildcard '*', and that is the point: with a wildcard list menu the plugin
+        // falls back to the product article's own language (the articles are de-DE), and only that
+        // path produces the prefix for a product without a menu item of its own. A hard-coded
+        // 'de-DE' here would take the shortcut and a regression in the fallback would stay unseen.
+        $sprache = (string) ($this->menuLanguage(9001) ?? '*');
+        echo "    (parent language from the fixture: {$sprache})\n";
+
         $collector = new SefRecordingCollector();
         $parent    = osmap_make_item([
             'id'         => 9001,
@@ -299,15 +307,25 @@ class SitemapHttpSefTest
             'component'  => $option,
             'path'       => 'shop',
             'browserNav' => 0,
-            'language'   => 'de-DE',
+            'language'   => $sprache,
         ]);
 
         $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
+
+        // In CLI Uri::root() resolves to the directory of this script, so every link carries that
+        // as its path prefix. It is cut off, otherwise the comparison would be about the path of
+        // the test file instead of the path of the product.
+        $cliBasis = rtrim((string) (parse_url(\Joomla\CMS\Uri\Uri::root(), PHP_URL_PATH) ?? ''), '/');
 
         $pfade = [];
         foreach ($collector->nodes as $node) {
             $link = (string) ($node->link ?? '');
             $pfad = (string) (parse_url($link, PHP_URL_PATH) ?? '');
+
+            if ($cliBasis !== '' && str_starts_with($pfad, $cliBasis)) {
+                $pfad = substr($pfad, strlen($cliBasis));
+            }
+
             $pfade[] = $pfad;
             echo "    - {$pfad}\n";
         }
@@ -337,6 +355,23 @@ class SitemapHttpSefTest
 
             return $pfade !== [];
         });
+    }
+
+    /**
+     * The language of a menu row, as the fixture wrote it. Null when the row is absent.
+     */
+    private function menuLanguage(int $id): ?string
+    {
+        $query = method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
+        $query->select($this->db->quoteName('language'))
+            ->from($this->db->quoteName('#__menu'))
+            ->where($this->db->quoteName('id') . ' = ' . (int) $id);
+
+        $sprache = $this->db->setQuery($query)->loadResult();
+
+        return $sprache === null ? null : (string) $sprache;
     }
 
     /**
