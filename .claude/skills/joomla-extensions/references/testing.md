@@ -129,7 +129,8 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 |---|---|
 | Privacy | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_privacy_j2commerce_j6_test ./run-tests.sh all` |
 | OSMap | `CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all` |
-| OSMap SEF (`docker-compose.joomla6-sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef` |
+| OSMap SEF (J5, `docker-compose.sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef` |
+| OSMap SEF (J6, `docker-compose.joomla6-sef.yml`) | `CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef` |
 | Import/Export | `CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all` |
 | Product Compare | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all` |
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
@@ -137,7 +138,12 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | AJAX Forms `tests-j2c4/`, `tests-j2c6/` | `./run-tests.sh all` (own `test.env` with the right container) |
 
 `all` runs every entry of `TEST_SCRIPTS`. For OSMap this includes `sitemap-http-sef`, which CI runs
-only against the SEF stack; run suites by name to mirror the CI matrix.
+only against the SEF stacks; run suites by name to mirror the CI matrix. Without `J2COMMERCE_SEF=1`
+that suite skips, and with `TEST_STRICT_SKIP=1` it fails instead of skipping, so do not combine
+`TEST_STRICT_SKIP=1` with `all` on a non-SEF OSMap stack. The reverse holds as well: with
+`J2COMMERCE_SEF=1` the standard-stack suites `plugin-class` and `osmap-loader` skip, because the
+SEF fixture gives every product URL a `/de/` prefix their exact URL assertions do not expect. On a
+SEF stack, `all` with `TEST_STRICT_SKIP=1` therefore fails too, run `sitemap-http-sef` by name.
 
 Production-like lane for Privacy and OSMap (`tests/docker-compose.production.yml`, needs
 `tests/j2commerce6.zip` from the pin `7edb6e11…`), commands from the workflow:

@@ -61,9 +61,10 @@ Advans-IT-Solutions-GmbH/Joomla
   the dispatcher (`PluginHelper` sets it when booting the plugin).
 - **Releases:** only the latest release per extension exists; the publish workflow deletes older
   releases and tags on purpose. Details: `references/release-workflow.md`.
-- **OSMap mixed installation** (J2Store and J2Commerce both enabled): the sitemap has no shop
-  entries; this documented limitation stays (issue #182) and is covered by the migration order in
-  the OSMap README.
+- **OSMap mixed installation** (J2Store and J2Commerce both enabled): `com_j2store` takes
+  precedence — its menu items are still served, only `com_j2commerce` menu items are skipped
+  (issue #182). A shop whose live menu items already point to `com_j2commerce` is missing those
+  URLs until J2Store is disabled; the migration order in the OSMap README avoids it.
 - **Workflow, public-repository and review-cadence rules** are defined once in `AGENTS.md` (the
   single source of truth) — this skill stays focused on extension-specific decisions.
 

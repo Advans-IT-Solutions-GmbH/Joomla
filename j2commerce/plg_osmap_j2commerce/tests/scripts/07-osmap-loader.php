@@ -24,6 +24,23 @@
  */
 
 define('_JEXEC', 1);
+
+// This suite asserts the dispatch on the standard stacks, with exact product URLs that carry no
+// language prefix. The dedicated SEF stacks (J2COMMERCE_SEF=1) mark the fixture articles with a
+// language, so every product URL there starts with /de/, and 08-sitemap-http-sef.php is the suite
+// for those stacks. CI runs only 08 on the SEF containers. `./run-tests.sh all` on such a container
+// would otherwise fail here on the prefix alone, before any dispatch behaviour is judged. This is
+// the mirror image of the guard in 08, with the same TEST_STRICT_SKIP rule.
+if (getenv('J2COMMERCE_SEF') === '1') {
+    if (getenv('TEST_STRICT_SKIP') === '1') {
+        fwrite(STDERR, "FAILED: this suite runs on the standard stacks, but J2COMMERCE_SEF=1 is set (TEST_STRICT_SKIP=1)\n");
+        exit(1);
+    }
+
+    fwrite(STDOUT, "skipped: standard-stack suite, J2COMMERCE_SEF=1 is set\n");
+    exit(0);
+}
+
 define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
@@ -204,6 +221,66 @@ class OsmapLoaderTest
         return null;
     }
 
+    /**
+     * Empty OSMap's two plugin caches.
+     *
+     * General keeps the extension rows in `static $dbPlugins` and the per-component matches in
+     * `static $optionPlugins` (OSMap 5.1.6, both protected). Once a component has been asked
+     * about, every further question is answered from there. A test that changes the enabled flag
+     * in the database and then asks again would therefore be told what it was told before the
+     * change, so both caches are emptied around every change.
+     *
+     * Returns false when the real OSMap library is loaded but a cache could not be reached, so a
+     * renamed property in a later OSMap version shows up as a failing assertion instead of
+     * quietly turning the disabled-plugin case into a test of OSMap's cache. The replication
+     * path has no cache and therefore nothing to empty.
+     */
+    private function clearOsmapPluginCaches(): bool
+    {
+        if (!class_exists('\\Alledia\\OSMap\\Helper\\General')) {
+            return true;
+        }
+
+        $geleert = 0;
+
+        foreach (['dbPlugins', 'optionPlugins'] as $name) {
+            try {
+                $eigenschaft = new \ReflectionProperty('\\Alledia\\OSMap\\Helper\\General', $name);
+                $eigenschaft->setAccessible(true);
+                $eigenschaft->setValue(null, []);
+                $geleert++;
+            } catch (\Throwable $e) {
+                echo "  (OSMap cache {$name} not reachable: {$e->getMessage()})\n";
+            }
+        }
+
+        return $geleert === 2;
+    }
+
+    private function pluginEnabled(): int
+    {
+        return (int) $this->db->setQuery(
+            $this->qb()
+                ->select($this->db->quoteName('enabled'))
+                ->from($this->db->quoteName('#__extensions'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->loadResult();
+    }
+
+    private function setPluginEnabled(int $enabled): void
+    {
+        $this->db->setQuery(
+            $this->qb()
+                ->update($this->db->quoteName('#__extensions'))
+                ->set($this->db->quoteName('enabled') . ' = ' . $enabled)
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('osmap'))
+                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+        )->execute();
+    }
+
     public function run(): bool
     {
         echo "=== Real OSMap Loader Tests ===\n";
@@ -238,6 +315,39 @@ class OsmapLoaderTest
         $this->test("OSMap loader does NOT match plugin for {$this->otherOption} (single-element)", function () use ($otherPlugins) {
             return $this->findOurPlugin($otherPlugins) === null;
         });
+
+        $initialEnabled = $this->pluginEnabled();
+
+        // The matches above are now cached inside OSMap, so the caches have to go before the
+        // loader is asked about a state this test has just written. If they cannot be reached,
+        // this case would silently test the cache instead of the database, which is why that is
+        // an assertion of its own rather than a quiet fallback.
+        $this->test('OSMap plugin caches are reachable for the state change', function () {
+            return $this->clearOsmapPluginCaches();
+        });
+
+        $this->test('Disabled plugin is not matched by the OSMap loader', function () {
+            $this->setPluginEnabled(0);
+            $this->clearOsmapPluginCaches();
+
+            try {
+                return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) === null;
+            } finally {
+                $this->setPluginEnabled(1);
+                $this->clearOsmapPluginCaches();
+            }
+        });
+
+        // Counter-proof in the other direction, and the real check on the cache clearing: if the
+        // caches still held the "disabled" answer, or if the row had not been restored, the
+        // plugin would not be matched here either, and a passing disabled-case would mean
+        // nothing.
+        $this->test('Enabled again, the loader matches the plugin once more', function () {
+            return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) !== null;
+        });
+
+        $this->setPluginEnabled($initialEnabled);
+        $this->clearOsmapPluginCaches();
 
         if ($ourPlugin === null) {
             echo "\nFATAL: plugin not matched by loader — cannot continue dispatch tests\n";
@@ -372,6 +482,25 @@ class OsmapLoaderTest
             $this->test("getTree({$catView},id=2) emits each product once", function () use ($catCollector) {
                 $links = array_map(static fn($n) => $n->link, $catCollector->nodes);
                 return count($links) === count(array_unique($links));
+            });
+
+            // Discriminator: the two assertions above still pass if the loader
+            // ignores the category id (every fixture product lives in category 2).
+            // Dispatch the same view at a non-existent category — its nested-set
+            // subtree is empty, so an honoured filter emits nothing while an
+            // ignored id would still return alpha/beta.
+            $noMatchParent = osmap_make_item([
+                'id'         => 9001,
+                'link'       => 'index.php?option=' . $this->option . '&view=' . $catView . '&' . $param . '=90000002',
+                'component'  => $this->option,
+                'path'       => 'shop',
+                'browserNav' => 0,
+            ]);
+            $noMatchCollector = $this->newCollector();
+            $this->dispatchGetTree($ourPlugin, $noMatchCollector, $noMatchParent, new Registry([]));
+
+            $this->test("getTree({$catView},id=<no-match>) honours the category id (emits nothing)", function () use ($noMatchCollector) {
+                return $noMatchCollector->nodes === [];
             });
         }
 
