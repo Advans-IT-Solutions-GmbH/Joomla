@@ -103,6 +103,7 @@ class ComponentFunctionsTest
         $this->testScanForIssues();
         $this->testClassifyExtension();
         $this->testPageHasNoFixedText();
+        $this->testLocalizationGuardCatchesHardcodedText();
         $this->testTextsFollowTheLanguage();
 
         echo "\n=== Component Functions Test Summary ===\n";
@@ -282,6 +283,51 @@ class ComponentFunctionsTest
     }
 
     /**
+     * A guard that cannot fail is worth nothing, so the scanner itself is checked here, with
+     * the constructs it has to see through and the ones it has to leave alone. Every case is a
+     * line someone could plausibly write in this view.
+     *
+     * The first three are the reason this self-test exists: a visible literal does not have to
+     * stand at parenthesis depth 0. Passed through htmlspecialchars(), through sprintf(), or
+     * merely wrapped in parentheses, it reaches the browser just the same, and a scanner that
+     * exempts everything inside parentheses would report none of them.
+     */
+    private function testLocalizationGuardCatchesHardcodedText(): void
+    {
+        echo "\n--- Language guard self-test ---\n";
+
+        $visible = [
+            'through htmlspecialchars'   => "<?php echo htmlspecialchars('Hardcoded Label'); ?>",
+            'through sprintf'            => "<?php echo sprintf('Total: %d items', \$n); ?>",
+            'merely in parentheses'      => "<?php echo ('Hardcoded label'); ?>",
+            'a single mixed-case word'   => "<?php echo htmlspecialchars('Warning'); ?>",
+            'inserted into a translation' => "<?php echo Text::sprintf('COM_X', htmlspecialchars('Visible Thing')); ?>",
+        ];
+
+        foreach ($visible as $label => $snippet) {
+            $found = $this->findEchoedFixedText($snippet);
+            $this->test('Guard reports a hardcoded text ' . $label, $found !== [],
+                'reported: ' . implode(', ', $found));
+        }
+
+        $allowed = [
+            'a language key'             => "<?php echo Text::_('COM_X_Y'); ?>",
+            'a key chosen in place'      => "<?php echo Text::_(\$c ? 'COM_A' : 'COM_B'); ?>",
+            'a fully qualified Text::_'  => "<?php echo \\Joomla\\CMS\\Language\\Text::_('COM_X_Y'); ?>",
+            'the allowed company name'   => "<?php echo Text::sprintf('COM_X', '<a href=\"https://advans.ch\">Advans IT Solutions GmbH</a>'); ?>",
+            'a layout name'             => "<?php echo HTMLHelper::_('form.token'); ?>",
+            'an encoding argument'      => "<?php echo htmlspecialchars(\$x, ENT_QUOTES, 'UTF-8'); ?>",
+            'CSS classes in a condition' => "<?php echo \$c ? 'badge-danger' : 'badge-warning'; ?>",
+        ];
+
+        foreach ($allowed as $label => $snippet) {
+            $found = $this->findEchoedFixedText($snippet);
+            $this->test('Guard stays silent about ' . $label, $found === [],
+                'reported: ' . implode(', ', $found));
+        }
+    }
+
+    /**
      * Remove the few fixed strings the page may legitimately show: the company
      * name, the copyright sign, the year range, the GPL notice and separators.
      *
@@ -311,12 +357,24 @@ class ComponentFunctionsTest
      * Find visible text emitted as a hardcoded string literal from PHP output.
      *
      * Tokenises the markup and collects the string literals that an `echo`,
-     * `print` or `<?= ?>` writes out directly (parenthesis depth 0 — literals
-     * passed to Text::…, htmlspecialchars() etc. sit inside parentheses and
-     * are therefore ignored, being either localised or non-visible arguments).
-     * A literal is reported when, after stripping any HTML, real words remain
-     * that are not an allowed fixed string and not a lowercase CSS class or
-     * identifier token.
+     * `print` or `<?= ?>` writes out, whichever call they pass through. Only one
+     * position is exempt: the FIRST argument of a localisation call
+     * (`Text::_`, `Text::sprintf`, `Text::plural`, `Text::script`), which is the
+     * language key itself and therefore produces translated output.
+     *
+     * Parenthesis depth alone is not the criterion, and must not be: `echo
+     * htmlspecialchars('Hardcoded Label')` puts a visible literal at depth 1, and
+     * `echo ('Hardcoded label');` does the same, so exempting everything inside
+     * parentheses would let untranslated text pass this very check. The scanner
+     * therefore keeps a stack of the open calls and asks which call the literal
+     * belongs to, not how deeply it is nested. Further arguments of a localisation
+     * call are checked as well, because they are inserted into the translated text
+     * and are visible (the footer link survives because its text is an allowed
+     * fixed string, not because it is unchecked).
+     *
+     * A literal is reported when, after stripping any HTML, real words remain that
+     * are not an allowed fixed string and not an identifier token
+     * (see looksLikeIdentifier()).
      *
      * @return string[]  The offending literal contents.
      */
@@ -326,7 +384,14 @@ class ComponentFunctionsTest
         $found  = [];
 
         $inEcho = false;
-        $depth  = 0;
+
+        // Stapel der offenen Klammern. Je Eintrag der Name des Aufrufs, der sie geoeffnet hat,
+        // und die Zahl der Kommas auf dieser Ebene, also die Nummer des Arguments.
+        $calls = [];
+
+        // Die letzten drei bedeutungstragenden Token-Texte. Aus ihnen entsteht der Name des
+        // Aufrufs, sobald die Klammer kommt: 'Text', '::', '_' ergibt Text::_.
+        $recent = [];
 
         foreach ($tokens as $token) {
             if (is_array($token)) {
@@ -334,7 +399,8 @@ class ComponentFunctionsTest
 
                 if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
                     $inEcho = true;
-                    $depth  = 0;
+                    $calls  = [];
+                    $recent = [];
                     continue;
                 }
 
@@ -347,19 +413,23 @@ class ComponentFunctionsTest
                     continue;
                 }
 
-                if ($id === T_CONSTANT_ENCAPSED_STRING && $depth === 0) {
+                if ($id === T_CONSTANT_ENCAPSED_STRING && !$this->isLanguageKeyArgument($calls)) {
                     $value   = $this->literalValue($text);
                     $visible = $this->dropAllowedText(
                         html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8')
                     );
 
-                    // Ignore empties, pure CSS-class / identifier tokens (lower
-                    // case, digits, hyphens) and anything without a real word.
+                    // Ignore empties, identifier tokens and anything without a real word.
                     if ($visible !== ''
                         && preg_match('/\p{L}/u', $visible)
-                        && !preg_match('/^[a-z0-9\-\s]+$/', $visible)) {
+                        && !$this->looksLikeIdentifier($visible)) {
                         $found[$value] = $value;
                     }
+                }
+
+                if ($id !== T_WHITESPACE && $id !== T_COMMENT && $id !== T_DOC_COMMENT) {
+                    $recent   = array_slice($recent, -2);
+                    $recent[] = $text;
                 }
 
                 continue;
@@ -369,17 +439,70 @@ class ComponentFunctionsTest
                 continue;
             }
 
-            // Single-character tokens: track parentheses and the statement end.
+            // Single-character tokens: track the open calls, the argument number and the
+            // statement end.
             if ($token === '(') {
-                $depth++;
-            } elseif ($token === ')') {
-                $depth--;
-            } elseif ($token === ';' && $depth === 0) {
+                $calls[]  = ['name' => implode('', $recent), 'commas' => 0];
+                $recent   = [];
+
+                continue;
+            }
+
+            if ($token === ')') {
+                array_pop($calls);
+            } elseif ($token === ',' && $calls !== []) {
+                $calls[count($calls) - 1]['commas']++;
+            } elseif ($token === ';' && $calls === []) {
                 $inEcho = false;
             }
+
+            $recent   = array_slice($recent, -2);
+            $recent[] = $token;
         }
 
         return array_values($found);
+    }
+
+    /**
+     * Does the literal currently being read sit in the one exempt position, the language key
+     * of the innermost call?
+     *
+     * Only the innermost call decides. A literal in `Text::sprintf('KEY', htmlspecialchars('x'))`
+     * belongs to htmlspecialchars, not to the translation, and `Text::_($c ? 'A' : 'B')` has
+     * both keys in the first argument of Text::_ and is therefore exempt.
+     *
+     * @param  array<int, array{name: string, commas: int}>  $calls  The open calls, outermost first.
+     */
+    private function isLanguageKeyArgument(array $calls): bool
+    {
+        if ($calls === []) {
+            return false;
+        }
+
+        $innermost = $calls[count($calls) - 1];
+
+        return $innermost['commas'] === 0
+            && (bool) preg_match('/(?:^|\\\\)J?Text::(?:_|sprintf|plural|script)$/', $innermost['name']);
+    }
+
+    /**
+     * Is this text a machine identifier rather than something a reader would read?
+     *
+     * Identifiers are CSS classes, layout names, language keys, encodings and the like. They
+     * are single tokens without spaces that either carry a separator (`badge-danger`,
+     * `form.token`, `COM_J2STORE_CLEANUP_X`, `UTF-8`) or are written in one case throughout
+     * (`j2store`, `type`). Visible prose differs in exactly those two respects, so
+     * `Hardcoded Label` and the single word `Warning` are both reported.
+     */
+    private function looksLikeIdentifier(string $value): bool
+    {
+        if (preg_match('/\s/u', $value) || !preg_match('/^[A-Za-z0-9_.\-]+$/', $value)) {
+            return false;
+        }
+
+        return (bool) preg_match('/[._\-]/', $value)
+            || $value === strtolower($value)
+            || $value === strtoupper($value);
     }
 
     /**
