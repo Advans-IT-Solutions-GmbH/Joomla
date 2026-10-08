@@ -335,6 +335,12 @@ class ComponentFunctionsTest
             'in a variable inserted into a string' => "<?php \$name = 'Hardcoded'; echo \"<b>{\$name}</b>\"; ?>",
             'in a variable used as a Text key' => "<?php \$key = 'Hardcoded Label'; echo Text::_(\$key); ?>",
             'behind a tag built from two pieces' => "<?php echo '<span class=\"a\"' . ' data-x=\"1\">Hardcoded Label</span>'; ?>",
+            'in an alt built from pieces' => "<?php echo '<img src=\"x.png\" alt=\"' . 'Hardcoded Label' . '\">'; ?>",
+            'in an aria-label built from pieces' => "<?php echo '<button aria-label=\"' . 'Close' . ' dialog\"></button>'; ?>",
+            'returned by a function'     => "<?php function label(): string { return 'Hardcoded Label'; } echo label(); ?>",
+            'returned through a local variable' => "<?php function label() { \$t = 'Hardcoded Label'; return \$t; } echo htmlspecialchars(label()); ?>",
+            'returned by a function another one calls' => "<?php function inner() { return 'Hardcoded Label'; } function outer() { return inner(); } echo outer(); ?>",
+            'assigned from a function'   => "<?php function label() { return 'Hardcoded Label'; } \$x = label(); echo \$x; ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -378,6 +384,9 @@ class ComponentFunctionsTest
             'a variable that is never output' => "<?php \$mode = 'Hardcoded Label'; echo Text::_('COM_X'); ?>",
             'the rest of a tag built from pieces' => "<?php \$box = '<input type=\"checkbox\" aria-label=\"' . Text::_('COM_X') . '\"' . ' onclick=\"this.checked = true\">'; echo \$box; ?>",
             'a variable of a helper function' => "<?php function helper() { \$label = 'Hardcoded Label'; return \$label; } echo \$label ?? Text::_('COM_X'); ?>",
+            'a function that returns a translation' => "<?php function label() { return Text::_('COM_X'); } echo label(); ?>",
+            'a function that calls itself' => "<?php function f(\$n) { return \$n ? f(\$n - 1) : Text::_('COM_X'); } echo f(2); ?>",
+            'a function whose text is never returned' => "<?php function f() { \$unused = 'Hardcoded Label'; return Text::_('COM_X'); } echo f(); ?>",
         ];
 
         // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
@@ -559,7 +568,9 @@ class ComponentFunctionsTest
      * element (`$labels['x'] = …`), through further variables (`$b = $a`) and as the value of a
      * `foreach` loop. The assignments are read from the whole file, because the view echoes
      * variables its PHP header fills in. Where a variable is merely an index (`$issue[$field]`) or
-     * one side of a comparison, it is not output, the same rule as for a literal.
+     * one side of a comparison, it is not output, the same rule as for a literal. A call of a
+     * function the file declares (`echo label();`) stands for what that function returns, read
+     * from its `return` expressions with its own variables.
      *
      * @param  string       $markup  The part of the file that is sent to the browser.
      * @param  string|null  $source  The whole file, for the assignments. Defaults to $markup.
@@ -569,7 +580,9 @@ class ComponentFunctionsTest
     private function findEchoedFixedText(string $markup, ?string $source = null): array
     {
         $tokens  = $this->meaningfulTokens($markup);
-        $sources = $this->assignedText($this->meaningfulTokens($source ?? $markup));
+        $all     = $this->meaningfulTokens($source ?? $markup);
+        $sources = $this->assignedText($all);
+        $returns = $this->returnedText($all);
         $found   = [];
 
         for ($i = 0, $n = count($tokens); $i < $n; $i++) {
@@ -591,7 +604,7 @@ class ComponentFunctionsTest
                 $found[$text] = $text;
             }
 
-            foreach ($this->textOfVariables($output['variables'], $sources) as $text) {
+            foreach ($this->resolveText($output['variables'], $output['functions'], $sources, $returns) as $text) {
                 $found[$text] = $text;
             }
 
@@ -611,7 +624,7 @@ class ComponentFunctionsTest
      *
      * @param  array<int, array{id: int|null, text: string}>  $tokens
      *
-     * @return array{text: string[], variables: string[], end: int}
+     * @return array{text: string[], variables: string[], functions: string[], end: int}
      */
     private function scanExpression(array $tokens, int $from, bool $assignedValue): array
     {
@@ -628,11 +641,15 @@ class ComponentFunctionsTest
         // implode(', ', ['Fester Text']). Nur die innerste Klammer entscheidet.
         $brackets = [];
 
-        // Wo das vorige feste Stueck aufgehoert hat: ausserhalb eines Tags (null), in einem Tag
-        // ('') oder in einem Attributwert des Tags (das offene Anfuehrungszeichen). Ein Tag kann
-        // ueber mehrere Stuecke verkettet sein, '<input aria-label="' . $x . '" onclick="…">',
-        // und das zweite Stueck ist dann kein Fliesstext, sondern der Rest des Tags.
-        $tagState = null;
+        // Aufgerufene Funktionen. Was eine Funktion der Datei zurueckgibt, wird ausgegeben wie ein
+        // Literal an dieser Stelle.
+        $functions = [];
+
+        // Der Tag, den die vorigen festen Stuecke offen gelassen haben, von seinem '<' an, sonst
+        // leer. Ein Tag kann ueber mehrere Stuecke verkettet sein, '<img alt="' . 'Text' . '">',
+        // und jedes weitere Stueck ist dann kein Fliesstext, sondern die Fortsetzung des Tags. Der
+        // Anfang wird mitgefuehrt, damit der Name des Attributs erhalten bleibt.
+        $openTag = '';
 
         for ($i = $from, $n = count($tokens); $i < $n; $i++) {
             $id   = $tokens[$i]['id'];
@@ -670,8 +687,9 @@ class ComponentFunctionsTest
                     && ($tokens[$i + 1]['id'] ?? null) !== T_DOUBLE_ARROW) {
                     // Setzt das Stueck einen Tag fort, bekommt es dessen Anfang vorangestellt, damit
                     // strip_tags() und die Attributpruefung es als Teil des Tags lesen.
-                    $html     = ($tagState === null ? '' : '<x' . ($tagState === '' ? ' ' : ' a=' . $tagState)) . $value;
-                    $tagState = $this->tagStateAtEnd($html);
+                    $html    = $openTag . $value;
+                    $start   = $this->openTagStart($html);
+                    $openTag = $start === null ? '' : substr($html, $start);
 
                     $visible = $this->dropAllowedText(
                         html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')
@@ -695,6 +713,15 @@ class ComponentFunctionsTest
                 continue;
             }
 
+            // Ein Aufruf einer Funktion, keiner Methode: label(), nicht $x->label() oder X::label().
+            if (($id === T_STRING || $id === T_NAME_FULLY_QUALIFIED)
+                && ($tokens[$i + 1]['text'] ?? '') === '('
+                && !in_array($tokens[$i - 1]['id'] ?? null, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR,
+                    T_DOUBLE_COLON, T_FUNCTION, T_NEW], true)) {
+                $name             = strtolower(ltrim($text, '\\'));
+                $functions[$name] = $name;
+            }
+
             // Track the open calls, the argument number and the field keys.
             if ($text === '(') {
                 $calls[] = ['name' => $this->calleeName($tokens, $i), 'commas' => 0];
@@ -709,37 +736,43 @@ class ComponentFunctionsTest
             }
         }
 
-        return ['text' => array_values($found), 'variables' => array_values($variables), 'end' => $i];
+        return [
+            'text'      => array_values($found),
+            'variables' => array_values($variables),
+            'functions' => array_values($functions),
+            'end'       => $i,
+        ];
     }
 
     /**
-     * Where the given HTML ends: outside a tag (null), inside a tag (''), or inside a quoted
-     * attribute value of a tag (the open quote). A `>` inside a quoted value does not close the
-     * tag, `onclick="… cb => …"` stays one tag.
+     * The position of the `<` of a tag the given HTML leaves open at its end, or null when every
+     * tag is closed. A `>` inside a quoted attribute value does not close the tag, `onclick="… cb
+     * => …"` stays one tag.
      */
-    private function tagStateAtEnd(string $html): ?string
+    private function openTagStart(string $html): ?int
     {
-        $state = null;
+        $start = null;
+        $quote = null;
 
         for ($i = 0, $n = strlen($html); $i < $n; $i++) {
             $c = $html[$i];
 
-            if ($state === null) {
+            if ($start === null) {
                 if ($c === '<' && preg_match('/[A-Za-z\/]/', $html[$i + 1] ?? '')) {
-                    $state = '';
+                    $start = $i;
                 }
-            } elseif ($state === '') {
-                if ($c === '"' || $c === "'") {
-                    $state = $c;
-                } elseif ($c === '>') {
-                    $state = null;
+            } elseif ($quote !== null) {
+                if ($c === $quote) {
+                    $quote = null;
                 }
-            } elseif ($c === $state) {
-                $state = '';
+            } elseif ($c === '"' || $c === "'") {
+                $quote = $c;
+            } elseif ($c === '>') {
+                $start = null;
             }
         }
 
-        return $state;
+        return $start;
     }
 
     /**
@@ -778,15 +811,16 @@ class ComponentFunctionsTest
      *
      * @param  array<int, array{id: int|null, text: string}>  $tokens
      *
-     * @return array<string, array{text: string[], variables: string[]}>
+     * @return array<string, array{text: string[], variables: string[], functions: string[]}>
      */
     private function assignedText(array $tokens): array
     {
         $sources = [];
 
         $add = static function (string $name, array $value) use (&$sources): void {
-            $sources[$name]['text']      = array_merge($sources[$name]['text'] ?? [], $value['text']);
-            $sources[$name]['variables'] = array_merge($sources[$name]['variables'] ?? [], $value['variables']);
+            foreach (['text', 'variables', 'functions'] as $part) {
+                $sources[$name][$part] = array_merge($sources[$name][$part] ?? [], $value[$part]);
+            }
         };
 
         for ($i = 0, $n = count($tokens); $i < $n; $i++) {
@@ -929,35 +963,117 @@ class ComponentFunctionsTest
     }
 
     /**
-     * Every fixed text the given variables can hold, following one variable to the next (`$b =
-     * $a`). Each variable is visited once, so an assignment cycle ends.
+     * What each named function of the file returns: the fixed text of its `return` expressions,
+     * the variables they read, resolved against the function's own assignments, and the functions
+     * they call. Closures and methods are left out, an output reaches neither as `name()`.
      *
-     * @param  string[]                                                $names
-     * @param  array<string, array{text: string[], variables: string[]}>  $sources
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     *
+     * @return array<string, array{text: string[], variables: string[], functions: string[], sources: array}>
+     */
+    private function returnedText(array $tokens): array
+    {
+        $returns = [];
+
+        for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+            $method = in_array($tokens[$i - 1]['id'] ?? null,
+                [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_STATIC, T_ABSTRACT, T_FINAL], true);
+
+            if ($tokens[$i]['id'] !== T_FUNCTION || ($tokens[$i + 1]['id'] ?? null) !== T_STRING || $method) {
+                continue;
+            }
+
+            $end  = $this->endOfFunction($tokens, $i);
+            $open = $i;
+            while ($open < $end && $tokens[$open]['text'] !== '{') {
+                $open++;
+            }
+
+            $body  = array_slice($tokens, $open + 1, max(0, $end - $open - 1));
+            $entry = ['text' => [], 'variables' => [], 'functions' => [], 'sources' => $this->assignedText($body)];
+
+            for ($k = 0, $m = count($body); $k < $m; $k++) {
+                if ($body[$k]['id'] === T_FUNCTION) {
+                    $k = $this->endOfFunction($body, $k);
+                    continue;
+                }
+
+                if ($body[$k]['id'] === T_RETURN) {
+                    $value = $this->scanExpression($body, $k + 1, false);
+
+                    foreach (['text', 'variables', 'functions'] as $part) {
+                        $entry[$part] = array_merge($entry[$part], $value[$part]);
+                    }
+
+                    $k = $value['end'];
+                }
+            }
+
+            $returns[strtolower($tokens[$i + 1]['text'])] ??= $entry;
+        }
+
+        return $returns;
+    }
+
+    /**
+     * Every fixed text the given variables and function calls can produce: a variable through its
+     * assignments ($sources), one variable through the next (`$b = $a`), a function through what
+     * it returns ($returns), whose own variables are looked up among its own assignments. Each
+     * variable is visited once per scope and each function once in all, so a cycle ends.
+     *
+     * @param  string[]  $variables
+     * @param  string[]  $functions
+     * @param  array<string, array{text: string[], variables: string[], functions: string[]}>  $sources
+     * @param  array<string, array{text: string[], variables: string[], functions: string[], sources: array}>  $returns
+     * @param  array<string, bool>  $seenFunctions
      *
      * @return string[]
      */
-    private function textOfVariables(array $names, array $sources): array
+    private function resolveText(array $variables, array $functions, array $sources, array $returns,
+        array &$seenFunctions = []): array
     {
         $found = [];
         $seen  = [];
 
-        while ($names !== []) {
-            $name = array_pop($names);
+        while ($variables !== [] || $functions !== []) {
+            if ($variables !== []) {
+                $name = array_pop($variables);
 
-            if (isset($seen[$name])) {
+                if (isset($seen[$name])) {
+                    continue;
+                }
+
+                $seen[$name] = true;
+                $entry       = $sources[$name] ?? null;
+                $local       = [];
+            } else {
+                $name = array_pop($functions);
+
+                if (isset($seenFunctions[$name])) {
+                    continue;
+                }
+
+                $seenFunctions[$name] = true;
+                $entry                = $returns[$name] ?? null;
+
+                // Die Variablen einer Rueckgabe gehoeren der Funktion, nicht dem Aufrufer.
+                $local = $entry === null ? [] : $this->resolveText($entry['variables'], [],
+                    $entry['sources'], $returns, $seenFunctions);
+            }
+
+            if ($entry === null) {
                 continue;
             }
 
-            $seen[$name] = true;
-
-            foreach ($sources[$name]['text'] ?? [] as $text) {
+            foreach (array_merge($entry['text'], $local) as $text) {
                 $found[$text] = $text;
             }
 
-            foreach ($sources[$name]['variables'] ?? [] as $variable) {
-                $names[] = $variable;
+            if (!isset($entry['sources'])) {
+                array_push($variables, ...$entry['variables']);
             }
+
+            array_push($functions, ...$entry['functions']);
         }
 
         return array_values($found);
