@@ -44,8 +44,31 @@ fi
 # `filename` is the current path; `previous_filename` is set for renames.
 changed_json="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" \
     --jq '.[] | {filename, previous_filename}')"
-mapfile -t CHANGED < <(printf '%s\n' "$changed_json" | jq -r '.filename' | sort -u)
-mapfile -t PREVIOUS < <(printf '%s\n' "$changed_json" | jq -r '.previous_filename // empty' | sort -u)
+
+# The evaluation runs in a COMMAND substitution, not a process substitution:
+# `mapfile -t X < <(... | jq ...)` hides a jq failure, because the exit status of a process
+# substitution never reaches the caller and `pipefail` does not cross that boundary. mapfile would
+# then exit 0 with an empty array, and an empty array means "no extension workflow is affected" to
+# this script, so the required check would report success without evaluating a single workflow. In
+# the assignments below, `set -e` aborts on exactly that failure.
+changed_list="$(printf '%s\n' "$changed_json" | jq -r '.filename' | sort -u)"
+previous_list="$(printf '%s\n' "$changed_json" | jq -r '.previous_filename // empty' | sort -u)"
+
+if [ -z "$changed_list" ]; then
+    # A pull request without a single file does not exist. An empty list therefore means the API
+    # request or its evaluation failed, and this required check must not report success on that.
+    echo "::error::The pull request reports no changed files at all; the API request or its evaluation failed, so the required extension workflows cannot be determined. Failing closed."
+    exit 1
+fi
+
+mapfile -t CHANGED <<<"$changed_list"
+
+# Renames are normally absent. A here-string built from an empty string would yield an array with
+# one empty element, so the array is left explicitly empty in that case.
+PREVIOUS=()
+if [ -n "$previous_list" ]; then
+    mapfile -t PREVIOUS <<<"$previous_list"
+fi
 
 echo "Changed files: ${#CHANGED[@]}"
 if [ "${#CHANGED[@]}" -ge 3000 ]; then
