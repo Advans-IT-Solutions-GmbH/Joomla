@@ -311,6 +311,9 @@ class ComponentFunctionsTest
             'behind a simple variable'   => "<?php echo \"Removed \$name from the site\"; ?>",
             'inside a short array'       => "<?php echo implode(', ', ['Hardcoded Label']); ?>",
             'inside a nested array'      => "<?php echo implode(', ', [\$a, ['Hardcoded Label']]); ?>",
+            'as a Text argument'         => "<?php echo Text::_('Hardcoded Label'); ?>",
+            'as one branch of a key'     => "<?php echo Text::_(\$c ? 'COM_A' : 'Hardcoded Label'); ?>",
+            'as a Text::sprintf format'  => "<?php echo Text::sprintf('Total: %d items', \$n); ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -387,6 +390,10 @@ class ComponentFunctionsTest
      * and are visible (the footer link survives because its text is an allowed
      * fixed string, not because it is unchecked).
      *
+     * The exempt position additionally requires the literal to LOOK like a key:
+     * `Text::_('Hardcoded Label')` returns its argument unchanged when no key
+     * matches, so such text ships untranslated and is reported.
+     *
      * Both forms of fixed text count: a whole string literal and the fixed pieces
      * of a string with values inserted, which PHP returns as tokens of their own
      * (`echo "Fixed text $x"`).
@@ -448,7 +455,7 @@ class ComponentFunctionsTest
                     ? $this->literalValue($text)
                     : stripcslashes($text);
 
-                if (!$this->isLanguageKeyArgument($calls)
+                if (!$this->isLanguageKeyArgument($calls, $value)
                     && !($brackets !== [] && $brackets[count($brackets) - 1])
                     && !$this->isComparisonOperand($tokens, $i)) {
                     $visible = $this->dropAllowedText(
@@ -586,16 +593,23 @@ class ComponentFunctionsTest
     }
 
     /**
-     * Does the literal currently being read sit in the one exempt position, the language key
-     * of the innermost call?
+     * Does the literal currently being read sit in the one exempt position, and is it actually a
+     * language key?
      *
-     * Only the innermost call decides. A literal in `Text::sprintf('KEY', htmlspecialchars('x'))`
-     * belongs to htmlspecialchars, not to the translation, and `Text::_($c ? 'A' : 'B')` has
-     * both keys in the first argument of Text::_ and is therefore exempt.
+     * Three things have to hold. The innermost open call is a localisation call, the literal is in
+     * its FIRST argument, and the literal has the shape of a language key: upper case, digits and
+     * underscores. All three matter. Only the innermost call counts, so a literal in
+     * `Text::sprintf('KEY', htmlspecialchars('x'))` belongs to htmlspecialchars; only the first
+     * argument is the key, the others are inserted into the translated text and are visible; and
+     * only a key shape is a key, because `Text::_('Hardcoded Label')` returns its argument
+     * unchanged when no key matches, so that text ships untranslated. `Text::_($c ? 'COM_A' :
+     * 'COM_B')` has two keys in the first argument and both are exempt, while a ternary with one
+     * hardcoded branch reports exactly that branch.
      *
      * @param  array<int, array{name: string, commas: int}>  $calls  The open calls, outermost first.
+     * @param  string                                       $value  The literal's text value.
      */
-    private function isLanguageKeyArgument(array $calls): bool
+    private function isLanguageKeyArgument(array $calls, string $value): bool
     {
         if ($calls === []) {
             return false;
@@ -604,7 +618,8 @@ class ComponentFunctionsTest
         $innermost = $calls[count($calls) - 1];
 
         return $innermost['commas'] === 0
-            && (bool) preg_match('/(?:^|\\\\)J?Text::(?:_|sprintf|plural|script)$/', $innermost['name']);
+            && (bool) preg_match('/(?:^|\\\\)J?Text::(?:_|sprintf|plural|script)$/', $innermost['name'])
+            && (bool) preg_match('/^[A-Z][A-Z0-9_]*$/', $value);
     }
 
     /**
