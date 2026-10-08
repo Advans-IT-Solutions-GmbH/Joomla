@@ -1081,9 +1081,20 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * @param   string    $languageTag     Language the mail is rendered in
      * @param   string    $recipientEmail  Address the mail goes to
      * @param   string    $recipientName   Name of the recipient (may be empty)
+     * MailTemplate escapes a replacement in the HTML body only when the tag was registered through
+     * addUnsafeTags(); everything else reaches the body as markup (libraries/src/Mail/MailTemplate.php
+     * line 490 and following, gated on $isHtml, so the plain-text body is never touched). Listing the
+     * user-controlled tags by hand is therefore the wrong way round: one forgotten field, or one new
+     * field in the template data, and a user-supplied value lands unescaped in an HTML mail.
+     *
+     * This method inverts that. Every key in $data is marked unsafe except the ones the caller
+     * explicitly declares as generated markup, and those are named one by one.
+     *
      * @param   array     $data            Replacement data for the template tags
      * @param   string    $context         Short label for the log entry
-     * @param   string[]  $unsafeTags      Tags whose value is escaped in the HTML body
+     * @param   string[]  $trustedTags     The ONLY tags whose value may reach the HTML body as markup,
+     *                                     for generated HTML such as link_html. Every other key of
+     *                                     $data is escaped.
      *
      * @return  bool  True only when the template mail was sent, false when there
      *                is no such template or the send failed and the caller has
@@ -1096,7 +1107,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         string $recipientName,
         array $data,
         string $context,
-        array $unsafeTags = []
+        array $trustedTags = []
     ): bool {
         try {
             if (MailTemplate::getTemplate($templateId, $languageTag) === null) {
@@ -1114,6 +1125,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer = new MailTemplate($templateId, $languageTag);
             $mailer->addTemplateData($data);
             $mailer->addRecipient($recipientEmail, $recipientName !== '' ? $recipientName : null);
+
+            // Escape everything the caller did not declare as generated markup. A flat array value is
+            // covered by its own top-level key, because MailTemplate checks the unsafe list against
+            // that key, not against the sub-keys (MailTemplate.php lines 490 and 499). The data this
+            // plugin passes holds scalars and flat arrays only, so one level is all there is.
+            $unsafeTags = array_values(array_diff(array_keys($data), $trustedTags));
 
             if ($unsafeTags) {
                 $mailer->addUnsafeTags($unsafeTags);
@@ -1417,9 +1434,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             (string) $user->name,
             $data,
             'Reset email',
-            // Both are chosen by the account holder, so they are escaped before
-            // they go into the HTML body.
-            ['name', 'username']
+            // link_html is markup this plugin builds itself. Everything else, the account holder's
+            // name, username and email included, is escaped by sendTemplateMail().
+            ['link_html']
         )) {
             return;
         }
@@ -1480,7 +1497,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             (string) $user->name,
             $data,
             'Remind email',
-            ['name', 'username']
+            ['link_html']
         )) {
             return;
         }
@@ -1546,7 +1563,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             (string) $user->name,
             $data,
             'Activation email',
-            ['username', 'name']
+            // This mail carries no generated markup: "activate" is a plain URL, so escaping it is
+            // correct. The list is kept uniform on purpose and simply matches nothing here.
+            ['link_html']
         )) {
             return;
         }
@@ -1618,7 +1637,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             '',
             $data,
             'Admin notification',
-            ['username', 'name']
+            // No link at all in this one, so nothing is trusted. Same uniform list.
+            ['link_html']
         )) {
             return;
         }
