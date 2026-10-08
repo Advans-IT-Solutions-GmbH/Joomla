@@ -204,6 +204,42 @@ class OsmapLoaderTest
         return null;
     }
 
+    /**
+     * Empty OSMap's two plugin caches.
+     *
+     * General keeps the extension rows in `static $dbPlugins` and the per-component matches in
+     * `static $optionPlugins` (OSMap 5.1.6, both protected). Once a component has been asked
+     * about, every further question is answered from there. A test that changes the enabled flag
+     * in the database and then asks again would therefore be told what it was told before the
+     * change, so both caches are emptied around every change.
+     *
+     * Returns false when the real OSMap library is loaded but a cache could not be reached, so a
+     * renamed property in a later OSMap version shows up as a failing assertion instead of
+     * quietly turning the disabled-plugin case into a test of OSMap's cache. The replication
+     * path has no cache and therefore nothing to empty.
+     */
+    private function clearOsmapPluginCaches(): bool
+    {
+        if (!class_exists('\\Alledia\\OSMap\\Helper\\General')) {
+            return true;
+        }
+
+        $geleert = 0;
+
+        foreach (['dbPlugins', 'optionPlugins'] as $name) {
+            try {
+                $eigenschaft = new \ReflectionProperty('\\Alledia\\OSMap\\Helper\\General', $name);
+                $eigenschaft->setAccessible(true);
+                $eigenschaft->setValue(null, []);
+                $geleert++;
+            } catch (\Throwable $e) {
+                echo "  (OSMap cache {$name} not reachable: {$e->getMessage()})\n";
+            }
+        }
+
+        return $geleert === 2;
+    }
+
     private function pluginEnabled(): int
     {
         return (int) $this->db->setQuery(
@@ -264,16 +300,37 @@ class OsmapLoaderTest
         });
 
         $initialEnabled = $this->pluginEnabled();
+
+        // The matches above are now cached inside OSMap, so the caches have to go before the
+        // loader is asked about a state this test has just written. If they cannot be reached,
+        // this case would silently test the cache instead of the database, which is why that is
+        // an assertion of its own rather than a quiet fallback.
+        $this->test('OSMap plugin caches are reachable for the state change', function () {
+            return $this->clearOsmapPluginCaches();
+        });
+
         $this->test('Disabled plugin is not matched by the OSMap loader', function () {
             $this->setPluginEnabled(0);
+            $this->clearOsmapPluginCaches();
 
             try {
                 return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) === null;
             } finally {
                 $this->setPluginEnabled(1);
+                $this->clearOsmapPluginCaches();
             }
         });
+
+        // Counter-proof in the other direction, and the real check on the cache clearing: if the
+        // caches still held the "disabled" answer, or if the row had not been restored, the
+        // plugin would not be matched here either, and a passing disabled-case would mean
+        // nothing.
+        $this->test('Enabled again, the loader matches the plugin once more', function () {
+            return $this->findOurPlugin($this->loadPluginsForComponent($this->option)) !== null;
+        });
+
         $this->setPluginEnabled($initialEnabled);
+        $this->clearOsmapPluginCaches();
 
         if ($ourPlugin === null) {
             echo "\nFATAL: plugin not matched by loader — cannot continue dispatch tests\n";
