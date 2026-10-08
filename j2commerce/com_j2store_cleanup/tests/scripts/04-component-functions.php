@@ -325,6 +325,8 @@ class ComponentFunctionsTest
             'hyphenated prose'           => "<?php echo 'hard-coded'; ?>",
             'a hyphenated single word'   => "<?php echo htmlspecialchars('e-mail'); ?>",
             'in a title attribute'       => "<span title=\"<?php echo 'Hardcoded Label'; ?>\"></span>",
+            'in an attribute of echoed HTML' => "<?php echo '<img src=\"x.png\" alt=\"Hardcoded Label\">'; ?>",
+            'through a short echo'       => "<?= htmlspecialchars('Hardcoded Label') ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -348,6 +350,8 @@ class ComponentFunctionsTest
             'a compared value'          => "<span class=\"<?php echo \$issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>\"></span>",
             'a compared value in front' => "<span class=\"<?php echo 'j2store' === \$issue['type'] ? 'badge-danger' : 'badge-warning'; ?>\"></span>",
             'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
+            'echoed HTML with a decorative image' => "<?php echo '<img src=\"x.png\" alt=\"\">'; ?>",
+            'a key through a short echo' => "<?= Text::_('COM_X_Y') ?>",
         ];
 
         // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
@@ -375,6 +379,7 @@ class ComponentFunctionsTest
             'CSS classes'                => '<span class="badge badge-danger"></span>',
             'a decorative image'         => '<img src="spacer.gif" alt="">',
             'a title filled from PHP'    => "<a href=\"#\" title=\"<?php echo Text::_('COM_X'); ?>\">x</a>",
+            'a title filled by a short echo' => "<a href=\"#\" title=\"<?= Text::_('COM_X') ?>\">x</a>",
             'the allowed company name'   => '<a href="https://advans.ch" title="Advans IT Solutions GmbH">x</a>',
             'a link target'              => '<a href="https://advans.ch" target="_blank" rel="noopener">x</a>',
         ];
@@ -395,11 +400,12 @@ class ComponentFunctionsTest
     /**
      * The literal HTML of the markup: every PHP block replaced by a blank, `<style>` and
      * `<script>` removed. An attribute filled from PHP (`title="<?php echo … ?>"`) is left with
-     * a blank value, which is what the literal page carries.
+     * a blank value, which is what the literal page carries. Both opening forms count, the long
+     * `<?php` and the short echo `<?=`, the same two findEchoedFixedText() reads.
      */
     private function literalHtml(string $markup): string
     {
-        $html = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
+        $html = preg_replace('/<\?(?:php\b|=).*?\?>/s', ' ', $markup);
 
         return preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $html);
     }
@@ -585,6 +591,13 @@ class ComponentFunctionsTest
                         && preg_match('/\p{L}/u', $visible)
                         && !$this->looksLikeIdentifier($visible)) {
                         $found[$value] = $value;
+                    }
+
+                    // HTML that PHP writes out carries its visible attributes along. strip_tags()
+                    // above throws them away, so `echo '<img alt="Fixed text">'` would be empty.
+                    // The same attribute check as for the markup outside PHP applies.
+                    foreach ($this->findFixedAttributeText($value) as $attribute) {
+                        $found[$attribute] = $attribute;
                     }
                 }
 
