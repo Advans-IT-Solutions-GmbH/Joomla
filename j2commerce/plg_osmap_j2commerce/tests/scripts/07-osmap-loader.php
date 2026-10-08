@@ -24,6 +24,23 @@
  */
 
 define('_JEXEC', 1);
+
+// This suite asserts the dispatch on the standard stacks, with exact product URLs that carry no
+// language prefix. The dedicated SEF stacks (J2COMMERCE_SEF=1) mark the fixture articles with a
+// language, so every product URL there starts with /de/, and 08-sitemap-http-sef.php is the suite
+// for those stacks. CI runs only 08 on the SEF containers. `./run-tests.sh all` on such a container
+// would otherwise fail here on the prefix alone, before any dispatch behaviour is judged. This is
+// the mirror image of the guard in 08, with the same TEST_STRICT_SKIP rule.
+if (getenv('J2COMMERCE_SEF') === '1') {
+    if (getenv('TEST_STRICT_SKIP') === '1') {
+        fwrite(STDERR, "FAILED: this suite runs on the standard stacks, but J2COMMERCE_SEF=1 is set (TEST_STRICT_SKIP=1)\n");
+        exit(1);
+    }
+
+    fwrite(STDOUT, "skipped: standard-stack suite, J2COMMERCE_SEF=1 is set\n");
+    exit(0);
+}
+
 define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
