@@ -134,10 +134,10 @@ class PluginClassTest
         $rc = new ReflectionClass('Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare');
 
         foreach ([
-            'onAfterDispatch',
+            'onBeforeCompileHead',
             'onAfterRender',
-            'onJ2StoreAfterDisplayProduct',
-            'onJ2StoreAfterDisplayProductList',
+            'onJ2StoreAfterProductDisplay',
+            'onJ2StoreAfterAddToCartButton',
             'onJ2CommerceAfterProductListItemDisplay',
             'onJ2CommerceAfterProductDisplay',
             'onAjaxProductcompare',
@@ -160,6 +160,13 @@ class PluginClassTest
             isset($events['onJ2CommerceAfterProductListItemDisplay']));
         $this->test('getSubscribedEvents() contains AfterProductDisplay hook',
             isset($events['onJ2CommerceAfterProductDisplay']));
+        foreach (['onJ2StoreAfterProductDisplay', 'onJ2StoreAfterAddToCartButton', 'onAjaxProductcompare', 'onBeforeCompileHead', 'onAfterRender'] as $name) {
+            $this->test("getSubscribedEvents() contains $name", isset($events[$name]));
+        }
+        $this->test('getSubscribedEvents() does not contain events J2Store 4 never fires',
+            !isset($events['onJ2StoreAfterDisplayProduct']) && !isset($events['onJ2StoreAfterDisplayProductList']));
+        $this->test('Handlers for events J2Store 4 never fires are gone',
+            !$rc->hasMethod('onJ2StoreAfterDisplayProduct') && !$rc->hasMethod('onJ2StoreAfterDisplayProductList'));
         $this->test('getSubscribedEvents() does not contain wrong ViewProductListHtml event',
             !isset($events['onJ2CommerceViewProductListHtml']));
         $this->test('getSubscribedEvents() does not contain wrong ViewProductHtml event',
@@ -176,32 +183,27 @@ class PluginClassTest
     {
         echo "\n--- Instantiation ---\n";
 
-        $dispatcher = new \Joomla\Event\Dispatcher();
-        $params     = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
+        $params = new Registry(['max_products' => 4, 'show_in_list' => 1, 'show_in_detail' => 1]);
 
         try {
-            $plugin = new TestableProductCompare(
-                $dispatcher,
-                ['params' => $params]
-            );
+            $plugin = new TestableProductCompare(['params' => $params]);
             $this->test('Plugin instantiates without error', true);
         } catch (\Throwable $e) {
             $this->test('Plugin instantiates without error', false, $e->getMessage());
             return;
         }
 
-        // J4: onJ2StoreAfterDisplayProductList with show_in_list=0 → empty string
+        // J2Store 4: list/detail hooks with show_in_list/show_in_detail=0 → no result added
         $params0 = new Registry(['show_in_list' => 0, 'show_in_detail' => 0]);
-        $plugin0 = new TestableProductCompare(
-            $dispatcher,
-            ['params' => $params0]
-        );
-        $product = (object)['j2store_product_id' => 1];
-        $result  = $plugin0->onJ2StoreAfterDisplayProductList($product);
-        $this->test('J4 show_in_list=0 → empty string', $result === '');
+        $plugin0 = new TestableProductCompare(['params' => $params0]);
+        $product   = (object)['j2store_product_id' => 1];
+        $j4List    = new TestEvent('onJ2StoreAfterAddToCartButton', [$product, 'j2store.site.products.default_cart']);
+        $plugin0->onJ2StoreAfterAddToCartButton($j4List);
+        $this->test('J2Store show_in_list=0 → no result added', count($j4List->getArgument('result', [])) === 0);
 
-        $result2 = $plugin0->onJ2StoreAfterDisplayProduct($product, 'detail');
-        $this->test('J4 show_in_detail=0 → empty string', $result2 === '');
+        $j4Detail = new TestEvent('onJ2StoreAfterProductDisplay', [$product, new \stdClass()]);
+        $plugin0->onJ2StoreAfterProductDisplay($j4Detail);
+        $this->test('J2Store show_in_detail=0 → no result added', count($j4Detail->getArgument('result', [])) === 0);
 
         // J6: onJ2CommerceAfterProductListItemDisplay with show_in_list=0 → no result added
         $eventList = new TestEvent('onJ2CommerceAfterProductListItemDisplay', [
@@ -225,10 +227,7 @@ class PluginClassTest
         // so it works whether the product is at $args[0] (current public source) or
         // $args[2] ([$result, $view, $product] signature reported in review).
         $params1 = new Registry(['show_in_list' => 1, 'show_in_detail' => 1]);
-        $plugin1 = new TestableProductCompare(
-            $dispatcher,
-            ['params' => $params1]
-        );
+        $plugin1 = new TestableProductCompare(['params' => $params1]);
 
         // Product at $args[0]
         $ev0 = new TestEvent('onJ2CommerceAfterProductDisplay', [

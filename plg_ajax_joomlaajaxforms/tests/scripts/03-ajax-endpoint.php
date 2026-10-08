@@ -26,6 +26,8 @@ class AjaxEndpointTest
         $allPassed = $this->testPluginEnabled() && $allPassed;
         $allPassed = $this->testEndpointAccessible() && $allPassed;
         $allPassed = $this->testResponseFormat() && $allPassed;
+        $allPassed = $this->testTextsTask() && $allPassed;
+        $allPassed = $this->testErrorPayloadKeepsEnvelope() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -125,6 +127,147 @@ class AjaxEndpointTest
         }
         
         echo "FAIL (HTTP $httpCode, invalid response format)\n";
+        return false;
+    }
+
+    /**
+     * The script carries no text of its own. When a page loads it without the
+     * texts in its script options, it asks the endpoint (task "texts"), which
+     * answers without a form token with the translated texts of the plugin.
+     */
+    private function testTextsTask(): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: Script texts are delivered by the endpoint without a token... ";
+
+        // Sent like the script sends it: POST to the com_ajax URL, task in the body,
+        // no form token, no session.
+        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'task=texts');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        $body     = (string) curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $payload = ajaxforms_decode_response($body);
+        $texts   = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+
+        // The direct onAfterRoute answer must carry the same envelope com_ajax
+        // produces: a top-level success flag and the plugin payload in data[].
+        $envelope = json_decode($body, true);
+
+        $en = [];
+        $ini = '/var/www/html/plugins/ajax/joomlaajaxforms/language/en-GB/plg_ajax_joomlaajaxforms.ini';
+        if (is_file($ini)) {
+            $en = parse_ini_file($ini, false, INI_SCANNER_RAW) ?: [];
+        }
+
+        $problems = [];
+
+        if ($httpCode !== 200 || ($payload['success'] ?? false) !== true) {
+            $problems[] = "HTTP $httpCode, body " . substr($body, 0, 150);
+        }
+
+        if (!is_array($envelope)
+            || ($envelope['success'] ?? null) !== true
+            || !is_array($envelope['data'] ?? null)
+        ) {
+            $problems[] = 'envelope shape mismatch: ' . substr($body, 0, 150);
+        }
+
+        foreach (['ERROR_GENERIC', 'PROFILE_SAVED', 'CLOSE'] as $name) {
+            $value = (string) ($texts[$name] ?? '');
+
+            if ($value === '' || preg_match('/^[A-Z][A-Z0-9_]+$/', $value)) {
+                $problems[] = "$name missing or untranslated ('$value')";
+            }
+        }
+
+        if (($texts['ERROR_GENERIC'] ?? null) !== ($en['PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'] ?? '')) {
+            $problems[] = 'ERROR_GENERIC is not the text of the language file';
+        }
+
+        // Same answer carries the state of the "Debug Output" option. On a normal
+        // page onBeforeRender() does not run, so this is the only way the option
+        // can reach the script. Default is off, and the key must be a boolean so
+        // the script does not switch traces on from a missing value.
+        if (!array_key_exists('debug', $payload) || $payload['debug'] !== false) {
+            $problems[] = 'debug flag missing or not false by default: '
+                . var_export($payload['debug'] ?? null, true);
+        }
+
+        if ($problems === []) {
+            echo "PASS\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * A logical error (here: a state-changing task sent without a form token)
+     * must be carried in the very same com_ajax envelope as a success. The
+     * outer envelope always reports the dispatch as success:true and puts the
+     * plugin's own payload in data[]; the rejection lives in that inner payload
+     * (success:false). testTextsTask() only proves the happy path, so this
+     * proves the error path keeps the shape onAfterRoute is meant to mirror.
+     */
+    private function testErrorPayloadKeepsEnvelope(): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: A rejected task keeps the com_ajax envelope... ";
+
+        $ch = curl_init($this->baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_POST, true);
+        // A real task that changes state, but no form token: onAjaxJoomlaajaxforms()
+        // rejects it and returns its own success:false payload.
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'task=reset');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        $body     = (string) curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $envelope = json_decode($body, true);
+
+        $problems = [];
+
+        if ($httpCode !== 200) {
+            $problems[] = "HTTP $httpCode";
+        }
+
+        // The outer envelope must be intact even for a rejection.
+        if (!is_array($envelope)
+            || ($envelope['success'] ?? null) !== true
+            || !is_array($envelope['data'] ?? null)
+        ) {
+            $problems[] = 'outer envelope shape mismatch: ' . substr($body, 0, 150);
+        }
+
+        // The rejection itself must sit in the inner plugin payload.
+        if (!ajaxforms_is_json_rejection($body)) {
+            $problems[] = 'inner payload is not a success:false rejection: ' . substr($body, 0, 150);
+        }
+
+        if ($problems === []) {
+            echo "PASS\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
         return false;
     }
 

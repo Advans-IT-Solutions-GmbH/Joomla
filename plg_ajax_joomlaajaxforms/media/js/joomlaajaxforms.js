@@ -10,14 +10,59 @@
 'use strict';
 
 /**
- * Get language string from Joomla script options
+ * Translated text the script shows itself, or an empty string.
+ *
+ * The texts come from the script options the plugin (or the page) adds, or,
+ * when a page loaded the script without them, from the endpoint (task
+ * "texts"). The script carries no text of its own, so a site never shows a
+ * message in a language other than its own.
  */
-function getFormsLang(key, fallback) {
+function getFormsLang(key) {
+    var opts = {};
+
     try {
-        var opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
-        return opts[key] || fallback;
+        opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
     } catch (e) {
-        return fallback;
+        opts = {};
+    }
+
+    return opts[key] || (JoomlaAjaxForms.texts && JoomlaAjaxForms.texts[key]) || '';
+}
+
+/**
+ * Developer trace, printed only while the plugin option "Debug Output" is on.
+ * Without it no trace is printed during normal use. Failed requests are still
+ * reported with console.error, so a real problem stays visible.
+ *
+ * The flag comes from the script options the plugin adds, or, when a page
+ * loaded the script without them, from the endpoint answer that loadTexts()
+ * stores. On a normal page the second path is the only one, because plugins of
+ * the ajax group are imported by com_ajax and onBeforeRender() therefore does
+ * not run. Traces before that answer arrives are lost, so the first lines of a
+ * page load stay unprinted even with the option on.
+ */
+function formsDebug() {
+    var enabled = false;
+
+    try {
+        enabled = !!(Joomla.getOptions('plg_ajax_joomlaajaxforms') || {}).debug;
+    } catch (e) {
+        enabled = false;
+    }
+
+    if (!enabled) {
+        try {
+            // JoomlaAjaxForms is a const declared below, so reading it before
+            // that line would throw. Only calls after initialisation reach a
+            // value here, every earlier one keeps the trace off.
+            enabled = !!JoomlaAjaxForms.debug;
+        } catch (e) {
+            enabled = false;
+        }
+    }
+
+    if (enabled && typeof console !== 'undefined' && typeof console.log === 'function') {
+        console.log.apply(console, arguments);
     }
 }
 
@@ -42,6 +87,55 @@ const JoomlaAjaxForms = {
         errorClass: 'alert alert-danger',
         successClass: 'alert alert-success',
         loadingClass: 'is-loading'
+    },
+
+    /**
+     * Texts fetched from the endpoint when the page did not provide them.
+     */
+    texts: {},
+
+    /**
+     * State of the plugin option "Debug Output" as the endpoint reported it.
+     * Only used when the page carries no script options, which is the normal
+     * case on a live page. formsDebug() reads it.
+     */
+    debug: false,
+
+    /**
+     * Fetch the translated texts once when the page loaded the script without
+     * them (script options missing). Read-only request without a token.
+     */
+    loadTexts: function() {
+        if (getFormsLang('ERROR_GENERIC') !== '') {
+            return;
+        }
+
+        // POST like the other requests: a GET of the non-SEF com_ajax URL is
+        // redirected by Joomla's router first.
+        fetch(JoomlaAjaxForms.config.baseUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            },
+            body: JoomlaAjaxForms.buildBaseParams('texts', '').toString()
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(rawData) {
+            var data = JoomlaAjaxForms.unwrapResponse(rawData);
+
+            if (data && data.success && data.data && typeof data.data === 'object') {
+                JoomlaAjaxForms.texts = data.data;
+            }
+
+            if (data && data.success) {
+                JoomlaAjaxForms.debug = !!data.debug;
+            }
+        })
+        .catch(function(error) {
+            formsDebug('[JoomlaAjaxForms] Texts could not be loaded:', error);
+        });
     },
 
     /**
@@ -88,7 +182,8 @@ const JoomlaAjaxForms = {
      */
     init: function() {
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('[JoomlaAjaxForms] Initializing...');
+            formsDebug('[JoomlaAjaxForms] Initializing...');
+            JoomlaAjaxForms.loadTexts();
             JoomlaAjaxForms.initLoginForm();
             JoomlaAjaxForms.initRegistrationForm();
             JoomlaAjaxForms.initResetForm();
@@ -204,13 +299,71 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * Selectors that find a com_users form, in the order they are tried.
+     *
+     * The form action is the weakest hook. Joomla writes the task only into the
+     * action URL (`index.php?task=reset.request`); neither the reset nor the
+     * remind form of the core carries a hidden task field. With SEF turned on
+     * the routed address no longer contains the task, so `form[action*=...]`
+     * stops matching, the form is never converted, and a visitor who enters a
+     * valid address gets no answer at all.
+     *
+     * The first two entries match the form element itself, independently of its
+     * surroundings and of the action: the class Joomla puts on the form
+     * (`com-users-reset__form`) and `data-joomlaajaxforms`, which a template
+     * override can set on markup of its own. Only then come the wrapper of the
+     * core view and the action, which still covers a site without SEF.
+     *
+     * @param {string} view - "reset" or "remind"
+     * @param {string} task - the com_users task of that view
+     * @returns {string[]}
+     */
+    userFormSelectors: function(view, task) {
+        return [
+            'form[data-joomlaajaxforms="' + view + '"]',
+            'form.com-users-' + view + '__form',
+            '.com-users-' + view + ' form.form-validate',
+            '.com-users-' + view + ' #user-registration',
+            '.' + view + ' form.form-validate',
+            '.' + view + ' #user-registration',
+            'form[action*="' + task + '"]'
+        ];
+    },
+
+    /**
+     * The form of a com_users view, or null.
+     *
+     * Besides the selectors above a hidden task field is accepted, which a
+     * template override may render instead of a class or a data attribute.
+     *
+     * @param {string} view - "reset" or "remind"
+     * @param {string} task - the com_users task of that view
+     * @returns {HTMLFormElement|null}
+     */
+    findUserForm: function(view, task) {
+        const selectors = JoomlaAjaxForms.userFormSelectors(view, task);
+
+        for (let i = 0; i < selectors.length; i++) {
+            const found = document.querySelector(selectors[i]);
+
+            if (found) {
+                return found.tagName === 'FORM' ? found : (found.form || found.closest('form'));
+            }
+        }
+
+        const taskInput = document.querySelector('input[name="task"][value="' + task + '"]');
+
+        return taskInput ? taskInput.form : null;
+    },
+
+    /**
      * Initialize password reset form
      */
     initResetForm: function() {
-        const form = document.querySelector('.reset form.form-validate, .reset #user-registration, form[action*="reset.request"]');
-        console.log('[JoomlaAjaxForms] Reset form search:', form ? 'FOUND' : 'NOT FOUND');
+        const form = JoomlaAjaxForms.findUserForm('reset', 'reset.request');
+        formsDebug('[JoomlaAjaxForms] Reset form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
-            console.log('[JoomlaAjaxForms] Converting reset form to AJAX');
+            formsDebug('[JoomlaAjaxForms] Converting reset form to AJAX');
             JoomlaAjaxForms.convertForm(form, 'reset', ['email']);
             form.dataset.ajaxInitialized = 'true';
         }
@@ -220,10 +373,10 @@ const JoomlaAjaxForms = {
      * Initialize username reminder form
      */
     initRemindForm: function() {
-        const form = document.querySelector('.remind form.form-validate, .remind #user-registration, form[action*="remind.remind"]');
-        console.log('[JoomlaAjaxForms] Remind form search:', form ? 'FOUND' : 'NOT FOUND');
+        const form = JoomlaAjaxForms.findUserForm('remind', 'remind.remind');
+        formsDebug('[JoomlaAjaxForms] Remind form search:', form ? 'FOUND' : 'NOT FOUND');
         if (form && !form.dataset.ajaxInitialized) {
-            console.log('[JoomlaAjaxForms] Converting remind form to AJAX');
+            formsDebug('[JoomlaAjaxForms] Converting remind form to AJAX');
             JoomlaAjaxForms.convertForm(form, 'remind', ['email']);
             form.dataset.ajaxInitialized = 'true';
         }
@@ -291,7 +444,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
         });
@@ -352,7 +505,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
         });
@@ -405,7 +558,7 @@ const JoomlaAjaxForms = {
 
                 // Empty data[] from com_ajax means plugin was not reached (token/session issue)
                 if (rawData.data && Array.isArray(rawData.data) && rawData.data.length === 0) {
-                    JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                    JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 } else if (data.success) {
                     var msg = data.message || (data.data && data.data.message) || '';
                     JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');
@@ -417,7 +570,7 @@ const JoomlaAjaxForms = {
             })
             .catch(function(error) {
                 JoomlaAjaxForms.enableSubmit(submitBtn);
-                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred. Please try again.'), 'error');
+                JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
                 console.error('JoomlaAjaxForms Error:', error);
             });
 
@@ -522,7 +675,7 @@ const JoomlaAjaxForms = {
         if (data.message) {
             return data.message;
         }
-        return getFormsLang('ERROR_GENERIC', 'An error occurred');
+        return getFormsLang('ERROR_GENERIC');
     },
 
     /**
@@ -533,7 +686,18 @@ const JoomlaAjaxForms = {
      * @param {string} type - 'success' or 'error'
      */
     showMessage: function(container, message, type) {
-        container.className = 'ajax-message ' + (type === 'success' 
+        // No translated text available (neither from the server nor from the
+        // page): show nothing rather than a text in another language. Clear the
+        // container first, otherwise a message of an earlier request stays on
+        // screen next to a result it does not belong to.
+        if (!message) {
+            container.className = 'ajax-message';
+            container.innerHTML = '';
+            container.style.display = 'none';
+            return;
+        }
+
+        container.className = 'ajax-message ' + (type === 'success'
             ? JoomlaAjaxForms.config.successClass 
             : JoomlaAjaxForms.config.errorClass);
         container.innerHTML = '';
@@ -543,7 +707,10 @@ const JoomlaAjaxForms = {
         var closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'close';
-        closeBtn.setAttribute('aria-label', 'Schliessen');
+        var closeLabel = getFormsLang('CLOSE');
+        if (closeLabel !== '') {
+            closeBtn.setAttribute('aria-label', closeLabel);
+        }
         closeBtn.innerHTML = '&times;';
         closeBtn.addEventListener('click', function() { container.remove(); });
         container.appendChild(closeBtn);
@@ -702,7 +869,7 @@ const JoomlaAjaxForms = {
             var forms = document.querySelectorAll(selector);
             forms.forEach(function(form) {
                 if (!form.dataset.ajaxInitialized) {
-                    console.log('[JoomlaAjaxForms] Converting profile form to AJAX');
+                    formsDebug('[JoomlaAjaxForms] Converting profile form to AJAX');
                     // Prevent Joomla's form validator from submitting normally
                     form.classList.remove('form-validate');
                     form.setAttribute('novalidate', 'novalidate');
@@ -750,7 +917,7 @@ const JoomlaAjaxForms = {
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
             if (data.success) {
-                var msg = data.message || getFormsLang('PROFILE_SAVED', 'Profile saved.');
+                var msg = data.message || getFormsLang('PROFILE_SAVED');
                 JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');
             } else {
                 JoomlaAjaxForms.showMessage(messageContainer, JoomlaAjaxForms.getErrorMessage(data), 'error');
@@ -759,7 +926,7 @@ const JoomlaAjaxForms = {
         .catch(function(error) {
             console.error('[JoomlaAjaxForms] Profile save error:', error);
             JoomlaAjaxForms.enableSubmit(submitBtn);
-            JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC', 'An error occurred.'), 'error');
+            JoomlaAjaxForms.showMessage(messageContainer, getFormsLang('ERROR_GENERIC'), 'error');
         });
     }
 };

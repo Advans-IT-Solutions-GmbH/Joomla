@@ -24,7 +24,6 @@ require_once __DIR__ . '/_osmap_bootstrap.php';
 use Joomla\CMS\Factory;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Event\Dispatcher;
 use Joomla\Registry\Registry;
 
 // Load the REAL OSMap library (Collector, Item) installed in the test image so
@@ -97,7 +96,7 @@ class PluginEmitTest
     private function makePlugin(?string $class = null): object
     {
         $class  = $class ?? $this->stackClass();
-        $plugin = new $class(new Dispatcher(), ['params' => new Registry([])]);
+        $plugin = new $class(['params' => new Registry([])]);
         $plugin->setDatabase($this->db);
 
         return $plugin;
@@ -114,7 +113,7 @@ class PluginEmitTest
      */
     private function makePluginWithProducts(array $products): object
     {
-        $plugin = new class (new Dispatcher(), ['params' => new Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
+        $plugin = new class (['params' => new Registry([])]) extends \Advans\Plugin\Osmap\J2Commerce\Extension\J2Commerce {
             /** @var object[] */
             public array $fixtureProducts = [];
 

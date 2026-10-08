@@ -13,6 +13,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/j2store-cleanup.yml'
   pull_request:
     branches: [main]
@@ -25,6 +26,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/j2store-cleanup.yml'
 
 permissions: {}
@@ -122,6 +124,8 @@ jobs:
             script: 'functions'
           - name: '05 - Safety Checks'
             script: 'safety'
+          - name: 'Backend Views'
+            script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '06 - Uninstall'
@@ -242,6 +246,8 @@ jobs:
             script: 'functions'
           - name: '05 - Safety Checks'
             script: 'safety'
+          - name: 'Backend Views'
+            script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '06 - Uninstall'

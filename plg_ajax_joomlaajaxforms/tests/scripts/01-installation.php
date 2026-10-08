@@ -34,6 +34,8 @@ class InstallationTest
         $allPassed = $this->testServiceProvider() && $allPassed;
         $allPassed = $this->testLanguageFiles() && $allPassed;
         $allPassed = $this->testJavaScriptFiles() && $allPassed;
+        $allPassed = $this->testNoConsoleNoise() && $allPassed;
+        $allPassed = $this->testScriptHasNoFixedTexts() && $allPassed;
 
         $this->printSummary();
         return $allPassed;
@@ -157,16 +159,251 @@ class InstallationTest
     private function testJavaScriptFiles(): bool
     {
         echo "Test: JavaScript files installed... ";
-        
+
         $jsFile = '/var/www/html/media/plg_ajax_joomlaajaxforms/js/joomlaajaxforms.js';
-        
+
         if (file_exists($jsFile)) {
             echo "PASS\n";
             return true;
         }
-        
+
         echo "FAIL\n";
         return false;
+    }
+
+    /**
+     * The shipped script must stay quiet on a live site: developer traces only
+     * through formsDebug(), which prints while the plugin option "debug" is on.
+     */
+    private function testNoConsoleNoise(): bool
+    {
+        $jsFile = '/var/www/html/media/plg_ajax_joomlaajaxforms/js/joomlaajaxforms.js';
+        $source = is_file($jsFile) ? (string) file_get_contents($jsFile) : '';
+        $passed = true;
+
+        echo "Test: Script writes no unconditional console output... ";
+        $helper = $this->jsFunctionBody($source, 'function formsDebug');
+        // console.log may only be reached through formsDebug(), which is the one
+        // place that checks the debug option first.
+        $logCalls = preg_match_all('/console\.log\b/', $source);
+        $inHelper = $helper !== null ? preg_match_all('/console\.log\b/', $helper) : 0;
+
+        if ($source !== '' && $helper !== null && $logCalls > 0 && $logCalls === $inHelper) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL ({$logCalls} console.log uses, {$inHelper} of them inside formsDebug())\n";
+            $passed = false;
+        }
+
+        echo "Test: Developer traces are gated by the debug option... ";
+        if ($helper !== null
+            && str_contains($helper, "Joomla.getOptions('plg_ajax_joomlaajaxforms')")
+            && str_contains($helper, '.debug')
+            && str_contains($helper, 'if (enabled')
+        ) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (formsDebug() does not read the debug script option)\n";
+            $passed = false;
+        }
+
+        echo "Test: Every JSON.parse() sits inside a try block... ";
+        $unguarded = $this->unguardedJsonParse($source);
+        if ($source !== '' && $unguarded === []) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (" . count($unguarded) . " unguarded call(s))\n";
+            $passed = false;
+        }
+
+        echo "Test: Debug option is declared in the manifest, off by default... ";
+        $manifest = '/var/www/html/plugins/ajax/joomlaajaxforms/joomlaajaxforms.xml';
+        $ok       = false;
+
+        if (is_file($manifest)) {
+            $xml = simplexml_load_file($manifest);
+            foreach ($xml->xpath('//field[@name="debug"]') ?: [] as $field) {
+                $ok = (string) $field['default'] === '0'
+                    && (string) $field['label'] === 'PLG_AJAX_JOOMLAAJAXFORMS_DEBUG';
+            }
+        }
+
+        if ($ok) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (no debug field with default 0)\n";
+            $passed = false;
+        }
+
+        echo "Test: Debug option is translated in de-DE, en-GB and fr-FR... ";
+        $missing = [];
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $ini = '/var/www/html/plugins/ajax/joomlaajaxforms/language/' . $tag . '/plg_ajax_joomlaajaxforms.ini';
+            $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+
+            foreach (['PLG_AJAX_JOOMLAAJAXFORMS_DEBUG', 'PLG_AJAX_JOOMLAAJAXFORMS_DEBUG_DESC'] as $key) {
+                if (empty($values[$key])) {
+                    $missing[] = $tag . '/' . $key;
+                }
+            }
+
+            if ($tag === 'de-DE' && str_contains((string) ($values['PLG_AJAX_JOOMLAAJAXFORMS_DEBUG_DESC'] ?? ''), 'ß')) {
+                $missing[] = 'de-DE uses an eszett';
+            }
+        }
+
+        if ($missing === []) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (" . implode(', ', $missing) . ")\n";
+            $passed = false;
+        }
+
+        return $passed;
+    }
+
+    /**
+     * The script shows only texts it received from the plugin or the page (or
+     * fetched from the endpoint), never a text of its own, so a site in any
+     * language shows its own language.
+     */
+    private function testScriptHasNoFixedTexts(): bool
+    {
+        $jsFile = '/var/www/html/media/plg_ajax_joomlaajaxforms/js/joomlaajaxforms.js';
+        $source = is_file($jsFile) ? (string) file_get_contents($jsFile) : '';
+        $passed = true;
+
+        echo "Test: getFormsLang() takes a key only, without a fallback text... ";
+        if ($source !== '' && preg_match('/getFormsLang\(\s*\'[A-Z_]+\'\s*,/', $source) === 0) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        echo "Test: Script contains none of the former fixed texts... ";
+        $found = [];
+        foreach (['An error occurred', 'Please try again', 'Profile saved', 'Schliessen', 'Close'] as $text) {
+            if (str_contains($source, "'" . $text) || str_contains($source, '"' . $text)) {
+                $found[] = $text;
+            }
+        }
+        if ($source !== '' && $found === []) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL (" . implode(', ', $found) . ")\n";
+            $passed = false;
+        }
+
+        echo "Test: aria-label and messages come from getFormsLang()... ";
+        if ($source !== ''
+            && preg_match("/setAttribute\(\s*'aria-label'\s*,\s*'/", $source) === 0
+            && str_contains($source, "getFormsLang('CLOSE')")
+        ) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        echo "Test: Missing texts are fetched from the endpoint (task=texts)... ";
+        if (str_contains($source, "buildBaseParams('texts', '')") && str_contains($source, 'JoomlaAjaxForms.loadTexts()')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        return $passed;
+    }
+
+    /** Body of `…name…{ … }` in JavaScript source, or null. */
+    private function jsFunctionBody(string $source, string $name): ?string
+    {
+        $start = strpos($source, $name);
+
+        if ($start === false) {
+            return null;
+        }
+
+        $brace = strpos($source, '{', $start);
+
+        if ($brace === false) {
+            return null;
+        }
+
+        $depth = 0;
+
+        for ($i = $brace; $i < \strlen($source); $i++) {
+            if ($source[$i] === '{') {
+                $depth++;
+            } elseif ($source[$i] === '}') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($source, $brace, $i - $brace + 1);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Offsets of JSON.parse( calls outside any try block, found by scanning
+     * braces, so a call that is moved out of its guard is caught as well.
+     *
+     * @return int[]
+     */
+    private function unguardedJsonParse(string $source): array
+    {
+        $tryRanges = [];
+        $offset    = 0;
+
+        while (($start = strpos($source, 'try', $offset)) !== false) {
+            $offset = $start + 3;
+            $brace  = strpos($source, '{', $start);
+
+            if ($brace === false) {
+                break;
+            }
+
+            $depth = 0;
+
+            for ($i = $brace; $i < \strlen($source); $i++) {
+                if ($source[$i] === '{') {
+                    $depth++;
+                } elseif ($source[$i] === '}') {
+                    $depth--;
+
+                    if ($depth === 0) {
+                        $tryRanges[] = [$brace, $i];
+                        break;
+                    }
+                }
+            }
+        }
+
+        $unguarded = [];
+        $offset    = 0;
+
+        while (($pos = strpos($source, 'JSON.parse(', $offset)) !== false) {
+            $offset   = $pos + 1;
+            $isInside = false;
+
+            foreach ($tryRanges as [$from, $to]) {
+                if ($pos > $from && $pos < $to) {
+                    $isInside = true;
+                    break;
+                }
+            }
+
+            if (!$isInside) {
+                $unguarded[] = $pos;
+            }
+        }
+
+        return $unguarded;
     }
 
     private function printSummary(): void

@@ -22,6 +22,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 require_once __DIR__ . '/bootstrap-app.php';
 
+use Joomla\CMS\Event\GenericEvent;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Document\FactoryInterface as DocumentFactoryInterface;
 use Joomla\CMS\Document\HtmlDocument;
@@ -90,13 +91,35 @@ class RenderInjectionTest
         // real tmpl directory (plugins/{group}/productcompare/tmpl), exactly as the
         // installed plugin does at runtime.
         $plugin = new \Advans\Plugin\J2Commerce\ProductCompare\Extension\ProductCompare(
-            new Dispatcher(),
             ['params' => $params, 'type' => $this->group, 'name' => 'productcompare']
         );
 
         $plugin->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
 
         return $plugin;
+    }
+
+    /**
+     * Render one compare button through the plugin's storefront event handler,
+     * dispatched like the shop does. The bar and modal are only injected into
+     * pages that show a button.
+     */
+    private function renderButton(object $plugin, int $productId = 434343): string
+    {
+        $dispatcher = new Dispatcher();
+        $dispatcher->addSubscriber($plugin);
+
+        $event = $this->group === 'j2commerce'
+            ? new GenericEvent('onJ2CommerceAfterProductListItemDisplay', [
+                (object) ['j2commerce_product_id' => $productId], 'com_j2commerce.products', [],
+            ])
+            : new GenericEvent('onJ2StoreAfterAddToCartButton', [
+                (object) ['j2store_product_id' => $productId], 'j2store.site.products.default_cart',
+            ]);
+
+        $dispatcher->dispatch($event->getName(), $event);
+
+        return implode('', (array) $event->getArgument('result', []));
     }
 
     private function makeHtmlDocument(): HtmlDocument
@@ -121,7 +144,6 @@ class RenderInjectionTest
     private function attachDocument(object $app, HtmlDocument $doc): void
     {
         $rp = new ReflectionProperty($app, 'document');
-        $rp->setAccessible(true);
         $rp->setValue($app, $doc);
     }
 
@@ -148,6 +170,14 @@ class RenderInjectionTest
         $original = '<!DOCTYPE html><html><head><title>T</title></head>'
             . '<body><main><p>Storefront content</p></main></body></html>';
         $app->setBody($original);
+
+        // A page without a compare button stays unchanged.
+        $plugin->onAfterRender();
+        $this->test('Page without compare button stays unchanged', $app->getBody() === $original);
+
+        $button = $this->renderButton($plugin);
+        $this->test('Storefront event rendered a compare button',
+            strpos($button, 'data-product-id="434343"') !== false, $button);
 
         try {
             ob_start();

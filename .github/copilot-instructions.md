@@ -16,4 +16,6 @@ Signing-Regeln:
 
 Lizenz: Alle Extensions stehen unter GPL-3.0-or-later; Kopfvorlage und Regeln für Fremdcode in `/AGENTS.md` (Abschnitt „Lizenz“).
 
-PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst.
+PR-only-Workflow: Änderungen nur per PR, Squash-Merge, Agenten mergen nie selbst. Review-Befunde sofort beheben, nicht auf die CI warten.
+
+Öffentliches Repository: keine Kundendaten, Hostnamen, IP-Adressen oder internen Details — auch nicht in Commit-Nachrichten, PR-Texten und Kommentaren. Weitere festgehaltene Entscheidungen: `/AGENTS.md`, Abschnitt „Repo-spezifisch (Joomla)“.

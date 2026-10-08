@@ -10,6 +10,7 @@ $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 
 // Register component PSR-4 namespace
@@ -82,15 +83,14 @@ class ImportModelTest
         $model = $rc->newInstanceWithoutConstructor();
         $model->setDatabase($db);
 
-        $this->test('importProductFull() with missing required fields throws', function () use ($model) {
+        $this->test('importProductFull() without a title throws InvalidArgumentException', function () use ($model) {
             try {
                 $model->importProductFull([]);
-                // If it returns without throwing, check result has error info
-                return true;
-            } catch (\Throwable $e) {
-                // Expected — missing required fields
+            } catch (\InvalidArgumentException $e) {
                 return true;
             }
+
+            return false;
         });
 
         // --- Runtime: importProductFull() with minimal valid data ---
@@ -133,12 +133,111 @@ class ImportModelTest
             });
         }
 
+        $this->testTranslatedRowErrors($model);
+
         echo "\n=== Import Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";
         echo "Total:  " . ($this->passed + $this->failed) . "\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * importData() reports a failed row to the administrator in the site
+     * language: frame and reason come from the component language file, no
+     * English text is built into the model. Runs in de-DE so an English literal
+     * would show.
+     */
+    private function testTranslatedRowErrors(object $model): void
+    {
+        // Joomla installs an extension's language file only for languages the site
+        // has, and the test site has no de-DE pack. Load the de-DE file from the
+        // package under test instead, without falling back to en-GB.
+        $languageDir = sys_get_temp_dir() . '/import-language-' . uniqid();
+        @mkdir($languageDir . '/language/de-DE', 0755, true);
+        $zip = new \ZipArchive();
+
+        if ($zip->open('/tmp/extension.zip') === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = (string) $zip->getNameIndex($i);
+
+                if (str_ends_with($name, 'de-DE/com_j2commerce_importexport.ini')) {
+                    file_put_contents($languageDir . '/language/de-DE/com_j2commerce_importexport.ini', (string) $zip->getFromIndex($i));
+                    break;
+                }
+            }
+
+            $zip->close();
+        }
+
+        $language = Factory::getContainer()
+            ->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)
+            ->createLanguage('de-DE');
+        $language->load('com_j2commerce_importexport', $languageDir, 'de-DE', true, false);
+
+        $previousApplication = Factory::$application;
+        $hasLanguageProperty = property_exists(Factory::class, 'language');
+        $previousLanguage    = $hasLanguageProperty ? Factory::$language : null;
+
+        // Text reads the language through Factory; give it the German one.
+        Factory::$application = new class ($language) {
+            public function __construct(private object $language)
+            {
+            }
+
+            public function getLanguage(): object
+            {
+                return $this->language;
+            }
+        };
+
+        if ($hasLanguageProperty) {
+            Factory::$language = $language;
+        }
+
+        $file = sys_get_temp_dir() . '/import-language-test-' . uniqid() . '.json';
+
+        try {
+            $this->test('Precondition: component language loaded in de-DE', function () {
+                return Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_NO_DATA') === 'Die Datei enthält keine Daten.';
+            });
+
+            // One row without a title: rejected before anything is written.
+            file_put_contents($file, json_encode([['title' => '']]));
+            $result = $model->importData($file, 'products_full', []);
+
+            $this->test('A row without a title fails', fn () => ($result['failed'] ?? 0) === 1);
+            $this->test('The failed row is reported in the site language',
+                fn () => ($result['errors'][0] ?? '') === 'Zeile 1: Der Produkttitel ist erforderlich.');
+
+            file_put_contents($file, json_encode([]));
+            $empty = $model->importData($file, 'products_full', []);
+            $this->test('An empty file is reported in the site language',
+                fn () => ($empty['errors'][0] ?? '') === 'Die Datei enthält keine Daten.');
+
+            $this->test('An unsupported format is reported in the site language', function () use ($model) {
+                try {
+                    $model->importData('/tmp/products.xls', 'products_full', []);
+                } catch (\RuntimeException $e) {
+                    return $e->getMessage() === 'Nicht unterstütztes Dateiformat: xls';
+                }
+
+                return false;
+            });
+        } finally {
+            Factory::$application = $previousApplication;
+
+            if ($hasLanguageProperty) {
+                Factory::$language = $previousLanguage;
+            }
+
+            @unlink($file);
+            @unlink($languageDir . '/language/de-DE/com_j2commerce_importexport.ini');
+            @rmdir($languageDir . '/language/de-DE');
+            @rmdir($languageDir . '/language');
+            @rmdir($languageDir);
+        }
     }
 }
 

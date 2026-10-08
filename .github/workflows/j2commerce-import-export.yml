@@ -13,6 +13,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/j2commerce-import-export.yml'
   pull_request:
     branches: [main]
@@ -25,6 +26,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/j2commerce-import-export.yml'
 
 permissions: {}
@@ -135,6 +137,10 @@ jobs:
             script: 'export-http'
           - name: '08 - Import HTTP (CSRF)'
             script: 'import-http'
+          - name: '09 - Active Shop Detection'
+            script: 'active-shop'
+          - name: 'Backend Views'
+            script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '06 - Uninstall'
@@ -218,6 +224,10 @@ jobs:
             script: 'export-http'
           - name: '08 - Import HTTP (CSRF)'
             script: 'import-http'
+          - name: '09 - Active Shop Detection'
+            script: 'active-shop'
+          - name: 'Backend Views'
+            script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '06 - Uninstall'
