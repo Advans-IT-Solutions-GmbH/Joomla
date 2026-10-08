@@ -4,6 +4,17 @@
 
 echo "=== OSMap J2Commerce Test Environment ==="
 
+# mod_rewrite has to be enabled BEFORE Apache starts. a2enmod only writes the symlink in
+# mods-enabled; an already running Apache does not pick the module up, so doing this later in the
+# SEF block would leave the lane serving requests without rewrite while the configuration claims
+# otherwise. Only the module load order matters here: .htaccess itself is read per request and is
+# still copied further down, once Joomla has unpacked htaccess.txt. The J6 entrypoint does the
+# same, at the same place.
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Enabling mod_rewrite before Apache starts (J2COMMERCE_SEF=1)..."
+    a2enmod rewrite >/dev/null 2>&1 || true
+fi
+
 /entrypoint.sh apache2-foreground &
 JOOMLA_PID=$!
 
@@ -106,9 +117,21 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
 \$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = true;', \$c);
 file_put_contents(\$f, \$c);
 " 2>/dev/null || true
-    a2enmod rewrite >/dev/null 2>&1 || true
+    # The module itself is already loaded, see the top of this script. Here only .htaccess is put
+    # in place, which Apache reads per request.
     if [ -f /var/www/html/htaccess.txt ] && [ ! -f /var/www/html/.htaccess ]; then
         cp /var/www/html/htaccess.txt /var/www/html/.htaccess
+    fi
+
+    # Proof rather than assumption: a lane that claims to serve rewrite-based SEF URLs must
+    # actually have the module loaded. Without this the suite would test the old server
+    # configuration, and this J5 lane only LOGS the live status of its URLs, so nothing else
+    # would notice.
+    if apache2ctl -M 2>/dev/null | grep -q rewrite_module; then
+        echo "mod_rewrite is loaded."
+    else
+        echo "ERROR: mod_rewrite is NOT loaded although J2COMMERCE_SEF=1; the SEF lane would test the wrong server configuration." >&2
+        exit 1
     fi
 else
     echo "Disabling SEF URLs (default J5 mode)..."
