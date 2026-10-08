@@ -115,6 +115,30 @@ class SitemapOutputTest
         return $expected;
     }
 
+    /**
+     * The article id behind each expected alias, read from the fixture rows rather than written in
+     * here, so the expectation follows the seed of the entrypoint. A missing article yields 0, which
+     * the caller reports as a fixture error instead of comparing against it.
+     *
+     * @return array<string, int>  alias => article id, sorted by alias
+     */
+    private function expectedUidsByAlias(): array
+    {
+        $map = [];
+
+        foreach ($this->expectedAliases() as $alias) {
+            $q = $this->createDbQuery()
+                ->select($this->db->quoteName('id'))
+                ->from($this->db->quoteName('#__content'))
+                ->where($this->db->quoteName('alias') . ' = ' . $this->db->quote($alias));
+            $map[$alias] = (int) $this->db->setQuery($q)->loadResult();
+        }
+
+        ksort($map);
+
+        return $map;
+    }
+
     public function run(): bool
     {
         echo "=== Sitemap Output Tests ===\n\n";
@@ -186,13 +210,41 @@ class SitemapOutputTest
             return count($nodes) > 0;
         });
 
-        $this->test('Emitted nodes have the j2commerce.product.* uid format', function () use ($nodes) {
-            foreach ($nodes as $node) {
-                if (!preg_match('/^j2commerce\.product\.\d+$/', (string) $node->uid)) {
+        // OSMap identifies and de-duplicates nodes by their uid. A node carrying the uid of another
+        // product, or the same uid on every node, would vanish from the rendered sitemap although
+        // its link is right, and a format check alone passes either way. So the exact pairing of
+        // each alias with the article id behind it is asserted, one node per product, including
+        // the menu-less product on J5.
+        $this->test('Emitted nodes carry the uid of exactly their own product (alias → article id)', function () use ($nodes) {
+            $erwartet = [];
+            foreach ($this->expectedUidsByAlias() as $alias => $id) {
+                if ($id <= 0) {
+                    echo "  fixture article for {$alias} not found\n";
+
                     return false;
                 }
+                $erwartet[$alias] = 'j2commerce.product.' . $id;
             }
-            return count($nodes) > 0;
+
+            $ist = [];
+            foreach ($nodes as $node) {
+                $alias = basename(parse_url((string) $node->link, PHP_URL_PATH) ?: '');
+                if (isset($ist[$alias])) {
+                    echo "  {$alias} emitted twice\n";
+
+                    return false;
+                }
+                $ist[$alias] = (string) $node->uid;
+            }
+            ksort($ist);
+
+            if ($ist !== $erwartet) {
+                echo '  expected: ' . json_encode($erwartet) . "\n  got:      " . json_encode($ist) . "\n";
+
+                return false;
+            }
+
+            return true;
         });
 
         $this->test('Emitted nodes use default priority 0.8', function () use ($nodes) {
