@@ -158,19 +158,34 @@ class SecurityTest
         // The front page carries a token only when something on it renders a form, which depends
         // on the installed extensions: in the J2Commerce lanes the cart form provides one, in a
         // bare installation there is none, and the token-name cases were silently skipped there.
-        // The core login view always renders one, so it is asked as well. Cookie and token are
-        // always taken from the SAME response, otherwise the token would belong to another
-        // session.
-        foreach (['/', '/index.php?option=com_users&view=login'] as $pfad) {
+        // Two core views that always render a form with a token are therefore asked as well.
+        //
+        // Redirects are followed, because a component view without a menu item is answered with
+        // one, and curl keeps the cookies of the handle while doing so (CURLOPT_COOKIEFILE with
+        // an empty name switches the in-memory cookie engine on). That keeps cookie and token in
+        // the SAME session, which matters: a token of another session is worthless here.
+        $versucht = [];
+
+        foreach ([
+            '/',
+            '/index.php?option=com_users&view=login',
+            '/index.php?option=com_users&view=reset',
+        ] as $pfad) {
             $ch = curl_init($this->baseUrl . $pfad);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 10);
             curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, '');
             $response = (string) curl_exec($ch);
+            $status   = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
             curl_close($ch);
 
             // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
             if (!preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)) {
+                $versucht[] = $pfad . ' (HTTP ' . $status . ', ' . strlen($response) . ' bytes, no token)';
+
                 continue;
             }
 
@@ -185,6 +200,8 @@ class SecurityTest
 
             return [$sessionCookie, $tokenName];
         }
+
+        echo "  (no token anywhere: " . implode('; ', $versucht) . ")\n";
 
         return ['', ''];
     }
