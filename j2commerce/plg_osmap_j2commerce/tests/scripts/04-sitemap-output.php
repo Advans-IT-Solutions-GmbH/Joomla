@@ -153,13 +153,21 @@ class SitemapOutputTest
             return (int) $this->db->setQuery($q)->loadResult() === 1;
         });
 
-        $this->test('Fixture: 2 hidden product menu items exist on the standard stack', function () {
+        // The J6 SEF fixture omits the hidden children on purpose: it proves that the direct
+        // query alone carries the products, with published routes 9011/9012 for the HTTP check
+        // (08-sitemap-http-sef.php asserts the omission there). `./run-tests.sh all` runs this
+        // suite on that container too, so the expected count follows the fixture instead of
+        // failing before the direct-query cases below can run.
+        $sefJ6 = $this->isJ6 && getenv('J2COMMERCE_SEF') === '1';
+        $expectedHidden = $sefJ6 ? 0 : 2;
+
+        $this->test("Fixture: {$expectedHidden} hidden product menu items exist on this stack", function () use ($expectedHidden) {
             $q = $this->createDbQuery()
                 ->select('COUNT(*)')
                 ->from('#__menu')
                 ->where('parent_id = ' . self::SHOP_MENU_ID)
                 ->where('published = -2');
-            return (int) $this->db->setQuery($q)->loadResult() === 2;
+            return (int) $this->db->setQuery($q)->loadResult() === $expectedHidden;
         });
 
         $this->test('Fixture: 2 enabled products exist in the stack products table', function () {
