@@ -258,8 +258,16 @@ class ComponentFunctionsTest
         $markup = substr($source, $start, $end - $start);
 
         // Layer 1: the literal HTML between the PHP blocks carries no words.
-        $inlineHtml = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
-        $inlineHtml = preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $inlineHtml);
+        $inlineHtml = $this->literalHtml($markup);
+
+        // Layer 1a: the attributes a reader sees or hears. strip_tags() below throws them away
+        // together with their tags, so `<input placeholder="Search">` or `<img alt="Logo">` would
+        // otherwise pass as "no text". They are read before the tags go.
+        $attributeText = $this->findFixedAttributeText($inlineHtml);
+
+        $this->test('Literal HTML attributes contain no fixed visible text', $attributeText === [],
+            'left over: ' . implode(', ', $attributeText));
+
         $inlineText = html_entity_decode(strip_tags($inlineHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $inlineText = $this->dropAllowedText($inlineText);
 
@@ -342,11 +350,112 @@ class ComponentFunctionsTest
             'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
         ];
 
+        // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
+        // runs through literalHtml() first, the same pipeline the page check uses, so an
+        // attribute filled from PHP is seen exactly as the page check sees it.
+        $visibleAttributes = [
+            'in a placeholder'           => '<input type="text" placeholder="Hardcoded Label">',
+            'in an image alternative'    => '<img src="logo.png" alt="Visible text">',
+            'in a title'                 => '<a href="#" title="Open the settings">x</a>',
+            'in an aria-label'           => '<button type="button" aria-label="Close dialog"></button>',
+            'on a submit button'         => '<input type="submit" value="Remove now">',
+            'in single quotes'           => "<input type='text' placeholder='Hardcoded Label'>",
+            'as hyphenated prose'        => '<img src="x.png" alt="hard-coded">',
+        ];
+
+        foreach ($visibleAttributes as $label => $snippet) {
+            $found = $this->findFixedAttributeText($this->literalHtml($snippet));
+            $this->test('Guard reports a fixed attribute text ' . $label, $found !== [],
+                'reported: ' . implode(', ', $found));
+        }
+
+        $machineAttributes = [
+            'a hidden field value'       => '<input type="hidden" name="task" value="remove">',
+            'a checkbox value'           => '<input type="checkbox" name="cid[]" value="selected">',
+            'CSS classes'                => '<span class="badge badge-danger"></span>',
+            'a decorative image'         => '<img src="spacer.gif" alt="">',
+            'a title filled from PHP'    => "<a href=\"#\" title=\"<?php echo Text::_('COM_X'); ?>\">x</a>",
+            'the allowed company name'   => '<a href="https://advans.ch" title="Advans IT Solutions GmbH">x</a>',
+            'a link target'              => '<a href="https://advans.ch" target="_blank" rel="noopener">x</a>',
+        ];
+
+        foreach ($machineAttributes as $label => $snippet) {
+            $found = $this->findFixedAttributeText($this->literalHtml($snippet));
+            $this->test('Guard stays silent about the attribute of ' . $label, $found === [],
+                'reported: ' . implode(', ', $found));
+        }
+
         foreach ($allowed as $label => $snippet) {
             $found = $this->findEchoedFixedText($snippet);
             $this->test('Guard stays silent about ' . $label, $found === [],
                 'reported: ' . implode(', ', $found));
         }
+    }
+
+    /**
+     * The literal HTML of the markup: every PHP block replaced by a blank, `<style>` and
+     * `<script>` removed. An attribute filled from PHP (`title="<?php echo … ?>"`) is left with
+     * a blank value, which is what the literal page carries.
+     */
+    private function literalHtml(string $markup): string
+    {
+        $html = preg_replace('/<\?php.*?\?>/s', ' ', $markup);
+
+        return preg_replace('/<(style|script)\b.*?<\/\1>/is', ' ', $html);
+    }
+
+    /**
+     * Fixed text in those attributes of the literal HTML that a reader sees or hears.
+     *
+     * `title`, `alt`, `placeholder` and `aria-label` are shown or read aloud, and so is the
+     * `value` of a button-like input (`submit`, `button`, `reset`), which is its caption. The
+     * `value` of any other input is data, not text: a hidden field or a checkbox carries what
+     * is submitted, never what is displayed. Everything else (`class`, `id`, `name`, `href`,
+     * `data-*` …) is for the machine.
+     *
+     * The same filters as for echoed text apply afterwards: allowed fixed strings removed, then
+     * only real words that are not an identifier token count.
+     *
+     * @return string[]  `name="value"` of each offending attribute
+     */
+    private function findFixedAttributeText(string $html): array
+    {
+        $found = [];
+
+        if (!preg_match_all('/<([a-z][a-z0-9-]*)\b([^>]*)>/i', $html, $tags, PREG_SET_ORDER)) {
+            return [];
+        }
+
+        foreach ($tags as $tag) {
+            $element = strtolower($tag[1]);
+
+            preg_match_all('/([a-z][a-z0-9_:-]*)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/i', $tag[2], $pairs, PREG_SET_ORDER);
+
+            $attributes = [];
+            foreach ($pairs as $pair) {
+                $raw = ($pair[2] ?? '') !== '' ? $pair[2] : ($pair[3] ?? '');
+                $attributes[strtolower($pair[1])] = html_entity_decode($raw, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            }
+
+            $visible = ['title', 'alt', 'placeholder', 'aria-label'];
+            if ($element === 'input' && in_array(strtolower($attributes['type'] ?? ''), ['submit', 'button', 'reset'], true)) {
+                $visible[] = 'value';
+            }
+
+            foreach ($visible as $name) {
+                if (!isset($attributes[$name])) {
+                    continue;
+                }
+
+                $text = $this->dropAllowedText($attributes[$name]);
+
+                if ($text !== '' && preg_match('/\p{L}/u', $text) && !$this->looksLikeIdentifier($text)) {
+                    $found[] = $name . '="' . $attributes[$name] . '"';
+                }
+            }
+        }
+
+        return array_values(array_unique($found));
     }
 
     /**
