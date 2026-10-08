@@ -309,6 +309,8 @@ class ComponentFunctionsTest
             'in front of a value'        => "<?php echo \"Hardcoded {\$label}\"; ?>",
             'behind a value'             => "<?php echo \"{\$count} extensions found\"; ?>",
             'behind a simple variable'   => "<?php echo \"Removed \$name from the site\"; ?>",
+            'inside a short array'       => "<?php echo implode(', ', ['Hardcoded Label']); ?>",
+            'inside a nested array'      => "<?php echo implode(', ', [\$a, ['Hardcoded Label']]); ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -326,6 +328,8 @@ class ComponentFunctionsTest
             'an encoding argument'      => "<?php echo htmlspecialchars(\$x, ENT_QUOTES, 'UTF-8'); ?>",
             'CSS classes in a condition' => "<?php echo \$c ? 'badge-danger' : 'badge-warning'; ?>",
             'a field key'               => "<?php echo htmlspecialchars(\$issue['detail']); ?>",
+            'a chained field key'       => "<?php echo htmlspecialchars(\$all['issues'][0]['detail']); ?>",
+            'a key behind a call'       => "<?php echo htmlspecialchars(getIssue(\$x)['detail']); ?>",
             'a compared value'          => "<?php echo \$issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>",
             'a compared value in front' => "<?php echo 'j2store' === \$issue['type'] ? 'badge-danger' : 'badge-warning'; ?>",
             'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
@@ -391,8 +395,10 @@ class ComponentFunctionsTest
      * are not an allowed fixed string and not an identifier token
      * (see looksLikeIdentifier()). Two positions are recognised by their place in
      * the code rather than by their spelling, because a plain single word really
-     * does occur there: a field key inside square brackets (`$issue['type']`) and
-     * one side of a comparison (`=== 'j2store'`). Neither is ever output.
+     * does occur there: a field key inside LOOKUP brackets (`$issue['type']`) and
+     * one side of a comparison (`=== 'j2store'`). Neither is ever output. An array
+     * with contents is not a lookup, so `implode(', ', ['Fixed text'])` is
+     * reported; see opensSubscript().
      *
      * @return string[]  The offending literal contents.
      */
@@ -407,9 +413,11 @@ class ComponentFunctionsTest
         // und die Zahl der Kommas auf dieser Ebene, also die Nummer des Arguments.
         $calls = [];
 
-        // Offene eckige Klammern. Eine Zeichenkette darin ist ein Feldschluessel wie
-        // $issue['type'] und wird nie ausgegeben.
-        $brackets = 0;
+        // Offene eckige Klammern, je Eintrag die Antwort auf die Frage, ob sie einen Zugriff
+        // eroeffnet. $issue['type'] ist ein Feldschluessel und wird nie ausgegeben, ['Fester
+        // Text'] ist ein Feld mit Inhalt und sehr wohl sichtbar, etwa in
+        // implode(', ', ['Fester Text']). Nur die innerste Klammer entscheidet.
+        $brackets = [];
 
         foreach ($tokens as $i => $token) {
             $id   = $token['id'];
@@ -418,7 +426,7 @@ class ComponentFunctionsTest
             if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
                 $inEcho   = true;
                 $calls    = [];
-                $brackets = 0;
+                $brackets = [];
                 continue;
             }
 
@@ -441,7 +449,7 @@ class ComponentFunctionsTest
                     : stripcslashes($text);
 
                 if (!$this->isLanguageKeyArgument($calls)
-                    && $brackets === 0
+                    && !($brackets !== [] && $brackets[count($brackets) - 1])
                     && !$this->isComparisonOperand($tokens, $i)) {
                     $visible = $this->dropAllowedText(
                         html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8')
@@ -464,9 +472,9 @@ class ComponentFunctionsTest
             } elseif ($text === ')') {
                 array_pop($calls);
             } elseif ($text === '[') {
-                $brackets++;
+                $brackets[] = $this->opensSubscript($tokens, $i);
             } elseif ($text === ']') {
-                $brackets--;
+                array_pop($brackets);
             } elseif ($text === ',' && $calls !== []) {
                 $calls[count($calls) - 1]['commas']++;
             } elseif ($text === ';' && $calls === []) {
@@ -528,6 +536,33 @@ class ComponentFunctionsTest
         }
 
         return implode('', array_reverse($teile));
+    }
+
+    /**
+     * Does the `[` at the given index open a lookup rather than an array with contents?
+     *
+     * A lookup follows something that can be indexed: a variable, a closing bracket or
+     * parenthesis, a string, or a name (a constant or a property). An array with contents follows
+     * none of those, for instance after `(`, after a comma or right behind `echo`. The difference
+     * matters because a literal in a lookup is a key and never reaches the page, while
+     * `implode(', ', ['Fixed text'])` prints its contents.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function opensSubscript(array $tokens, int $index): bool
+    {
+        if ($index === 0) {
+            return false;
+        }
+
+        $vorher = $tokens[$index - 1];
+
+        if (in_array($vorher['id'], [T_VARIABLE, T_STRING, T_CONSTANT_ENCAPSED_STRING,
+            T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            return true;
+        }
+
+        return $vorher['id'] === null && in_array($vorher['text'], [']', ')'], true);
     }
 
     /**
