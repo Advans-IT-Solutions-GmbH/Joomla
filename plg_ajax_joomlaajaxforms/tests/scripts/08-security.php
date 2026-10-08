@@ -155,25 +155,52 @@ class SecurityTest
      */
     private function getSessionAndToken(): array
     {
-        $ch = curl_init($this->baseUrl . '/');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_HEADER, true);
-        $response = (string) curl_exec($ch);
-        curl_close($ch);
+        // The front page carries a token only when something on it renders a form, which depends
+        // on the installed extensions: in the J2Commerce lanes the cart form provides one, in a
+        // bare installation there is none, and the token-name cases were silently skipped there.
+        // The core login view always renders one, so it is asked as well. Cookie and token are
+        // always taken from the SAME response, otherwise the token would belong to another
+        // session.
+        foreach (['/', '/index.php?option=com_users&view=login'] as $pfad) {
+            $ch = curl_init($this->baseUrl . $pfad);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            $response = (string) curl_exec($ch);
+            curl_close($ch);
 
-        $sessionCookie = '';
-        if (preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $response, $m)) {
-            $sessionCookie = trim($m[1]);
+            // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
+            if (!preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)) {
+                continue;
+            }
+
+            $tokenName     = $m[1];
+            $sessionCookie = '';
+
+            if (preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $response, $c)) {
+                $sessionCookie = trim($c[1]);
+            }
+
+            echo "  (token taken from {$pfad})\n";
+
+            return [$sessionCookie, $tokenName];
         }
 
-        // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
-        $tokenName = '';
-        if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)) {
-            $tokenName = $m[1];
+        return ['', ''];
+    }
+
+    /**
+     * True when a test that cannot run must fail instead of being skipped. Same rule as
+     * sh_strict_skip() of the shared helpers, which this suite does not load; its answer is used
+     * when it is available.
+     */
+    private function strictSkip(): bool
+    {
+        if (function_exists('sh_strict_skip')) {
+            return sh_strict_skip();
         }
 
-        return [$sessionCookie, $tokenName];
+        return getenv('TEST_STRICT_SKIP') === '1';
     }
 
     /**
@@ -268,7 +295,21 @@ class SecurityTest
         }
 
         if ($echtToken === '') {
-            echo "  SKIP: no CSRF token found on the front page, token-name cases skipped\n";
+            $meldung = 'no CSRF token found on the front page or in the login view, '
+                . 'so the token-name cases cannot run';
+
+            // CI runs with TEST_STRICT_SKIP=1, where a test that cannot run has to fail. A plain
+            // return would drop all three token-name cases below and leave the suite green
+            // without ever having exercised them. The token is now looked for in the core login
+            // view as well, so reaching this point means no Joomla page rendered a token at all,
+            // which is a real defect of the lane rather than a missing extension.
+            if ($this->strictSkip()) {
+                $this->test('A CSRF token is available for the token-name cases', false, $meldung);
+
+                return;
+            }
+
+            echo "  SKIP: {$meldung}\n";
 
             return;
         }

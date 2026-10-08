@@ -287,10 +287,12 @@ class ComponentFunctionsTest
      * the constructs it has to see through and the ones it has to leave alone. Every case is a
      * line someone could plausibly write in this view.
      *
-     * The first three are the reason this self-test exists: a visible literal does not have to
+     * The first cases are the reason this self-test exists: a visible literal does not have to
      * stand at parenthesis depth 0. Passed through htmlspecialchars(), through sprintf(), or
      * merely wrapped in parentheses, it reaches the browser just the same, and a scanner that
-     * exempts everything inside parentheses would report none of them.
+     * exempts everything inside parentheses would report none of them. Nor does visible text
+     * have to be a whole literal: the fixed pieces around an inserted value are their own
+     * tokens, and a single plain word is visible text as much as a sentence is.
      */
     private function testLocalizationGuardCatchesHardcodedText(): void
     {
@@ -301,7 +303,12 @@ class ComponentFunctionsTest
             'through sprintf'            => "<?php echo sprintf('Total: %d items', \$n); ?>",
             'merely in parentheses'      => "<?php echo ('Hardcoded label'); ?>",
             'a single mixed-case word'   => "<?php echo htmlspecialchars('Warning'); ?>",
+            'a single lowercase word'    => "<?php echo 'warning'; ?>",
+            'a single uppercase word'    => "<?php echo 'WARNING'; ?>",
             'inserted into a translation' => "<?php echo Text::sprintf('COM_X', htmlspecialchars('Visible Thing')); ?>",
+            'in front of a value'        => "<?php echo \"Hardcoded {\$label}\"; ?>",
+            'behind a value'             => "<?php echo \"{\$count} extensions found\"; ?>",
+            'behind a simple variable'   => "<?php echo \"Removed \$name from the site\"; ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -318,6 +325,10 @@ class ComponentFunctionsTest
             'a layout name'             => "<?php echo HTMLHelper::_('form.token'); ?>",
             'an encoding argument'      => "<?php echo htmlspecialchars(\$x, ENT_QUOTES, 'UTF-8'); ?>",
             'CSS classes in a condition' => "<?php echo \$c ? 'badge-danger' : 'badge-warning'; ?>",
+            'a field key'               => "<?php echo htmlspecialchars(\$issue['detail']); ?>",
+            'a compared value'          => "<?php echo \$issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>",
+            'a compared value in front' => "<?php echo 'j2store' === \$issue['type'] ? 'badge-danger' : 'badge-warning'; ?>",
+            'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
         ];
 
         foreach ($allowed as $label => $snippet) {
@@ -372,15 +383,22 @@ class ComponentFunctionsTest
      * and are visible (the footer link survives because its text is an allowed
      * fixed string, not because it is unchecked).
      *
+     * Both forms of fixed text count: a whole string literal and the fixed pieces
+     * of a string with values inserted, which PHP returns as tokens of their own
+     * (`echo "Fixed text $x"`).
+     *
      * A literal is reported when, after stripping any HTML, real words remain that
      * are not an allowed fixed string and not an identifier token
-     * (see looksLikeIdentifier()).
+     * (see looksLikeIdentifier()). Two positions are recognised by their place in
+     * the code rather than by their spelling, because a plain single word really
+     * does occur there: a field key inside square brackets (`$issue['type']`) and
+     * one side of a comparison (`=== 'j2store'`). Neither is ever output.
      *
      * @return string[]  The offending literal contents.
      */
     private function findEchoedFixedText(string $markup): array
     {
-        $tokens = token_get_all($markup);
+        $tokens = $this->meaningfulTokens($markup);
         $found  = [];
 
         $inEcho = false;
@@ -389,32 +407,42 @@ class ComponentFunctionsTest
         // und die Zahl der Kommas auf dieser Ebene, also die Nummer des Arguments.
         $calls = [];
 
-        // Die letzten drei bedeutungstragenden Token-Texte. Aus ihnen entsteht der Name des
-        // Aufrufs, sobald die Klammer kommt: 'Text', '::', '_' ergibt Text::_.
-        $recent = [];
+        // Offene eckige Klammern. Eine Zeichenkette darin ist ein Feldschluessel wie
+        // $issue['type'] und wird nie ausgegeben.
+        $brackets = 0;
 
-        foreach ($tokens as $token) {
-            if (is_array($token)) {
-                [$id, $text] = $token;
+        foreach ($tokens as $i => $token) {
+            $id   = $token['id'];
+            $text = $token['text'];
 
-                if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
-                    $inEcho = true;
-                    $calls  = [];
-                    $recent = [];
-                    continue;
-                }
+            if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
+                $inEcho   = true;
+                $calls    = [];
+                $brackets = 0;
+                continue;
+            }
 
-                if (!$inEcho) {
-                    continue;
-                }
+            if (!$inEcho) {
+                continue;
+            }
 
-                if ($id === T_CLOSE_TAG) {
-                    $inEcho = false;
-                    continue;
-                }
+            if ($id === T_CLOSE_TAG) {
+                $inEcho = false;
+                continue;
+            }
 
-                if ($id === T_CONSTANT_ENCAPSED_STRING && !$this->isLanguageKeyArgument($calls)) {
-                    $value   = $this->literalValue($text);
+            // Beide Formen fester Text: die vollstaendige Zeichenkette und die festen Stuecke
+            // einer Zeichenkette mit eingesetzten Werten. PHP gibt letztere als eigene Token
+            // zurueck, ein Waechter, der nur die erste Form kennt, sieht echo "Fester Text $x"
+            // nicht.
+            if ($id === T_CONSTANT_ENCAPSED_STRING || $id === T_ENCAPSED_AND_WHITESPACE) {
+                $value = $id === T_CONSTANT_ENCAPSED_STRING
+                    ? $this->literalValue($text)
+                    : stripcslashes($text);
+
+                if (!$this->isLanguageKeyArgument($calls)
+                    && $brackets === 0
+                    && !$this->isComparisonOperand($tokens, $i)) {
                     $visible = $this->dropAllowedText(
                         html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8')
                     );
@@ -427,40 +455,99 @@ class ComponentFunctionsTest
                     }
                 }
 
-                if ($id !== T_WHITESPACE && $id !== T_COMMENT && $id !== T_DOC_COMMENT) {
-                    $recent   = array_slice($recent, -2);
-                    $recent[] = $text;
-                }
-
                 continue;
             }
 
-            if (!$inEcho) {
-                continue;
-            }
-
-            // Single-character tokens: track the open calls, the argument number and the
-            // statement end.
-            if ($token === '(') {
-                $calls[]  = ['name' => implode('', $recent), 'commas' => 0];
-                $recent   = [];
-
-                continue;
-            }
-
-            if ($token === ')') {
+            // Track the open calls, the argument number, the field keys and the statement end.
+            if ($text === '(') {
+                $calls[] = ['name' => $this->calleeName($tokens, $i), 'commas' => 0];
+            } elseif ($text === ')') {
                 array_pop($calls);
-            } elseif ($token === ',' && $calls !== []) {
+            } elseif ($text === '[') {
+                $brackets++;
+            } elseif ($text === ']') {
+                $brackets--;
+            } elseif ($text === ',' && $calls !== []) {
                 $calls[count($calls) - 1]['commas']++;
-            } elseif ($token === ';' && $calls === []) {
+            } elseif ($text === ';' && $calls === []) {
                 $inEcho = false;
             }
-
-            $recent   = array_slice($recent, -2);
-            $recent[] = $token;
         }
 
         return array_values($found);
+    }
+
+    /**
+     * The tokens of the markup without whitespace and comments, each as id plus text, so the
+     * scanner can look at the neighbours of a token by index. A single-character token gets the
+     * id null.
+     *
+     * @return array<int, array{id: int|null, text: string}>
+     */
+    private function meaningfulTokens(string $markup): array
+    {
+        $out = [];
+
+        foreach (token_get_all($markup) as $token) {
+            if (is_array($token)) {
+                if ($token[0] === T_WHITESPACE || $token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                    continue;
+                }
+
+                $out[] = ['id' => $token[0], 'text' => $token[1]];
+
+                continue;
+            }
+
+            $out[] = ['id' => null, 'text' => $token];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The name in front of the parenthesis at the given index, assembled from the name tokens
+     * immediately before it: `Text`, `::`, `_` gives Text::_, and a bare `(` used for grouping
+     * gives the empty string.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function calleeName(array $tokens, int $index): string
+    {
+        $teile = [];
+
+        for ($i = $index - 1; $i >= 0; $i--) {
+            $id = $tokens[$i]['id'];
+
+            if (!in_array($id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_DOUBLE_COLON,
+                T_VARIABLE, T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)) {
+                break;
+            }
+
+            $teile[] = $tokens[$i]['text'];
+        }
+
+        return implode('', array_reverse($teile));
+    }
+
+    /**
+     * Is the literal at the given index one side of a comparison, as in
+     * `$issue['type'] === 'j2store'`? Such a literal is a value being tested, never output, and
+     * both orders occur, so the token before and the token after are both consulted.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function isComparisonOperand(array $tokens, int $index): bool
+    {
+        $vergleiche = ['==', '===', '!=', '!==', '<>', '<=>'];
+
+        foreach ([$index - 1, $index + 1] as $i) {
+            if (isset($tokens[$i]) && in_array($tokens[$i]['text'], $vergleiche, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -488,21 +575,20 @@ class ComponentFunctionsTest
     /**
      * Is this text a machine identifier rather than something a reader would read?
      *
-     * Identifiers are CSS classes, layout names, language keys, encodings and the like. They
-     * are single tokens without spaces that either carry a separator (`badge-danger`,
-     * `form.token`, `COM_J2STORE_CLEANUP_X`, `UTF-8`) or are written in one case throughout
-     * (`j2store`, `type`). Visible prose differs in exactly those two respects, so
-     * `Hardcoded Label` and the single word `Warning` are both reported.
+     * Machine tokens in this view are CSS classes (`badge-danger`), layout names
+     * (`form.token`), language keys (`COM_J2STORE_CLEANUP_X`) and encodings (`UTF-8`). What they
+     * have in common is a separator inside one word, and that is the whole rule: one word
+     * without spaces that carries a dot, a hyphen or an underscore.
+     *
+     * Being written in one case is deliberately NOT enough. A lone `warning` or `WARNING` would
+     * be visible untranslated text, and the two positions where a single plain word really does
+     * occur in this view are recognised by their place in the code instead, not by their
+     * spelling: a field key inside square brackets, and one side of a comparison.
      */
     private function looksLikeIdentifier(string $value): bool
     {
-        if (preg_match('/\s/u', $value) || !preg_match('/^[A-Za-z0-9_.\-]+$/', $value)) {
-            return false;
-        }
-
-        return (bool) preg_match('/[._\-]/', $value)
-            || $value === strtolower($value)
-            || $value === strtoupper($value);
+        return (bool) preg_match('/^[A-Za-z0-9_.\-]+$/', $value)
+            && (bool) preg_match('/[._\-]/', $value);
     }
 
     /**
