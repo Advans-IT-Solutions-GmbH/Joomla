@@ -151,7 +151,7 @@ class SecurityTest
 
     /**
      * Load the front page and extract a session cookie + CSRF token name.
-     * Returns [cookie_header_value, token_name].
+     * Returns [cookies of that session as name => value, token_name].
      */
     private function getSessionAndToken(): array
     {
@@ -180,6 +180,19 @@ class SecurityTest
             curl_setopt($ch, CURLOPT_COOKIEFILE, '');
             $response = (string) curl_exec($ch);
             $status   = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+
+            // Every cookie the handle holds at the end, across all redirects, not just the first
+            // Set-Cookie header of the response. The first one need not be the session cookie,
+            // and a token sent with another session's cookie tests a different session.
+            $cookies = [];
+            foreach ((array) curl_getinfo($ch, CURLINFO_COOKIELIST) as $zeile) {
+                // Netscape format: domain, subdomains, path, secure, expiry, name, value
+                $felder = explode("\t", (string) $zeile);
+                if (count($felder) >= 7) {
+                    $cookies[$felder[5]] = $felder[6];
+                }
+            }
+
             curl_close($ch);
 
             // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
@@ -189,21 +202,14 @@ class SecurityTest
                 continue;
             }
 
-            $tokenName     = $m[1];
-            $sessionCookie = '';
+            echo "  (token taken from {$pfad}, " . count($cookies) . " cookie(s) of that session)\n";
 
-            if (preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $response, $c)) {
-                $sessionCookie = trim($c[1]);
-            }
-
-            echo "  (token taken from {$pfad})\n";
-
-            return [$sessionCookie, $tokenName];
+            return [$cookies, $m[1]];
         }
 
         echo "  (no token anywhere: " . implode('; ', $versucht) . ")\n";
 
-        return ['', ''];
+        return [[], ''];
     }
 
     /**
@@ -303,13 +309,7 @@ class SecurityTest
         //    any non-empty value is valid, and hasValidToken() mirrors core exactly.
         //
         //    Measured with a real session so the field name is the right one.
-        [$echtCookie, $echtToken] = $this->getSessionAndToken();
-        $echtCookies = [];
-
-        if ($echtCookie && str_contains($echtCookie, '=')) {
-            [$cName, $cVal] = explode('=', $echtCookie, 2);
-            $echtCookies[$cName] = $cVal;
-        }
+        [$echtCookies, $echtToken] = $this->getSessionAndToken();
 
         if ($echtToken === '') {
             $meldung = 'no CSRF token found on the front page or in the login view, '
@@ -409,17 +409,11 @@ class SecurityTest
         $this->test('Victim cart item seeded', $cartitemId > 0, "cartitem_id=$cartitemId");
 
         // Obtain a real (unauthenticated) session + CSRF token
-        [$sessionCookie, $tokenName] = $this->getSessionAndToken();
+        [$cookies, $tokenName] = $this->getSessionAndToken();
 
         $fields = ['task' => 'removeCartItem', 'cartitem_id' => $cartitemId];
         if ($tokenName) {
             $fields[$tokenName] = '1';
-        }
-
-        $cookies = [];
-        if ($sessionCookie && str_contains($sessionCookie, '=')) {
-            [$cName, $cVal] = explode('=', $sessionCookie, 2);
-            $cookies[$cName] = $cVal;
         }
 
         $url = $this->baseUrl . $this->ajaxPath . '&task=removeCartItem';
@@ -539,12 +533,7 @@ class SecurityTest
         // Log in as admin via the plugin's own task=login endpoint.
         // This is the same path used by the front-end login form and gives a
         // properly authenticated Joomla session without relying on com_users routing.
-        [$sessionCookie, $tokenName] = $this->getSessionAndToken();
-        $cookies = [];
-        if ($sessionCookie && str_contains($sessionCookie, '=')) {
-            [$cName, $cVal] = explode('=', $sessionCookie, 2);
-            $cookies[$cName] = $cVal;
-        }
+        [$cookies, $tokenName] = $this->getSessionAndToken();
 
         // Read admin password from the container environment — each docker-compose
         // sets JOOMLA_ADMIN_PASSWORD differently across J5/J2C4/J2C6 stacks.
