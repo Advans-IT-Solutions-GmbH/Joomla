@@ -277,7 +277,7 @@ class ComponentFunctionsTest
         // Every echoed string literal that survives strip_tags must come from a
         // language key (Text::…); bare labels such as the J2Store/Joomla origin
         // badge are reported instead of being silently stripped with the block.
-        $hardcoded = $this->findEchoedFixedText($markup);
+        $hardcoded = $this->findEchoedFixedText($markup, $source);
 
         $this->test('PHP emits no hardcoded visible text', $hardcoded === [],
             'hardcoded: ' . implode(', ', array_map(static fn ($s) => "'$s'", $hardcoded)));
@@ -327,6 +327,14 @@ class ComponentFunctionsTest
             'in a title attribute'       => "<span title=\"<?php echo 'Hardcoded Label'; ?>\"></span>",
             'in an attribute of echoed HTML' => "<?php echo '<img src=\"x.png\" alt=\"Hardcoded Label\">'; ?>",
             'through a short echo'       => "<?= htmlspecialchars('Hardcoded Label') ?>",
+            'assigned to a variable first' => "<?php \$label = 'Hardcoded Label'; ?><p><?php echo \$label; ?></p>",
+            'passed on through a second variable' => "<?php \$a = 'Hardcoded Label'; \$b = \$a; echo htmlspecialchars(\$b); ?>",
+            'appended to a variable'     => "<?php \$out = ''; \$out .= 'Hardcoded Label'; echo \$out; ?>",
+            'assigned to an element'     => "<?php \$labels['x'] = 'Hardcoded Label'; echo \$labels['x']; ?>",
+            'as the value of a loop'     => "<?php foreach (['Hardcoded Label'] as \$l) { echo \$l; } ?>",
+            'in a variable inserted into a string' => "<?php \$name = 'Hardcoded'; echo \"<b>{\$name}</b>\"; ?>",
+            'in a variable used as a Text key' => "<?php \$key = 'Hardcoded Label'; echo Text::_(\$key); ?>",
+            'behind a tag built from two pieces' => "<?php echo '<span class=\"a\"' . ' data-x=\"1\">Hardcoded Label</span>'; ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -334,6 +342,14 @@ class ComponentFunctionsTest
             $this->test('Guard reports a hardcoded text ' . $label, $found !== [],
                 'reported: ' . implode(', ', $found));
         }
+
+        // The page check passes the whole file for the assignments and only the body as output,
+        // because the view echoes variables its PHP header fills in.
+        $file  = "<?php \$heading = 'Hardcoded Label'; ?><html><body><h2><?php echo \$heading; ?></h2></body></html>";
+        $body  = substr($file, strpos($file, '<body>'));
+        $found = $this->findEchoedFixedText($body, $file);
+        $this->test('Guard reports a hardcoded text assigned in the header of the file', $found !== [],
+            'reported: ' . implode(', ', $found));
 
         $allowed = [
             'a language key'             => "<?php echo Text::_('COM_X_Y'); ?>",
@@ -352,6 +368,16 @@ class ComponentFunctionsTest
             'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
             'echoed HTML with a decorative image' => "<?php echo '<img src=\"x.png\" alt=\"\">'; ?>",
             'a key through a short echo' => "<?= Text::_('COM_X_Y') ?>",
+            'a key held in a variable'   => "<?php \$key = 'COM_X_Y'; echo Text::_(\$key); ?>",
+            'a translation held in a variable' => "<?php \$label = Text::_('COM_X_Y'); echo htmlspecialchars(\$label); ?>",
+            'an assigned class in an attribute' => "<?php \$cls = 'badge-danger'; ?><span class=\"<?php echo \$cls; ?>\"></span>",
+            'a variable compared with a word' => "<?php \$type = 'j2store'; echo \$type === 'j2store' ? Text::_('COM_A') : Text::_('COM_B'); ?>",
+            'a variable used as an index' => "<?php \$field = 'detail'; echo htmlspecialchars(\$issue[\$field]); ?>",
+            'an array key'               => "<?php \$map = ['state' => Text::_('COM_X')]; echo \$map['state']; ?>",
+            'a loop key'                 => "<?php foreach (['state' => Text::_('COM_X')] as \$k => \$v) { echo \$v; } ?>",
+            'a variable that is never output' => "<?php \$mode = 'Hardcoded Label'; echo Text::_('COM_X'); ?>",
+            'the rest of a tag built from pieces' => "<?php \$box = '<input type=\"checkbox\" aria-label=\"' . Text::_('COM_X') . '\"' . ' onclick=\"this.checked = true\">'; echo \$box; ?>",
+            'a variable of a helper function' => "<?php function helper() { \$label = 'Hardcoded Label'; return \$label; } echo \$label ?? Text::_('COM_X'); ?>",
         ];
 
         // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
@@ -524,19 +550,73 @@ class ComponentFunctionsTest
      * does occur there: a field key inside LOOKUP brackets (`$issue['type']`) and
      * one side of a comparison (`=== 'j2store'`). Neither is ever output. An array
      * with contents is not a lookup, so `implode(', ', ['Fixed text'])` is
-     * reported; see opensSubscript().
+     * reported; see opensSubscript(). The key in front of `=>` is a key as well and is not
+     * output either: `implode(', ', $map)` prints the values only.
+     *
+     * Text does not have to be written out where it is spelled. `$label = 'Fixed text'; echo
+     * $label;` shows the same text as `echo 'Fixed text';`, so a variable that an output reads
+     * stands for every text assigned to it anywhere in $source: by `=`, `.=` or `??=`, to an
+     * element (`$labels['x'] = …`), through further variables (`$b = $a`) and as the value of a
+     * `foreach` loop. The assignments are read from the whole file, because the view echoes
+     * variables its PHP header fills in. Where a variable is merely an index (`$issue[$field]`) or
+     * one side of a comparison, it is not output, the same rule as for a literal.
+     *
+     * @param  string       $markup  The part of the file that is sent to the browser.
+     * @param  string|null  $source  The whole file, for the assignments. Defaults to $markup.
      *
      * @return string[]  The offending literal contents.
      */
-    private function findEchoedFixedText(string $markup): array
+    private function findEchoedFixedText(string $markup, ?string $source = null): array
     {
-        $tokens = $this->meaningfulTokens($markup);
-        $found  = [];
+        $tokens  = $this->meaningfulTokens($markup);
+        $sources = $this->assignedText($this->meaningfulTokens($source ?? $markup));
+        $found   = [];
 
-        $inEcho = false;
+        for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+            $id = $tokens[$i]['id'];
 
-        // Schreibt dieser echo in ein Attribut, das niemand liest (class, id, style, data-*)?
-        $inAttribut = false;
+            if ($id !== T_ECHO && $id !== T_PRINT && $id !== T_OPEN_TAG_WITH_ECHO) {
+                continue;
+            }
+
+            // Schreibt dieser echo in ein Attribut, das niemand liest (class, id, style, data-*)?
+            // Dann ist nichts davon sichtbar, weder ein Literal noch eine Variable.
+            if ($this->insideHtmlAttribute($tokens, $i)) {
+                continue;
+            }
+
+            $output = $this->scanExpression($tokens, $i + 1, false);
+
+            foreach ($output['text'] as $text) {
+                $found[$text] = $text;
+            }
+
+            foreach ($this->textOfVariables($output['variables'], $sources) as $text) {
+                $found[$text] = $text;
+            }
+
+            $i = $output['end'];
+        }
+
+        return array_values($found);
+    }
+
+    /**
+     * Read one expression from the given index to its end and return the fixed text it carries
+     * and the variables it reads as a value.
+     *
+     * The end of an output is `;` outside any call, or `?>`. The end of an assigned value is the
+     * same, and additionally a `,`, `)` or `]` that closes something opened before the value (`for
+     * ($i = 0, …`, `if (($x = …))`) or the `as` of a `foreach` header.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     *
+     * @return array{text: string[], variables: string[], end: int}
+     */
+    private function scanExpression(array $tokens, int $from, bool $assignedValue): array
+    {
+        $found     = [];
+        $variables = [];
 
         // Stapel der offenen Klammern. Je Eintrag der Name des Aufrufs, der sie geoeffnet hat,
         // und die Zahl der Kommas auf dieser Ebene, also die Nummer des Arguments.
@@ -548,24 +628,30 @@ class ComponentFunctionsTest
         // implode(', ', ['Fester Text']). Nur die innerste Klammer entscheidet.
         $brackets = [];
 
-        foreach ($tokens as $i => $token) {
-            $id   = $token['id'];
-            $text = $token['text'];
+        // Wo das vorige feste Stueck aufgehoert hat: ausserhalb eines Tags (null), in einem Tag
+        // ('') oder in einem Attributwert des Tags (das offene Anfuehrungszeichen). Ein Tag kann
+        // ueber mehrere Stuecke verkettet sein, '<input aria-label="' . $x . '" onclick="…">',
+        // und das zweite Stueck ist dann kein Fliesstext, sondern der Rest des Tags.
+        $tagState = null;
 
-            if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
-                $inEcho     = true;
-                $calls      = [];
-                $brackets   = [];
-                $inAttribut = $this->insideHtmlAttribute($tokens, $i);
-                continue;
+        for ($i = $from, $n = count($tokens); $i < $n; $i++) {
+            $id   = $tokens[$i]['id'];
+            $text = $tokens[$i]['text'];
+
+            if ($id === T_CLOSE_TAG || ($text === ';' && $calls === [])) {
+                break;
             }
 
-            if (!$inEcho) {
-                continue;
+            if ($assignedValue && $calls === [] && $brackets === []
+                && (in_array($text, [',', ')', ']'], true) || $id === T_AS)) {
+                break;
             }
 
-            if ($id === T_CLOSE_TAG) {
-                $inEcho = false;
+            if ($id === T_VARIABLE) {
+                if ($this->isReadAsValue($tokens, $i, $brackets)) {
+                    $variables[$text] = $text;
+                }
+
                 continue;
             }
 
@@ -579,11 +665,16 @@ class ComponentFunctionsTest
                     : stripcslashes($text);
 
                 if (!$this->isLanguageKeyArgument($calls, $value)
-                    && !$inAttribut
                     && !($brackets !== [] && $brackets[count($brackets) - 1])
-                    && !$this->isComparisonOperand($tokens, $i)) {
+                    && !$this->isComparisonOperand($tokens, $i)
+                    && ($tokens[$i + 1]['id'] ?? null) !== T_DOUBLE_ARROW) {
+                    // Setzt das Stueck einen Tag fort, bekommt es dessen Anfang vorangestellt, damit
+                    // strip_tags() und die Attributpruefung es als Teil des Tags lesen.
+                    $html     = ($tagState === null ? '' : '<x' . ($tagState === '' ? ' ' : ' a=' . $tagState)) . $value;
+                    $tagState = $this->tagStateAtEnd($html);
+
                     $visible = $this->dropAllowedText(
-                        html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_HTML5, 'UTF-8')
+                        html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')
                     );
 
                     // Ignore empties, identifier tokens and anything without a real word.
@@ -596,7 +687,7 @@ class ComponentFunctionsTest
                     // HTML that PHP writes out carries its visible attributes along. strip_tags()
                     // above throws them away, so `echo '<img alt="Fixed text">'` would be empty.
                     // The same attribute check as for the markup outside PHP applies.
-                    foreach ($this->findFixedAttributeText($value) as $attribute) {
+                    foreach ($this->findFixedAttributeText($html) as $attribute) {
                         $found[$attribute] = $attribute;
                     }
                 }
@@ -604,7 +695,7 @@ class ComponentFunctionsTest
                 continue;
             }
 
-            // Track the open calls, the argument number, the field keys and the statement end.
+            // Track the open calls, the argument number and the field keys.
             if ($text === '(') {
                 $calls[] = ['name' => $this->calleeName($tokens, $i), 'commas' => 0];
             } elseif ($text === ')') {
@@ -615,8 +706,257 @@ class ComponentFunctionsTest
                 array_pop($brackets);
             } elseif ($text === ',' && $calls !== []) {
                 $calls[count($calls) - 1]['commas']++;
-            } elseif ($text === ';' && $calls === []) {
-                $inEcho = false;
+            }
+        }
+
+        return ['text' => array_values($found), 'variables' => array_values($variables), 'end' => $i];
+    }
+
+    /**
+     * Where the given HTML ends: outside a tag (null), inside a tag (''), or inside a quoted
+     * attribute value of a tag (the open quote). A `>` inside a quoted value does not close the
+     * tag, `onclick="… cb => …"` stays one tag.
+     */
+    private function tagStateAtEnd(string $html): ?string
+    {
+        $state = null;
+
+        for ($i = 0, $n = strlen($html); $i < $n; $i++) {
+            $c = $html[$i];
+
+            if ($state === null) {
+                if ($c === '<' && preg_match('/[A-Za-z\/]/', $html[$i + 1] ?? '')) {
+                    $state = '';
+                }
+            } elseif ($state === '') {
+                if ($c === '"' || $c === "'") {
+                    $state = $c;
+                } elseif ($c === '>') {
+                    $state = null;
+                }
+            } elseif ($c === $state) {
+                $state = '';
+            }
+        }
+
+        return $state;
+    }
+
+    /**
+     * Is the variable at the given index read for its value, the value an output would show?
+     *
+     * Not when it is `$this`, an object (`$item->name`), a static property, an index inside lookup
+     * brackets (`$issue[$field]`), one side of a comparison, or the target of an assignment inside
+     * the expression.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     * @param  bool[]                                          $brackets  The open square brackets.
+     */
+    private function isReadAsValue(array $tokens, int $index, array $brackets): bool
+    {
+        if ($tokens[$index]['text'] === '$this'
+            || ($tokens[$index - 1]['id'] ?? null) === T_DOUBLE_COLON
+            || ($brackets !== [] && $brackets[count($brackets) - 1])
+            || $this->isComparisonOperand($tokens, $index)) {
+            return false;
+        }
+
+        $next = $tokens[$index + 1] ?? ['id' => null, 'text' => ''];
+
+        return !in_array($next['id'], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON,
+                T_CONCAT_EQUAL, T_COALESCE_EQUAL], true)
+            && $next['text'] !== '=';
+    }
+
+    /**
+     * The fixed text each variable of the file is given, and the variables it is given from.
+     *
+     * Every assignment counts, wherever it stands: `$x = …`, `$x .= …`, `$x ??= …`, an element
+     * (`$x['k'] = …`, the text lands in $x) and the value of a `foreach` loop, which receives what
+     * the loop runs over. The value is read by scanExpression(), so the same rules apply as for an
+     * output: a language key, a field key, an array key and a compared value are not text.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     *
+     * @return array<string, array{text: string[], variables: string[]}>
+     */
+    private function assignedText(array $tokens): array
+    {
+        $sources = [];
+
+        $add = static function (string $name, array $value) use (&$sources): void {
+            $sources[$name]['text']      = array_merge($sources[$name]['text'] ?? [], $value['text']);
+            $sources[$name]['variables'] = array_merge($sources[$name]['variables'] ?? [], $value['variables']);
+        };
+
+        for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+            $id = $tokens[$i]['id'];
+
+            // Eine Funktion hat ihre eigenen Variablen. Die Ansicht steht auf der obersten Ebene
+            // der Datei und sieht sie nicht, ihr $issue ist nicht das $issue einer Hilfsfunktion.
+            if ($id === T_FUNCTION) {
+                $i = $this->endOfFunction($tokens, $i);
+                continue;
+            }
+
+            if ($id === T_FOREACH && ($tokens[$i + 1]['text'] ?? '') === '(') {
+                $value = $this->scanExpression($tokens, $i + 2, true);
+
+                if (($tokens[$value['end']]['id'] ?? null) === T_AS) {
+                    foreach ($this->loopValueVariables($tokens, $value['end'] + 1) as $name) {
+                        $add($name, $value);
+                    }
+                }
+
+                continue;
+            }
+
+            if ($id !== T_VARIABLE || $tokens[$i]['text'] === '$this'
+                || ($tokens[$i - 1]['id'] ?? null) === T_DOUBLE_COLON) {
+                continue;
+            }
+
+            // Ein Element gehoert zur Variablen: $labels['x'] = 'Text' fuellt $labels.
+            $j = $i + 1;
+            while (($tokens[$j]['text'] ?? '') === '[') {
+                $j = $this->closingBracket($tokens, $j) + 1;
+            }
+
+            $operator = $tokens[$j] ?? null;
+
+            if ($operator !== null
+                && ($operator['text'] === '=' || in_array($operator['id'], [T_CONCAT_EQUAL, T_COALESCE_EQUAL], true))) {
+                $add($tokens[$i]['text'], $this->scanExpression($tokens, $j + 1, true));
+            }
+        }
+
+        return $sources;
+    }
+
+    /**
+     * The variables that receive the values in a `foreach` header, read from behind `as` to the
+     * closing parenthesis. A key variable in front of `=>` receives the keys, not the values, and
+     * is left out.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     *
+     * @return string[]
+     */
+    private function loopValueVariables(array $tokens, int $from): array
+    {
+        $names = [];
+        $depth = 0;
+
+        for ($i = $from, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]['text'];
+
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                if ($depth === 0) {
+                    break;
+                }
+
+                $depth--;
+            } elseif ($tokens[$i]['id'] === T_DOUBLE_ARROW && $depth === 0) {
+                $names = [];
+            } elseif ($tokens[$i]['id'] === T_VARIABLE) {
+                $names[] = $text;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The index of the token that ends the function declared at the given `function` token: the
+     * `}` that closes its body, or the `;` of a declaration without one. Braces opened inside a
+     * string (`"{$x}"`) are closed by a plain `}` and are counted as well.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function endOfFunction(array $tokens, int $index): int
+    {
+        $parens = 0;
+        $braces = 0;
+
+        for ($i = $index + 1, $n = count($tokens); $i < $n; $i++) {
+            $id   = $tokens[$i]['id'];
+            $text = $tokens[$i]['text'];
+
+            if ($braces === 0) {
+                if ($text === '(') {
+                    $parens++;
+                } elseif ($text === ')') {
+                    $parens--;
+                } elseif ($text === ';' && $parens === 0) {
+                    return $i;
+                } elseif ($text === '{' && $parens === 0) {
+                    $braces = 1;
+                }
+
+                continue;
+            }
+
+            if ($text === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                $braces++;
+            } elseif ($text === '}' && --$braces === 0) {
+                return $i;
+            }
+        }
+
+        return $n - 1;
+    }
+
+    /**
+     * The index of the `]` that closes the `[` at the given index.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function closingBracket(array $tokens, int $index): int
+    {
+        $depth = 0;
+
+        for ($i = $index, $n = count($tokens); $i < $n; $i++) {
+            if ($tokens[$i]['text'] === '[') {
+                $depth++;
+            } elseif ($tokens[$i]['text'] === ']' && --$depth === 0) {
+                return $i;
+            }
+        }
+
+        return $n - 1;
+    }
+
+    /**
+     * Every fixed text the given variables can hold, following one variable to the next (`$b =
+     * $a`). Each variable is visited once, so an assignment cycle ends.
+     *
+     * @param  string[]                                                $names
+     * @param  array<string, array{text: string[], variables: string[]}>  $sources
+     *
+     * @return string[]
+     */
+    private function textOfVariables(array $names, array $sources): array
+    {
+        $found = [];
+        $seen  = [];
+
+        while ($names !== []) {
+            $name = array_pop($names);
+
+            if (isset($seen[$name])) {
+                continue;
+            }
+
+            $seen[$name] = true;
+
+            foreach ($sources[$name]['text'] ?? [] as $text) {
+                $found[$text] = $text;
+            }
+
+            foreach ($sources[$name]['variables'] ?? [] as $variable) {
+                $names[] = $variable;
             }
         }
 
