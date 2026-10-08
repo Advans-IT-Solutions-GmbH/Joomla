@@ -256,14 +256,27 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
     # patch yet. A de-DE pack for an older patch in the same major.minor installs
     # and routes fine, so walk the patch level down (each with the v1..v3 revision
     # suffixes) until one downloads — keeping the SEF fixture green on release days.
+    # On the first patch of a new minor there may be no pack for that minor at all,
+    # so the walk continues into the two previous minors of the same major (patch 20
+    # down to 0). The lane only needs the language to exist and route /de/, which an
+    # older pack of the same major provides; a 404 costs one quick request.
     LANG_MAJOR="${JOOMLA_VERSION%%.*}"
     LANG_MINOR="$(echo "${JOOMLA_VERSION}" | cut -d. -f2)"
     LANG_PATCH="$(echo "${JOOMLA_VERSION}" | cut -d. -f3)"
     LANG_MINOR="${LANG_MINOR:-0}"
     LANG_PATCH="${LANG_PATCH:-0}"
-    LANG_INSTALLED=0
+    LANG_CANDIDATES=""
     for lang_patch in $(seq "${LANG_PATCH}" -1 0); do
-        LANG_CANDIDATE="${LANG_MAJOR}.${LANG_MINOR}.${lang_patch}"
+        LANG_CANDIDATES="${LANG_CANDIDATES} ${LANG_MAJOR}.${LANG_MINOR}.${lang_patch}"
+    done
+    for lang_minor in $(seq $((LANG_MINOR - 1)) -1 $((LANG_MINOR - 2))); do
+        [ "${lang_minor}" -lt 0 ] && break
+        for lang_patch in $(seq 20 -1 0); do
+            LANG_CANDIDATES="${LANG_CANDIDATES} ${LANG_MAJOR}.${lang_minor}.${lang_patch}"
+        done
+    done
+    LANG_INSTALLED=0
+    for LANG_CANDIDATE in ${LANG_CANDIDATES}; do
         for suffix in v1 v2 v3; do
             LANG_URL="https://github.com/joomlagerman/joomla/releases/download/${LANG_CANDIDATE}${suffix}/de-DE_joomla_lang_full_${LANG_CANDIDATE}${suffix}.zip"
             # Retry transient network/5xx failures (not HTTP 404, so a missing
@@ -282,7 +295,7 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
         done
     done
     if [ "${LANG_INSTALLED}" != "1" ]; then
-        echo "ERROR: Could not download a de-DE language pack for Joomla ${JOOMLA_VERSION}"
+        echo "ERROR: Could not download a de-DE language pack for Joomla ${JOOMLA_VERSION} (tried${LANG_CANDIDATES})"
         exit 1
     fi
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL

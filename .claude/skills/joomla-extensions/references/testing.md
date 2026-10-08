@@ -34,7 +34,9 @@ pull it (`docker pull joomla:6-php8.4-apache`) or build with `--pull` to test th
 The OSMap Joomla 6 SEF lane also installs the real Joomla German `de-DE` pack. Because the moving
 `joomla:6-php8.4-apache` tag may advance before `joomlagerman` publishes the exact same patch, the fixture first tries
 the current Joomla patch and then walks older patches of the same major.minor, each with release suffixes
-`v1`..`v3`. Downloads use curl retries/timeouts so transient network or 5xx failures do not make the SEF
+`v1`..`v3`. When the tag reaches the first patch of a new minor before any pack for it exists, the walk
+continues into the two previous minors of the same major (patch 20 down to 0), so a minor release does not
+break the lane. Downloads use curl retries/timeouts so transient network or 5xx failures do not make the SEF
 fixture flaky.
 
 Pinned on purpose: J2Commerce 4 stays on release 4.1.4; J2Commerce 6 is built from the commits listed
