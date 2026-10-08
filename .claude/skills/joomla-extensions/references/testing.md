@@ -140,7 +140,10 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 `all` runs every entry of `TEST_SCRIPTS`. For OSMap this includes `sitemap-http-sef`, which CI runs
 only against the SEF stacks; run suites by name to mirror the CI matrix. Without `J2COMMERCE_SEF=1`
 that suite skips, and with `TEST_STRICT_SKIP=1` it fails instead of skipping, so do not combine
-`TEST_STRICT_SKIP=1` with `all` on a non-SEF OSMap stack.
+`TEST_STRICT_SKIP=1` with `all` on a non-SEF OSMap stack. The reverse holds as well: with
+`J2COMMERCE_SEF=1` the standard-stack suites `plugin-class` and `osmap-loader` skip, because the
+SEF fixture gives every product URL a `/de/` prefix their exact URL assertions do not expect. On a
+SEF stack, `all` with `TEST_STRICT_SKIP=1` therefore fails too, run `sitemap-http-sef` by name.
 
 Production-like lane for Privacy and OSMap (`tests/docker-compose.production.yml`, needs
 `tests/j2commerce6.zip` from the pin `7edb6e11…`), commands from the workflow:
