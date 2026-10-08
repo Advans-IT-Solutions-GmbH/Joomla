@@ -44,9 +44,53 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/_osmap_bootstrap.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
+
+// The real OSMap library of the test image, so the plugin is dispatched against the real
+// Collector and Item, not against stubs. Needed for the direct dispatch further down, which
+// asserts what the PLUGIN emits instead of only what the finished sitemap shows.
+osmap_ensure_classes();
+
+spl_autoload_register(function (string $class): void {
+    $prefix = 'Advans\\Plugin\\Osmap\\J2Commerce\\';
+    $base   = JPATH_PLUGINS . '/osmap/j2commerce/src/';
+
+    if (str_starts_with($class, $prefix)) {
+        $file = $base . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+
+        if (file_exists($file)) {
+            require_once $file;
+        }
+    }
+});
+
+if (file_exists(JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php')) {
+    require_once JPATH_PLUGINS . '/osmap/j2commerce/j2commerce.php';
+}
+
+/**
+ * Collector that records every node handed to printNode(). The empty constructor bypasses the
+ * real Collector's SitemapInterface requirement; printNode() is all the plugin uses.
+ */
+class SefRecordingCollector extends \Alledia\OSMap\Sitemap\Collector
+{
+    /** @var object[] */
+    public array $nodes = [];
+
+    public function __construct()
+    {
+    }
+
+    public function printNode($node): bool
+    {
+        $this->nodes[] = (object) $node;
+
+        return true;
+    }
+}
 
 class SitemapHttpSefTest
 {
@@ -235,9 +279,128 @@ class SitemapHttpSefTest
             return true;
         });
 
+        $this->assertPluginEmitsThePrefix();
+
         echo "\n=== SEF Sitemap HTTP Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * The nodes the PLUGIN itself emits on this fixture, asserted separately from the sitemap.
+     *
+     * The assertions above read the live sitemap, and on the J6 SEF fixture that sitemap has two
+     * sources for the same locations: the plugin's direct query and the published `com_content`
+     * routes 9011/9012 that the fixture seeds under the shop item. Both produce
+     * `/de/shop/<alias>`, and OSMap de-duplicates them, so every assertion above would still pass
+     * if the plugin emitted nothing at all. That is the one thing this suite is about, so it is
+     * asserted at the source: `getTree()` is dispatched directly, exactly as OSMap does it, and
+     * the nodes it hands to the collector are examined.
+     *
+     * Only the PATH is compared, and the part of it that CLI adds is cut off first: outside a web
+     * request `Uri::root()` resolves to the directory of this script. What remains is the language
+     * prefix and the menu path, which is what #176 was about.
+     */
+    private function assertPluginEmitsThePrefix(): void
+    {
+        echo "\n--- Nodes the plugin itself emits (not the published routes) ---\n";
+
+        $option = $this->isJ6 ? 'com_j2commerce' : 'com_j2store';
+        $klasse = $this->isJ6
+            ? 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2CommerceNew'
+            : 'Advans\\Plugin\\Osmap\\J2Commerce\\Extension\\J2Commerce';
+
+        if (!class_exists($klasse)) {
+            $this->test('Plugin class for this stack is available', function () {
+                return false;
+            });
+
+            return;
+        }
+
+        $plugin = new $klasse(['params' => new \Joomla\Registry\Registry([])]);
+        $plugin->setDatabase($this->db);
+
+        // The parent's language comes from the fixture itself, it is not written in here. Row 9001
+        // carries the wildcard '*', and that is the point: with a wildcard list menu the plugin
+        // falls back to the product article's own language (the articles are de-DE), and only that
+        // path produces the prefix for a product without a menu item of its own. A hard-coded
+        // 'de-DE' here would take the shortcut and a regression in the fallback would stay unseen.
+        $sprache = (string) ($this->menuLanguage(9001) ?? '*');
+        echo "    (parent language from the fixture: {$sprache})\n";
+
+        $collector = new SefRecordingCollector();
+        $parent    = osmap_make_item([
+            'id'         => 9001,
+            'link'       => 'index.php?option=' . $option . '&view=products',
+            'component'  => $option,
+            'path'       => 'shop',
+            'browserNav' => 0,
+            'language'   => $sprache,
+        ]);
+
+        $plugin->getTree($collector, $parent, new \Joomla\Registry\Registry([]));
+
+        // In CLI Uri::root() resolves to the directory of this script, so every link carries that
+        // as its path prefix. It is cut off, otherwise the comparison would be about the path of
+        // the test file instead of the path of the product.
+        $cliBasis = rtrim((string) (parse_url(\Joomla\CMS\Uri\Uri::root(), PHP_URL_PATH) ?? ''), '/');
+
+        $pfade = [];
+        foreach ($collector->nodes as $node) {
+            $link = (string) ($node->link ?? '');
+            $pfad = (string) (parse_url($link, PHP_URL_PATH) ?? '');
+
+            if ($cliBasis !== '' && str_starts_with($pfad, $cliBasis)) {
+                $pfad = substr($pfad, strlen($cliBasis));
+            }
+
+            $pfade[] = $pfad;
+            echo "    - {$pfad}\n";
+        }
+
+        $this->test('The plugin emits product nodes of its own on this fixture', function () use ($pfade) {
+            return $pfade !== [];
+        });
+
+        foreach (['test-product-alpha', 'test-product-beta'] as $alias) {
+            $this->test("The plugin emits {$alias} with the /de/ prefix", function () use ($pfade, $alias) {
+                foreach ($pfade as $pfad) {
+                    if ($pfad === '/de/shop/' . $alias) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+        }
+
+        $this->test('No node the plugin emits lacks the /de/ prefix', function () use ($pfade) {
+            foreach ($pfade as $pfad) {
+                if (!str_starts_with($pfad, '/de/')) {
+                    return false;
+                }
+            }
+
+            return $pfade !== [];
+        });
+    }
+
+    /**
+     * The language of a menu row, as the fixture wrote it. Null when the row is absent.
+     */
+    private function menuLanguage(int $id): ?string
+    {
+        $query = method_exists($this->db, 'createQuery')
+            ? $this->db->createQuery()
+            : $this->db->getQuery(true);
+        $query->select($this->db->quoteName('language'))
+            ->from($this->db->quoteName('#__menu'))
+            ->where($this->db->quoteName('id') . ' = ' . (int) $id);
+
+        $sprache = $this->db->setQuery($query)->loadResult();
+
+        return $sprache === null ? null : (string) $sprache;
     }
 
     /**
