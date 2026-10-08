@@ -314,6 +314,9 @@ class ComponentFunctionsTest
             'as a Text argument'         => "<?php echo Text::_('Hardcoded Label'); ?>",
             'as one branch of a key'     => "<?php echo Text::_(\$c ? 'COM_A' : 'Hardcoded Label'); ?>",
             'as a Text::sprintf format'  => "<?php echo Text::sprintf('Total: %d items', \$n); ?>",
+            'hyphenated prose'           => "<?php echo 'hard-coded'; ?>",
+            'a hyphenated single word'   => "<?php echo htmlspecialchars('e-mail'); ?>",
+            'in a title attribute'       => "<span title=\"<?php echo 'Hardcoded Label'; ?>\"></span>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -329,12 +332,13 @@ class ComponentFunctionsTest
             'the allowed company name'   => "<?php echo Text::sprintf('COM_X', '<a href=\"https://advans.ch\">Advans IT Solutions GmbH</a>'); ?>",
             'a layout name'             => "<?php echo HTMLHelper::_('form.token'); ?>",
             'an encoding argument'      => "<?php echo htmlspecialchars(\$x, ENT_QUOTES, 'UTF-8'); ?>",
-            'CSS classes in a condition' => "<?php echo \$c ? 'badge-danger' : 'badge-warning'; ?>",
+            'CSS classes in an attribute' => "<span class=\"badge <?php echo \$c ? 'badge-danger' : 'badge-warning'; ?>\"></span>",
+            'a data attribute'           => "<span data-state=\"<?php echo 'needs-review'; ?>\"></span>",
             'a field key'               => "<?php echo htmlspecialchars(\$issue['detail']); ?>",
             'a chained field key'       => "<?php echo htmlspecialchars(\$all['issues'][0]['detail']); ?>",
             'a key behind a call'       => "<?php echo htmlspecialchars(getIssue(\$x)['detail']); ?>",
-            'a compared value'          => "<?php echo \$issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>",
-            'a compared value in front' => "<?php echo 'j2store' === \$issue['type'] ? 'badge-danger' : 'badge-warning'; ?>",
+            'a compared value'          => "<span class=\"<?php echo \$issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>\"></span>",
+            'a compared value in front' => "<span class=\"<?php echo 'j2store' === \$issue['type'] ? 'badge-danger' : 'badge-warning'; ?>\"></span>",
             'a separator without words' => "<?php echo implode(', ', \$parts); ?>",
         ];
 
@@ -416,6 +420,9 @@ class ComponentFunctionsTest
 
         $inEcho = false;
 
+        // Schreibt dieser echo in ein Attribut, das niemand liest (class, id, style, data-*)?
+        $inAttribut = false;
+
         // Stapel der offenen Klammern. Je Eintrag der Name des Aufrufs, der sie geoeffnet hat,
         // und die Zahl der Kommas auf dieser Ebene, also die Nummer des Arguments.
         $calls = [];
@@ -431,9 +438,10 @@ class ComponentFunctionsTest
             $text = $token['text'];
 
             if ($id === T_ECHO || $id === T_PRINT || $id === T_OPEN_TAG_WITH_ECHO) {
-                $inEcho   = true;
-                $calls    = [];
-                $brackets = [];
+                $inEcho     = true;
+                $calls      = [];
+                $brackets   = [];
+                $inAttribut = $this->insideHtmlAttribute($tokens, $i);
                 continue;
             }
 
@@ -456,6 +464,7 @@ class ComponentFunctionsTest
                     : stripcslashes($text);
 
                 if (!$this->isLanguageKeyArgument($calls, $value)
+                    && !$inAttribut
                     && !($brackets !== [] && $brackets[count($brackets) - 1])
                     && !$this->isComparisonOperand($tokens, $i)) {
                     $visible = $this->dropAllowedText(
@@ -623,22 +632,62 @@ class ComponentFunctionsTest
     }
 
     /**
-     * Is this text a machine identifier rather than something a reader would read?
+     * Is this text a machine token by its very FORM, independently of where it stands?
      *
-     * Machine tokens in this view are CSS classes (`badge-danger`), layout names
-     * (`form.token`), language keys (`COM_J2STORE_CLEANUP_X`) and encodings (`UTF-8`). What they
-     * have in common is a separator inside one word, and that is the whole rule: one word
-     * without spaces that carries a dot, a hyphen or an underscore.
+     * Only two forms qualify, and both are forms that prose cannot take:
      *
-     * Being written in one case is deliberately NOT enough. A lone `warning` or `WARNING` would
-     * be visible untranslated text, and the two positions where a single plain word really does
-     * occur in this view are recognised by their place in the code instead, not by their
-     * spelling: a field key inside square brackets, and one side of a comparison.
+     *  - no lower-case letter plus a digit or a separator: `UTF-8`, `COM_J2STORE_CLEANUP_X`,
+     *    `ENT_QUOTES` — encodings, constants and language keys;
+     *  - a dotted lower-case path: `form.token` — layout and helper names.
+     *
+     * A hyphen on its own is deliberately NOT enough. `hard-coded` and `e-mail` are visible prose
+     * and carry one, so a general separator rule would wave exactly those through. The CSS classes
+     * of this view (`badge-danger`) are recognised by their PLACE instead, inside a `class`
+     * attribute (see insideHtmlAttribute()), and the same goes for the other two spots where a
+     * plain word really occurs: a key inside lookup brackets, and one side of a comparison.
      */
     private function looksLikeIdentifier(string $value): bool
     {
-        return (bool) preg_match('/^[A-Za-z0-9_.\-]+$/', $value)
-            && (bool) preg_match('/[._\-]/', $value);
+        if (preg_match('/\s/u', $value) || !preg_match('/^[A-Za-z0-9_.\-]+$/', $value)) {
+            return false;
+        }
+
+        if (!preg_match('/[a-z]/', $value) && preg_match('/[0-9_.\-]/', $value)) {
+            return true;
+        }
+
+        return (bool) preg_match('/^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$/', $value);
+    }
+
+    /**
+     * Does the echo at the given index write into an HTML attribute that a reader never sees?
+     *
+     * `class`, `id`, `style` and `data-*` carry machine tokens, so a literal written into one of
+     * them is not user-visible text even when it looks like a word. The inline HTML right before
+     * the echo decides: `<span class="badge <?php echo ... ?>">` leaves `class="badge ` as the
+     * tail of that chunk. `title`, `alt`, `placeholder` and `value` are deliberately NOT in the
+     * list, because their content IS displayed.
+     *
+     * @param  array<int, array{id: int|null, text: string}>  $tokens
+     */
+    private function insideHtmlAttribute(array $tokens, int $index): bool
+    {
+        for ($i = $index; $i >= 0; $i--) {
+            $id = $tokens[$i]['id'];
+
+            if ($id === T_INLINE_HTML) {
+                return (bool) preg_match(
+                    '/(?:class|id|style|data-[\w-]+)\s*=\s*"[^"]*$/i',
+                    $tokens[$i]['text']
+                );
+            }
+
+            if (!in_array($id, [T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO, T_ECHO, T_PRINT], true)) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /**
