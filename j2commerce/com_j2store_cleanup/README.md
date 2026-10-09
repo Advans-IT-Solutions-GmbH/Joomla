@@ -310,7 +310,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages and the confirmation before removal (passed to the browser with `Text::script()`). Generic words use Joomla core keys (`JENABLED`, `JDISABLED`, `JGLOBAL_CHECK_ALL`). A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../../README.md#languages)):
+Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages, the confirmation before removal (passed to the browser with `Text::script()`) and the copyright/licence line in the footer. The only literal left is the company name itself, a proper noun that is the same in every language. Generic words use Joomla core keys (`JENABLED`, `JDISABLED`, `JGLOBAL_CHECK_ALL`). A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../../README.md#languages)):
 ```
 administrator/language/{language-tag}/com_j2store_cleanup.ini
 administrator/language/{language-tag}/com_j2store_cleanup.sys.ini

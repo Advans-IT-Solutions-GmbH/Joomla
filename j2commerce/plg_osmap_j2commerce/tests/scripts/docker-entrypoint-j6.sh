@@ -7,6 +7,16 @@ set -e
 
 echo "=== OSMap J2Commerce Test Environment (J6 Stack) ==="
 
+# mod_rewrite has to be enabled BEFORE Apache starts. a2enmod only writes the symlink in
+# mods-enabled; an already running Apache does not pick the module up, so doing this later in the SEF
+# block would leave the lane serving requests without rewrite while the configuration claims
+# otherwise. Only the module load order matters here: .htaccess itself is read per request and is
+# still copied further down, once Joomla has unpacked htaccess.txt.
+if [ "${J2COMMERCE_SEF}" = "1" ]; then
+    echo "Enabling mod_rewrite before Apache starts (J2COMMERCE_SEF=1)..."
+    a2enmod rewrite >/dev/null 2>&1 || true
+fi
+
 /entrypoint.sh apache2-foreground &
 JOOMLA_PID=$!
 
@@ -109,10 +119,20 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
 \$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = true;', \$c);
 file_put_contents(\$f, \$c);
 " 2>/dev/null || true
-    # Enable Apache rewrite + Joomla .htaccess so SEF rewrite URLs resolve.
-    a2enmod rewrite >/dev/null 2>&1 || true
+    # The module itself is already loaded, see the top of this script. Here only .htaccess is put in
+    # place, which Apache reads per request.
     if [ -f /var/www/html/htaccess.txt ] && [ ! -f /var/www/html/.htaccess ]; then
         cp /var/www/html/htaccess.txt /var/www/html/.htaccess
+    fi
+
+    # Proof rather than assumption: a lane that claims to serve rewrite-based SEF URLs must actually
+    # have the module loaded. Without this the suite would test the old server configuration and stay
+    # green while nothing was rewritten.
+    if apache2ctl -M 2>/dev/null | grep -q rewrite_module; then
+        echo "mod_rewrite is loaded."
+    else
+        echo "ERROR: mod_rewrite is NOT loaded although J2COMMERCE_SEF=1; the SEF lane would test the wrong server configuration." >&2
+        exit 1
     fi
 else
     echo "Disabling SEF URLs (default J6 mode)..."
@@ -141,34 +161,27 @@ echo "com_j2commerce=${COM_J2COMMERCE_ID}"
 
 echo "Inserting fixtures..."
 MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
-    -e "SELECT COALESCE(MAX(id),1) FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND parent_id=1 LIMIT 1;" 2>/dev/null)
+    -e "SELECT parent_id FROM ${DB_PREFIX}menu WHERE menutype='mainmenu' AND level=1 LIMIT 1;" 2>/dev/null)
+if [ -z "${MAINMENU_ROOT_ID}" ]; then
+    MAINMENU_ROOT_ID=$(mysql -h mysql -u joomla -pjoomla_pass joomla_db -sN \
+        -e "SELECT id FROM ${DB_PREFIX}menu WHERE parent_id=0 LIMIT 1;" 2>/dev/null || echo "1")
+fi
 MAINMENU_ROOT_ID=${MAINMENU_ROOT_ID:-1}
 
 # Standard J6 stack: two hidden product children (published=-2) nested inside
 # the shop interval so getTree() traverses the hidden-child menu path
-# (mechanism 1). The dedicated SEF stack omits them and nests two published
-# de-DE product routes (9011/9012) instead, so the live sitemap exercises the
-# direct product-query path (mechanism 2) while those routes stay resolvable
-# for the live-routing assertions.
-# Either way exactly two child rows follow the shop row, so the shop interval
-# is @max_rgt + 1 .. @max_rgt + 6 on both stacks. Shop and children share one
-# @max_rgt in a single statement batch so the children land inside that
-# interval; recomputing @max_rgt after the shop row (and the root expansion)
-# would push them outside it.
-SHOP_RGT_OFFSET=6
+# (mechanism 1). The dedicated SEF stack omits them, so the shop stays a leaf
+# here (offset 2) and the sitemap exercises the direct product-query path
+# (mechanism 2). The published de-DE routes (9011/9012) that lane needs for the
+# live HTTP assertions are created further down, together with the language pack
+# and the menu rebuild, which recomputes the whole nested set anyway.
+# Shop and children share one @max_rgt in a single statement batch so the
+# children land inside the shop [lft,rgt] interval; recomputing @max_rgt after
+# the shop row (and the root expansion) would push them outside it.
 SHOP_CHILD_ROWS=""
-SHOP_LIVE_ROUTE_ROWS=""
-if [ "${J2COMMERCE_SEF}" = "1" ]; then
-    SHOP_LIVE_ROUTE_ROWS=",
-    (9011, 'mainmenu', 'Live Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
-     'index.php?option=com_content&view=article&id=9001&Itemid=9011',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
-     @max_rgt + 2, @max_rgt + 3),
-    (9012, 'mainmenu', 'Live Product Beta', 'test-product-beta', 'shop/test-product-beta',
-     'index.php?option=com_content&view=article&id=9002&Itemid=9012',
-     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}',
-     @max_rgt + 4, @max_rgt + 5)"
-else
+SHOP_RGT_OFFSET=2
+if [ "${J2COMMERCE_SEF}" != "1" ]; then
+    SHOP_RGT_OFFSET=6
     SHOP_CHILD_ROWS=",
     (9002, 'mainmenu', 'Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
      'index.php?option=com_content&view=article&id=9001&Itemid=9002',
@@ -199,10 +212,10 @@ VALUES
     (9001, 9001, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}'),
     (9002, 9002, 'com_content', 'simple', 1, 1, 0, '', '', '', '{}');
 
--- Menu items: shop parent (published=1) plus either hidden product children on
--- the standard stack or dedicated published product routes on the SEF stack.
--- All rows share one @max_rgt so the children/routes nest inside the shop
--- [lft,rgt] interval; the global root rgt is then expanded once to include them.
+-- Menu items: shop parent (published=1) plus the hidden product children on the
+-- standard stack (the SEF stack leaves the shop a leaf here). All rows share one
+-- @max_rgt so the children nest inside the shop [lft,rgt] interval; the global
+-- root rgt is then expanded once to include them.
 SET @max_rgt = (SELECT COALESCE(MAX(rgt), 10) FROM ${DB_PREFIX}menu);
 INSERT IGNORE INTO ${DB_PREFIX}menu
     (id, menutype, title, alias, path, link, type, published, parent_id, level,
@@ -211,7 +224,7 @@ VALUES
     (9001, 'mainmenu', 'Shop', 'shop', 'shop',
      'index.php?option=com_j2commerce&view=products',
      'component', 1, ${MAINMENU_ROOT_ID}, 1, ${COM_J2COMMERCE_ID}, '*', 1, 0, '{}',
-     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET})${SHOP_CHILD_ROWS}${SHOP_LIVE_ROUTE_ROWS};
+     @max_rgt + 1, @max_rgt + ${SHOP_RGT_OFFSET})${SHOP_CHILD_ROWS};
 
 -- Expand global root rgt to include new items
 UPDATE ${DB_PREFIX}menu
@@ -221,21 +234,148 @@ EOSQL
 echo "Fixtures inserted"
 
 # Multilingual SEF fixture — only when SEF is enabled (the dedicated SEF stack
-# runs 08-sitemap-http-sef.php). Register the matching #__languages row (sef=de)
-# and mark the product articles as de-DE so the direct product-query path emits
-# /de/shop/... URLs. The stack also carries separate published product routes
-# (9011/9012) so live-routing tests can coexist with the direct-query coverage
-# that still depends on the absence of published=-2 hidden children.
+# runs 08-sitemap-http-sef.php). Install the real de-DE language pack, register
+# the matching #__languages row (sef=de, published=1) and mark the product
+# articles as de-DE, so the direct product-query path emits /de/shop/... URLs.
+# The lane also gets dedicated published de-DE product routes (9011/9012) so
+# those URLs resolve live with HTTP 200, while the hidden children (published=-2)
+# stay absent: live-routing coverage and the direct-query coverage of the
+# hidden-child-free fixture therefore coexist in one stack. Any pre-existing
+# product menu item for those aliases/paths is removed first, so the sitemap
+# cannot fall back to a hidden-menu shortcut. The Shop parent stays language='*'
+# so OSMap still traverses it.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Applying multilingual SEF fixture (de-DE / sef=de)..."
+    JOOMLA_VERSION=$(php -r "define('_JEXEC',1); define('JPATH_BASE','/var/www/html'); require JPATH_BASE . '/includes/defines.php'; require JPATH_BASE . '/includes/framework.php'; echo JVERSION;" 2>/dev/null || true)
+    if [ -z "${JOOMLA_VERSION}" ]; then
+        echo "ERROR: Could not detect Joomla version for de-DE language pack installation"
+        exit 1
+    fi
+    # The mutable joomla:6-php8.4-apache image tag auto-pulls the newest patch
+    # release, and joomlagerman may not have published a de-DE pack for that exact
+    # patch yet. A de-DE pack for an older patch in the same major.minor installs
+    # and routes fine, so walk the patch level down (each with the v1..v3 revision
+    # suffixes) until one downloads — keeping the SEF fixture green on release days.
+    # On the first patch of a new minor there may be no pack for that minor at all,
+    # so the walk continues into the two previous minors of the same major (patch 20
+    # down to 0). The lane only needs the language to exist and route /de/, which an
+    # older pack of the same major provides; a 404 costs one quick request.
+    LANG_MAJOR="${JOOMLA_VERSION%%.*}"
+    LANG_MINOR="$(echo "${JOOMLA_VERSION}" | cut -d. -f2)"
+    LANG_PATCH="$(echo "${JOOMLA_VERSION}" | cut -d. -f3)"
+    LANG_MINOR="${LANG_MINOR:-0}"
+    LANG_PATCH="${LANG_PATCH:-0}"
+    LANG_CANDIDATES=""
+    for lang_patch in $(seq "${LANG_PATCH}" -1 0); do
+        LANG_CANDIDATES="${LANG_CANDIDATES} ${LANG_MAJOR}.${LANG_MINOR}.${lang_patch}"
+    done
+    for lang_minor in $(seq $((LANG_MINOR - 1)) -1 $((LANG_MINOR - 2))); do
+        [ "${lang_minor}" -lt 0 ] && break
+        for lang_patch in $(seq 20 -1 0); do
+            LANG_CANDIDATES="${LANG_CANDIDATES} ${LANG_MAJOR}.${lang_minor}.${lang_patch}"
+        done
+    done
+    LANG_INSTALLED=0
+    for LANG_CANDIDATE in ${LANG_CANDIDATES}; do
+        for suffix in v1 v2 v3; do
+            LANG_URL="https://github.com/joomlagerman/joomla/releases/download/${LANG_CANDIDATE}${suffix}/de-DE_joomla_lang_full_${LANG_CANDIDATE}${suffix}.zip"
+            # Retry transient network/5xx failures (not HTTP 404, so a missing
+            # pack version still falls through to the next candidate quickly).
+            if curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+                --connect-timeout 15 --max-time 180 "${LANG_URL}" -o /tmp/de-DE.zip; then
+                echo "Installing de-DE language pack (${LANG_CANDIDATE}${suffix})..."
+                if HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/de-DE.zip; then
+                    echo "de-DE language pack installed"
+                    LANG_INSTALLED=1
+                    break 2
+                fi
+                echo "ERROR: de-DE language pack installation failed for ${LANG_CANDIDATE}${suffix}"
+                exit 1
+            fi
+        done
+    done
+    if [ "${LANG_INSTALLED}" != "1" ]; then
+        echo "ERROR: Could not download a de-DE language pack for Joomla ${JOOMLA_VERSION} (tried${LANG_CANDIDATES})"
+        exit 1
+    fi
     mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
-INSERT IGNORE INTO ${DB_PREFIX}languages
+INSERT INTO ${DB_PREFIX}languages
     (lang_code, title, title_native, sef, image, description, metakey, metadesc, sitename, published, access, ordering)
 VALUES
-    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1);
+    ('de-DE', 'German (DE)', 'Deutsch (DE)', 'de', '', '', '', '', '', 1, 1, 1)
+ON DUPLICATE KEY UPDATE
+    title = 'German (DE)',
+    title_native = 'Deutsch (DE)',
+    sef = 'de',
+    published = 1,
+    access = 1,
+    ordering = 1;
 
-UPDATE ${DB_PREFIX}content SET language='de-DE' WHERE id IN (9001, 9002);
+UPDATE ${DB_PREFIX}extensions
+SET enabled = 1
+WHERE type='plugin' AND folder='system' AND element IN ('languagefilter', 'languagecode');
+
+UPDATE ${DB_PREFIX}content
+SET language='de-DE'
+WHERE id IN (9001, 9002);
 EOSQL
+    mysql -h mysql -u joomla -pjoomla_pass joomla_db <<EOSQL
+START TRANSACTION;
+-- Deliberately without a menutype or parent_id restriction. The INSERT below uses the fixed ids
+-- 9011 and 9012 and the fixed aliases. A leftover row carrying one of those ids under a different
+-- parent, or in another menu, would survive a restricted DELETE, and the INSERT would then fail on
+-- the primary key or leave a second route on the same alias. Every value listed here belongs to
+-- this test fixture alone: the ids are in the 9000 range, the aliases and paths carry the
+-- test-product prefix.
+DELETE FROM ${DB_PREFIX}menu
+WHERE id IN (9002, 9003, 9011, 9012)
+   OR alias IN ('test-product-alpha', 'test-product-beta')
+   OR path IN ('shop/test-product-alpha', 'shop/test-product-beta');
+
+INSERT INTO ${DB_PREFIX}menu
+    (id, menutype, title, alias, path, link, type, published, parent_id, level,
+     component_id, language, access, client_id, params, img, lft, rgt)
+VALUES
+    (9011, 'mainmenu', 'Live Test Product Alpha', 'test-product-alpha', 'shop/test-product-alpha',
+     'index.php?option=com_content&view=article&id=9001&Itemid=9011',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0),
+    (9012, 'mainmenu', 'Live Test Product Beta', 'test-product-beta', 'shop/test-product-beta',
+     'index.php?option=com_content&view=article&id=9002&Itemid=9012',
+     'component', 1, 9001, 2, ${COM_CONTENT_ID}, 'de-DE', 1, 0, '{}', '', 0, 0);
+COMMIT;
+EOSQL
+    HTTP_HOST=localhost php <<'EOPHP'
+<?php
+define('_JEXEC', 1);
+define('JPATH_BASE', '/var/www/html');
+require JPATH_BASE . '/includes/defines.php';
+require JPATH_BASE . '/includes/framework.php';
+
+$container = \Joomla\CMS\Factory::getContainer();
+$input = null;
+
+foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+    try {
+        if ($container->has($inputClass)) {
+            $input = $container->get($inputClass);
+            break;
+        }
+    } catch (\Throwable $e) {
+        // try the next candidate
+    }
+}
+
+$app = new \Joomla\CMS\Application\SiteApplication($input, $container->get('config'), null, $container);
+$app->setDispatcher($container->get(\Joomla\Event\DispatcherInterface::class));
+\Joomla\CMS\Factory::$application = $app;
+
+$db = $container->get(\Joomla\Database\DatabaseInterface::class);
+
+if (!(new \Joomla\CMS\Table\Menu($db))->rebuild()) {
+    fwrite(STDERR, "Menu rebuild failed\n");
+    exit(1);
+}
+EOPHP
     echo "Multilingual SEF fixture applied"
 fi
 

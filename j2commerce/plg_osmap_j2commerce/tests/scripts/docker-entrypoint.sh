@@ -5,10 +5,11 @@
 echo "=== OSMap J2Commerce Test Environment ==="
 
 # mod_rewrite has to be enabled BEFORE Apache starts. a2enmod only writes the symlink in
-# mods-enabled; an already running Apache does not pick the module up, so doing this later in the SEF
-# block would leave the lane serving requests without rewrite while the configuration claims
+# mods-enabled; an already running Apache does not pick the module up, so doing this later in the
+# SEF block would leave the lane serving requests without rewrite while the configuration claims
 # otherwise. Only the module load order matters here: .htaccess itself is read per request and is
-# still copied further down, once Joomla has unpacked htaccess.txt.
+# still copied further down, once Joomla has unpacked htaccess.txt. The J6 entrypoint does the
+# same, at the same place.
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Enabling mod_rewrite before Apache starts (J2COMMERCE_SEF=1)..."
     a2enmod rewrite >/dev/null 2>&1 || true
@@ -100,8 +101,11 @@ mysql -h mysql -u joomla -pjoomla_pass joomla_db \
 # J5 SEF stack (docker-compose.sef.yml, J2COMMERCE_SEF=1) enables rewrite URLs
 # so 08-sitemap-http-sef.php can assert that every emitted product URL carries
 # the correct language SEF prefix (e.g. /de/shop/...) in the live sitemap. The
-# end-to-end HTTP-200 resolution check needs a full multilingual stack and is
-# tracked as follow-up #185.
+# split between the two SEF lanes is deliberate: this J5 lane installs no site
+# language pack and therefore proves URL *generation* only, its live status is
+# logged for diagnostics. The J6 SEF lane builds the full multilingual stack
+# (de-DE language pack, plg_system_languagefilter, published de-DE routes) and
+# asserts there that every product URL resolves directly with HTTP 200 (#185).
 if [ "${J2COMMERCE_SEF}" = "1" ]; then
     echo "Enabling SEF URLs (J2COMMERCE_SEF=1)..."
     mysql -h mysql -u joomla -pjoomla_pass joomla_db \
@@ -113,15 +117,16 @@ if [ "${J2COMMERCE_SEF}" = "1" ]; then
 \$c = preg_replace('/public \\\$sef_rewrite = [^;]+;/', 'public \$sef_rewrite = true;', \$c);
 file_put_contents(\$f, \$c);
 " 2>/dev/null || true
-    # The module itself is already loaded, see the top of this script. Here only .htaccess is put in
-    # place, which Apache reads per request.
+    # The module itself is already loaded, see the top of this script. Here only .htaccess is put
+    # in place, which Apache reads per request.
     if [ -f /var/www/html/htaccess.txt ] && [ ! -f /var/www/html/.htaccess ]; then
         cp /var/www/html/htaccess.txt /var/www/html/.htaccess
     fi
 
-    # Proof rather than assumption: a lane that claims to serve rewrite-based SEF URLs must actually
-    # have the module loaded. Without this the suite would test the old server configuration and stay
-    # green while nothing was rewritten.
+    # Proof rather than assumption: a lane that claims to serve rewrite-based SEF URLs must
+    # actually have the module loaded. Without this the suite would test the old server
+    # configuration, and this J5 lane only LOGS the live status of its URLs, so nothing else
+    # would notice.
     if apache2ctl -M 2>/dev/null | grep -q rewrite_module; then
         echo "mod_rewrite is loaded."
     else

@@ -167,7 +167,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         // "texts" only returns the public texts the script shows (no user data, no
         // state change), so it is answered without a form token: a page without
-        // any form still needs them.
+        // any form still needs them. The text map is wrapped under "data" so the
+        // response shape stays {success:true, data:{...texts}} like every other
+        // task; the script reads it as data.data after unwrapping the com_ajax
+        // envelope (see media/js/joomlaajaxforms.js unwrapResponse()).
         //
         // The answer carries the "debug" option as well. On a normal page the
         // ajax plugin group is imported by com_ajax only, so onBeforeRender()

@@ -151,29 +151,79 @@ class SecurityTest
 
     /**
      * Load the front page and extract a session cookie + CSRF token name.
-     * Returns [cookie_header_value, token_name].
+     * Returns [cookies of that session as name => value, token_name].
      */
     private function getSessionAndToken(): array
     {
-        $ch = curl_init($this->baseUrl . '/');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_HEADER, true);
-        $response = (string) curl_exec($ch);
-        curl_close($ch);
+        // The front page carries a token only when something on it renders a form, which depends
+        // on the installed extensions: in the J2Commerce lanes the cart form provides one, in a
+        // bare installation there is none, and the token-name cases were silently skipped there.
+        // Two core views that always render a form with a token are therefore asked as well.
+        //
+        // Redirects are followed, because a component view without a menu item is answered with
+        // one, and curl keeps the cookies of the handle while doing so (CURLOPT_COOKIEFILE with
+        // an empty name switches the in-memory cookie engine on). That keeps cookie and token in
+        // the SAME session, which matters: a token of another session is worthless here.
+        $versucht = [];
 
-        $sessionCookie = '';
-        if (preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $response, $m)) {
-            $sessionCookie = trim($m[1]);
+        foreach ([
+            '/',
+            '/index.php?option=com_users&view=login',
+            '/index.php?option=com_users&view=reset',
+        ] as $pfad) {
+            $ch = curl_init($this->baseUrl . $pfad);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, '');
+            $response = (string) curl_exec($ch);
+            $status   = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+
+            // Every cookie the handle holds at the end, across all redirects, not just the first
+            // Set-Cookie header of the response. The first one need not be the session cookie,
+            // and a token sent with another session's cookie tests a different session.
+            $cookies = [];
+            foreach ((array) curl_getinfo($ch, CURLINFO_COOKIELIST) as $zeile) {
+                // Netscape format: domain, subdomains, path, secure, expiry, name, value
+                $felder = explode("\t", (string) $zeile);
+                if (count($felder) >= 7) {
+                    $cookies[$felder[5]] = $felder[6];
+                }
+            }
+
+            curl_close($ch);
+
+            // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
+            if (!preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)) {
+                $versucht[] = $pfad . ' (HTTP ' . $status . ', ' . strlen($response) . ' bytes, no token)';
+
+                continue;
+            }
+
+            echo "  (token taken from {$pfad}, " . count($cookies) . " cookie(s) of that session)\n";
+
+            return [$cookies, $m[1]];
         }
 
-        // Joomla CSRF token: hidden input whose value is "1" and name is a 32-char hex string
-        $tokenName = '';
-        if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)) {
-            $tokenName = $m[1];
+        echo "  (no token anywhere: " . implode('; ', $versucht) . ")\n";
+
+        return [[], ''];
+    }
+
+    /**
+     * True when a test that cannot run must fail instead of being skipped. Same rule as
+     * sh_strict_skip() of the shared helpers, which this suite does not load; its answer is used
+     * when it is available.
+     */
+    private function strictSkip(): bool
+    {
+        if (function_exists('sh_strict_skip')) {
+            return sh_strict_skip();
         }
 
-        return [$sessionCookie, $tokenName];
+        return getenv('TEST_STRICT_SKIP') === '1';
     }
 
     /**
@@ -240,15 +290,71 @@ class SecurityTest
             "Got HTTP $codeP, body: " . substr($bodyP, 0, 200)
         );
 
-        // 2. POST with a fabricated (wrong) token
+        // 2. POST with a fabricated token FIELD NAME, new session.
         [$code2, $body2] = $this->http('POST', $url, [
             'task'              => 'getCartCount',
-            str_repeat('a', 32) => '1',   // fake 32-char hex token
+            str_repeat('a', 32) => '1',   // fake 32-char hex token name
         ], [], false);
         $this->test(
-            'Fake-token POST is rejected with JSON success=false (no redirect)',
+            'POST with a wrong token field name is rejected with JSON success=false (no redirect)',
             $code2 === 200 && ajaxforms_is_json_rejection($body2),
             "Got HTTP $code2, body: " . substr($body2, 0, 200)
+        );
+
+        // 3. The contract, written down so nobody "tightens" it by mistake: in Joomla the token is
+        //    the FIELD NAME, not the value. Session::checkToken() asks
+        //    $input->$method->get($token, '', 'alnum') and only requires a non-empty value
+        //    (joomla-cms 5.4-dev, libraries/src/Session/Session.php line 75). The field name is an
+        //    HMAC of session id and user, and that is the secret. JFormToken renders value="1", but
+        //    any non-empty value is valid, and hasValidToken() mirrors core exactly.
+        //
+        //    Measured with a real session so the field name is the right one.
+        [$echtCookies, $echtToken] = $this->getSessionAndToken();
+
+        if ($echtToken === '') {
+            $meldung = 'no CSRF token found on the front page or in the login view, '
+                . 'so the token-name cases cannot run';
+
+            // CI runs with TEST_STRICT_SKIP=1, where a test that cannot run has to fail. A plain
+            // return would drop all three token-name cases below and leave the suite green
+            // without ever having exercised them. The token is now looked for in the core login
+            // view as well, so reaching this point means no Joomla page rendered a token at all,
+            // which is a real defect of the lane rather than a missing extension.
+            if ($this->strictSkip()) {
+                $this->test('A CSRF token is available for the token-name cases', false, $meldung);
+
+                return;
+            }
+
+            echo "  SKIP: {$meldung}\n";
+
+            return;
+        }
+
+        [$code3, $body3] = $this->http('POST', $url, [
+            'task'     => 'getCartCount',
+            $echtToken => 'irgendwas',
+        ], $echtCookies, false);
+        $this->test(
+            'POST with the right token name and an arbitrary value is accepted, like Joomla core',
+            $code3 === 200 && !ajaxforms_is_json_rejection($body3),
+            "Got HTTP $code3, body: " . substr($body3, 0, 200)
+        );
+
+        // 4. The same real session, but with the field name reversed: now it must be refused. That
+        //    separates "some field is present" from "the right field is present".
+        $falscherName = strrev($echtToken) === $echtToken
+            ? str_repeat('b', \strlen($echtToken))
+            : strrev($echtToken);
+
+        [$code4, $body4] = $this->http('POST', $url, [
+            'task'        => 'getCartCount',
+            $falscherName => '1',
+        ], $echtCookies, false);
+        $this->test(
+            'POST with an altered token name is refused even in an established session',
+            $code4 === 200 && ajaxforms_is_json_rejection($body4),
+            "Got HTTP $code4, body: " . substr($body4, 0, 200)
         );
     }
 
@@ -303,17 +409,11 @@ class SecurityTest
         $this->test('Victim cart item seeded', $cartitemId > 0, "cartitem_id=$cartitemId");
 
         // Obtain a real (unauthenticated) session + CSRF token
-        [$sessionCookie, $tokenName] = $this->getSessionAndToken();
+        [$cookies, $tokenName] = $this->getSessionAndToken();
 
         $fields = ['task' => 'removeCartItem', 'cartitem_id' => $cartitemId];
         if ($tokenName) {
             $fields[$tokenName] = '1';
-        }
-
-        $cookies = [];
-        if ($sessionCookie && str_contains($sessionCookie, '=')) {
-            [$cName, $cVal] = explode('=', $sessionCookie, 2);
-            $cookies[$cName] = $cVal;
         }
 
         $url = $this->baseUrl . $this->ajaxPath . '&task=removeCartItem';
@@ -433,12 +533,7 @@ class SecurityTest
         // Log in as admin via the plugin's own task=login endpoint.
         // This is the same path used by the front-end login form and gives a
         // properly authenticated Joomla session without relying on com_users routing.
-        [$sessionCookie, $tokenName] = $this->getSessionAndToken();
-        $cookies = [];
-        if ($sessionCookie && str_contains($sessionCookie, '=')) {
-            [$cName, $cVal] = explode('=', $sessionCookie, 2);
-            $cookies[$cName] = $cVal;
-        }
+        [$cookies, $tokenName] = $this->getSessionAndToken();
 
         // Read admin password from the container environment — each docker-compose
         // sets JOOMLA_ADMIN_PASSWORD differently across J5/J2C4/J2C6 stacks.
