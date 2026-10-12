@@ -41,9 +41,21 @@ class DisplayController extends BaseController
 
         if (\in_array($view, self::EDIT_VIEWS, true)) {
             $user = $this->app->getIdentity();
+            $id   = $this->input->getInt('id', 0);
 
-            if (!$user->authorise('core.edit', 'com_dmarcreports')
-                && !$user->authorise('core.create', 'com_dmarcreports')) {
+            // An existing record (id > 0) exposes stored configuration — mailbox
+            // host/user/folder and domain notes — so reading it requires
+            // core.edit. Only a blank/new form (no id) may be reached with
+            // core.create alone. Using an OR for both cases would let a
+            // create-only user read existing configuration they may not edit.
+            $allowed = $id > 0
+                ? $user->authorise('core.edit', 'com_dmarcreports')
+                : (
+                    $user->authorise('core.create', 'com_dmarcreports')
+                    || $user->authorise('core.edit', 'com_dmarcreports')
+                );
+
+            if (!$allowed) {
                 throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
         }

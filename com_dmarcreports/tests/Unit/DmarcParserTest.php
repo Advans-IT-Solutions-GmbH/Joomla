@@ -320,4 +320,77 @@ XML;
 
         $this->assertSame((int) $end, $report['date_end']);
     }
+
+    public function testRejectsPolicyDomainBeyondStorageLength(): void
+    {
+        // A valid-but-overlong policy domain would overflow the VARCHAR(190)
+        // column and, for an auto-detected domain, make every poll fail and the
+        // message retry forever, so it is rejected as a parse failure.
+        $long = str_repeat('a', 191) . '.example';
+        $xml  = str_replace('<domain>example.org</domain>', '<domain>' . $long . '</domain>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithUnknownDisposition(): void
+    {
+        $xml = str_replace('<disposition>none</disposition>', '<disposition>bogus</disposition>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithMissingDisposition(): void
+    {
+        $xml = str_replace('<disposition>none</disposition>', '<disposition></disposition>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithUnknownDkimResult(): void
+    {
+        $xml = str_replace('<dkim>pass</dkim>', '<dkim>unknown</dkim>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithUnknownSpfResult(): void
+    {
+        $xml = str_replace('<spf>pass</spf>', '<spf>softfail</spf>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithMissingHeaderFrom(): void
+    {
+        $xml = str_replace(
+            "    <identifiers>\n      <header_from>example.org</header_from>\n    </identifiers>",
+            "    <identifiers>\n      <header_from></header_from>\n    </identifiers>",
+            $this->sample()
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsUnknownAlignmentMode(): void
+    {
+        $xml = str_replace('<adkim>s</adkim>', '<adkim>x</adkim>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testDefaultsAlignmentToRelaxedWhenAbsent(): void
+    {
+        $xml    = str_replace("    <adkim>s</adkim>\n    <aspf>r</aspf>\n", '', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame('r', $report['policy']['adkim']);
+        $this->assertSame('r', $report['policy']['aspf']);
+    }
 }

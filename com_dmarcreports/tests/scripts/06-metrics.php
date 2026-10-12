@@ -214,7 +214,7 @@ class MetricsTest
         $id = $this->domainId;
 
         if ($id === 0) {
-            $query = $this->db->getQuery(true)
+            $query = $this->query()
                 ->select($this->db->quoteName('id'))
                 ->from($this->db->quoteName('#__dmarc_domains'))
                 ->where($this->db->quoteName('domain') . ' = ' . $this->db->quote(self::DOMAIN));
@@ -227,13 +227,23 @@ class MetricsTest
 
         foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
             $column = $table === '#__dmarc_domains' ? 'id' : 'domain_id';
-            $query  = $this->db->getQuery(true)
+            $query  = $this->query()
                 ->delete($this->db->quoteName($table))
                 ->where($this->db->quoteName($column) . ' = ' . (int) $id);
             $this->db->setQuery($query)->execute();
         }
 
         $this->domainId = 0;
+    }
+
+    /**
+     * A new query builder via the forward-compatible factory. Joomla 6 replaces
+     * the deprecated getQuery(true) with createQuery(); the guard keeps the
+     * suite green on both Joomla 5 and 6.
+     */
+    private function query()
+    {
+        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
     }
 
     private function test(string $name, callable $fn): void

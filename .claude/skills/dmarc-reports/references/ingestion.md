@@ -80,7 +80,12 @@ The published policy is validated, not just copied: `p` must be `none`, `quarant
 and `pct`, when present, must be a whole number 0–100 (absent defaults to 100). A malformed or
 out-of-range value rejects the whole report instead of being coerced, because the latest stored
 policy drives the dashboard and the rollout guidance — one bogus report must not display a fake
-policy and suppress all guidance. `sp` is optional and validated only when present.
+policy and suppress all guidance. `sp` is optional and validated only when present. The published
+alignment modes (`adkim`/`aspf`) default to relaxed (`r`) when absent but reject a present-unknown
+value rather than silently coercing it, so a misdeclared alignment policy is never misrepresented.
+The published policy domain is also rejected when it exceeds the stored column length
+(`MAX_DOMAIN_LENGTH`, 190): a valid-but-overlong auto-detected domain would otherwise overflow the
+insert and make the message retry forever.
 
 Report-level and record-level fields are validated the same way. A report with an inverted date
 range (`date_end < date_begin`) is rejected before storage, because an out-of-order range would
@@ -91,7 +96,14 @@ is also rejected: metrics anchor the rolling windows and the displayed current p
 the Action Center windows and pin the shown policy indefinitely. Every
 `record` row must carry a routable `source_ip` (`FILTER_VALIDATE_IP`) and a positive integer
 `count`; a missing or malformed value rejects the whole report rather than being coerced to `''`
-or `0`. Coercion would commit the report fingerprint while keeping an invalid row, so a corrected
+or `0`. The per-record evaluated fields are validated the same way rather than coerced: the
+`disposition` must be `none`/`quarantine`/`reject`, the evaluated `dkim`/`spf` results must be
+`pass`/`fail`, and `header_from` must be present and within the stored length. A missing or unknown
+value rejects the whole report instead of being stored as a misleading default (`none` / `fail` /
+empty) — otherwise the report fingerprint would be committed with inaccurate rows, and a later
+corrected copy would be dropped as a duplicate while the dashboard metrics and rollout guidance stay
+wrong.
+Coercion would commit the report fingerprint while keeping an invalid row, so a corrected
 copy of the same report would later be discarded as a duplicate while the bad row skews metrics.
 The `count` must also fit the signed integer PHP binds and the `BIGINT UNSIGNED` column stores
 (capped at `PHP_INT_MAX`); a digit string beyond that range is rejected up front, because it would
@@ -108,7 +120,9 @@ recomputing it.
 same report is a no-op: the insert is skipped and no duplicate records are written. `ingestMessages()`
 loops `ingestMessage()` over the streamed messages; `newSummary()` builds the per-run result
 (counts of new / duplicate / failed / skipped) shown back to the admin and written to `last_run` /
-`last_status` / `last_message` on the source.
+`last_status` / `last_message` on the source. The per-run `records` tally is accumulated locally and
+folded into the summary only **after** the report's transaction commits, so a mid-report insert or
+commit failure that rolls the whole report back cannot leave an inflated record count.
 
 Auto-registering an unknown domain is gated by ACL. The constructor takes an `allowAutoCreate` flag
 that `IngestController` sets from the current user's `core.create` privilege on the component: an

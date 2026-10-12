@@ -227,12 +227,19 @@ final class Ingestor
         try {
             $reportId = $this->insertReport($report, $hash, $domainId, $sourceId);
 
+            // Count locally and fold into the running summary only after the
+            // commit succeeds. Adding inside the loop would leave the record
+            // tally inflated if a later insert or the commit itself failed and
+            // rolled the whole report back.
+            $records = 0;
+
             foreach ($report['records'] as $record) {
                 $this->insertRecord($record, $reportId, $domainId);
-                $summary['records'] += (int) $record['count'];
+                $records += (int) $record['count'];
             }
 
             $this->db->transactionCommit();
+            $summary['records'] += $records;
             $summary['imported']++;
         } catch (\Throwable) {
             $this->db->transactionRollback();

@@ -325,10 +325,17 @@ final class Metrics
      */
     private function timeline(int $domainId): array
     {
+        // Bucket by UTC calendar day: FLOOR(date_begin / 86400) yields the day
+        // index since the epoch, so multiple reporters covering the same day
+        // collapse into one row instead of producing duplicate 'day' keys, and
+        // the 90-row limit then means 90 distinct days rather than 90 reports.
+        // The expression is portable across MySQL and PostgreSQL.
+        $dayBucket = 'FLOOR(' . $this->db->quoteName('rep.date_begin') . ' / 86400)';
+
         $query = $this->query()
             ->select(
                 [
-                    'rep.date_begin AS day_ts',
+                    $dayBucket . ' AS day_bucket',
                     'COALESCE(SUM(' . $this->db->quoteName('rec.count') . '), 0) AS total',
                     'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 OR '
                         . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count')
@@ -340,8 +347,8 @@ final class Metrics
                 $this->db->quoteName('rec.report_id') . ' = ' . $this->db->quoteName('rep.id'))
             ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->group($this->db->quoteName('rep.date_begin'))
-            ->order($this->db->quoteName('rep.date_begin') . ' DESC');
+            ->group($dayBucket)
+            ->order($dayBucket . ' DESC');
 
         // Take the newest 90 days, then restore chronological order for display.
         $query->setLimit(90);
@@ -349,7 +356,7 @@ final class Metrics
 
         return array_map(
             static fn (array $r): array => [
-                'day'   => gmdate('Y-m-d', (int) $r['day_ts']),
+                'day'   => gmdate('Y-m-d', (int) $r['day_bucket'] * 86400),
                 'total' => (int) $r['total'],
                 'pass'  => (int) $r['pass'],
             ],

@@ -32,6 +32,15 @@ final class DmarcParser
     private const MAX_CLOCK_SKEW = 172800;
 
     /**
+     * Maximum stored length of a domain value, matching the VARCHAR(190) domain
+     * and header_from columns. A syntactically valid domain can be longer, but
+     * storing it would overflow the column; for an auto-detected policy domain
+     * the insert then fails on every poll and the message is retried forever, so
+     * an over-length domain is rejected here as a parse failure instead.
+     */
+    private const MAX_DOMAIN_LENGTH = 190;
+
+    /**
      * Parse one aggregate report document.
      *
      * @param   string  $xml  The raw XML of a single <feedback> document.
@@ -95,6 +104,13 @@ final class DmarcParser
             throw new \InvalidArgumentException('The report is missing a report id or published policy domain.');
         }
 
+        // Reject a policy domain that would overflow its storage column. For an
+        // auto-detected domain the insert would otherwise fail on every poll and
+        // the message would be retried forever (see MAX_DOMAIN_LENGTH).
+        if (self::length($report['policy']['domain']) > self::MAX_DOMAIN_LENGTH) {
+            throw new \InvalidArgumentException('The published policy domain exceeds the supported length.');
+        }
+
         // The fingerprint is built from org name, report id and begin date; a
         // report missing either of the remaining two parts cannot be deduplicated
         // reliably and is rejected so distinct reports never collide on one hash.
@@ -155,6 +171,25 @@ final class DmarcParser
                 throw new \InvalidArgumentException('A report record has a non-positive message count.');
             }
 
+            // Required evaluated fields are validated, not coerced. A missing or
+            // unknown disposition / DKIM / SPF result, or a missing header_from,
+            // would otherwise be stored as a misleading default (none / fail /
+            // empty) and commit the report fingerprint, so a later corrected
+            // copy would be discarded as a duplicate while the dashboard shows
+            // inaccurate metrics. The whole report is rejected instead.
+            $disposition = self::evaluatedDisposition($evaluated->disposition ?? null);
+            $dkimResult  = self::evaluatedResult($evaluated->dkim ?? null, 'DKIM');
+            $spfResult   = self::evaluatedResult($evaluated->spf ?? null, 'SPF');
+            $headerFrom  = strtolower(self::text($identifier->header_from ?? null));
+
+            if ($headerFrom === '') {
+                throw new \InvalidArgumentException('A report record is missing the header_from identifier.');
+            }
+
+            if (self::length($headerFrom) > self::MAX_DOMAIN_LENGTH) {
+                throw new \InvalidArgumentException('A report record header_from exceeds the supported length.');
+            }
+
             // Guard the running total with overflow-safe addition. Individually
             // valid counts can still sum past PHP_INT_MAX, where array_sum()
             // would spill into a float and casting it back yields PHP_INT_MIN,
@@ -170,12 +205,12 @@ final class DmarcParser
             $report['records'][] = [
                 'source_ip'     => $sourceIp,
                 'count'         => $count,
-                'disposition'   => self::disposition($evaluated->disposition ?? null),
-                'dkim_result'   => strtolower(self::text($evaluated->dkim ?? null)),
-                'spf_result'    => strtolower(self::text($evaluated->spf ?? null)),
-                'dkim_aligned'  => strtolower(self::text($evaluated->dkim ?? null)) === 'pass' ? 1 : 0,
-                'spf_aligned'   => strtolower(self::text($evaluated->spf ?? null)) === 'pass' ? 1 : 0,
-                'header_from'   => strtolower(self::text($identifier->header_from ?? null)),
+                'disposition'   => $disposition,
+                'dkim_result'   => $dkimResult,
+                'spf_result'    => $spfResult,
+                'dkim_aligned'  => $dkimResult === 'pass' ? 1 : 0,
+                'spf_aligned'   => $spfResult === 'pass' ? 1 : 0,
+                'header_from'   => $headerFrom,
                 'envelope_from' => strtolower(self::text($identifier->envelope_from ?? null)),
                 'envelope_to'   => strtolower(self::text($identifier->envelope_to ?? null)),
             ];
@@ -217,7 +252,18 @@ final class DmarcParser
     {
         $value = strtolower(self::text($node));
 
-        return $value === 's' ? 's' : 'r';
+        // An absent tag inherits the RFC 7489 default of relaxed alignment.
+        if ($value === '') {
+            return 'r';
+        }
+
+        // A present but unknown mode is rejected rather than silently coerced to
+        // relaxed, which would misrepresent the published alignment policy.
+        if ($value !== 's' && $value !== 'r') {
+            throw new \InvalidArgumentException('The report publishes an unknown DMARC alignment mode.');
+        }
+
+        return $value;
     }
 
     /**
@@ -299,10 +345,64 @@ final class DmarcParser
         return $len > $cap || ($len === $cap && strcmp($digits, $max) > 0);
     }
 
-    private static function disposition($node): string
+    /**
+     * Validates a record's evaluated disposition (policy_evaluated/disposition).
+     * It is a required field and must be one of the three RFC 7489 values. An
+     * absent or unknown value is rejected rather than coerced to 'none', which
+     * would understate the applied policy and still fingerprint the report so a
+     * later corrected copy would be dropped as a duplicate.
+     *
+     * @param   \SimpleXMLElement|null  $node  The disposition tag, if present.
+     *
+     * @return  string  A validated disposition.
+     */
+    private static function evaluatedDisposition($node): string
     {
         $value = strtolower(self::text($node));
 
-        return \in_array($value, ['quarantine', 'reject'], true) ? $value : 'none';
+        if ($value === '') {
+            throw new \InvalidArgumentException('A report record is missing its evaluated disposition.');
+        }
+
+        if (!\in_array($value, ['none', 'quarantine', 'reject'], true)) {
+            throw new \InvalidArgumentException('A report record has an unknown evaluated disposition.');
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validates a record's evaluated DKIM or SPF result. Both are required and
+     * must be 'pass' or 'fail'; any other value (including an absent tag) is
+     * rejected rather than being treated as a failure, because a wrong result
+     * skews the pass-rate metrics and rollout guidance.
+     *
+     * @param   \SimpleXMLElement|null  $node   The result tag, if present.
+     * @param   string                  $label  Human label for the error message.
+     *
+     * @return  string  Either 'pass' or 'fail'.
+     */
+    private static function evaluatedResult($node, string $label): string
+    {
+        $value = strtolower(self::text($node));
+
+        if ($value === '') {
+            throw new \InvalidArgumentException('A report record is missing its evaluated ' . $label . ' result.');
+        }
+
+        if ($value !== 'pass' && $value !== 'fail') {
+            throw new \InvalidArgumentException('A report record has an unknown evaluated ' . $label . ' result.');
+        }
+
+        return $value;
+    }
+
+    /**
+     * Length of a string in characters, preferring the multibyte count so an
+     * internationalised domain is measured by characters rather than bytes.
+     */
+    private static function length(string $value): int
+    {
+        return \function_exists('mb_strlen') ? mb_strlen($value) : \strlen($value);
     }
 }
