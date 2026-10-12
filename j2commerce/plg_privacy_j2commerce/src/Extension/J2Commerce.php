@@ -1919,9 +1919,17 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $app  = $this->getApplication();
         $task = (string) $app->getInput()->getCmd('task', '');
 
-        $result = $task === self::CONFIRM_TASK
-            ? $this->handleConfirmationPage($app)
-            : $this->handleAccountTask($app, $task);
+        if ($task === self::CONFIRM_TASK) {
+            // Public page: no exception text reaches the visitor (com_ajax prints it otherwise).
+            try {
+                $result = $this->handleConfirmationPage($app);
+            } catch (\Throwable $e) {
+                Log::add('Privacy request confirmation page failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
+                $result = $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_FAILED'), 'danger');
+            }
+        } else {
+            $result = $this->handleAccountTask($app, $task);
+        }
 
         if (\is_object($event) && method_exists($event, 'addResult')) {
             $event->addResult($result);
@@ -1999,7 +2007,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TOO_MANY_ATTEMPTS'), 'danger');
         }
 
-        $status = $this->confirmPrivacyRequest($email, $token);
+        try {
+            $status = $this->confirmPrivacyRequest($email, $token);
+        } catch (\Throwable $e) {
+            // com_ajax would print the exception class and message to the visitor.
+            Log::add('Privacy request confirmation failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
+            $status = self::CONFIRM_FAILED;
+        }
 
         if ($status === self::CONFIRM_OK) {
             $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
