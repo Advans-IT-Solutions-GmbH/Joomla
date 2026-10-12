@@ -40,6 +40,11 @@ Policy decisions use a `rank = none<quarantine<reject` comparison against the do
 "publish this record" suggestion (we cannot know what is missing when the lookup itself failed) —
 distinct from a genuinely missing record. Keep that distinction when editing.
 
+A present record is validated before it is read as healthy: more than one DMARC (or SPF) record is
+reported as a duplicate, and a malformed required tag — an unknown `p` value or a `pct` that is not
+a whole number 0–100 — is reported as invalid (`dns_dmarc_invalid`) rather than silently treated as
+a working policy.
+
 ## Persistence
 
 Findings are stored in `#__dmarc_actions` keyed by `(domain_id, action_key)` so an admin can mark

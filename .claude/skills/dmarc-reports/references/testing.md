@@ -17,6 +17,7 @@ Driven by `shared/tests/run-tests.sh` via `tests/test.env` (`CONTAINER_NAME=com_
 | parser | `03-parser.php` | RFC 7489 XML parsed into the expected records |
 | storage | `04-storage.php` | Idempotent store (dedupe by `report_hash`) |
 | action-center | `05-action-center.php` | Recommendations derived correctly from the data |
+| metrics | `06-metrics.php` | `Metrics` aggregator over a seeded DB: lifetime totals, rolling-window rates, new sources, timeline |
 | backend-views | `shared-backend-views.php` | Renders each admin page: 200, no PHP/Joomla error, no untranslated key |
 | install-messages | `shared-install-messages.php` | Install/reinstall/update in en-GB/de-DE/fr-FR, no `[ERROR]`/`[WARNING]` |
 | uninstall | `10-uninstall.php` | Removal, table drop, verification |
@@ -29,10 +30,11 @@ rests on code review. See `ingestion.md`.
 
 ## Unit suite (`tests/Unit/`, PHPUnit)
 
-Separate CI job, no Docker. Covers the parser, `Metrics`, `DnsDiagnostics` and `ActionCenter`
-(pure logic). `composer install` then `composer test`. Local run (Windows, no Docker/composer):
-run `phpunit.phar` from the `com_dmarcreports` dir (so it finds `phpunit.xml`) with a php.ini that
-loads mbstring/openssl/zip/fileinfo.
+Separate CI job, no Docker. Covers the parser, `DnsDiagnostics` and `ActionCenter` (pure logic).
+The database-backed `Metrics` aggregation is exercised by the `metrics` integration suite instead,
+because it needs a real database. `composer install` then `composer test`. Local run (Windows, no
+Docker/composer): run `phpunit.phar` from the `com_dmarcreports` dir (so it finds `phpunit.xml`)
+with a php.ini that loads mbstring/openssl/zip/fileinfo.
 
 ## Validation gates (run before every push)
 

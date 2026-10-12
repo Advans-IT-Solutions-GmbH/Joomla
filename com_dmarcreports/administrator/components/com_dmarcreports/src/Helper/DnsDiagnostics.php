@@ -55,6 +55,11 @@ final class DnsDiagnostics
             // More than one DMARC record is invalid per RFC 7489; receivers apply
             // error handling, so this must not be read as a healthy policy.
             $findings[] = ['code' => 'dns_dmarc_duplicate', 'severity' => 3, 'params' => [$domain]];
+        } elseif (!$dmarc['valid']) {
+            // A malformed required tag (an unknown p value, or a pct outside the
+            // 0-100 integer range) leaves receivers unable to apply the intended
+            // policy, so the record is reported as invalid rather than healthy.
+            $findings[] = ['code' => 'dns_dmarc_invalid', 'severity' => 3, 'params' => [$domain]];
         } else {
             if ($dmarc['policy'] === '' || $dmarc['policy'] === 'none') {
                 $findings[] = ['code' => 'dns_dmarc_policy_none', 'severity' => 2, 'params' => [$domain]];
@@ -104,7 +109,7 @@ final class DnsDiagnostics
     {
         $records = $this->resolver->txt('_dmarc.' . $domain);
 
-        $result = ['present' => false, 'error' => false, 'duplicate' => false, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
+        $result = ['present' => false, 'error' => false, 'duplicate' => false, 'valid' => true, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
 
         if ($records === null) {
             $result['error'] = true;
@@ -128,9 +133,24 @@ final class DnsDiagnostics
         $result['policy'] = strtolower($tags['p'] ?? '');
         $result['rua']    = isset($tags['rua']) && $tags['rua'] !== '';
 
-        if (isset($tags['pct']) && is_numeric($tags['pct'])) {
-            $result['pct'] = (int) $tags['pct'];
+        // The required p tag must name a known disposition; anything else (a
+        // typo such as p=bogus, or no p tag at all) is an invalid record.
+        $valid = \in_array($result['policy'], ['none', 'quarantine', 'reject'], true);
+
+        if (isset($tags['pct'])) {
+            // pct is an integer percentage 0-100; a non-numeric or out-of-range
+            // value (pct=abc, pct=101) makes the record invalid rather than a
+            // silently ignored healthy policy.
+            $pct = trim($tags['pct']);
+
+            if (ctype_digit($pct) && (int) $pct <= 100) {
+                $result['pct'] = (int) $pct;
+            } else {
+                $valid = false;
+            }
         }
+
+        $result['valid'] = $valid;
 
         return $result;
     }

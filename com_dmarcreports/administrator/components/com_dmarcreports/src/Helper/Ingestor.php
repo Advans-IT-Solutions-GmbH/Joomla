@@ -203,8 +203,10 @@ final class Ingestor
         } catch (\Throwable) {
             $this->db->transactionRollback();
             $summary['failed']++;
-            // Storage failures are treated as transient so the caller can retry
-            // the message instead of marking it processed and dropping a report
+            // Values are clamped to their column widths before storage, so a
+            // deterministic length overflow cannot recur here; a failure that
+            // still reaches this point is treated as transient (a lock, a lost
+            // connection) and the caller retries rather than dropping a report
             // that was never persisted.
             $retry = true;
         }
@@ -275,22 +277,26 @@ final class Ingestor
      */
     private function insertReport(array $report, string $hash, int $domainId, ?int $sourceId): int
     {
+        // Clamp every value to its column width before writing. An overlong
+        // field would otherwise raise the same deterministic storage error on
+        // every run, which the caller would keep treating as transient and
+        // retry forever; fitting the schema keeps ingestion idempotent.
         $row = (object) [
             'domain_id'      => $domainId,
             'source_id'      => $sourceId ?: 0,
-            'org_name'       => $report['org_name'],
-            'org_email'      => $report['org_email'],
-            'report_id'      => $report['report_id'],
+            'org_name'       => $this->clip((string) $report['org_name'], 255),
+            'org_email'      => $this->clip((string) $report['org_email'], 255),
+            'report_id'      => $this->clip((string) $report['report_id'], 255),
             'report_hash'    => $hash,
-            'date_begin'     => $report['date_begin'],
-            'date_end'       => $report['date_end'],
-            'policy_domain'  => $report['policy']['domain'],
-            'policy_p'       => $report['policy']['p'],
-            'policy_sp'      => $report['policy']['sp'],
-            'policy_pct'     => $report['policy']['pct'],
-            'policy_adkim'   => $report['policy']['adkim'],
-            'policy_aspf'    => $report['policy']['aspf'],
-            'message_count'  => array_sum(array_column($report['records'], 'count')),
+            'date_begin'     => (int) $report['date_begin'],
+            'date_end'       => (int) $report['date_end'],
+            'policy_domain'  => $this->clip((string) $report['policy']['domain'], 190),
+            'policy_p'       => $this->clip((string) $report['policy']['p'], 20),
+            'policy_sp'      => $this->clip((string) $report['policy']['sp'], 20),
+            'policy_pct'     => (int) $report['policy']['pct'],
+            'policy_adkim'   => $this->clip((string) $report['policy']['adkim'], 1),
+            'policy_aspf'    => $this->clip((string) $report['policy']['aspf'], 1),
+            'message_count'  => (int) array_sum(array_column($report['records'], 'count')),
             'created'        => Factory::getDate()->toSql(),
         ];
 
@@ -304,22 +310,34 @@ final class Ingestor
      */
     private function insertRecord(array $record, int $reportId, int $domainId): void
     {
+        // Clamp string fields to their column widths for the same reason as the
+        // report row: a deterministic length overflow must never block a run.
         $row = (object) [
             'report_id'     => $reportId,
             'domain_id'     => $domainId,
-            'source_ip'     => $record['source_ip'],
-            'count'         => $record['count'],
-            'disposition'   => $record['disposition'],
-            'dkim_result'   => $record['dkim_result'],
-            'spf_result'    => $record['spf_result'],
-            'dkim_aligned'  => $record['dkim_aligned'],
-            'spf_aligned'   => $record['spf_aligned'],
-            'header_from'   => $record['header_from'],
-            'envelope_from' => $record['envelope_from'],
-            'envelope_to'   => $record['envelope_to'],
+            'source_ip'     => $this->clip((string) $record['source_ip'], 45),
+            'count'         => (int) $record['count'],
+            'disposition'   => $this->clip((string) $record['disposition'], 20),
+            'dkim_result'   => $this->clip((string) $record['dkim_result'], 20),
+            'spf_result'    => $this->clip((string) $record['spf_result'], 20),
+            'dkim_aligned'  => (int) $record['dkim_aligned'],
+            'spf_aligned'   => (int) $record['spf_aligned'],
+            'header_from'   => $this->clip((string) $record['header_from'], 190),
+            'envelope_from' => $this->clip((string) $record['envelope_from'], 190),
+            'envelope_to'   => $this->clip((string) $record['envelope_to'], 190),
         ];
 
         $this->db->insertObject('#__dmarc_records', $row);
+    }
+
+    /**
+     * Trim a value to at most $max characters so it fits its database column.
+     * Uses multibyte-aware length because the columns count characters, not
+     * bytes, under utf8mb4.
+     */
+    private function clip(string $value, int $max): string
+    {
+        return function_exists('mb_substr') ? mb_substr($value, 0, $max) : substr($value, 0, $max);
     }
 
     private function query(): \Joomla\Database\QueryInterface

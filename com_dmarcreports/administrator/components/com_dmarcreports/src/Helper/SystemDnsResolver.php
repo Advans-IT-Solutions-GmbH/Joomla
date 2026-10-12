@@ -13,7 +13,11 @@ defined('_JEXEC') or die;
 
 /**
  * The default resolver, backed by PHP's dns_get_record(). It performs only
- * read-only TXT lookups and never transmits any site data.
+ * read-only TXT lookups and never writes to DNS. It does, however, transmit
+ * the host being queried: like any DNS lookup, each call discloses the
+ * monitored domain (and its _dmarc subdomain) to the system resolver and the
+ * upstream DNS servers it consults, consistent with the note on
+ * {@see DnsDiagnostics}. No other site data is sent.
  *
  * @since  1.0.0
  */

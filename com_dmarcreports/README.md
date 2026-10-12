@@ -151,7 +151,7 @@ com_dmarcreports/
 
 This component has automated tests that run via GitHub Actions (`dmarc-reports.yml`) on pushes and pull requests to `main` that change this directory, the shared harness files it uses or the workflow file. CI also runs a PHP syntax check, the language file lint, the requirements check (Joomla 5.4+, PHP 8.1+), the deprecated-API scan and a PHPUnit unit suite. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
 
-The integration suite runs against **two real stacks** — Joomla 5 (`test-j5`) and Joomla 6 (`test-j6`) — so the parser, storage and Action Center logic are exercised inside an actual Joomla install. The component does not depend on J2Commerce.
+The integration suite runs against **two real stacks** — Joomla 5 (`test-j5`) and Joomla 6 (`test-j6`) — so the parser, storage, metrics and Action Center logic are exercised inside an actual Joomla install. The component does not depend on J2Commerce.
 
 ### Test Suites
 
@@ -162,11 +162,12 @@ Order as in `tests/test.env`:
 3. **Parser** - RFC 7489 aggregate-report XML is parsed into the expected records
 4. **Storage** - Reports and records are stored idempotently (dedupe by reporter org + report id)
 5. **Action Center** - Recommendations are derived correctly from the parsed data
-6. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
-7. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-8. **Uninstall** - Component removal, table drop, verification
+6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
+7. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
+8. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+9. **Uninstall** - Component removal, table drop, verification
 
-A separate **PHPUnit (Unit)** job runs the parser, metrics, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker.
+A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
 
 ### Running Tests Locally
 

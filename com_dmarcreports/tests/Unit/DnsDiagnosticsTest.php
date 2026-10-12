@@ -131,8 +131,45 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertContains('dns_spf_duplicate', $this->codes($result));
     }
 
-    public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void
+    public function testMalformedPolicyValueIsReportedAsInvalid(): void
     {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=bogus; rua=mailto:dmarc@example.org'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+        $codes  = $this->codes($result);
+
+        $this->assertFalse($result['dmarc']['valid']);
+        $this->assertContains('dns_dmarc_invalid', $codes);
+        // An unusable record must not be read as a healthy or policy-none record.
+        $this->assertNotContains('dns_dmarc_policy_none', $codes);
+    }
+
+    public function testOutOfRangePctIsReportedAsInvalid(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; rua=mailto:dmarc@example.org; pct=150'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+        $codes  = $this->codes($result);
+
+        $this->assertFalse($result['dmarc']['valid']);
+        $this->assertContains('dns_dmarc_invalid', $codes);
+    }
+
+    public function testNonNumericPctIsReportedAsInvalid(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; rua=mailto:dmarc@example.org; pct=abc'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+
+        $this->assertContains('dns_dmarc_invalid', $this->codes($diagnostics->inspect('example.org')));
+    }
+
+    public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void    {
         $resolver = new class implements DnsResolverInterface {
             public function txt(string $host): ?array
             {
