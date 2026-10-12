@@ -646,7 +646,7 @@ Payment data (credit card details, bank information) is stored by payment servic
 3. Deletes their saved addresses
 4. Logs the effective fiscal year end and time zone (an invalid stored value is logged and replaced by `12-31`)
 5. Finds guest orders (`user_id = 0`) outside the retention period that still contain personal data and anonymizes them per order (orders with a lifetime license keep the e-mail address)
-6. Removes IP address and user agent from the checkout consent records of all anonymized orders
+6. Removes IP address and user agent from the checkout consent records of all anonymized J2Commerce 6 orders (consents are recorded only for them and name only the order number); an order number that also belongs to another order keeps its order info and consent evidence (logged)
 7. Logs all actions; the task ends with an error status when guest orders or all users failed
 
 ---
