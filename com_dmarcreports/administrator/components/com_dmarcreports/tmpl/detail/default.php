@@ -93,7 +93,9 @@ defined('_JEXEC') or die;
                 <dl class="row mb-0">
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_DMARC'); ?></dt>
                     <dd class="col-sm-9">
-                        <?php if (!empty($this->dns['dmarc']['present'])) : ?>
+                        <?php if (!empty($this->dns['dmarc']['error'])) : ?>
+                            <span class="text-warning"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_ERROR'); ?></span>
+                        <?php elseif (!empty($this->dns['dmarc']['present'])) : ?>
                             <code><?php echo htmlspecialchars((string) $this->dns['dmarc']['record']); ?></code>
                         <?php else : ?>
                             <span class="text-danger"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_MISSING'); ?></span>
@@ -105,7 +107,9 @@ defined('_JEXEC') or die;
                     </dd>
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_SPF'); ?></dt>
                     <dd class="col-sm-9">
-                        <?php if (!empty($this->dns['spf']['present'])) : ?>
+                        <?php if (!empty($this->dns['spf']['error'])) : ?>
+                            <span class="text-warning"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_ERROR'); ?></span>
+                        <?php elseif (!empty($this->dns['spf']['present'])) : ?>
                             <code><?php echo htmlspecialchars((string) $this->dns['spf']['record']); ?></code>
                         <?php else : ?>
                             <span class="text-danger"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_MISSING'); ?></span>

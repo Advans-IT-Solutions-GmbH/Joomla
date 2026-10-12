@@ -71,7 +71,7 @@ class IngestController extends BaseController
                     'unseen_only'         => true,
                     'delete_after_import' => (int) $source->delete_after_import,
                 ],
-                function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): bool {
+                function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): string {
                     return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
                 }
             );
@@ -144,6 +144,7 @@ class IngestController extends BaseController
             ->select('*')
             ->from($db->quoteName('#__dmarc_sources'))
             ->where($db->quoteName('id') . ' = :id')
+            ->where($db->quoteName('published') . ' = 1')
             ->bind(':id', $sourceId, ParameterType::INTEGER);
 
         return $db->setQuery($query)->loadObject() ?: null;

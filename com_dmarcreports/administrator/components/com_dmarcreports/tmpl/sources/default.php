@@ -53,7 +53,7 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
                                         : Text::_('COM_DMARCREPORTS_SOURCE_NEVER_RUN'); ?>
                                 </td>
                                 <td class="text-center">
-                                    <?php if ($canIngest) : ?>
+                                    <?php if ($canIngest && (int) $item->published === 1) : ?>
                                     <button type="submit" form="dmarc-ingest-<?php echo (int) $item->id; ?>" class="btn btn-sm btn-primary">
                                         <?php echo Text::_('COM_DMARCREPORTS_SOURCE_RUN_IMPORT'); ?>
                                     </button>
@@ -79,6 +79,9 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
           // form (submitted via the row button's form="" attribute) with a CSRF
           // token, never a GET link that a reload or prefetch could replay. ?>
     <?php foreach ($this->items as $item) : ?>
+        <?php if ((int) $item->published !== 1) : ?>
+            <?php continue; ?>
+        <?php endif; ?>
         <form class="d-none" id="dmarc-ingest-<?php echo (int) $item->id; ?>"
               action="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>" method="post">
             <input type="hidden" name="task" value="ingest.import">

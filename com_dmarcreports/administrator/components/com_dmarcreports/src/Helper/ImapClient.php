@@ -46,6 +46,14 @@ final class ImapClient
 
     private int $timeout;
 
+    /**
+     * Whether the server advertised the UIDPLUS capability (RFC 4315). When it
+     * does, imported messages can be removed with a targeted "UID EXPUNGE",
+     * which only expunges the messages we name; without it a plain EXPUNGE would
+     * remove every \Deleted message in the mailbox, so deletion is deferred.
+     */
+    private bool $uidplus = false;
+
     public function __construct(int $timeout = 20)
     {
         $this->timeout = max(5, $timeout);
@@ -57,18 +65,25 @@ final class ImapClient
      * next run.
      *
      * Each fetched body is passed to {@see $onMessage} and then released before
-     * the next is read, so memory never holds more than a single message. The
-     * callback returns true when the message produced a new stored report.
-     * Afterwards every processed message is flagged \Seen (so the default
-     * UNSEEN search skips it next time); when the source opts into deletion the
-     * successfully ingested messages are instead flagged \Deleted and expunged.
+     * the next is read, so memory never holds more than a single message. All
+     * mailbox operations address messages by UID (RFC 3501), so flags and
+     * expunges always reference the exact message even as the mailbox changes.
+     *
+     * The callback returns one of three outcomes (matching
+     * {@see Ingestor}'s RESULT_* constants): "new" when it stored a new report,
+     * "skip" when the message was a duplicate or could not be parsed, or
+     * "retry" when a transient failure (e.g. a database error) prevented
+     * storage. "new" and "skip" messages are advanced (flagged \Seen so the
+     * UNSEEN search skips them, or \Deleted and expunged when the source opts
+     * into deletion); "retry" messages are left untouched so the next run can
+     * try them again instead of losing them.
      *
      * @param   array<string, mixed>  $config     host, port, security (ssl|tls|none),
      *                                            username, password, folder, limit,
      *                                            unseen_only, delete_after_import.
-     * @param   callable(array{uid: int, raw: string}): bool  $onMessage
+     * @param   callable(array{uid: int, raw: string}): string  $onMessage
      *
-     * @return  array{seen: int, ingested: int, skipped: int}
+     * @return  array{seen: int, ingested: int, skipped: int, deferred: int}
      *
      * @throws  \RuntimeException  On any connection, authentication or protocol error.
      */
@@ -88,10 +103,11 @@ final class ImapClient
 
         $this->connect($host, $port, $security);
 
-        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0];
+        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'deferred' => 0];
 
         try {
             $this->login((string) ($config['username'] ?? ''), (string) ($config['password'] ?? ''));
+            $this->uidplus = $this->supportsUidplus();
             $this->select($folder);
 
             // Oldest first, then the configured batch size, so a backlog drains
@@ -101,7 +117,7 @@ final class ImapClient
             $ids = \array_slice($ids, 0, $limit);
 
             $handled = []; // produced a new report
-            $touched = []; // processed but no new report (empty, duplicate or failed)
+            $touched = []; // processed but no new report (empty, duplicate or invalid)
             $budget  = self::MAX_TOTAL_BYTES;
 
             foreach ($ids as $id) {
@@ -114,10 +130,15 @@ final class ImapClient
                 }
 
                 $budget -= \strlen($raw);
-                $ingested = (bool) $onMessage(['uid' => $id, 'raw' => $raw]);
+                $result = (string) $onMessage(['uid' => $id, 'raw' => $raw]);
                 unset($raw);
 
-                if ($ingested) {
+                if ($result === 'retry') {
+                    // A transient failure must not advance the message: leaving
+                    // it unflagged keeps it in the UNSEEN set so the next run
+                    // retries it instead of silently dropping an unstored report.
+                    $stats['deferred']++;
+                } elseif ($result === 'new') {
                     $stats['ingested']++;
                     $handled[] = $id;
                 } else {
@@ -141,12 +162,11 @@ final class ImapClient
     }
 
     /**
-     * Advance the mailbox after a run. Flagging happens before any EXPUNGE so
-     * every STORE still references valid sequence numbers (EXPUNGE renumbers the
-     * remaining messages).
+     * Advance the mailbox after a run. Operations address messages by UID, so
+     * flagging and expunging stay correct regardless of sequence renumbering.
      *
-     * @param  int[]  $handled  Sequence numbers that produced a new report.
-     * @param  int[]  $touched  Sequence numbers processed without a new report.
+     * @param  int[]  $handled  UIDs that produced a new report.
+     * @param  int[]  $touched  UIDs processed without a new report.
      */
     private function advance(array $handled, array $touched, bool $delete): void
     {
@@ -168,7 +188,7 @@ final class ImapClient
         $set = $this->sequenceSet($ids);
 
         if ($set !== '') {
-            $this->command('STORE ' . $set . ' +FLAGS.SILENT (\\Seen)', 'Unable to flag processed messages.');
+            $this->command('UID STORE ' . $set . ' +FLAGS.SILENT (\\Seen)', 'Unable to flag processed messages.');
         }
     }
 
@@ -180,12 +200,27 @@ final class ImapClient
             return;
         }
 
-        $this->command('STORE ' . $set . ' +FLAGS.SILENT (\\Deleted)', 'Unable to flag messages for deletion.');
-        $this->command('EXPUNGE', 'Unable to expunge imported messages.');
+        if ($this->uidplus) {
+            // UID EXPUNGE only removes the messages we name, so concurrent
+            // clients' \Deleted messages are left alone (RFC 4315).
+            $this->command('UID STORE ' . $set . ' +FLAGS.SILENT (\\Deleted)', 'Unable to flag messages for deletion.');
+            $this->command('UID EXPUNGE ' . $set, 'Unable to expunge imported messages.');
+
+            return;
+        }
+
+        // Without UIDPLUS a plain EXPUNGE would remove every \Deleted message in
+        // the mailbox, including those another client flagged. Flag the imported
+        // messages \Deleted and \Seen and defer removal to the server or a
+        // manual expunge; \Seen keeps them out of the UNSEEN search meanwhile.
+        $this->command(
+            'UID STORE ' . $set . ' +FLAGS.SILENT (\\Deleted \\Seen)',
+            'Unable to flag messages for deletion.'
+        );
     }
 
     /**
-     * Build an ascending, de-duplicated IMAP sequence set (e.g. "1,2,5").
+     * Build an ascending, de-duplicated IMAP UID set (e.g. "1,2,5").
      *
      * @param  int[]  $ids
      */
@@ -259,7 +294,7 @@ final class ImapClient
     private function search(bool $unseen): array
     {
         $tag   = $this->nextTag();
-        $this->write($tag . ' SEARCH ' . ($unseen ? 'UNSEEN' : 'ALL'));
+        $this->write($tag . ' UID SEARCH ' . ($unseen ? 'UNSEEN' : 'ALL'));
 
         $ids   = [];
         $error = 'Unable to search the mailbox.';
@@ -284,10 +319,37 @@ final class ImapClient
         return $ids;
     }
 
+    /**
+     * Detect the UIDPLUS capability (RFC 4315) so {@see deleteMessages()} can
+     * choose a targeted "UID EXPUNGE" over a mailbox-wide EXPUNGE.
+     */
+    private function supportsUidplus(): bool
+    {
+        $tag = $this->nextTag();
+        $this->write($tag . ' CAPABILITY');
+
+        $uidplus = false;
+
+        while (true) {
+            $line = $this->readLine();
+
+            if (stripos($line, '* CAPABILITY') === 0 && stripos($line, 'UIDPLUS') !== false) {
+                $uidplus = true;
+            }
+
+            if (str_starts_with($line, $tag . ' ')) {
+                $this->assertOk($line, 'Unable to read server capabilities.');
+                break;
+            }
+        }
+
+        return $uidplus;
+    }
+
     private function fetchBody(int $id): string
     {
         $tag = $this->nextTag();
-        $this->write($tag . ' FETCH ' . $id . ' (BODY.PEEK[])');
+        $this->write($tag . ' UID FETCH ' . $id . ' (BODY.PEEK[])');
 
         $raw  = '';
         $line = $this->readLine();
@@ -429,6 +491,13 @@ final class ImapClient
 
     private function quote(string $value): string
     {
+        // A quoted string may not span lines. The password is read with
+        // filter="raw", so reject any CR or LF before it can terminate the
+        // LOGIN (or SELECT) command and smuggle in further IMAP commands.
+        if (strpbrk($value, "\r\n") !== false) {
+            throw new \RuntimeException('IMAP credentials or folder names must not contain line breaks.');
+        }
+
         return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"';
     }
 }

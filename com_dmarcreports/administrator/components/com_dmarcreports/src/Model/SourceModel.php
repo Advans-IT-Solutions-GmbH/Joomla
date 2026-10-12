@@ -96,6 +96,54 @@ class SourceModel extends AdminModel
         return parent::save($data);
     }
 
+    /**
+     * Delete sources while preserving their reports. Each report keeps a
+     * nonzero source_id pointing at its mailbox; before the source row is
+     * removed its reports are reset to the 0 sentinel (the same value used for
+     * manually uploaded reports), so no report is left referencing a source
+     * that no longer exists. Both steps run in one transaction.
+     *
+     * @param   array  $pks  Primary keys of the sources to delete.
+     *
+     * @return  boolean
+     */
+    public function delete(&$pks)
+    {
+        $pks = (array) $pks;
+        $ids = array_values(array_filter(array_map('intval', $pks), static fn (int $id): bool => $id > 0));
+
+        if ($ids === []) {
+            return parent::delete($pks);
+        }
+
+        $db = $this->getDatabase();
+        $db->transactionStart();
+
+        try {
+            $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->update($db->quoteName('#__dmarc_reports'))
+                ->set($db->quoteName('source_id') . ' = 0')
+                ->whereIn($db->quoteName('source_id'), $ids);
+            $db->setQuery($query)->execute();
+
+            $result = parent::delete($pks);
+
+            if ($result === false) {
+                $db->transactionRollback();
+
+                return false;
+            }
+
+            $db->transactionCommit();
+
+            return $result;
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
+    }
+
     private function getExistingPassword(int $pk): string
     {
         $db    = $this->getDatabase();

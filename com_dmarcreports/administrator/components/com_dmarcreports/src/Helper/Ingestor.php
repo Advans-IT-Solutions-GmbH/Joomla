@@ -26,6 +26,23 @@ defined('_JEXEC') or die;
  */
 final class Ingestor
 {
+    /**
+     * Per-message ingestion outcomes returned by {@see ingestMessage()}. They
+     * tell a streaming caller (the IMAP client) whether the source message may
+     * be advanced: a transient failure returns RESULT_RETRY so the message is
+     * left in place for the next run instead of being marked processed and lost.
+     */
+    public const RESULT_NEW   = 'new';
+    public const RESULT_SKIP  = 'skip';
+    public const RESULT_RETRY = 'retry';
+
+    /**
+     * Upper bound on a manually uploaded report file before decompression. The
+     * archive helper enforces its own decompressed-size limits; this cap stops
+     * an oversized upload from being read into memory wholesale beforehand.
+     */
+    private const MAX_UPLOAD_BYTES = 16777216; // 16 MiB
+
     private DatabaseInterface $db;
 
     public function __construct(?DatabaseInterface $db = null)
@@ -57,22 +74,34 @@ final class Ingestor
 
     /**
      * Ingest a single raw message, accumulating into a shared summary. Returns
-     * true when the message produced at least one newly stored report, so a
-     * streaming caller can decide whether the source message may be removed.
+     * a RESULT_* outcome so a streaming caller can decide whether the source
+     * message may be advanced: RESULT_NEW (stored a report) and RESULT_SKIP
+     * (duplicate or unparseable) are safe to mark processed, while RESULT_RETRY
+     * (a transient storage failure) means the message must be left untouched.
      *
      * @param   array{uid?: int, raw?: string}  $message
      * @param   array<string, int>              $summary  Mutated in place.
+     *
+     * @return  self::RESULT_*
      */
-    public function ingestMessage(array $message, ?int $sourceId, int $forcedDomainId, array &$summary): bool
+    public function ingestMessage(array $message, ?int $sourceId, int $forcedDomainId, array &$summary): string
     {
         $before = (int) ($summary['imported'] ?? 0);
+        $retry  = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
             $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
-            $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
+            $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
         }
 
-        return (int) ($summary['imported'] ?? 0) > $before;
+        if ($retry) {
+            // A transient storage failure: leave the message in place so the
+            // next run retries it. Any report already stored from this message
+            // is recognised as a duplicate and skipped on that retry.
+            return self::RESULT_RETRY;
+        }
+
+        return (int) ($summary['imported'] ?? 0) > $before ? self::RESULT_NEW : self::RESULT_SKIP;
     }
 
     /**
@@ -83,16 +112,36 @@ final class Ingestor
     public function ingestFile(string $path, string $filename, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
         $summary = $this->newSummary();
-        $payload = is_readable($path) ? (string) file_get_contents($path) : '';
 
-        if ($payload === '') {
+        if (!is_readable($path)) {
             $summary['failed']++;
 
             return $summary;
         }
 
+        $size = (int) @filesize($path);
+
+        if ($size <= 0 || $size > self::MAX_UPLOAD_BYTES) {
+            // Empty, unreadable or larger than the accepted compressed ceiling.
+            $summary['failed']++;
+
+            return $summary;
+        }
+
+        // Read at most the ceiling (plus one byte to catch a file that grew
+        // between the stat and the read), so the upload never buffers unbounded
+        // before the archive helper applies its decompression limits.
+        $payload = (string) @file_get_contents($path, false, null, 0, self::MAX_UPLOAD_BYTES + 1);
+
+        if ($payload === '' || \strlen($payload) > self::MAX_UPLOAD_BYTES) {
+            $summary['failed']++;
+
+            return $summary;
+        }
+
+        $retry     = false;
         $documents = ReportArchive::extract($payload, $filename);
-        $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
+        $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
 
         return $summary;
     }
@@ -101,7 +150,7 @@ final class Ingestor
      * @param   string[]            $documents
      * @param   array<string, int>  $summary
      */
-    private function ingestDocuments(array $documents, ?int $sourceId, int $forcedDomainId, array &$summary): void
+    private function ingestDocuments(array $documents, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
         // An attachment or upload that yields no usable document is a failed
         // ingestion, not a silent success.
@@ -119,7 +168,7 @@ final class Ingestor
                 continue;
             }
 
-            $this->store($report, $sourceId, $forcedDomainId, $summary);
+            $this->store($report, $sourceId, $forcedDomainId, $summary, $retry);
         }
     }
 
@@ -127,7 +176,7 @@ final class Ingestor
      * @param   array<string, mixed>  $report
      * @param   array<string, int>    $summary
      */
-    private function store(array $report, ?int $sourceId, int $forcedDomainId, array &$summary): void
+    private function store(array $report, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
         $hash = DmarcParser::fingerprint($report);
 
@@ -154,6 +203,10 @@ final class Ingestor
         } catch (\Throwable) {
             $this->db->transactionRollback();
             $summary['failed']++;
+            // Storage failures are treated as transient so the caller can retry
+            // the message instead of marking it processed and dropping a report
+            // that was never persisted.
+            $retry = true;
         }
     }
 

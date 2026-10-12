@@ -8,6 +8,7 @@
  */
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionPresenter;
+use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -16,6 +17,11 @@ use Joomla\CMS\Session\Session;
 defined('_JEXEC') or die;
 
 $token = Session::getFormToken();
+
+// The Action Center controls persist a status change, which ActionsController
+// gates behind core.edit.state; hide them from view-only users who would only
+// hit a 403 on submit.
+$canEditState = Factory::getApplication()->getIdentity()->authorise('core.edit.state', 'com_dmarcreports');
 
 $statusLabels = [
     'done'     => 'COM_DMARCREPORTS_ACTION_STATUS_DONE',
@@ -50,6 +56,7 @@ $statusLabels = [
                                 </div>
                                 <?php echo htmlspecialchars(ActionPresenter::text($item)); ?>
                             </div>
+                            <?php if ($canEditState) : ?>
                             <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2">
                                 <input type="hidden" name="task" value="actions.done">
                                 <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
@@ -79,6 +86,7 @@ $statusLabels = [
                                     <?php echo Text::_('COM_DMARCREPORTS_ACTION_IGNORE'); ?>
                                 </button>
                             </form>
+                            <?php endif; ?>
                         </li>
                     <?php endforeach; ?>
                 </ol>
@@ -103,6 +111,7 @@ $statusLabels = [
                             <?php echo htmlspecialchars((string) $item['domain']); ?> &middot;
                             <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
                         </div>
+                        <?php if ($canEditState) : ?>
                         <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2">
                             <input type="hidden" name="task" value="actions.reopen">
                             <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
@@ -112,6 +121,7 @@ $statusLabels = [
                                 <?php echo Text::_('COM_DMARCREPORTS_ACTION_REOPEN'); ?>
                             </button>
                         </form>
+                        <?php endif; ?>
                     </li>
                 <?php endforeach; ?>
             </ul>

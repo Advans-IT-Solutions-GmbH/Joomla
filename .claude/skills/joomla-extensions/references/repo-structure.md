@@ -90,6 +90,6 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `joomla-ajax-forms.yml` | push/PR to `main` (`plg_ajax_joomlaajaxforms/**`, `shared/**`, workflow file), manual | Build & Test |
 | `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-joomla-ajax-forms.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
-| `dmarc-reports.yml` | push/PR to `main` (`com_dmarcreports/**`, `shared/**`, workflow file), manual | Build & Test |
+| `dmarc-reports.yml` | push/PR to `main` (`com_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
