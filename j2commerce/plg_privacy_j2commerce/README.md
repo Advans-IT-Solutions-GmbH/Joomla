@@ -610,7 +610,7 @@ Payment data (credit card details, bank information) is stored by payment servic
    ↓
 2. Request carried out (never refused by this plugin):
           • account pseudonymised (Joomla core privacy user plugin)
-          • saved addresses, carts, AcyMailing data deleted
+          • saved addresses, carts of the account, AcyMailing data deleted
           • orders outside the retention period anonymized
             (lifetime-license orders keep their order e-mail)
           • orders within the retention period kept intact;
@@ -948,7 +948,7 @@ This plugin complies with Swiss legal requirements:
 - Orders within the retention period: **Kept intact** (not anonymized); a removal request is still carried out for all other data
 - Orders outside retention period: **Anonymized** on deletion request and by the cleanup task (registered users and guest orders)
 - Address book entries: **Deleted** immediately on request
-- Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
+- Cart data: **Deleted** immediately on request (carts of the account; guest carts carry no e-mail address and are not touched) — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
 ### Payment Provider Data
 
