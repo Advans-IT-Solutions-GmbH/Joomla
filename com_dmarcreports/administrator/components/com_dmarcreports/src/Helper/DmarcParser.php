@@ -47,6 +47,14 @@ final class DmarcParser
     private const MAX_DOMAIN_LENGTH = 190;
 
     /**
+     * Maximum stored length of a report metadata value, matching the VARCHAR(255)
+     * org_name, org_email and report_id columns. An over-length value would
+     * overflow the column so the insert fails on every poll and the message is
+     * retried forever; it is rejected here as a parse failure instead.
+     */
+    private const MAX_METADATA_LENGTH = 255;
+
+    /**
      * Parse one aggregate report document.
      *
      * @param   string  $xml  The raw XML of a single <feedback> document.
@@ -108,6 +116,16 @@ final class DmarcParser
 
         if ($report['report_id'] === '' || $report['policy']['domain'] === '') {
             throw new \InvalidArgumentException('The report is missing a report id or published policy domain.');
+        }
+
+        // Reject over-length report metadata before storage. These untrusted
+        // values land in VARCHAR(255) columns; an over-length value would fail
+        // the insert on every poll and the message would be retried forever
+        // (see MAX_METADATA_LENGTH), so it is rejected as a parse failure here.
+        foreach (['org_name', 'org_email', 'report_id'] as $field) {
+            if (self::length((string) $report[$field]) > self::MAX_METADATA_LENGTH) {
+                throw new \InvalidArgumentException('The report ' . $field . ' exceeds the supported length.');
+            }
         }
 
         // Reject a policy domain that would overflow its storage column. For an
@@ -208,6 +226,17 @@ final class DmarcParser
 
             $total += $count;
 
+            $envelopeFrom = strtolower(self::text($identifier->envelope_from ?? null));
+            $envelopeTo   = strtolower(self::text($identifier->envelope_to ?? null));
+
+            // Envelope identifiers land in VARCHAR(190) columns; reject an
+            // over-length value as a parse failure so the insert cannot fail on
+            // every poll and retry the message forever.
+            if (self::length($envelopeFrom) > self::MAX_DOMAIN_LENGTH
+                || self::length($envelopeTo) > self::MAX_DOMAIN_LENGTH) {
+                throw new \InvalidArgumentException('A report record envelope identifier exceeds the supported length.');
+            }
+
             $report['records'][] = [
                 'source_ip'     => $sourceIp,
                 'count'         => $count,
@@ -217,8 +246,8 @@ final class DmarcParser
                 'dkim_aligned'  => $dkimResult === 'pass' ? 1 : 0,
                 'spf_aligned'   => $spfResult === 'pass' ? 1 : 0,
                 'header_from'   => $headerFrom,
-                'envelope_from' => strtolower(self::text($identifier->envelope_from ?? null)),
-                'envelope_to'   => strtolower(self::text($identifier->envelope_to ?? null)),
+                'envelope_from' => $envelopeFrom,
+                'envelope_to'   => $envelopeTo,
             ];
         }
 

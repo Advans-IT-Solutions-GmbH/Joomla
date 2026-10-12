@@ -69,7 +69,6 @@ class IngestController extends BaseController
                     'password'            => CryptoHelper::decrypt((string) $source->password_enc),
                     'folder'              => $source->folder,
                     'limit'               => $limit,
-                    'unseen_only'         => true,
                     'delete_after_import' => (int) $source->delete_after_import,
                 ],
                 function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): string {

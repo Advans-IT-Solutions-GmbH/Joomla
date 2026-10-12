@@ -187,6 +187,42 @@ XML;
         DmarcParser::parse($xml);
     }
 
+    public function testRejectsOverlongOrgName(): void
+    {
+        $xml = str_replace('<org_name>example.net</org_name>', '<org_name>' . str_repeat('a', 256) . '</org_name>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsOverlongOrgEmail(): void
+    {
+        $xml = str_replace('<email>dmarc@example.net</email>', '<email>' . str_repeat('a', 256) . '</email>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsOverlongReportId(): void
+    {
+        $xml = str_replace('<report_id>12345-abc</report_id>', '<report_id>' . str_repeat('a', 256) . '</report_id>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsOverlongEnvelopeIdentifier(): void
+    {
+        $xml = str_replace(
+            '<header_from>example.org</header_from>',
+            '<header_from>example.org</header_from><envelope_from>' . str_repeat('a', 191) . '</envelope_from>',
+            $this->sample()
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
     public function testRejectsUnknownPolicyValue(): void
     {
         $xml = str_replace('<p>none</p>', '<p>bogus</p>', $this->sample());

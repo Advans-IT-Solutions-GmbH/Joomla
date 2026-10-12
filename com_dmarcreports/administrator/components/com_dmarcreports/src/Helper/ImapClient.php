@@ -99,7 +99,7 @@ final class ImapClient
      *
      * @param   array<string, mixed>  $config     host, port, security (ssl|tls),
      *                                            username, password, folder, limit,
-     *                                            unseen_only, delete_after_import.
+     *                                            delete_after_import.
      * @param   callable(array{uid: int, raw: string}): string  $onMessage
      *
      * @return  array{seen: int, ingested: int, skipped: int, deferred: int}
@@ -113,7 +113,6 @@ final class ImapClient
         $security = strtolower((string) ($config['security'] ?? 'ssl'));
         $folder   = (string) ($config['folder'] ?? 'INBOX');
         $limit    = max(1, (int) ($config['limit'] ?? 50));
-        $unseen   = !\array_key_exists('unseen_only', $config) || !empty($config['unseen_only']);
         $delete   = !empty($config['delete_after_import']);
 
         if ($host === '') {
@@ -137,9 +136,14 @@ final class ImapClient
             $this->uidplus = $this->supportsUidplus();
             $this->select($folder);
 
-            // Oldest first, then the configured batch size, so a backlog drains
-            // from the front instead of repeatedly reprocessing the newest mail.
-            $ids = $this->search($unseen);
+            // Only unread messages are considered, oldest first, then the
+            // configured batch size. Processing flags each message \Seen (or
+            // deletes it), so it drops out of the next UNSEEN search: the backlog
+            // drains from the front and every run advances to newer mail. An
+            // "all mail" mode was deliberately removed because, without deletion,
+            // repeated ALL searches keep returning the same oldest batch and
+            // never reach newer reports.
+            $ids = $this->search();
             sort($ids);
             $ids = \array_slice($ids, 0, $limit);
 
@@ -152,6 +156,11 @@ final class ImapClient
                 $stats['seen']++;
 
                 if ($raw === '') {
+                    // An empty body here means the literal was empty or exceeded
+                    // the per-message cap in fetchBody(): the message is advanced
+                    // without producing a report, so it is counted as skipped to
+                    // keep the operator-visible totals honest.
+                    $stats['skipped']++;
                     $touched[] = $id;
                     continue;
                 }
@@ -343,10 +352,10 @@ final class ImapClient
     /**
      * @return int[]
      */
-    private function search(bool $unseen): array
+    private function search(): array
     {
         $tag   = $this->nextTag();
-        $this->write($tag . ' UID SEARCH ' . ($unseen ? 'UNSEEN' : 'ALL'));
+        $this->write($tag . ' UID SEARCH UNSEEN');
 
         $ids   = [];
         $error = 'Unable to search the mailbox.';
