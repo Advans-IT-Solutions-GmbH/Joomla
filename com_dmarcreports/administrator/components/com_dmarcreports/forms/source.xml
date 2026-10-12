@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<form>
+    <fieldset name="details">
+        <field name="id" type="hidden" />
+
+        <field
+            name="name"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_NAME_LABEL"
+            description="COM_DMARCREPORTS_FIELD_NAME_DESC"
+            required="true"
+            filter="string"
+            size="40" />
+
+        <field
+            name="domain_id"
+            type="sql"
+            label="COM_DMARCREPORTS_FIELD_DOMAIN_ID_LABEL"
+            description="COM_DMARCREPORTS_FIELD_DOMAIN_ID_DESC"
+            query="SELECT id AS value, domain AS text FROM #__dmarc_domains ORDER BY domain ASC"
+            header="JOPTION_SELECT_PUBLISHED">
+            <option value="0">COM_DMARCREPORTS_FIELD_DOMAIN_ID_AUTO</option>
+        </field>
+
+        <field
+            name="delete_after_import"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_FIELD_DELETE_AFTER_IMPORT_LABEL"
+            description="COM_DMARCREPORTS_FIELD_DELETE_AFTER_IMPORT_DESC"
+            default="0">
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+    </fieldset>
+
+    <fieldset name="mailbox">
+        <field name="protocol" type="hidden" default="imap" />
+
+        <field
+            name="host"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_HOST_LABEL"
+            description="COM_DMARCREPORTS_FIELD_HOST_DESC"
+            filter="string"
+            size="40" />
+
+        <field
+            name="port"
+            type="number"
+            label="COM_DMARCREPORTS_FIELD_PORT_LABEL"
+            description="COM_DMARCREPORTS_FIELD_PORT_DESC"
+            default="993"
+            min="1"
+            max="65535" />
+
+        <field
+            name="security"
+            type="list"
+            label="COM_DMARCREPORTS_FIELD_SECURITY_LABEL"
+            description="COM_DMARCREPORTS_FIELD_SECURITY_DESC"
+            default="ssl">
+            <option value="ssl">COM_DMARCREPORTS_SECURITY_SSL</option>
+            <option value="tls">COM_DMARCREPORTS_SECURITY_TLS</option>
+            <option value="none">COM_DMARCREPORTS_SECURITY_NONE</option>
+        </field>
+
+        <field
+            name="username"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_USERNAME_LABEL"
+            description="COM_DMARCREPORTS_FIELD_USERNAME_DESC"
+            filter="string"
+            autocomplete="off"
+            size="40" />
+
+        <field
+            name="password"
+            type="password"
+            label="COM_DMARCREPORTS_FIELD_PASSWORD_LABEL"
+            description="COM_DMARCREPORTS_FIELD_PASSWORD_DESC"
+            autocomplete="new-password"
+            filter="raw"
+            size="40" />
+
+        <field
+            name="folder"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_FOLDER_LABEL"
+            description="COM_DMARCREPORTS_FIELD_FOLDER_DESC"
+            default="INBOX"
+            filter="string"
+            size="40" />
+    </fieldset>
+
+    <fieldset name="state">
+        <field
+            name="published"
+            type="list"
+            label="JSTATUS"
+            default="1">
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+    </fieldset>
+</form>

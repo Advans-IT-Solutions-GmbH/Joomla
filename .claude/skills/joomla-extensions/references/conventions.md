@@ -14,7 +14,7 @@ refactor(privacy): extract anonymization into separate method
 ```
 
 Scope is the extension identifier as used by the release/publish workflows: `privacy`,
-`importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`.
+`importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`, `dmarcreports`.
 
 ## PHP
 
@@ -70,9 +70,9 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
    sub-plugins, `administrator/language` of components) to the new tag, rename the files if their
    name carries the tag, and translate every value. Keep the keys and the `printf` placeholders.
 2. Register the files where the manifest lists them. Extensions with `<folder>language</folder>`
-   (Privacy with its sub-plugins, OSMap, Product Compare) need nothing else. Import/Export, Cleanup
-   and AJAX Forms list each file in `<languages>`: add one `<language tag="xx-XX">` line per file.
-   These three stay on `<languages>` on purpose: installed sites have copies in the global
+   (Privacy with its sub-plugins, OSMap, Product Compare) need nothing else. Import/Export, Cleanup,
+   DMARC Reports and AJAX Forms list each file in `<languages>`: add one `<language tag="xx-XX">` line per file.
+   These stay on `<languages>` on purpose: installed sites have copies in the global
    `administrator/language/<tag>/` folder, which Joomla loads before the extension folder, and a
    switch would leave those copies behind unchanged.
 3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension; it compares the new

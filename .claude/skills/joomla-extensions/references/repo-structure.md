@@ -10,6 +10,7 @@
 | OSMap | `j2commerce/plg_osmap_j2commerce/` | plugin (osmap) | J2Commerce sitemap for OSMap |
 | Cleanup | `j2commerce/com_j2store_cleanup/` | component | Remove legacy J2Store extensions |
 | AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
+| DMARC Reports | `com_dmarcreports/` | component | DMARC aggregate-report analysis (multi-domain, IMAP/file ingestion, action dashboard) |
 
 ## Shared Infrastructure
 
@@ -89,3 +90,6 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `joomla-ajax-forms.yml` | push/PR to `main` (`plg_ajax_joomlaajaxforms/**`, `shared/**`, workflow file), manual | Build & Test |
 | `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-joomla-ajax-forms.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `dmarc-reports.yml` | push/PR to `main` (`com_dmarcreports/**`, `shared/**`, workflow file), manual | Build & Test |
+| `release-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |

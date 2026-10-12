@@ -1,0 +1,99 @@
+<?php
+/**
+ * @package     DMARC Reports Component
+ * @subpackage  Administrator
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+namespace Advans\Component\DmarcReports\Administrator\Controller;
+
+use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
+use Joomla\CMS\MVC\Controller\BaseController;
+use Joomla\CMS\Router\Route;
+use Joomla\Database\DatabaseInterface;
+use Joomla\Database\ParameterType;
+
+defined('_JEXEC') or die;
+
+/**
+ * Streams the stored DMARC records of a domain as a CSV download, turning the
+ * raw aggregate data into something an operator can open in a spreadsheet.
+ *
+ * @since  1.0.0
+ */
+class ExportController extends BaseController
+{
+    public function records()
+    {
+        $this->checkToken('get');
+
+        $app = Factory::getApplication();
+
+        if (!$app->getIdentity()->authorise('core.manage', 'com_dmarcreports')) {
+            throw new \Joomla\CMS\Access\Exception\NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        $domainId = (int) $app->getInput()->getInt('domain_id', 0);
+
+        if ($domainId <= 0) {
+            $this->setRedirect(
+                Route::_('index.php?option=com_dmarcreports&view=dashboard', false),
+                Text::_('COM_DMARCREPORTS_DETAIL_CHOOSE_DOMAIN'),
+                'warning'
+            );
+
+            return false;
+        }
+
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select(
+                [
+                    $db->quoteName('rep.org_name'),
+                    $db->quoteName('rep.date_begin'),
+                    $db->quoteName('rep.date_end'),
+                    $db->quoteName('rec.source_ip'),
+                    $db->quoteName('rec.count'),
+                    $db->quoteName('rec.disposition'),
+                    $db->quoteName('rec.dkim_result'),
+                    $db->quoteName('rec.spf_result'),
+                    $db->quoteName('rec.dkim_aligned'),
+                    $db->quoteName('rec.spf_aligned'),
+                    $db->quoteName('rec.header_from'),
+                ]
+            )
+            ->from($db->quoteName('#__dmarc_records', 'rec'))
+            ->join('INNER', $db->quoteName('#__dmarc_reports', 'rep'),
+                $db->quoteName('rep.id') . ' = ' . $db->quoteName('rec.report_id'))
+            ->where($db->quoteName('rec.domain_id') . ' = :domainId')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->order($db->quoteName('rep.date_begin') . ' DESC');
+
+        $rows = $db->setQuery($query)->loadAssocList() ?: [];
+
+        $app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);
+        $app->setHeader('Content-Disposition', 'attachment; filename="dmarc-records-' . $domainId . '.csv"', true);
+        $app->sendHeaders();
+
+        $out = fopen('php://output', 'w');
+        fputcsv($out, [
+            'org_name', 'date_begin', 'date_end', 'source_ip', 'count', 'disposition',
+            'dkim_result', 'spf_result', 'dkim_aligned', 'spf_aligned', 'header_from',
+        ]);
+
+        foreach ($rows as $row) {
+            $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
+            $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
+            fputcsv($out, $row);
+        }
+
+        fclose($out);
+
+        $app->close();
+
+        return true;
+    }
+}

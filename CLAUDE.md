@@ -28,6 +28,7 @@ Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` 
 ```
 Joomla/
 ├── plg_ajax_joomlaajaxforms/   # eigenständiges Joomla-Plugin (Gruppe: ajax)
+├── com_dmarcreports/           # Komponente: DMARC-Aggregat-Report-Analyse (Admin-only)
 ├── j2commerce/                 # J2Commerce-bezogene Extensions
 │   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension
 │   ├── plg_osmap_j2commerce/           # OSMap-Sitemap-Plugin (Gruppe: osmap)
@@ -48,7 +49,7 @@ Joomla/
 **Tests** laufen Docker-basiert gegen eine echte Joomla-(+J2Commerce-)Installation. Es gibt zwei Test-Ebenen:
 
 - Integrations-/Funktionstests über die PHP-Skripte in `tests/scripts/` + `shared/tests/run-tests.sh` (das, was die CI ausführt).
-- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce` mit den Suites `Unit` und `Integration`, ausserdem `com_j2commerce_importexport`, `com_j2store_cleanup` und `plg_j2commerce_productcompare`).
+- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce` mit den Suites `Unit` und `Integration`, ausserdem `com_j2commerce_importexport`, `com_j2store_cleanup`, `plg_j2commerce_productcompare` und `com_dmarcreports`).
 
 Manche Extensions testen gegen mehrere Plattformen über parallele Test-Ordner bzw. `docker-compose.joomla6.yml` (z. B. `plg_ajax_joomlaajaxforms` mit `tests/`, `tests-j2c4/`, `tests-j2c6/`).
 
@@ -108,6 +109,7 @@ docker compose -f docker-compose.joomla6.yml down -v
 - Import/Export: `CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all`
 - Product Compare: `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all`
 - Cleanup (Workflow setzt nur den Container): `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all`
+- DMARC Reports (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all`
 - AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
 
 Alle Extensions verlangen Joomla 5.4 oder neuer (5.4.x, 6.x) und PHP 8.1 oder neuer; `shared/tests/requirements-check.php` prüft das im CI-Job „Language Files“. Die Test-Images nutzen mitlaufende offizielle Tags (`joomla:5.4-php8.3-apache` = neuestes 5.4.x, `joomla:6-php8.4-apache` = neuestes 6.x), keine gepinnte Joomla-Patch-Version. Jeder Job gibt `Tested versions: Joomla X.Y.Z, PHP A.B.C` aus; ein roter Lauf kann daher von einem neuen Joomla-Release kommen, erst die ausgegebene Version prüfen. J2Commerce 6 wird aus einem gepinnten Commit gebaut. Der Job „Language Files“ führt zusätzlich `shared/tests/deprecated-api-scan.php` aus; die produktionsnahen Lanes werten mit `shared-deprecations.php` alle Deprecations aus, die Code der Extension direkt auslöst. Die CI setzt `TEST_STRICT_SKIP=1` (ein SKIP gilt als Fehler). Pflicht-Check auf PRs ist allein „Collect Results“ aus `collect-results.yml`; nach dem erneuten Ausführen eines fehlgeschlagenen Extension-Workflows auch „Collect Results“ neu starten.

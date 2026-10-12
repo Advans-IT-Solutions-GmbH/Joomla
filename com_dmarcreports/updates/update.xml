@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<updates>
+    <update>
+        <name>DMARC Reports</name>
+        <description>DMARC aggregate report analysis for Joomla</description>
+        <element>com_dmarcreports</element>
+        <type>component</type>
+        <version>1.0.0</version>
+        <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_dmarcreports</infourl>
+        <downloads>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.0.0/com_dmarcreports_1.0.0.zip</downloadurl>
+        </downloads>
+        <tags>
+            <tag>stable</tag>
+        </tags>
+        <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+        <php_minimum>8.1</php_minimum>
+    </update>
+</updates>
