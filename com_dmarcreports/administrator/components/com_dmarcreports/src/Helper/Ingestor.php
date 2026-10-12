@@ -225,6 +225,16 @@ final class Ingestor
         $this->db->transactionStart();
 
         try {
+            if (!$this->lockDomain($domainId)) {
+                // The domain was deleted between resolution above and acquiring
+                // the lock here, so writing children now would orphan them with
+                // no parent. Roll back and skip rather than store orphan rows.
+                $this->db->transactionRollback();
+                $summary['skipped']++;
+
+                return;
+            }
+
             $reportId = $this->insertReport($report, $hash, $domainId, $sourceId);
 
             // Count locally and fold into the running summary only after the
@@ -262,6 +272,27 @@ final class Ingestor
             ->bind(':hash', $hash);
 
         return (int) $this->db->setQuery($query)->loadResult() > 0;
+    }
+
+    /**
+     * Lock the parent domain row for the lifetime of the surrounding
+     * transaction. A concurrent domain delete locks the same row before
+     * clearing the child tables, so taking this lock serialises the two
+     * operations and prevents a report or its records from being written
+     * against a domain that is being removed. Returns false when the row no
+     * longer exists, signalling the caller to abort rather than orphan rows.
+     *
+     * A plain FOR UPDATE is used for portability across MySQL and MariaDB. The
+     * id is already an integer, so inlining it carries no injection risk.
+     */
+    private function lockDomain(int $domainId): bool
+    {
+        $sql = 'SELECT ' . $this->db->quoteName('id')
+            . ' FROM ' . $this->db->quoteName('#__dmarc_domains')
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $domainId
+            . ' FOR UPDATE';
+
+        return (int) $this->db->setQuery($sql)->loadResult() === $domainId;
     }
 
     /**

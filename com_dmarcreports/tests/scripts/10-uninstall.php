@@ -49,8 +49,19 @@ class UninstallTest
         });
 
         $this->test('DMARC tables dropped by uninstall SQL', function () {
-            $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}dmarc_reports'");
-            return $result && $result->num_rows === 0;
+            // Every table created by the install schema must be gone, not just
+            // one: a partial drop would leave orphaned operational data behind.
+            $tables = ['dmarc_domains', 'dmarc_sources', 'dmarc_reports', 'dmarc_records', 'dmarc_actions'];
+
+            foreach ($tables as $table) {
+                $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
+
+                if (!$result || $result->num_rows !== 0) {
+                    return false;
+                }
+            }
+
+            return true;
         });
 
         echo "\n=== Uninstall Test Summary ===\n";

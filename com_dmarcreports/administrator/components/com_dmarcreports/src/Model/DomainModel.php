@@ -107,6 +107,18 @@ class DomainModel extends AdminModel
         $db->transactionStart();
 
         try {
+            // Lock the parent domain rows before clearing children so a
+            // concurrent ingestion (which locks the same row before inserting
+            // its report and records) cannot write a child after these tables
+            // are cleared, which would orphan it. A plain FOR UPDATE keeps this
+            // portable across MySQL and MariaDB; the ids are already integers,
+            // so inlining them carries no injection risk.
+            $lockSql = 'SELECT ' . $db->quoteName('id')
+                . ' FROM ' . $db->quoteName('#__dmarc_domains')
+                . ' WHERE ' . $db->quoteName('id') . ' IN (' . implode(',', $ids) . ')'
+                . ' FOR UPDATE';
+            $db->setQuery($lockSql)->execute();
+
             foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
                 $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
                     ->delete($db->quoteName($table))

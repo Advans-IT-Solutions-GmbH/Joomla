@@ -153,7 +153,6 @@ final class ImapClient
 
             foreach ($ids as $id) {
                 $raw = $this->fetchBody($id);
-                $stats['seen']++;
 
                 if ($raw === '') {
                     // An empty body here means the literal was empty or exceeded
@@ -162,12 +161,26 @@ final class ImapClient
                     // skip, kept separate from callback-level skips so the caller
                     // can surface it in the operator summary without the callback
                     // ever seeing this message (and without double-counting).
+                    $stats['seen']++;
                     $stats['skipped']++;
                     $stats['transport_skipped']++;
                     $touched[] = $id;
                     continue;
                 }
 
+                if (\strlen($raw) > $budget) {
+                    // Parsing and storing this message would push the run past
+                    // the aggregate byte ceiling. Leave it fully untouched —
+                    // not counted, not flagged, and with the callback never
+                    // invoked — so the next run picks it up first. Because a
+                    // single body is capped at MAX_LITERAL_BYTES and every run
+                    // starts with the full budget, the next run can always make
+                    // progress on it, so no message is starved.
+                    unset($raw);
+                    break;
+                }
+
+                $stats['seen']++;
                 $budget -= \strlen($raw);
                 $result = (string) $onMessage(['uid' => $id, 'raw' => $raw]);
                 unset($raw);
@@ -183,12 +196,6 @@ final class ImapClient
                 } else {
                     $stats['skipped']++;
                     $touched[] = $id;
-                }
-
-                // Stop once the aggregate budget is spent; the remainder is
-                // untouched and will be picked up by the next run.
-                if ($budget <= 0) {
-                    break;
                 }
             }
 
