@@ -45,7 +45,11 @@ final class DnsDiagnostics
         $spf      = $this->inspectSpf($domain);
         $findings = [];
 
-        if (!$dmarc['present']) {
+        if ($dmarc['error']) {
+            // A resolver failure is reported as its own finding so a transient
+            // outage is not mistaken for a domain that never published DMARC.
+            $findings[] = ['code' => 'dns_lookup_error', 'severity' => 2, 'params' => [$domain]];
+        } elseif (!$dmarc['present']) {
             $findings[] = ['code' => 'dns_dmarc_missing', 'severity' => 3, 'params' => [$domain]];
         } else {
             if ($dmarc['policy'] === '' || $dmarc['policy'] === 'none') {
@@ -63,7 +67,13 @@ final class DnsDiagnostics
             }
         }
 
-        if (!$spf['present']) {
+        if ($spf['error']) {
+            // Only add a lookup-error finding when DMARC did not already raise
+            // one for this domain, so a resolver outage is reported once.
+            if (!$dmarc['error']) {
+                $findings[] = ['code' => 'dns_lookup_error', 'severity' => 2, 'params' => [$domain]];
+            }
+        } elseif (!$spf['present']) {
             $findings[] = ['code' => 'dns_spf_missing', 'severity' => 2, 'params' => [$domain]];
         }
 
@@ -72,9 +82,11 @@ final class DnsDiagnostics
             'dmarc'     => $dmarc,
             'spf'       => $spf,
             'findings'  => $findings,
-            'suggested' => $dmarc['present']
-                ? ''
-                : 'v=DMARC1; p=none; rua=mailto:dmarc@' . $domain . '; fo=1',
+            // Only suggest a record when the lookup succeeded and found none; a
+            // failed lookup must not imply the domain lacks a DMARC record.
+            'suggested' => (!$dmarc['error'] && !$dmarc['present'])
+                ? 'v=DMARC1; p=none; rua=mailto:dmarc@' . $domain . '; fo=1'
+                : '',
         ];
     }
 
@@ -83,9 +95,17 @@ final class DnsDiagnostics
      */
     private function inspectDmarc(string $domain): array
     {
-        $record = $this->firstMatching('_dmarc.' . $domain, 'v=dmarc1');
+        $records = $this->resolver->txt('_dmarc.' . $domain);
 
-        $result = ['present' => false, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
+        $result = ['present' => false, 'error' => false, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
+
+        if ($records === null) {
+            $result['error'] = true;
+
+            return $result;
+        }
+
+        $record = $this->firstMatching($records, 'v=dmarc1');
 
         if ($record === null) {
             return $result;
@@ -110,16 +130,25 @@ final class DnsDiagnostics
      */
     private function inspectSpf(string $domain): array
     {
-        $record = $this->firstMatching($domain, 'v=spf1');
+        $records = $this->resolver->txt($domain);
 
-        return ['present' => $record !== null, 'record' => $record ?? ''];
+        if ($records === null) {
+            return ['present' => false, 'error' => true, 'record' => ''];
+        }
+
+        $record = $this->firstMatching($records, 'v=spf1');
+
+        return ['present' => $record !== null, 'error' => false, 'record' => $record ?? ''];
     }
 
-    private function firstMatching(string $host, string $prefix): ?string
+    /**
+     * @param   string[]  $records
+     */
+    private function firstMatching(array $records, string $prefix): ?string
     {
-        foreach ($this->resolver->txt($host) as $txt) {
-            if (stripos(ltrim($txt), $prefix) === 0) {
-                return trim($txt);
+        foreach ($records as $txt) {
+            if (stripos(ltrim((string) $txt), $prefix) === 0) {
+                return trim((string) $txt);
             }
         }
 

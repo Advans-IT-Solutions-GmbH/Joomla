@@ -21,4 +21,26 @@ defined('_JEXEC') or die;
 class SourceController extends FormController
 {
     protected $view_list = 'sources';
+
+    /**
+     * {@inheritDoc}
+     *
+     * When validation fails the base controller stores the raw submitted form in
+     * user state so the edit screen can be redisplayed. That payload contains the
+     * plaintext mailbox password, which must never be retained in the session, so
+     * it is stripped here before control returns to the browser.
+     */
+    public function save($key = null, $urlVar = null)
+    {
+        $result  = parent::save($key, $urlVar);
+        $context = $this->option . '.edit.' . $this->context . '.data';
+        $data    = $this->app->getUserState($context);
+
+        if (\is_array($data) && \array_key_exists('password', $data)) {
+            unset($data['password']);
+            $this->app->setUserState($context, $data);
+        }
+
+        return $result;
+    }
 }

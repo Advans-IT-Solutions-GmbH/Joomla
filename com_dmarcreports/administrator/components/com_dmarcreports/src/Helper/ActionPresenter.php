@@ -47,6 +47,7 @@ final class ActionPresenter
             'dns_dmarc_no_rua'      => Text::_('COM_DMARCREPORTS_ACTION_DNS_DMARC_NO_RUA_TITLE'),
             'dns_dmarc_pct'         => Text::_('COM_DMARCREPORTS_ACTION_DNS_DMARC_PCT_TITLE'),
             'dns_spf_missing'       => Text::_('COM_DMARCREPORTS_ACTION_DNS_SPF_MISSING_TITLE'),
+            'dns_lookup_error'      => Text::_('COM_DMARCREPORTS_ACTION_DNS_LOOKUP_ERROR_TITLE'),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TITLE'),
         };
     }
@@ -76,6 +77,7 @@ final class ActionPresenter
             'dns_dmarc_no_rua'      => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_NO_RUA_TEXT', ...self::pad($params, 1)),
             'dns_dmarc_pct'         => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_PCT_TEXT', ...self::pad($params, 1)),
             'dns_spf_missing'       => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_SPF_MISSING_TEXT', ...self::pad($params, 1)),
+            'dns_lookup_error'      => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_LOOKUP_ERROR_TEXT', ...self::pad($params, 1)),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TEXT'),
         };
     }

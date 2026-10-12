@@ -35,7 +35,7 @@ class IngestController extends BaseController
      */
     public function import()
     {
-        $this->checkToken('get');
+        $this->checkToken();
         $this->authorise();
 
         $app      = Factory::getApplication();
@@ -51,23 +51,31 @@ class IngestController extends BaseController
         }
 
         try {
-            $client = new ImapClient((int) $this->getConfig('imap_timeout', 20));
-            $limit  = (int) $this->getConfig('max_messages_per_run', 50);
+            $client   = new ImapClient((int) $this->getConfig('imap_timeout', 20));
+            $limit    = (int) $this->getConfig('max_messages_per_run', 50);
+            $ingestor = new Ingestor();
+            $summary  = $ingestor->newSummary();
+            $domainId = (int) $source->domain_id;
 
-            $messages = $client->fetch(
+            // Bodies are streamed one at a time into the ingestor and released
+            // immediately, so a large mailbox cannot be buffered into memory.
+            $client->process(
                 [
-                    'host'        => $source->host,
-                    'port'        => (int) $source->port,
-                    'security'    => $source->security,
-                    'username'    => $source->username,
-                    'password'    => CryptoHelper::decrypt((string) $source->password_enc),
-                    'folder'      => $source->folder,
-                    'limit'       => $limit,
-                    'unseen_only' => false,
-                ]
+                    'host'                => $source->host,
+                    'port'                => (int) $source->port,
+                    'security'            => $source->security,
+                    'username'            => $source->username,
+                    'password'            => CryptoHelper::decrypt((string) $source->password_enc),
+                    'folder'              => $source->folder,
+                    'limit'               => $limit,
+                    'unseen_only'         => true,
+                    'delete_after_import' => (int) $source->delete_after_import,
+                ],
+                function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): bool {
+                    return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
+                }
             );
 
-            $summary = (new Ingestor())->ingestMessages($messages, $sourceId, (int) $source->domain_id);
             $this->recordRun($sourceId, 'ok', $this->summaryText($summary));
 
             $this->setRedirect($redirect, $this->summaryText($summary), 'message');

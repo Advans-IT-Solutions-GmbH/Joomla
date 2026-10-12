@@ -19,16 +19,20 @@ defined('_JEXEC') or die;
  */
 final class SystemDnsResolver implements DnsResolverInterface
 {
-    public function txt(string $host): array
+    public function txt(string $host): ?array
     {
+        // Without the function the lookup cannot be performed at all, which is a
+        // resolver error (null), not evidence that the host has no records.
         if (!\function_exists('dns_get_record')) {
-            return [];
+            return null;
         }
 
         $records = @dns_get_record($host, DNS_TXT);
 
+        // dns_get_record() returns false on failure; an empty array is a valid
+        // answer meaning the host genuinely publishes no TXT records.
         if (!\is_array($records)) {
-            return [];
+            return null;
         }
 
         $out = [];

@@ -30,6 +30,15 @@ final class ImapClient
      */
     private const MAX_LITERAL_BYTES = 33554432; // 32 MiB
 
+    /**
+     * Aggregate byte budget for a single import run. Bodies are handed to the
+     * caller one at a time and released immediately, so memory never holds more
+     * than one message; this secondary cap stops a run from streaming an
+     * unbounded total (e.g. thousands of large reports) in one pass. Whatever is
+     * left is advanced on the next run.
+     */
+    private const MAX_TOTAL_BYTES = 134217728; // 128 MiB
+
     /** @var resource|null */
     private $socket;
 
@@ -43,24 +52,35 @@ final class ImapClient
     }
 
     /**
-     * Fetch raw messages from a mailbox folder.
+     * Stream raw messages from a mailbox folder to a callback, one at a time,
+     * then advance the mailbox so the same messages are not reprocessed on the
+     * next run.
      *
-     * @param   array<string, mixed>  $config  host, port, security (ssl|tls|none),
-     *                                         username, password, folder, limit,
-     *                                         unseen_only.
+     * Each fetched body is passed to {@see $onMessage} and then released before
+     * the next is read, so memory never holds more than a single message. The
+     * callback returns true when the message produced a new stored report.
+     * Afterwards every processed message is flagged \Seen (so the default
+     * UNSEEN search skips it next time); when the source opts into deletion the
+     * successfully ingested messages are instead flagged \Deleted and expunged.
      *
-     * @return  array<int, array{uid: int, raw: string}>
+     * @param   array<string, mixed>  $config     host, port, security (ssl|tls|none),
+     *                                            username, password, folder, limit,
+     *                                            unseen_only, delete_after_import.
+     * @param   callable(array{uid: int, raw: string}): bool  $onMessage
+     *
+     * @return  array{seen: int, ingested: int, skipped: int}
      *
      * @throws  \RuntimeException  On any connection, authentication or protocol error.
      */
-    public function fetch(array $config): array
+    public function process(array $config, callable $onMessage): array
     {
         $host     = (string) ($config['host'] ?? '');
         $port     = (int) ($config['port'] ?? 993);
         $security = strtolower((string) ($config['security'] ?? 'ssl'));
         $folder   = (string) ($config['folder'] ?? 'INBOX');
         $limit    = max(1, (int) ($config['limit'] ?? 50));
-        $unseen   = !empty($config['unseen_only']);
+        $unseen   = !\array_key_exists('unseen_only', $config) || !empty($config['unseen_only']);
+        $delete   = !empty($config['delete_after_import']);
 
         if ($host === '') {
             throw new \RuntimeException('No IMAP host configured.');
@@ -68,27 +88,113 @@ final class ImapClient
 
         $this->connect($host, $port, $security);
 
+        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0];
+
         try {
             $this->login((string) ($config['username'] ?? ''), (string) ($config['password'] ?? ''));
             $this->select($folder);
 
+            // Oldest first, then the configured batch size, so a backlog drains
+            // from the front instead of repeatedly reprocessing the newest mail.
             $ids = $this->search($unseen);
-            $ids = \array_slice($ids, -$limit);
+            sort($ids);
+            $ids = \array_slice($ids, 0, $limit);
 
-            $messages = [];
+            $handled = []; // produced a new report
+            $touched = []; // processed but no new report (empty, duplicate or failed)
+            $budget  = self::MAX_TOTAL_BYTES;
 
             foreach ($ids as $id) {
                 $raw = $this->fetchBody($id);
+                $stats['seen']++;
 
-                if ($raw !== '') {
-                    $messages[] = ['uid' => $id, 'raw' => $raw];
+                if ($raw === '') {
+                    $touched[] = $id;
+                    continue;
+                }
+
+                $budget -= \strlen($raw);
+                $ingested = (bool) $onMessage(['uid' => $id, 'raw' => $raw]);
+                unset($raw);
+
+                if ($ingested) {
+                    $stats['ingested']++;
+                    $handled[] = $id;
+                } else {
+                    $stats['skipped']++;
+                    $touched[] = $id;
+                }
+
+                // Stop once the aggregate budget is spent; the remainder is
+                // untouched and will be picked up by the next run.
+                if ($budget <= 0) {
+                    break;
                 }
             }
 
-            return $messages;
+            $this->advance($handled, $touched, $delete);
+
+            return $stats;
         } finally {
             $this->logout();
         }
+    }
+
+    /**
+     * Advance the mailbox after a run. Flagging happens before any EXPUNGE so
+     * every STORE still references valid sequence numbers (EXPUNGE renumbers the
+     * remaining messages).
+     *
+     * @param  int[]  $handled  Sequence numbers that produced a new report.
+     * @param  int[]  $touched  Sequence numbers processed without a new report.
+     */
+    private function advance(array $handled, array $touched, bool $delete): void
+    {
+        // Messages kept in place are marked \Seen so the UNSEEN search skips
+        // them next time. When deleting, the ingested ones are removed instead.
+        $seen = $delete ? $touched : array_merge($handled, $touched);
+
+        if ($seen !== []) {
+            $this->markSeen($seen);
+        }
+
+        if ($delete && $handled !== []) {
+            $this->deleteMessages($handled);
+        }
+    }
+
+    private function markSeen(array $ids): void
+    {
+        $set = $this->sequenceSet($ids);
+
+        if ($set !== '') {
+            $this->command('STORE ' . $set . ' +FLAGS.SILENT (\\Seen)', 'Unable to flag processed messages.');
+        }
+    }
+
+    private function deleteMessages(array $ids): void
+    {
+        $set = $this->sequenceSet($ids);
+
+        if ($set === '') {
+            return;
+        }
+
+        $this->command('STORE ' . $set . ' +FLAGS.SILENT (\\Deleted)', 'Unable to flag messages for deletion.');
+        $this->command('EXPUNGE', 'Unable to expunge imported messages.');
+    }
+
+    /**
+     * Build an ascending, de-duplicated IMAP sequence set (e.g. "1,2,5").
+     *
+     * @param  int[]  $ids
+     */
+    private function sequenceSet(array $ids): string
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        sort($ids);
+
+        return implode(',', $ids);
     }
 
     private function connect(string $host, int $port, string $security): void

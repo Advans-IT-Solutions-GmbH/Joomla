@@ -49,13 +49,30 @@ final class Ingestor
         $summary = $this->newSummary();
 
         foreach ($messages as $message) {
-            foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
-                $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
-                $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
-            }
+            $this->ingestMessage($message, $sourceId, $forcedDomainId, $summary);
         }
 
         return $summary;
+    }
+
+    /**
+     * Ingest a single raw message, accumulating into a shared summary. Returns
+     * true when the message produced at least one newly stored report, so a
+     * streaming caller can decide whether the source message may be removed.
+     *
+     * @param   array{uid?: int, raw?: string}  $message
+     * @param   array<string, int>              $summary  Mutated in place.
+     */
+    public function ingestMessage(array $message, ?int $sourceId, int $forcedDomainId, array &$summary): bool
+    {
+        $before = (int) ($summary['imported'] ?? 0);
+
+        foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
+            $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
+            $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
+        }
+
+        return (int) ($summary['imported'] ?? 0) > $before;
     }
 
     /**
@@ -258,9 +275,12 @@ final class Ingestor
     }
 
     /**
+     * A fresh, zeroed ingestion summary. Public so a streaming caller can seed
+     * one and accumulate across per-message calls.
+     *
      * @return array<string, int>
      */
-    private function newSummary(): array
+    public function newSummary(): array
     {
         return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'records' => 0];
     }

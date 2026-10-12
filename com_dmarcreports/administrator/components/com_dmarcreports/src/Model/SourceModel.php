@@ -45,6 +45,16 @@ class SourceModel extends AdminModel
 
         if (empty($data)) {
             $data = $this->getItem();
+        } else {
+            // On a validation redisplay Joomla hands back the submitted jform,
+            // which would carry the plaintext mailbox password in the session and
+            // repopulate the field. Strip the credential so it is never kept in
+            // user state nor echoed back; the operator re-enters it to change it.
+            if (\is_array($data)) {
+                unset($data['password'], $data['password_enc']);
+            } elseif (\is_object($data)) {
+                unset($data->password, $data->password_enc);
+            }
         }
 
         return $data;

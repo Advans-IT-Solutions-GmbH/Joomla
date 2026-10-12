@@ -77,10 +77,13 @@ class ExportController extends BaseController
         $app->sendHeaders();
 
         $out = fopen('php://output', 'w');
+        // Pass an explicit (empty) escape argument: PHP 8.4 deprecates relying on
+        // the default backslash escaping, and an empty escape keeps the output
+        // RFC 4180 compatible (fields are quoted, not backslash-escaped).
         fputcsv($out, [
             'org_name', 'date_begin', 'date_end', 'source_ip', 'count', 'disposition',
             'dkim_result', 'spf_result', 'dkim_aligned', 'spf_aligned', 'header_from',
-        ]);
+        ], ',', '"', '');
 
         // Stream the records in bounded chunks so a domain with a very large
         // history does not have to be buffered in memory all at once.
@@ -94,7 +97,7 @@ class ExportController extends BaseController
             foreach ($rows as $row) {
                 $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
                 $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
-                fputcsv($out, array_map([self::class, 'sanitiseCell'], $row));
+                fputcsv($out, array_map([self::class, 'sanitiseCell'], $row), ',', '"', '');
             }
 
             $offset += $chunk;

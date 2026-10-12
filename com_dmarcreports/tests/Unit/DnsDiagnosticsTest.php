@@ -97,4 +97,28 @@ class DnsDiagnosticsTest extends TestCase
 
         $this->assertContains('dns_spf_missing', $this->codes($diagnostics->inspect('example.org')));
     }
+
+    public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void
+    {
+        $resolver = new class implements DnsResolverInterface {
+            public function txt(string $host): ?array
+            {
+                return null;
+            }
+        };
+
+        $diagnostics = new DnsDiagnostics($resolver);
+        $result      = $diagnostics->inspect('example.org');
+        $codes       = $this->codes($result);
+
+        $this->assertContains('dns_lookup_error', $codes);
+        $this->assertNotContains('dns_dmarc_missing', $codes);
+        $this->assertNotContains('dns_spf_missing', $codes);
+        $this->assertTrue($result['dmarc']['error']);
+        $this->assertTrue($result['spf']['error']);
+        // A failed lookup must not imply a missing record, so no record is suggested.
+        $this->assertSame('', $result['suggested']);
+        // Both lookups failed, but the error is reported once for the domain.
+        $this->assertSame(1, \count(array_filter($codes, static fn (string $c): bool => $c === 'dns_lookup_error')));
+    }
 }

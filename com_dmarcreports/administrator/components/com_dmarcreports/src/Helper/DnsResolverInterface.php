@@ -22,9 +22,16 @@ interface DnsResolverInterface
     /**
      * Return the TXT records of a host as a list of full strings.
      *
+     * The return type separates three outcomes that must not be conflated: a
+     * successful lookup with records (a non-empty list), a successful lookup
+     * that found none (an empty list), and a lookup that could not be performed
+     * or failed (null). Callers rely on null to avoid reporting a transient
+     * resolver error as a genuinely missing record.
+     *
      * @param   string  $host  The fully qualified host name.
      *
-     * @return  string[]
+     * @return  string[]|null  The records, an empty array when none exist, or
+     *                         null when the lookup itself failed.
      */
-    public function txt(string $host): array;
+    public function txt(string $host): ?array;
 }

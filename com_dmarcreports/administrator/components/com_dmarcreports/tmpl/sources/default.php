@@ -11,11 +11,9 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
-use Joomla\CMS\Session\Session;
 
 defined('_JEXEC') or die;
 
-$token     = Session::getFormToken();
 $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest', 'com_dmarcreports');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>" method="post" name="adminForm" id="adminForm">
@@ -56,10 +54,9 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
                                 </td>
                                 <td class="text-center">
                                     <?php if ($canIngest) : ?>
-                                    <a class="btn btn-sm btn-primary"
-                                       href="<?php echo Route::_('index.php?option=com_dmarcreports&task=ingest.import&source_id=' . (int) $item->id . '&' . $token . '=1'); ?>">
+                                    <button type="submit" form="dmarc-ingest-<?php echo (int) $item->id; ?>" class="btn btn-sm btn-primary">
                                         <?php echo Text::_('COM_DMARCREPORTS_SOURCE_RUN_IMPORT'); ?>
-                                    </a>
+                                    </button>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -76,6 +73,20 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
     <input type="hidden" name="boxchecked" value="0">
     <?php echo HTMLHelper::_('form.token'); ?>
 </form>
+
+<?php if ($canIngest && !empty($this->items)) : ?>
+    <?php // Each mailbox import mutates state, so it is triggered by its own POST
+          // form (submitted via the row button's form="" attribute) with a CSRF
+          // token, never a GET link that a reload or prefetch could replay. ?>
+    <?php foreach ($this->items as $item) : ?>
+        <form class="d-none" id="dmarc-ingest-<?php echo (int) $item->id; ?>"
+              action="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>" method="post">
+            <input type="hidden" name="task" value="ingest.import">
+            <input type="hidden" name="source_id" value="<?php echo (int) $item->id; ?>">
+            <?php echo HTMLHelper::_('form.token'); ?>
+        </form>
+    <?php endforeach; ?>
+<?php endif; ?>
 
 <?php if ($canIngest) : ?>
 <div class="card mt-4">
