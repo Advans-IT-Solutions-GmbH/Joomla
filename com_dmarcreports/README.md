@@ -95,7 +95,8 @@ The Action Center converts the parsed reports into concrete, prioritised tasks, 
 - A domain is still at `p=none` while the aligned-pass rate is already above the quarantine threshold → it is safe to move to `p=quarantine`
 - An unaligned sender sends a meaningful share of mail → add it to SPF or set up DKIM before tightening policy
 - A new or unknown sending source appeared → review it before it affects a stricter policy
-- SPF or DMARC DNS records are missing or could not be looked up → the suggested record to publish is shown
+- An SPF or DMARC DNS record is missing → the suggested record to publish is shown
+- A DNS lookup failed → the records could not be checked, so none is suggested and a transient outage is not mistaken for a missing record
 
 Each item explains what to change, why, and when it is safe, ordered so the most important action comes first.
 

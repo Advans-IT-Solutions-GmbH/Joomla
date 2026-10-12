@@ -52,7 +52,7 @@ class IngestController extends BaseController
 
         try {
             $client   = new ImapClient((int) $this->getConfig('imap_timeout', 20));
-            $limit    = (int) $this->getConfig('max_messages_per_run', 50);
+            $limit    = (int) $this->getConfig('max_messages_per_run', 200);
             $ingestor = new Ingestor();
             $summary  = $ingestor->newSummary();
             $domainId = (int) $source->domain_id;

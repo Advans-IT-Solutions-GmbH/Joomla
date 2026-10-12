@@ -115,8 +115,20 @@ final class Metrics
         }
 
         $metrics['pass_rate']        = self::rate((int) $metrics['dmarc_pass'], (int) $metrics['total']);
-        $metrics['pass_rate_window'] = $this->reportPassRate($this->reportIdAtOffset($domainId, 0));
-        $metrics['pass_rate_prev']   = $this->reportPassRate($this->reportIdAtOffset($domainId, 1));
+
+        // Compare two equal-length, non-overlapping time windows anchored on the
+        // newest report, using volume-weighted rates aggregated across every
+        // report in each window. This avoids false drop alerts when adjacent
+        // individual reports come from different reporters or overlapping spans.
+        $anchor = $this->latestReportEnd($domainId);
+        $window = 7 * 86400;
+
+        $metrics['pass_rate_window'] = $anchor > 0
+            ? $this->windowPassRate($domainId, $anchor - $window, $anchor)
+            : null;
+        $metrics['pass_rate_prev'] = $anchor > 0
+            ? $this->windowPassRate($domainId, $anchor - (2 * $window), $anchor - $window)
+            : null;
 
         return $metrics;
     }
@@ -277,28 +289,32 @@ final class Metrics
     }
 
     /**
-     * Pass rate of a single report's records, or null when the report is empty
-     * or does not exist. Used to compare the latest reporting window against the
-     * one immediately before it rather than against all accumulated history.
+     * Volume-weighted DMARC pass rate across every record whose report window
+     * begins in the half-open interval (startTs, endTs], or null when no mail
+     * falls in that window. Bucketing by the report's own start time keeps the
+     * two compared windows non-overlapping regardless of how many reporters
+     * contribute, so the comparison stays like-for-like.
      */
-    private function reportPassRate(int $reportId): ?float
+    private function windowPassRate(int $domainId, int $startTs, int $endTs): ?float
     {
-        if ($reportId <= 0) {
-            return null;
-        }
-
         $query = $this->query()
             ->select(
                 [
-                    'COALESCE(SUM(' . $this->db->quoteName('count') . '), 0) AS total',
-                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 1 OR '
-                        . $this->db->quoteName('spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('count')
+                    'COALESCE(SUM(' . $this->db->quoteName('rec.count') . '), 0) AS total',
+                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 OR '
+                        . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count')
                         . ' ELSE 0 END), 0) AS pass',
                 ]
             )
-            ->from($this->db->quoteName('#__dmarc_records'))
-            ->where($this->db->quoteName('report_id') . ' = :reportId')
-            ->bind(':reportId', $reportId, ParameterType::INTEGER);
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join('INNER', $this->db->quoteName('#__dmarc_records', 'rec'),
+                $this->db->quoteName('rec.report_id') . ' = ' . $this->db->quoteName('rep.id'))
+            ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
+            ->where($this->db->quoteName('rep.date_begin') . ' > :startTs')
+            ->where($this->db->quoteName('rep.date_begin') . ' <= :endTs')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->bind(':startTs', $startTs, ParameterType::INTEGER)
+            ->bind(':endTs', $endTs, ParameterType::INTEGER);
 
         $row   = $this->db->setQuery($query)->loadAssoc() ?: [];
         $total = (int) ($row['total'] ?? 0);
@@ -307,19 +323,16 @@ final class Metrics
     }
 
     /**
-     * The report id at the given age for a domain: offset 0 is the most recent
-     * report, offset 1 the one before it, and so on.
+     * The newest report end timestamp for a domain, used to anchor the rolling
+     * comparison windows, or 0 when the domain has no reports yet.
      */
-    private function reportIdAtOffset(int $domainId, int $offset): int
+    private function latestReportEnd(int $domainId): int
     {
         $query = $this->query()
-            ->select($this->db->quoteName('id'))
+            ->select('COALESCE(MAX(' . $this->db->quoteName('date_end') . '), 0)')
             ->from($this->db->quoteName('#__dmarc_reports'))
             ->where($this->db->quoteName('domain_id') . ' = :domainId')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->order($this->db->quoteName('date_end') . ' DESC, ' . $this->db->quoteName('id') . ' DESC');
-
-        $query->setLimit(1, max(0, $offset));
+            ->bind(':domainId', $domainId, ParameterType::INTEGER);
 
         return (int) $this->db->setQuery($query)->loadResult();
     }

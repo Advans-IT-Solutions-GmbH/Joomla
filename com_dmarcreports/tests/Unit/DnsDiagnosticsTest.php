@@ -98,6 +98,39 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertContains('dns_spf_missing', $this->codes($diagnostics->inspect('example.org')));
     }
 
+    public function testDuplicateDmarcRecordsAreReportedAsInvalid(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => [
+                'v=DMARC1; p=reject; rua=mailto:dmarc@example.org',
+                'v=DMARC1; p=none',
+            ],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+        $codes  = $this->codes($result);
+
+        $this->assertTrue($result['dmarc']['duplicate']);
+        $this->assertContains('dns_dmarc_duplicate', $codes);
+        // A broken (duplicate) record must not be read as a healthy policy.
+        $this->assertNotContains('dns_dmarc_policy_none', $codes);
+    }
+
+    public function testDuplicateSpfRecordsAreReportedAsInvalid(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; rua=mailto:dmarc@example.org'],
+            'example.org'        => [
+                'v=spf1 include:_spf.example.net -all',
+                'v=spf1 -all',
+            ],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+
+        $this->assertTrue($result['spf']['duplicate']);
+        $this->assertContains('dns_spf_duplicate', $this->codes($result));
+    }
+
     public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void
     {
         $resolver = new class implements DnsResolverInterface {

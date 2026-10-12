@@ -241,6 +241,71 @@ class ActionCenterTest extends TestCase
         $this->assertContains('pass_rate_drop', $this->codes($items));
     }
 
+    public function testThresholdMetWithFailingSendersDowngradesQuarantineAdvice(): void
+    {
+        // Pass rate clears the quarantine threshold, but 10 messages still fail.
+        // The engine must not call the move "safe"; it downgrades to a resolve-
+        // first recommendation at plan-soon severity instead of act-now.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 1,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'none',
+                'dmarc_pass'     => 990,
+                'reject_under_p' => 10,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('resolve_before_quarantine', $codes);
+        $this->assertNotContains('move_to_quarantine', $codes);
+
+        $item = $this->find($items, 'resolve_before_quarantine');
+        $this->assertSame(2, $item['severity']);
+        $this->assertSame(10, $item['params'][2]);
+    }
+
+    public function testThresholdMetWithFailingSendersDowngradesRejectAdvice(): void
+    {
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 2,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'quarantine',
+                'dmarc_pass'     => 995,
+                'reject_under_p' => 5,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('resolve_before_reject', $codes);
+        $this->assertNotContains('move_to_reject', $codes);
+    }
+
+    public function testFullyAlignedDomainStillGetsSafeAdvanceAdvice(): void
+    {
+        // With no failing senders the advice stays the confident act-now move.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 3,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'none',
+                'dmarc_pass'     => 1000,
+                'reject_under_p' => 0,
+            ],
+            self::CONFIG
+        );
+
+        $item = $this->find($items, 'move_to_quarantine');
+        $this->assertNotNull($item);
+        $this->assertSame(3, $item['severity']);
+    }
+
     public function testDnsFindingsAreMergedAndSortedBySeverity(): void
     {
         $items = ActionCenter::generate(

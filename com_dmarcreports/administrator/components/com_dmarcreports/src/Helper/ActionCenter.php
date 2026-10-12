@@ -61,6 +61,11 @@ final class ActionCenter
             return self::finalise($items, $domainId, $dnsFindings);
         }
 
+        // Messages that would be rejected under p=reject: the still-failing
+        // senders. Advancement must not be presented as "safe" while these
+        // remain, so it is computed before the rollout guidance below.
+        $rejectUnderP = (int) ($metrics['reject_under_p'] ?? 0);
+
         // Policy rollout guidance along none -> quarantine -> reject, stopping at
         // the configured target so the Action Center never over-recommends.
         if ($policy === 'reject') {
@@ -68,22 +73,27 @@ final class ActionCenter
         } elseif ($policyRank >= $targetRank) {
             $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
         } elseif ($policy === '' || $policy === 'none') {
-            if ($passRate >= $quarantineThreshold) {
-                $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $passRate]);
-            } else {
+            if ($passRate < $quarantineThreshold) {
                 $items[] = self::item('stay_at_none', 'policy', 2, $domainId, [$domain, $passRate, $quarantineThreshold]);
+            } elseif ($rejectUnderP > 0) {
+                // Threshold met, but legitimate-looking mail still fails: resolve
+                // those senders before tightening instead of calling it safe.
+                $items[] = self::item('resolve_before_quarantine', 'policy', 2, $domainId, [$domain, $passRate, $rejectUnderP]);
+            } else {
+                $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $passRate]);
             }
         } elseif ($policy === 'quarantine') {
-            if ($passRate >= $rejectThreshold) {
-                $items[] = self::item('move_to_reject', 'policy', 3, $domainId, [$domain, $passRate]);
-            } else {
+            if ($passRate < $rejectThreshold) {
                 $items[] = self::item('stay_at_quarantine', 'policy', 2, $domainId, [$domain, $passRate, $rejectThreshold]);
+            } elseif ($rejectUnderP > 0) {
+                $items[] = self::item('resolve_before_reject', 'policy', 2, $domainId, [$domain, $passRate, $rejectUnderP]);
+            } else {
+                $items[] = self::item('move_to_reject', 'policy', 3, $domainId, [$domain, $passRate]);
             }
         }
 
-        // Messages that would be rejected under p=reject: a tightening risk.
-        $rejectUnderP = (int) ($metrics['reject_under_p'] ?? 0);
-
+        // The same still-failing senders are also surfaced as an explicit
+        // tightening risk so the admin sees the volume at stake.
         if ($rejectUnderP > 0 && $policy !== 'reject') {
             $share    = round($rejectUnderP / $total * 100, 1);
             $severity = $share >= 2 ? 3 : 2;

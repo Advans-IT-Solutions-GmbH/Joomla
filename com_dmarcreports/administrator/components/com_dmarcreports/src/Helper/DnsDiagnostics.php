@@ -51,6 +51,10 @@ final class DnsDiagnostics
             $findings[] = ['code' => 'dns_lookup_error', 'severity' => 2, 'params' => [$domain]];
         } elseif (!$dmarc['present']) {
             $findings[] = ['code' => 'dns_dmarc_missing', 'severity' => 3, 'params' => [$domain]];
+        } elseif ($dmarc['duplicate']) {
+            // More than one DMARC record is invalid per RFC 7489; receivers apply
+            // error handling, so this must not be read as a healthy policy.
+            $findings[] = ['code' => 'dns_dmarc_duplicate', 'severity' => 3, 'params' => [$domain]];
         } else {
             if ($dmarc['policy'] === '' || $dmarc['policy'] === 'none') {
                 $findings[] = ['code' => 'dns_dmarc_policy_none', 'severity' => 2, 'params' => [$domain]];
@@ -75,6 +79,9 @@ final class DnsDiagnostics
             }
         } elseif (!$spf['present']) {
             $findings[] = ['code' => 'dns_spf_missing', 'severity' => 2, 'params' => [$domain]];
+        } elseif ($spf['duplicate']) {
+            // Multiple SPF records are invalid (RFC 7208) and cause a permerror.
+            $findings[] = ['code' => 'dns_spf_duplicate', 'severity' => 2, 'params' => [$domain]];
         }
 
         return [
@@ -97,7 +104,7 @@ final class DnsDiagnostics
     {
         $records = $this->resolver->txt('_dmarc.' . $domain);
 
-        $result = ['present' => false, 'error' => false, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
+        $result = ['present' => false, 'error' => false, 'duplicate' => false, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
 
         if ($records === null) {
             $result['error'] = true;
@@ -105,15 +112,18 @@ final class DnsDiagnostics
             return $result;
         }
 
-        $record = $this->firstMatching($records, 'v=dmarc1');
+        $matching = $this->allMatching($records, 'v=dmarc1');
 
-        if ($record === null) {
+        if ($matching === []) {
             return $result;
         }
 
-        $result['present'] = true;
-        $result['record']  = $record;
-        $tags              = $this->tags($record);
+        $record = $matching[0];
+
+        $result['present']   = true;
+        $result['duplicate'] = \count($matching) > 1;
+        $result['record']    = $record;
+        $tags                = $this->tags($record);
 
         $result['policy'] = strtolower($tags['p'] ?? '');
         $result['rua']    = isset($tags['rua']) && $tags['rua'] !== '';
@@ -133,26 +143,38 @@ final class DnsDiagnostics
         $records = $this->resolver->txt($domain);
 
         if ($records === null) {
-            return ['present' => false, 'error' => true, 'record' => ''];
+            return ['present' => false, 'error' => true, 'duplicate' => false, 'record' => ''];
         }
 
-        $record = $this->firstMatching($records, 'v=spf1');
+        $matching = $this->allMatching($records, 'v=spf1');
 
-        return ['present' => $record !== null, 'error' => false, 'record' => $record ?? ''];
+        return [
+            'present'   => $matching !== [],
+            'error'     => false,
+            'duplicate' => \count($matching) > 1,
+            'record'    => $matching[0] ?? '',
+        ];
     }
 
     /**
+     * Return every record that begins with the given version prefix. More than
+     * one match is itself a finding: duplicate DMARC or SPF records are invalid.
+     *
      * @param   string[]  $records
+     *
+     * @return  string[]
      */
-    private function firstMatching(array $records, string $prefix): ?string
+    private function allMatching(array $records, string $prefix): array
     {
+        $matches = [];
+
         foreach ($records as $txt) {
             if (stripos(ltrim((string) $txt), $prefix) === 0) {
-                return trim((string) $txt);
+                $matches[] = trim((string) $txt);
             }
         }
 
-        return null;
+        return $matches;
     }
 
     /**
