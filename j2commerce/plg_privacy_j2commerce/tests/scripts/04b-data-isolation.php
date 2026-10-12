@@ -1277,6 +1277,14 @@ class DataIsolationTest
                 && str_contains($page, 'value="' . $token . '"') && $form !== '', $this->lastHttp);
             $this->test('GET as guest: no redirect to the login page', !str_contains($page, 'com_users') || str_contains($page, 'j2commerce-privacy-confirm'), $this->lastHttp);
 
+            // POST from a new session (no earlier GET, e.g. after the session expired): the page
+            // answers itself with the form, no redirect to the home page.
+            $jars[] = $fresh = tempnam(sys_get_temp_dir(), 'guest-confirm-');
+            $answer = $this->guestHttp($fresh, 'POST', $route, ['email' => $email, 'confirm_token' => $token, md5('stale-token') => '1']);
+            $this->test('POST from a new session: confirmation form with an error, no redirect, request still pending',
+                str_contains($answer, 'j2commerce-privacy-confirm') && str_contains($answer, 'alert-danger') && str_contains($answer, 'name="email"') && $status() === 0,
+                $this->lastHttp);
+
             // POST without form token: refused, nothing changes.
             $answer = $this->guestHttp($jar, 'POST', $route, ['email' => $email, 'confirm_token' => $token]);
             $this->test('POST without form token: refused, request still pending', str_contains($answer, 'alert-danger') && $status() === 0, $this->lastHttp);

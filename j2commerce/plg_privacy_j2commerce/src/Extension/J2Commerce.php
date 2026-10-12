@@ -2238,7 +2238,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $token   = self::cleanConfirmToken($input->post->getString('confirm_token', ''));
         $session = $app->getSession();
 
-        if (!Session::checkToken('post')) {
+        // The posted form token is checked here instead of Session::checkToken(), which redirects
+        // a new or expired session to the home page: this public page answers on its own.
+        if ((string) $input->post->get(Session::getFormToken(), '', 'alnum') === '') {
             return $this->renderConfirmationForm($email, $token, Text::_('JINVALID_TOKEN_NOTICE'), 'danger');
         }
 
