@@ -33,7 +33,10 @@ Both are declared in the manifest `<install>`/`<uninstall>` `<sql>` blocks. Tabl
 `#__` prefix placeholder and `utf8mb4`.
 
 - `report_hash` on `#__dmarc_reports` is the unique dedupe key (reporter org + report id).
-- `#__dmarc_records.count` is the message count for that row; metrics weight by it.
+- `#__dmarc_records.count` is the message count for that row; metrics weight by it. Message counts
+  are `BIGINT UNSIGNED` and the report date range (`date_begin`/`date_end`, Unix timestamps) is
+  `BIGINT`, so high-volume rows do not overflow and the timeline is not capped at the 2038 limit of
+  a signed 32-bit `INT`.
 - `#__dmarc_actions` persists Action Center items so status (open/done/snoozed) survives re-ingestion.
 
 ## Database API (Joomla 5 vs 6)

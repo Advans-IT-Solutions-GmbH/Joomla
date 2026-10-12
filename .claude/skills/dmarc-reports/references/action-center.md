@@ -24,6 +24,7 @@ are positional and fed into the matching language key by `ActionPresenter::title
 | `move_to_reject` | policy | At `p=quarantine` and pass rate ≥ reject threshold |
 | `at_target` / `enforced` | policy | Already at the configured target / at `p=reject` with `pct=100` |
 | `partial_enforcement` | policy | At `p=reject` but `pct<100`, so only that share of mail is enforced — not full enforcement |
+| `partial_quarantine` | policy | At `p=quarantine` but `pct<100`, so quarantine is only partly exercised — raise `pct` to 100 before advancing or calling quarantine the reached target |
 | `would_be_rejected` | policy | Share of mail that would be blocked today under `p=reject` (sev 3 if ≥2%) |
 | `align_source` | alignment | An unaligned sender (IP) — fix SPF/DKIM before tightening (sev by share) |
 | `new_source` | source | A sending IP not seen before — review it |
@@ -31,7 +32,15 @@ are positional and fed into the matching language key by `ActionPresenter::title
 | `dns_*` | dns | From `DnsDiagnostics` — missing/broken SPF or DMARC record (see below) |
 
 Policy decisions use a `rank = none<quarantine<reject` comparison against the domain's
-`expected_policy` / the `default_policy_target` option and the two threshold options.
+`expected_policy` / the `default_policy_target` option and the two threshold options. Partial
+enforcement (`pct<100`) is handled before the target/advance branches for both `p=reject`
+(`partial_enforcement`) and `p=quarantine` (`partial_quarantine`), so a policy that applies to only
+part of the mail stream is never reported as the reached target or treated as safe to advance.
+
+`align_source` is driven by `Metrics::unalignedSources()`, which queries failing senders
+independently of the display-oriented `topSources()` top-N list (`GROUP BY source_ip HAVING
+SUM(fail) > 0 ORDER BY fail DESC`). A heavy failing sender ranked below the top 20 by total volume
+therefore still reaches the Action Center and earns an alignment recommendation.
 
 ## DNS diagnostics
 

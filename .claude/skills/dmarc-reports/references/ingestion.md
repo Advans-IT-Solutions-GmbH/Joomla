@@ -57,6 +57,9 @@ misplace it on the timeline and could anchor the rolling comparison windows inco
 `count`; a missing or malformed value rejects the whole report rather than being coerced to `''`
 or `0`. Coercion would commit the report fingerprint while keeping an invalid row, so a corrected
 copy of the same report would later be discarded as a duplicate while the bad row skews metrics.
+The `count` must also fit the signed integer PHP binds and the `BIGINT UNSIGNED` column stores
+(capped at `PHP_INT_MAX`); a digit string beyond that range is rejected up front, because it would
+otherwise overflow on insert and make the message retry forever.
 
 ## Idempotent storage (`Ingestor`)
 

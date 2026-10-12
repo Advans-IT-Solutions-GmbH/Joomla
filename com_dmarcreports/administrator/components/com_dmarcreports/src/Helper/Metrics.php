@@ -104,7 +104,7 @@ final class Metrics
             'spf_pass'          => 0,
             'reject_under_p'    => 0,
             'top_sources'       => $this->topSources($domainId),
-            'unaligned_sources' => [],
+            'unaligned_sources' => $this->unalignedSources($domainId),
             'new_sources'       => $this->newSources($domainId),
             'timeline'          => $this->timeline($domainId),
             'pass_rate_prev'    => null,
@@ -112,12 +112,6 @@ final class Metrics
 
         $totals = $this->totals($domainId);
         $metrics = array_merge($metrics, $totals);
-
-        foreach ($metrics['top_sources'] as $source) {
-            if ((int) $source['aligned'] === 0) {
-                $metrics['unaligned_sources'][] = ['ip' => $source['source_ip'], 'count' => (int) $source['fail']];
-            }
-        }
 
         $metrics['pass_rate']        = self::rate((int) $metrics['dmarc_pass'], (int) $metrics['total']);
 
@@ -209,6 +203,43 @@ final class Metrics
         }
 
         return $rows;
+    }
+
+    /**
+     * Sources with mail that fails DMARC alignment, ranked by failing volume.
+     * This is queried independently of the display-oriented top-source table so
+     * a heavy failing sender ranked below the top N still reaches the Action
+     * Center and can earn an alignment recommendation.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function unalignedSources(int $domainId, int $limit = 20): array
+    {
+        $count = $this->db->quoteName('count');
+        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
+            . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('source_ip'),
+                    $fail . ' AS fail',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_records'))
+            ->where($this->db->quoteName('domain_id') . ' = :domainId')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->group($this->db->quoteName('source_ip'))
+            ->having($fail . ' > 0')
+            ->order('fail DESC');
+
+        $query->setLimit($limit);
+        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
+
+        return array_map(
+            static fn (array $r): array => ['ip' => $r['source_ip'], 'count' => (int) $r['fail']],
+            $rows
+        );
     }
 
     /**

@@ -169,6 +169,74 @@ class ActionCenterTest extends TestCase
         $this->assertNotContains('partial_enforcement', $codes);
     }
 
+    public function testQuarantineTargetWithPartialPercentageIsNotAtTarget(): void
+    {
+        // Target is quarantine and the policy is quarantine, but only 10% of
+        // mail is quarantined: this is not the reached target, it needs pct=100.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 6,
+                'domain'             => 'example.org',
+                'total'              => 1000,
+                'current_policy'     => 'quarantine',
+                'current_policy_pct' => 10,
+                'expected_policy'    => 'quarantine',
+                'dmarc_pass'         => 999,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('partial_quarantine', $codes);
+        $this->assertNotContains('at_target', $codes);
+
+        $item = $this->find($items, 'partial_quarantine');
+        $this->assertSame(2, $item['severity']);
+        $this->assertSame(10, $item['params'][1]);
+    }
+
+    public function testRejectTargetWithPartialQuarantineDoesNotAdvanceToReject(): void
+    {
+        // Target is reject and the policy is quarantine at only 25%: quarantine
+        // must be exercised on all mail before advancing, so no move_to_reject.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 7,
+                'domain'             => 'example.org',
+                'total'              => 1000,
+                'current_policy'     => 'quarantine',
+                'current_policy_pct' => 25,
+                'expected_policy'    => 'reject',
+                'dmarc_pass'         => 999,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('partial_quarantine', $codes);
+        $this->assertNotContains('move_to_reject', $codes);
+    }
+
+    public function testQuarantineTargetWithFullPercentageStaysAtTarget(): void
+    {
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 8,
+                'domain'             => 'example.org',
+                'total'              => 1000,
+                'current_policy'     => 'quarantine',
+                'current_policy_pct' => 100,
+                'expected_policy'    => 'quarantine',
+                'dmarc_pass'         => 999,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('at_target', $codes);
+        $this->assertNotContains('partial_quarantine', $codes);
+    }
+
     public function testQuarantineTargetStopsRolloutAtQuarantine(): void
     {
         $items = ActionCenter::generate(

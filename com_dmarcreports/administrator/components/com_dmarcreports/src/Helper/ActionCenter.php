@@ -79,6 +79,11 @@ final class ActionCenter
                 // full enforcement and must not be reported as "done".
                 $items[] = self::item('partial_enforcement', 'policy', 2, $domainId, [$domain, $policyPct]);
             }
+        } elseif ($policy === 'quarantine' && $policyPct < 100) {
+            // A quarantine policy applied to only part of the mail stream has not
+            // been fully exercised. Raise pct to 100 before advancing to reject
+            // or treating quarantine as the reached target, whatever the target.
+            $items[] = self::item('partial_quarantine', 'policy', 2, $domainId, [$domain, $policyPct]);
         } elseif ($policyRank >= $targetRank) {
             $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
         } elseif ($policy === '' || $policy === 'none') {

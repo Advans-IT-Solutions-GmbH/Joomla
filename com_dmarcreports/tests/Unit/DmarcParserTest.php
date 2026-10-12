@@ -236,6 +236,25 @@ XML;
         DmarcParser::parse($xml);
     }
 
+    public function testRejectsRecordWithCountBeyondIntegerRange(): void
+    {
+        // A digit string past PHP_INT_MAX would overflow the bound integer and
+        // fail deterministically on insert, so the whole report is rejected.
+        $xml = str_replace('<count>7</count>', '<count>99999999999999999999</count>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testAcceptsLargeCountWithinIntegerRange(): void
+    {
+        // Above the signed 32-bit limit but well within 64-bit range: valid.
+        $xml    = str_replace('<count>7</count>', '<count>3000000000</count>', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame(3000000000, $report['records'][0]['count']);
+    }
+
     public function testParsesIpv6SourceAddress(): void
     {
         $xml    = str_replace('<source_ip>192.0.2.10</source_ip>', '<source_ip>2001:db8::1</source_ip>', $this->sample());

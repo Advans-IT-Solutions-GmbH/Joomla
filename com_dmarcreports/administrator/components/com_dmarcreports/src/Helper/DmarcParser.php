@@ -119,13 +119,25 @@ final class DmarcParser
 
             $countText = self::text($row->count ?? null);
 
-            if (!ctype_digit($countText) || (int) $countText < 1) {
-                throw new \InvalidArgumentException('A report record has a missing or non-positive message count.');
+            // The value must be a positive integer that also fits the signed
+            // range PHP binds and the database column stores. A digit string
+            // beyond that range (for example "3000000000" on a 32-bit build, or
+            // a value past PHP_INT_MAX) would otherwise be clamped or overflow
+            // and fail deterministically on insert, making the message retry
+            // forever, so the whole report is rejected here instead.
+            if (!ctype_digit($countText) || self::exceedsIntegerRange($countText)) {
+                throw new \InvalidArgumentException('A report record has a missing, non-numeric or out-of-range message count.');
+            }
+
+            $count = (int) $countText;
+
+            if ($count < 1) {
+                throw new \InvalidArgumentException('A report record has a non-positive message count.');
             }
 
             $report['records'][] = [
                 'source_ip'     => $sourceIp,
-                'count'         => (int) $countText,
+                'count'         => $count,
                 'disposition'   => self::disposition($evaluated->disposition ?? null),
                 'dkim_result'   => strtolower(self::text($evaluated->dkim ?? null)),
                 'spf_result'    => strtolower(self::text($evaluated->spf ?? null)),
@@ -229,6 +241,28 @@ final class DmarcParser
         }
 
         return (int) $value;
+    }
+
+    /**
+     * Whether a non-negative digit string is larger than the signed integer PHP
+     * binds and the database stores, compared as text to avoid float rounding.
+     */
+    private static function exceedsIntegerRange(string $digits): bool
+    {
+        // Normalise leading zeros so magnitude is judged by significant digits
+        // only ("007" is 7, not a 3-digit number). An all-zero string collapses
+        // to "0", which is never over the cap.
+        $digits = ltrim($digits, '0');
+
+        if ($digits === '') {
+            return false;
+        }
+
+        $max = (string) PHP_INT_MAX;
+        $len = \strlen($digits);
+        $cap = \strlen($max);
+
+        return $len > $cap || ($len === $cap && strcmp($digits, $max) > 0);
     }
 
     private static function disposition($node): string
