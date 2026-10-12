@@ -88,7 +88,9 @@ final class ReportArchive
             return null;
         }
 
-        $data = @gzdecode($payload);
+        // Bound decompression itself (ceiling + 1 byte) so a gzip bomb cannot
+        // expand to an unbounded size before the size check below runs.
+        $data = @gzdecode($payload, self::MAX_BYTES + 1);
 
         if ($data === false || \strlen($data) > self::MAX_BYTES) {
             return null;

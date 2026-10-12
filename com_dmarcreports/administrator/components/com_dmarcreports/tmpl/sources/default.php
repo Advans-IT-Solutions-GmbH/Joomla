@@ -86,7 +86,8 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
         <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_UPLOAD_INTRO'); ?></p>
         <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
             <div class="col-auto">
-                <input type="file" name="report_file" class="form-control" accept=".xml,.gz,.zip" required>
+                <label for="dmarc-report-file" class="visually-hidden"><?php echo Text::_('COM_DMARCREPORTS_UPLOAD_FILE_LABEL'); ?></label>
+                <input type="file" id="dmarc-report-file" name="report_file" class="form-control" accept=".xml,.gz,.zip" required>
             </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-success">

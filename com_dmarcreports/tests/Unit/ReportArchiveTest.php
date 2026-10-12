@@ -82,6 +82,19 @@ class ReportArchiveTest extends TestCase
         $this->assertSame([], ReportArchive::extract($payload, 'huge.xml'));
     }
 
+    public function testOversizedGzipIsRejected(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // Decompresses to just over the 32 MiB ceiling; decompression itself is
+        // bounded, so the payload must be refused rather than fully expanded.
+        $payload = gzencode('<?xml version="1.0"?><feedback>' . str_repeat('A', 33554432) . '</feedback>');
+
+        $this->assertSame([], ReportArchive::extract($payload, 'bomb.xml.gz'));
+    }
+
     public function testZipDocumentCountIsCapped(): void
     {
         if (!class_exists(\ZipArchive::class)) {

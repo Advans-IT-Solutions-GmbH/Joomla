@@ -78,6 +78,14 @@ class DomainModel extends AdminModel
                 $db->setQuery($query)->execute();
             }
 
+            // Remove the domains inside the same transaction so children are
+            // only ever committed together with their parent rows.
+            if (!parent::delete($pks)) {
+                $db->transactionRollback();
+
+                return false;
+            }
+
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -85,6 +93,6 @@ class DomainModel extends AdminModel
             throw $e;
         }
 
-        return parent::delete($pks);
+        return true;
     }
 }
