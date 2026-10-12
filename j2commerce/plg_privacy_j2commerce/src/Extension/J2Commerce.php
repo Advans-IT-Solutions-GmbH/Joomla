@@ -1228,6 +1228,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
         $check         = $this->retentionOverDataSets($userId, $emails);
+        // Before the anonymization: it replaces the order e-mail the guest orders are found by.
+        $languageTag   = $this->customerLanguage($userId, $emails);
         $retained      = $check['orders'];
         $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
 
@@ -1284,7 +1286,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $this->guestRequest = $user === null;
 
         try {
-            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $this->customerLanguage($userId, $emails));
+            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
         } finally {
             $this->guestRequest = false;
         }

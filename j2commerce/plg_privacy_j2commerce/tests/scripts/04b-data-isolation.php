@@ -920,6 +920,42 @@ class DataIsolationTest
                 && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
                 json_encode($merged));
 
+            // Customer language: newest order, looked up before the anonymization replaces the
+            // e-mail the guest orders are found by (an older lifetime order keeps it).
+            $orders['lang_new'] = $this->insertGuestTestOrder('GUEST-LGN-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-11 years')), 'Lena');
+            $orders['lang_old'] = $this->insertGuestTestOrder('GUEST-LGO-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-13 years')), 'Lena');
+
+            foreach (['lang_new' => 'fr-FR', 'lang_old' => 'de-DE'] as $key => $tag) {
+                $this->db->setQuery(
+                    'UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' SET customer_language = ' . $this->db->quote($tag)
+                    . ' WHERE order_id = ' . $this->db->quote($orders[$key])
+                )->execute();
+            }
+
+            $langPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                public array $lifetime = [];
+                public array $reported = [];
+
+                protected function lifetimeOrderIds(array $orderIds): array
+                {
+                    return array_values(array_intersect(array_map('strval', $orderIds), $this->lifetime));
+                }
+
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                    $this->reported[] = [$languageTag, array_column($lifetime, 'order_number')];
+                }
+            };
+            $langPlugin->setDatabase($this->db);
+            $langPlugin->lifetime = [$orders['lang_old']];
+            $langPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest('lang.guest@example.com'),
+                'user'    => null,
+            ]));
+            $this->test('Customer e-mail language: the newest order (looked up before the anonymization), not the older lifetime order',
+                ($langPlugin->reported[0][0] ?? '') === 'fr-FR' && ($langPlugin->reported[0][1] ?? []) === [$orders['lang_old']],
+                json_encode($langPlugin->reported));
+
             // Customer e-mail text names only what the request removed.
             $guestFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'guestRequest');
             $guestFlag->setAccessible(true);
