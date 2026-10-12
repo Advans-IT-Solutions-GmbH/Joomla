@@ -831,7 +831,7 @@ The administrator message and the customer e-mail list the lifetime-license orde
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request (captured before Joomla's privacy user plugin pseudonymises the account). Requests of customers without account are created by the administrator and confirmed by the customer on the confirmation page of this plugin, see [Process for a guest customer](#process-for-a-guest-customer).
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request and the account address (every matching subscriber is exported and deleted) (captured before Joomla's privacy user plugin pseudonymises the account). Requests of customers without account are created by the administrator and confirmed by the customer on the confirmation page of this plugin, see [Process for a guest customer](#process-for-a-guest-customer).
 
 ---
 

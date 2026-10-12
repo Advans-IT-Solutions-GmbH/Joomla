@@ -867,6 +867,22 @@ class DataIsolationTest
             $this->test('Guest removal: legacy record with the guest address in markup, brackets and other letter case anonymized',
                 $legacySubject($legacy['wrapped']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
 
+            // An address with an apostrophe stored raw and with two different entities: the
+            // preselection must not depend on the representation of the local part.
+            $legacy['apos_raw']     = $this->insertGuestTestLegacyConsent("o'brien.guest@example.com");
+            $legacy['apos_html5']   = $this->insertGuestTestLegacyConsent('O&apos;Brien.Guest@Example.com');
+            $legacy['apos_numeric'] = $this->insertGuestTestLegacyConsent('o&#039;brien.guest@example.com');
+            $repository = new \Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository($this->db);
+            $found      = array_map('intval', array_column($repository->findLegacyGuestConsents(["o'brien.guest@example.com"]), 'id'));
+            sort($found);
+            $wantedIds  = [$legacy['apos_raw'], $legacy['apos_html5'], $legacy['apos_numeric']];
+            sort($wantedIds);
+            $this->test('Legacy export: an apostrophe address is found raw, as &apos; and as &#039;', $found === $wantedIds, json_encode($found));
+            $this->test('Legacy removal: the same three records are anonymized',
+                $repository->anonymizeLegacyConsents(0, ["O'Brien.Guest@example.com"]) === 3
+                && $legacySubject($legacy['apos_raw']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY'
+                && $legacySubject($legacy['apos_html5']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
+
             $addressCount = fn (int $id): int => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id
             )->loadResult();

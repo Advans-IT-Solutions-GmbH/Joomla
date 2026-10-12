@@ -160,8 +160,7 @@ final class ConsentRepository
 
         $wanted = array_flip($emails);
         $likes  = array_map(
-            fn (string $email): string => 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
-                . $this->db->quote('%' . $this->db->escape(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), true) . '%', false),
+            fn (string $email): string => $this->addressPrefilter($email),
             $emails
         );
         $rows   = [];
@@ -639,8 +638,7 @@ final class ConsentRepository
                 // Under a case-sensitive collation "Anna@Example.com" in the body would otherwise
                 // never reach the case-insensitive check below.
                 foreach ($emails as $email) {
-                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND LOWER(' . $this->db->quoteName('body') . ') LIKE '
-                        . $this->db->quote('%' . $this->db->escape(htmlspecialchars(mb_strtolower($email, 'UTF-8'), ENT_QUOTES, 'UTF-8'), true) . '%', false) . ')';
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->addressPrefilter($email) . ')';
                 }
 
                 $query->where('(' . implode(' OR ', $scope) . ')');
@@ -867,6 +865,27 @@ final class ConsentRepository
         $record = $this->findOrderConsent($orderId);
 
         return $record !== null && (int) $record->user_id === 0 ? [$record] : [];
+    }
+
+    /**
+     * SQL preselection of bodies that may contain $email. Only the domain is compared ("@" or
+     * its entity "&#64;" plus the domain, lower case): the local part may be stored raw or with
+     * HTML entities in several forms. The exact decision is bodyHasAddress().
+     */
+    private function addressPrefilter(string $email): string
+    {
+        $email  = mb_strtolower(trim($email), 'UTF-8');
+        $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
+        $likes  = [];
+
+        foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
+            foreach (['@', '&#64;'] as $at) {
+                $likes[] = 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
+                    . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+            }
+        }
+
+        return '(' . implode(' OR ', $likes) . ')';
     }
 
     private function likeMarker(string $orderId): string

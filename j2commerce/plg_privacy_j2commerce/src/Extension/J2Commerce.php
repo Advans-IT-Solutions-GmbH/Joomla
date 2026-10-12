@@ -566,11 +566,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return null;
         }
 
-        $db       = $this->getDatabase();
-        $acymUser = null;
+        $db        = $this->getDatabase();
+        $acymUsers = [];
 
         // Default: the account e-mail. A privacy request passes its addresses (request address
-        // first); the first one with a subscriber record is exported.
+        // first); every subscriber record of these addresses is exported.
         foreach ($emails ?? [(string) ($user->email ?? '')] as $email) {
             $email = (string) $email;
 
@@ -585,168 +585,172 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->from($db->quoteName($prefix . 'user'))
                     ->where($db->quoteName('email') . ' = :email')
                     ->bind(':email', $email);
-                $acymUser = $db->setQuery($query)->loadObject();
+
+                foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                    $acymUsers[(int) $row->id] = $row;
+                }
             } catch (\Exception $e) {
                 return null;
             }
-
-            if ($acymUser) {
-                break;
-            }
         }
 
-        if (!$acymUser) {
+        if ($acymUsers === []) {
             return null;
         }
 
         $domain = $this->createDomain('newsletter_subscriptions', Text::_('PLG_PRIVACY_J2COMMERCE_ACYM_DOMAIN'));
 
-        $domain->addItem($this->createItemFromArray([
-            'email'     => $acymUser->email,
-            'name'      => $acymUser->name ?? '',
-            'confirmed' => $acymUser->confirmed ? 'yes' : 'no',
-            'created'   => $acymUser->creation_date ?? '',
-        ], 'subscriber'));
+        foreach ($acymUsers as $acymUser) {
+            // Several subscribers (request and account address): IDs per subscriber.
+            $itemPrefix = \count($acymUsers) > 1 ? 'subscriber_' . (int) $acymUser->id . '_' : '';
 
-        // Load list subscriptions with list names
-        try {
-            $query = $this->createDbQuery()
-                ->select([
-                    'uhl.list_id',
-                    'uhl.status',
-                    'uhl.subscription_date',
-                    'uhl.unsubscribe_date',
-                    'l.name AS list_name',
-                    'l.display_name AS list_display_name',
-                ])
-                ->from($db->quoteName($prefix . 'user_has_list', 'uhl'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'list', 'l') .
-                    ' ON ' . $db->quoteName('l.id') . ' = ' . $db->quoteName('uhl.list_id')
-                )
-                ->where($db->quoteName('uhl.user_id') . ' = ' . (int) $acymUser->id);
-            $subscriptions = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $subscriptions = [];
-        }
-
-        foreach ($subscriptions as $sub) {
-            $listName = !empty($sub->list_display_name) ? $sub->list_display_name : ($sub->list_name ?? 'List #' . $sub->list_id);
             $domain->addItem($this->createItemFromArray([
-                'list'              => $listName,
-                'status'            => (int) $sub->status === 1 ? 'subscribed' : 'unsubscribed',
-                'subscription_date' => $sub->subscription_date ?? '',
-                'unsubscribe_date'  => $sub->unsubscribe_date ?? '',
-            ], 'subscription_' . $sub->list_id));
-        }
+                'email'     => $acymUser->email,
+                'name'      => $acymUser->name ?? '',
+                'confirmed' => $acymUser->confirmed ? 'yes' : 'no',
+                'created'   => $acymUser->creation_date ?? '',
+            ], $itemPrefix . 'subscriber'));
 
-        // Load custom field values (may contain name, address, phone, etc.)
-        try {
-            $query = $this->createDbQuery()
-                ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
-                ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'field', 'f') .
-                    ' ON ' . $db->quoteName('f.id') . ' = ' . $db->quoteName('uhf.field_id')
-                )
-                ->where($db->quoteName('uhf.user_id') . ' = ' . (int) $acymUser->id);
-            $fields = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $fields = [];
-        }
-
-        foreach ($fields as $field) {
-            if (empty($field->value)) {
-                continue;
+            // Load list subscriptions with list names
+            try {
+                $query = $this->createDbQuery()
+                    ->select([
+                        'uhl.list_id',
+                        'uhl.status',
+                        'uhl.subscription_date',
+                        'uhl.unsubscribe_date',
+                        'l.name AS list_name',
+                        'l.display_name AS list_display_name',
+                    ])
+                    ->from($db->quoteName($prefix . 'user_has_list', 'uhl'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'list', 'l') .
+                        ' ON ' . $db->quoteName('l.id') . ' = ' . $db->quoteName('uhl.list_id')
+                    )
+                    ->where($db->quoteName('uhl.user_id') . ' = ' . (int) $acymUser->id);
+                $subscriptions = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $subscriptions = [];
             }
 
-            $domain->addItem($this->createItemFromArray([
-                'field' => $field->field_name ?? 'field_' . $field->field_id,
-                'type'  => $field->field_type ?? '',
-                'value' => $field->value,
-            ], 'field_' . $field->field_id));
-        }
+            foreach ($subscriptions as $sub) {
+                $listName = !empty($sub->list_display_name) ? $sub->list_display_name : ($sub->list_name ?? 'List #' . $sub->list_id);
+                $domain->addItem($this->createItemFromArray([
+                    'list'              => $listName,
+                    'status'            => (int) $sub->status === 1 ? 'subscribed' : 'unsubscribed',
+                    'subscription_date' => $sub->subscription_date ?? '',
+                    'unsubscribe_date'  => $sub->unsubscribe_date ?? '',
+                ], $itemPrefix . 'subscription_' . $sub->list_id));
+            }
 
-        // Load send/open/click stats per campaign
-        try {
-            $query = $this->createDbQuery()
-                ->select(['us.mail_id', 'us.send_date', 'us.open', 'us.open_date', 'us.bounce',
-                          'us.bounce_rule', 'us.unsubscribe', 'us.device', 'us.opened_with',
-                          'm.name AS mail_name'])
-                ->from($db->quoteName($prefix . 'user_stat', 'us'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'mail', 'm') .
-                    ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('us.mail_id')
-                )
-                ->where($db->quoteName('us.user_id') . ' = ' . (int) $acymUser->id);
-            $stats = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $stats = [];
-        }
+            // Load custom field values (may contain name, address, phone, etc.)
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
+                    ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'field', 'f') .
+                        ' ON ' . $db->quoteName('f.id') . ' = ' . $db->quoteName('uhf.field_id')
+                    )
+                    ->where($db->quoteName('uhf.user_id') . ' = ' . (int) $acymUser->id);
+                $fields = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $fields = [];
+            }
 
-        foreach ($stats as $stat) {
-            $domain->addItem($this->createItemFromArray([
-                'campaign'    => $stat->mail_name ?? 'mail_' . $stat->mail_id,
-                'send_date'   => $stat->send_date ?? '',
-                'opened'      => $stat->open ? 'yes' : 'no',
-                'open_date'   => $stat->open_date ?? '',
-                'bounce'      => $stat->bounce ? 'yes' : 'no',
-                'bounce_rule' => $stat->bounce_rule ?? '',
-                'unsubscribed'=> $stat->unsubscribe ? 'yes' : 'no',
-                'device'      => $stat->device ?? '',
-                'opened_with' => $stat->opened_with ?? '',
-            ], 'stat_' . $stat->mail_id));
-        }
+            foreach ($fields as $field) {
+                if (empty($field->value)) {
+                    continue;
+                }
 
-        // Load URL click history
-        try {
-            $query = $this->createDbQuery()
-                ->select(['uc.mail_id', 'uc.url_id', 'uc.click', 'uc.date_click',
-                          'u.url', 'm.name AS mail_name'])
-                ->from($db->quoteName($prefix . 'url_click', 'uc'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'url', 'u') .
-                    ' ON ' . $db->quoteName('u.id') . ' = ' . $db->quoteName('uc.url_id')
-                )
-                ->leftJoin(
-                    $db->quoteName($prefix . 'mail', 'm') .
-                    ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('uc.mail_id')
-                )
-                ->where($db->quoteName('uc.user_id') . ' = ' . (int) $acymUser->id);
-            $clicks = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $clicks = [];
-        }
+                $domain->addItem($this->createItemFromArray([
+                    'field' => $field->field_name ?? 'field_' . $field->field_id,
+                    'type'  => $field->field_type ?? '',
+                    'value' => $field->value,
+                ], $itemPrefix . 'field_' . $field->field_id));
+            }
 
-        foreach ($clicks as $click) {
-            $domain->addItem($this->createItemFromArray([
-                'campaign'   => $click->mail_name ?? 'mail_' . $click->mail_id,
-                'url'        => $click->url ?? 'url_' . $click->url_id,
-                'clicks'     => $click->click,
-                'last_click' => $click->date_click ?? '',
-            ], 'click_' . $click->mail_id . '_' . $click->url_id));
-        }
+            // Load send/open/click stats per campaign
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['us.mail_id', 'us.send_date', 'us.open', 'us.open_date', 'us.bounce',
+                              'us.bounce_rule', 'us.unsubscribe', 'us.device', 'us.opened_with',
+                              'm.name AS mail_name'])
+                    ->from($db->quoteName($prefix . 'user_stat', 'us'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'mail', 'm') .
+                        ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('us.mail_id')
+                    )
+                    ->where($db->quoteName('us.user_id') . ' = ' . (int) $acymUser->id);
+                $stats = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $stats = [];
+            }
 
-        // Load action history (incl. IP address)
-        try {
-            $query = $this->createDbQuery()
-                ->select(['h.date', 'h.ip', 'h.action', 'h.data', 'h.unsubscribe_reason'])
-                ->from($db->quoteName($prefix . 'history', 'h'))
-                ->where($db->quoteName('h.user_id') . ' = ' . (int) $acymUser->id)
-                ->order($db->quoteName('h.date') . ' DESC');
-            $history = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $history = [];
-        }
+            foreach ($stats as $stat) {
+                $domain->addItem($this->createItemFromArray([
+                    'campaign'    => $stat->mail_name ?? 'mail_' . $stat->mail_id,
+                    'send_date'   => $stat->send_date ?? '',
+                    'opened'      => $stat->open ? 'yes' : 'no',
+                    'open_date'   => $stat->open_date ?? '',
+                    'bounce'      => $stat->bounce ? 'yes' : 'no',
+                    'bounce_rule' => $stat->bounce_rule ?? '',
+                    'unsubscribed'=> $stat->unsubscribe ? 'yes' : 'no',
+                    'device'      => $stat->device ?? '',
+                    'opened_with' => $stat->opened_with ?? '',
+                ], $itemPrefix . 'stat_' . $stat->mail_id));
+            }
 
-        foreach ($history as $i => $entry) {
-            $domain->addItem($this->createItemFromArray([
-                'date'               => date('Y-m-d H:i:s', (int) $entry->date),
-                'ip'                 => $entry->ip ?? '',
-                'action'             => $entry->action ?? '',
-                'data'               => $entry->data ?? '',
-                'unsubscribe_reason' => $entry->unsubscribe_reason ?? '',
-            ], 'history_' . $i));
+            // Load URL click history
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['uc.mail_id', 'uc.url_id', 'uc.click', 'uc.date_click',
+                              'u.url', 'm.name AS mail_name'])
+                    ->from($db->quoteName($prefix . 'url_click', 'uc'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'url', 'u') .
+                        ' ON ' . $db->quoteName('u.id') . ' = ' . $db->quoteName('uc.url_id')
+                    )
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'mail', 'm') .
+                        ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('uc.mail_id')
+                    )
+                    ->where($db->quoteName('uc.user_id') . ' = ' . (int) $acymUser->id);
+                $clicks = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $clicks = [];
+            }
+
+            foreach ($clicks as $click) {
+                $domain->addItem($this->createItemFromArray([
+                    'campaign'   => $click->mail_name ?? 'mail_' . $click->mail_id,
+                    'url'        => $click->url ?? 'url_' . $click->url_id,
+                    'clicks'     => $click->click,
+                    'last_click' => $click->date_click ?? '',
+                ], $itemPrefix . 'click_' . $click->mail_id . '_' . $click->url_id));
+            }
+
+            // Load action history (incl. IP address)
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['h.date', 'h.ip', 'h.action', 'h.data', 'h.unsubscribe_reason'])
+                    ->from($db->quoteName($prefix . 'history', 'h'))
+                    ->where($db->quoteName('h.user_id') . ' = ' . (int) $acymUser->id)
+                    ->order($db->quoteName('h.date') . ' DESC');
+                $history = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $history = [];
+            }
+
+            foreach ($history as $i => $entry) {
+                $domain->addItem($this->createItemFromArray([
+                    'date'               => date('Y-m-d H:i:s', (int) $entry->date),
+                    'ip'                 => $entry->ip ?? '',
+                    'action'             => $entry->action ?? '',
+                    'data'               => $entry->data ?? '',
+                    'unsubscribe_reason' => $entry->unsubscribe_reason ?? '',
+                ], $itemPrefix . 'history_' . $i));
+            }
         }
 
         return $domain;
