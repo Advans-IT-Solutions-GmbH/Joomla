@@ -35,7 +35,20 @@ class DomainModel extends AdminModel
             ['control' => 'jform', 'load_data' => $loadData]
         );
 
-        return $form ?: false;
+        if (empty($form)) {
+            return false;
+        }
+
+        // Without core.edit.state the published field must not be changeable from
+        // the edit form. Disabling it hides the control, and unsetting its filter
+        // drops the value from the posted data on save, so the restriction is
+        // enforced server-side and cannot be bypassed by crafting the request.
+        if (!$this->canEditState((object) $data)) {
+            $form->setFieldAttribute('published', 'disabled', 'true');
+            $form->setFieldAttribute('published', 'filter', 'unset');
+        }
+
+        return $form;
     }
 
     protected function loadFormData()

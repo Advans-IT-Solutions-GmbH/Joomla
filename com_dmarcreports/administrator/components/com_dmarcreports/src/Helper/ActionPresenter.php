@@ -33,10 +33,8 @@ final class ActionPresenter
         return match ($code) {
             'no_data'               => Text::_('COM_DMARCREPORTS_ACTION_NO_DATA_TITLE'),
             'move_to_quarantine'    => Text::_('COM_DMARCREPORTS_ACTION_MOVE_TO_QUARANTINE_TITLE'),
-            'resolve_before_quarantine' => Text::_('COM_DMARCREPORTS_ACTION_RESOLVE_BEFORE_QUARANTINE_TITLE'),
             'stay_at_none'          => Text::_('COM_DMARCREPORTS_ACTION_STAY_AT_NONE_TITLE'),
             'move_to_reject'        => Text::_('COM_DMARCREPORTS_ACTION_MOVE_TO_REJECT_TITLE'),
-            'resolve_before_reject' => Text::_('COM_DMARCREPORTS_ACTION_RESOLVE_BEFORE_REJECT_TITLE'),
             'stay_at_quarantine'    => Text::_('COM_DMARCREPORTS_ACTION_STAY_AT_QUARANTINE_TITLE'),
             'enforced'              => Text::_('COM_DMARCREPORTS_ACTION_ENFORCED_TITLE'),
             'partial_enforcement'   => Text::_('COM_DMARCREPORTS_ACTION_PARTIAL_ENFORCEMENT_TITLE'),
@@ -70,10 +68,8 @@ final class ActionPresenter
         return match ($code) {
             'no_data'               => Text::sprintf('COM_DMARCREPORTS_ACTION_NO_DATA_TEXT', ...self::pad($params, 1)),
             'move_to_quarantine'    => Text::sprintf('COM_DMARCREPORTS_ACTION_MOVE_TO_QUARANTINE_TEXT', ...self::pad($params, 2)),
-            'resolve_before_quarantine' => Text::sprintf('COM_DMARCREPORTS_ACTION_RESOLVE_BEFORE_QUARANTINE_TEXT', ...self::pad($params, 3)),
             'stay_at_none'          => Text::sprintf('COM_DMARCREPORTS_ACTION_STAY_AT_NONE_TEXT', ...self::pad($params, 3)),
             'move_to_reject'        => Text::sprintf('COM_DMARCREPORTS_ACTION_MOVE_TO_REJECT_TEXT', ...self::pad($params, 2)),
-            'resolve_before_reject' => Text::sprintf('COM_DMARCREPORTS_ACTION_RESOLVE_BEFORE_REJECT_TEXT', ...self::pad($params, 3)),
             'stay_at_quarantine'    => Text::sprintf('COM_DMARCREPORTS_ACTION_STAY_AT_QUARANTINE_TEXT', ...self::pad($params, 3)),
             'enforced'              => Text::sprintf('COM_DMARCREPORTS_ACTION_ENFORCED_TEXT', ...self::pad($params, 1)),
             'partial_enforcement'   => Text::sprintf('COM_DMARCREPORTS_ACTION_PARTIAL_ENFORCEMENT_TEXT', ...self::pad($params, 2)),

@@ -108,8 +108,22 @@ class DashboardModel extends BaseDatabaseModel
         $status  = new ActionStatus($this->getDb());
         $items   = [];
 
-        foreach ($this->getSummaries() as $summary) {
-            foreach (ActionCenter::generate($metrics->actionMetrics($summary), $config) as $item) {
+        $summaries = $this->getSummaries();
+
+        // Resolve the per-domain Action Center metrics for every domain in a
+        // fixed, small number of grouped queries rather than fanning out to
+        // several queries per domain.
+        $allMetrics = $metrics->actionMetricsForAll($summaries);
+
+        foreach ($summaries as $summary) {
+            $domainId = (int) ($summary['id'] ?? 0);
+            $domainMetrics = $allMetrics[$domainId] ?? null;
+
+            if ($domainMetrics === null) {
+                continue;
+            }
+
+            foreach (ActionCenter::generate($domainMetrics, $config) as $item) {
                 $item['domain'] = $summary['domain'];
                 $items[]        = $item;
             }

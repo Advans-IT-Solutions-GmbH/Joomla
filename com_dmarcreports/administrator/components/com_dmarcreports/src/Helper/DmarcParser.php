@@ -32,6 +32,12 @@ final class DmarcParser
     private const MAX_CLOCK_SKEW = 172800;
 
     /**
+     * Upper bound for a report date-range timestamp (2100-01-01 UTC). A value
+     * beyond this is treated as malformed rather than a real Unix timestamp.
+     */
+    private const MAX_TIMESTAMP = 4102444800;
+
+    /**
      * Maximum stored length of a domain value, matching the VARCHAR(190) domain
      * and header_from columns. A syntactically valid domain can be longer, but
      * storing it would overflow the column; for an auto-detected policy domain
@@ -79,8 +85,8 @@ final class DmarcParser
         $meta   = $feedback->report_metadata;
         $policy = $feedback->policy_published;
 
-        $begin = (int) ($meta->date_range->begin ?? 0);
-        $end   = (int) ($meta->date_range->end ?? 0);
+        $begin = self::timestamp($meta->date_range->begin ?? null);
+        $end   = self::timestamp($meta->date_range->end ?? null);
 
         $report = [
             'org_name'   => self::text($meta->org_name ?? null),
@@ -246,6 +252,27 @@ final class DmarcParser
     private static function text($node): string
     {
         return trim((string) ($node ?? ''));
+    }
+
+    /**
+     * Convert a report date-range value to a Unix timestamp, accepting only a
+     * plain non-negative integer in a plausible range. A bare (int) cast would
+     * silently accept numeric-prefixed junk such as "1700000000x" and store a
+     * valid-looking date; because the begin date feeds the dedup fingerprint and
+     * date_end anchors the rolling windows, an invalid value is rejected (mapped
+     * to 0) so the surrounding begin/end sanity checks reject the whole report.
+     */
+    private static function timestamp($node): int
+    {
+        $text = self::text($node);
+
+        if ($text === '' || !ctype_digit($text)) {
+            return 0;
+        }
+
+        $ts = (int) $text;
+
+        return ($ts >= 0 && $ts <= self::MAX_TIMESTAMP) ? $ts : 0;
     }
 
     private static function alignmentMode($node): string

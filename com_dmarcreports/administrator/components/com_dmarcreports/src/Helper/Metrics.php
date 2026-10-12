@@ -69,9 +69,16 @@ final class Metrics
 
         $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
 
+        $ids = array_map(static fn (array $r): int => (int) $r['id'], $rows);
+
+        // Resolve the latest policy for every domain in a single grouped query
+        // rather than one query per row, so the dashboard does not fan out as the
+        // number of monitored domains grows.
+        $policies = $this->latestPolicyAll($ids);
+
         foreach ($rows as &$row) {
             $row                       = array_map(static fn ($v) => is_numeric($v) ? $v + 0 : $v, $row);
-            $latest                    = $this->latestPolicy((int) $row['id']);
+            $latest                    = $policies[(int) $row['id']] ?? ['p' => '', 'pct' => 100];
             $row['current_policy']     = $latest['p'];
             $row['current_policy_pct'] = $latest['pct'];
             $row['pass_rate']          = self::rate((int) $row['dmarc_pass'], (int) $row['total']);
@@ -145,57 +152,87 @@ final class Metrics
     }
 
     /**
-     * A lean metric bundle for the Action Center, built from a per-domain
-     * summary row that the dashboard has already fetched in a single grouped
-     * query (domainSummaries). Only the fields the Action Center additionally
-     * needs are queried here: the aligned-source lists and the rolling window
-     * figures, which depend on each domain's own newest report and so cannot be
-     * folded into the one grouped summary query without non-portable window
-     * functions. The drill-down-only data (top sources, timeline) and the
-     * lifetime totals, latest policy and domain row are deliberately not
-     * recomputed, which removes the bulk of the former per-domain fan-out.
+     * Lean Action Center metric bundles for every supplied domain summary,
+     * keyed by domain id. Built from the per-domain summary rows the dashboard
+     * already fetched in one grouped query (domainSummaries), plus a small,
+     * fixed set of additional grouped queries covering the aligned-source lists
+     * and the rolling-window figures. Those figures depend on each domain's own
+     * newest report, but are resolved for all domains at once through a derived
+     * per-domain anchor table rather than one query per domain, so the Action
+     * Center no longer fans out to roughly six queries per domain. The number of
+     * queries is constant regardless of how many domains are monitored. The
+     * drill-down-only data (top sources, timeline) and the lifetime totals,
+     * latest policy and domain row are deliberately not recomputed here.
      *
-     * @param   array<string, mixed>  $summary  One row from domainSummaries().
+     * @param   array<int, array<string, mixed>>  $summaries  Rows from domainSummaries().
      *
-     * @return  array<string, mixed>
+     * @return  array<int, array<string, mixed>>
      */
-    public function actionMetrics(array $summary): array
+    public function actionMetricsForAll(array $summaries): array
     {
-        $domainId = (int) ($summary['id'] ?? 0);
+        $ids = [];
 
-        $metrics = [
-            'domain_id'          => $domainId,
-            'domain'             => (string) ($summary['domain'] ?? ''),
-            'expected_policy'    => (string) ($summary['expected_policy'] ?? 'reject'),
-            'current_policy'     => (string) ($summary['current_policy'] ?? ''),
-            'current_policy_pct' => (int) ($summary['current_policy_pct'] ?? 100),
-            'total'              => (int) ($summary['total'] ?? 0),
-            'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
-            'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
-            'unaligned_sources'  => $this->unalignedSources($domainId),
-            'new_sources'        => $this->newSources($domainId),
-            'pass_rate_prev'     => null,
-        ];
+        foreach ($summaries as $summary) {
+            $id = (int) ($summary['id'] ?? 0);
 
-        $metrics['pass_rate'] = self::rate($metrics['dmarc_pass'], $metrics['total']);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
 
-        $anchor = $this->latestReportEnd($domainId);
-        $window = 7 * 86400;
+        if ($ids === []) {
+            return [];
+        }
 
-        $current = $anchor > 0
-            ? $this->windowTotals($domainId, $anchor - $window, $anchor)
-            : ['total' => 0, 'pass' => 0, 'reject_under_p' => 0];
+        $window     = 7 * 86400;
+        $anchors    = $this->latestReportEndAll($ids);
+        $unaligned  = $this->unalignedSourcesAll($ids);
+        $newSources = $this->newSourcesAll($ids);
+        $current    = $this->windowTotalsAll($ids, $window, 0);
+        $previous   = $this->windowTotalsAll($ids, 2 * $window, $window);
 
-        $metrics['window_total']          = $current['total'];
-        $metrics['window_reject_under_p'] = $current['reject_under_p'];
-        $metrics['pass_rate_window']      = $current['total'] > 0
-            ? self::rate($current['pass'], $current['total'])
-            : null;
-        $metrics['pass_rate_prev'] = $anchor > 0
-            ? $this->windowPassRate($domainId, $anchor - (2 * $window), $anchor - $window)
-            : null;
+        $empty  = ['total' => 0, 'pass' => 0, 'reject_under_p' => 0];
+        $result = [];
 
-        return $metrics;
+        foreach ($summaries as $summary) {
+            $domainId = (int) ($summary['id'] ?? 0);
+
+            if ($domainId <= 0) {
+                continue;
+            }
+
+            $anchor = $anchors[$domainId] ?? 0;
+            $cur    = $current[$domainId] ?? $empty;
+            $prev   = $previous[$domainId] ?? $empty;
+
+            $metrics = [
+                'domain_id'          => $domainId,
+                'domain'             => (string) ($summary['domain'] ?? ''),
+                'expected_policy'    => (string) ($summary['expected_policy'] ?? 'reject'),
+                'current_policy'     => (string) ($summary['current_policy'] ?? ''),
+                'current_policy_pct' => (int) ($summary['current_policy_pct'] ?? 100),
+                'total'              => (int) ($summary['total'] ?? 0),
+                'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
+                'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
+                'unaligned_sources'  => $unaligned[$domainId] ?? [],
+                'new_sources'        => $anchor > 0 ? ($newSources[$domainId] ?? []) : [],
+                'pass_rate_prev'     => null,
+            ];
+
+            $metrics['pass_rate']             = self::rate($metrics['dmarc_pass'], $metrics['total']);
+            $metrics['window_total']          = $cur['total'];
+            $metrics['window_reject_under_p'] = $cur['reject_under_p'];
+            $metrics['pass_rate_window']      = $cur['total'] > 0
+                ? self::rate($cur['pass'], $cur['total'])
+                : null;
+            $metrics['pass_rate_prev'] = ($anchor > 0 && $prev['total'] > 0)
+                ? self::rate($prev['pass'], $prev['total'])
+                : null;
+
+            $result[$domainId] = $metrics;
+        }
+
+        return $result;
     }
 
     /**
@@ -530,6 +567,325 @@ final class Metrics
             ->bind(':domainId', $domainId, ParameterType::INTEGER);
 
         return $this->db->setQuery($query)->loadAssoc() ?: [];
+    }
+
+    /**
+     * The newest report end timestamp for every supplied domain, keyed by
+     * domain id, resolved in a single grouped query. Domains without any report
+     * are absent from the result (the caller treats a missing anchor as 0).
+     *
+     * @param   array<int, int>  $domainIds
+     *
+     * @return  array<int, int>
+     */
+    private function latestReportEndAll(array $domainIds): array
+    {
+        if ($domainIds === []) {
+            return [];
+        }
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    'COALESCE(MAX(' . $this->db->quoteName('date_end') . '), 0) AS anchor',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $this->intList($domainIds) . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        $map = [];
+
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $map[(int) $row['domain_id']] = (int) $row['anchor'];
+        }
+
+        return $map;
+    }
+
+    /**
+     * The latest published policy disposition and percentage for every supplied
+     * domain, keyed by domain id, resolved in a single groupwise-maximum query
+     * (newest by date_end, ties broken by the highest id). Portable across MySQL
+     * and PostgreSQL: it joins each report to the per-domain maximum date_end and
+     * resolves id ties in PHP rather than using a window function.
+     *
+     * @param   array<int, int>  $domainIds
+     *
+     * @return  array<int, array{p: string, pct: int}>
+     */
+    private function latestPolicyAll(array $domainIds): array
+    {
+        if ($domainIds === []) {
+            return [];
+        }
+
+        $in = $this->intList($domainIds);
+
+        $inner = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    'MAX(' . $this->db->quoteName('date_end') . ') AS max_end',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('r.domain_id'),
+                    $this->db->quoteName('r.id'),
+                    $this->db->quoteName('r.policy_p'),
+                    $this->db->quoteName('r.policy_pct'),
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports', 'r'))
+            ->join(
+                'INNER',
+                '(' . $inner . ') AS ' . $this->db->quoteName('m'),
+                $this->db->quoteName('m.domain_id') . ' = ' . $this->db->quoteName('r.domain_id')
+                    . ' AND ' . $this->db->quoteName('r.date_end') . ' = ' . $this->db->quoteName('m.max_end')
+            )
+            ->where($this->db->quoteName('r.domain_id') . ' IN (' . $in . ')')
+            ->order($this->db->quoteName('r.domain_id') . ' ASC, ' . $this->db->quoteName('r.id') . ' ASC');
+
+        $map = [];
+
+        // Rows arrive ordered by id ascending within each domain, so the last
+        // row written for a domain is the highest id sharing the newest end
+        // date, mirroring the per-domain "date_end DESC, id DESC" tiebreak.
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $map[(int) $row['domain_id']] = [
+                'p'   => (string) $row['policy_p'],
+                'pct' => (int) $row['policy_pct'],
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Unaligned sending sources for every supplied domain, keyed by domain id,
+     * resolved in a single grouped query and sliced to the top $limit per domain
+     * (ordered by failing volume) in PHP.
+     *
+     * @param   array<int, int>  $domainIds
+     *
+     * @return  array<int, array<int, array{ip: string, count: int}>>
+     */
+    private function unalignedSourcesAll(array $domainIds, int $limit = 20): array
+    {
+        if ($domainIds === []) {
+            return [];
+        }
+
+        $count = $this->db->quoteName('count');
+        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
+            . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    $this->db->quoteName('source_ip'),
+                    $fail . ' AS fail',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_records'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $this->intList($domainIds) . ')')
+            ->group($this->db->quoteName('domain_id') . ', ' . $this->db->quoteName('source_ip'))
+            ->having($fail . ' > 0')
+            ->order($this->db->quoteName('domain_id') . ' ASC, fail DESC');
+
+        $map = [];
+
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $domainId = (int) $row['domain_id'];
+
+            if (\count($map[$domainId] ?? []) >= $limit) {
+                continue;
+            }
+
+            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['fail']];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Newly observed sending sources for every supplied domain, keyed by domain
+     * id, resolved in a single grouped query and sliced to the top $limit per
+     * domain in PHP. Mirrors newSources() for a single domain, but anchors each
+     * domain's current window on its own newest report through a derived
+     * per-domain anchor table so one query serves all domains at once.
+     *
+     * @param   array<int, int>  $domainIds
+     *
+     * @return  array<int, array<int, array{ip: string, count: int}>>
+     */
+    private function newSourcesAll(array $domainIds, int $limit = 10): array
+    {
+        if ($domainIds === []) {
+            return [];
+        }
+
+        $in     = $this->intList($domainIds);
+        $window = 7 * 86400;
+
+        $anchor = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    'MAX(' . $this->db->quoteName('date_end') . ') AS anchor',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        $prior = (string) $this->query()
+            ->select('1')
+            ->from($this->db->quoteName('#__dmarc_reports', 'prep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'prec'),
+                $this->db->quoteName('prec.report_id') . ' = ' . $this->db->quoteName('prep.id')
+            )
+            ->where($this->db->quoteName('prep.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id'))
+            ->where($this->db->quoteName('prec.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
+            ->where($this->db->quoteName('prep.date_begin') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')');
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('rep.domain_id'),
+                    $this->db->quoteName('cur.source_ip'),
+                    'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'cur'),
+                $this->db->quoteName('cur.report_id') . ' = ' . $this->db->quoteName('rep.id')
+            )
+            ->join(
+                'INNER',
+                '(' . $anchor . ') AS ' . $this->db->quoteName('a'),
+                $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id')
+            )
+            ->where($this->db->quoteName('rep.domain_id') . ' IN (' . $in . ')')
+            ->where($this->db->quoteName('rep.date_begin') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')')
+            ->where($this->db->quoteName('rep.date_begin') . ' <= ' . $this->db->quoteName('a.anchor'))
+            ->where('NOT EXISTS (' . $prior . ')')
+            ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
+            ->order($this->db->quoteName('rep.domain_id') . ' ASC, total DESC');
+
+        $map = [];
+
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $domainId = (int) $row['domain_id'];
+
+            if (\count($map[$domainId] ?? []) >= $limit) {
+                continue;
+            }
+
+            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['total']];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Window volume, DMARC-passing volume and would-be-rejected volume for every
+     * supplied domain, keyed by domain id, over the half-open interval
+     * (anchor - $offsetStart, anchor - $offsetEnd] where the anchor is each
+     * domain's own newest report end date. One grouped query joined to a derived
+     * per-domain anchor table serves all domains, replacing the former per-domain
+     * windowTotals() calls. Domains with no reports are absent from the result.
+     *
+     * @param   array<int, int>  $domainIds
+     *
+     * @return  array<int, array{total: int, pass: int, reject_under_p: int}>
+     */
+    private function windowTotalsAll(array $domainIds, int $offsetStart, int $offsetEnd): array
+    {
+        if ($domainIds === []) {
+            return [];
+        }
+
+        $in = $this->intList($domainIds);
+
+        $anchor = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    'MAX(' . $this->db->quoteName('date_end') . ') AS anchor',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('rep.domain_id'),
+                    'COALESCE(SUM(' . $this->db->quoteName('rec.count') . '), 0) AS total',
+                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 OR '
+                        . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count')
+                        . ' ELSE 0 END), 0) AS pass',
+                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND '
+                        . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count')
+                        . ' ELSE 0 END), 0) AS reject_under_p',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join('INNER', $this->db->quoteName('#__dmarc_records', 'rec'),
+                $this->db->quoteName('rec.report_id') . ' = ' . $this->db->quoteName('rep.id'))
+            ->join(
+                'INNER',
+                '(' . $anchor . ') AS ' . $this->db->quoteName('a'),
+                $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id')
+            )
+            ->where($this->db->quoteName('rep.domain_id') . ' IN (' . $in . ')')
+            ->where($this->db->quoteName('rep.date_begin') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetStart . ')')
+            ->where($this->db->quoteName('rep.date_begin') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetEnd . ')')
+            ->group($this->db->quoteName('rep.domain_id'));
+
+        $map = [];
+
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $map[(int) $row['domain_id']] = [
+                'total'          => (int) $row['total'],
+                'pass'           => (int) $row['pass'],
+                'reject_under_p' => (int) $row['reject_under_p'],
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * A comma-separated list of distinct positive domain ids for safe inlining in
+     * grouped and correlated-subquery SQL. The values are cast to integers, so
+     * the result cannot carry injection; inlining avoids the bound-parameter name
+     * collisions that arise when embedding builder subqueries into an outer query.
+     *
+     * @param   array<int, int>  $domainIds
+     */
+    private function intList(array $domainIds): string
+    {
+        $clean = array_values(array_unique(array_filter(
+            array_map('intval', $domainIds),
+            static fn (int $id): bool => $id > 0
+        )));
+
+        return $clean === [] ? '0' : implode(',', $clean);
     }
 
     private static function rate(int $pass, int $total): float

@@ -354,11 +354,12 @@ class ActionCenterTest extends TestCase
         $this->assertContains('pass_rate_drop', $this->codes($items));
     }
 
-    public function testThresholdMetWithFailingSendersDowngradesQuarantineAdvice(): void
+    public function testThresholdMetAdvancesWithFailingSendersSurfacedSeparately(): void
     {
-        // Pass rate clears the quarantine threshold, but 10 messages still fail.
-        // The engine must not call the move "safe"; it downgrades to a resolve-
-        // first recommendation at plan-soon severity instead of act-now.
+        // Pass rate clears the quarantine threshold while 10 messages still fail.
+        // The configured threshold is the safety line, so the move is recommended
+        // at act-now severity; the residual failing mail is surfaced separately as
+        // a would_be_rejected warning rather than silently blocking the advance.
         $items = ActionCenter::generate(
             [
                 'domain_id'      => 1,
@@ -372,15 +373,18 @@ class ActionCenterTest extends TestCase
         );
 
         $codes = $this->codes($items);
-        $this->assertContains('resolve_before_quarantine', $codes);
-        $this->assertNotContains('move_to_quarantine', $codes);
+        $this->assertContains('move_to_quarantine', $codes);
+        $this->assertNotContains('resolve_before_quarantine', $codes);
 
-        $item = $this->find($items, 'resolve_before_quarantine');
-        $this->assertSame(2, $item['severity']);
-        $this->assertSame(10, $item['params'][2]);
+        $move = $this->find($items, 'move_to_quarantine');
+        $this->assertSame(3, $move['severity']);
+
+        $warning = $this->find($items, 'would_be_rejected');
+        $this->assertNotNull($warning);
+        $this->assertSame(10, $warning['params'][0]);
     }
 
-    public function testThresholdMetWithFailingSendersDowngradesRejectAdvice(): void
+    public function testRejectThresholdMetAdvancesWithFailingSendersSurfacedSeparately(): void
     {
         $items = ActionCenter::generate(
             [
@@ -395,8 +399,12 @@ class ActionCenterTest extends TestCase
         );
 
         $codes = $this->codes($items);
-        $this->assertContains('resolve_before_reject', $codes);
-        $this->assertNotContains('move_to_reject', $codes);
+        $this->assertContains('move_to_reject', $codes);
+        $this->assertNotContains('resolve_before_reject', $codes);
+
+        $warning = $this->find($items, 'would_be_rejected');
+        $this->assertNotNull($warning);
+        $this->assertSame(5, $warning['params'][0]);
     }
 
     public function testFullyAlignedDomainStillGetsSafeAdvanceAdvice(): void
@@ -471,7 +479,8 @@ class ActionCenterTest extends TestCase
     public function testRolloutFlagsFailuresFromCurrentWindow(): void
     {
         // Lifetime totals are spotless, but the current window still has failing
-        // senders. The engine must downgrade and size the risk from the window.
+        // senders. The window pass rate clears the threshold, so the advance is
+        // recommended while the window failures are sized as a separate warning.
         $items = ActionCenter::generate(
             [
                 'domain_id'             => 1,
@@ -488,8 +497,8 @@ class ActionCenterTest extends TestCase
         );
 
         $codes = $this->codes($items);
-        $this->assertContains('resolve_before_quarantine', $codes);
-        $this->assertNotContains('move_to_quarantine', $codes);
+        $this->assertContains('move_to_quarantine', $codes);
+        $this->assertNotContains('resolve_before_quarantine', $codes);
 
         $wouldBe = $this->find($items, 'would_be_rejected');
         $this->assertNotNull($wouldBe);

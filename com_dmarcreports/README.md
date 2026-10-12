@@ -14,6 +14,8 @@ Mailbox providers send DMARC aggregate reports (RFC 7489) as compressed XML atta
 
 Everything runs on your own server. No report data ever leaves the host — there is no external service, no Python, no Elasticsearch, and no cloud dependency. Reports are fetched on demand from a configured mailbox over IMAP, or uploaded by hand.
 
+The one outbound exception is DNS: the DNS diagnostics and the detail view for an unmonitored domain call `dns_get_record()` to read that domain's published SPF and DMARC records. Like any DNS lookup this discloses the domain name being queried to your configured resolver, but no report contents are ever transmitted and the parsed report data is never sent to a third-party analysis service.
+
 Beyond showing the numbers, the component includes an **Action Center** that reads the parsed data and produces prioritised, plain-language recommendations: when it is safe to move a domain from `p=none` to `quarantine` to `reject`, which unaligned senders need SPF or DKIM before you tighten policy, and which new or failing sources need attention first. A non-expert administrator can see exactly where action is required.
 
 ## Features

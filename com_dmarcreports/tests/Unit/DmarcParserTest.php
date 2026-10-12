@@ -171,6 +171,22 @@ XML;
         DmarcParser::parse($xml);
     }
 
+    public function testRejectsReportWithNonNumericBeginDate(): void
+    {
+        $xml = str_replace('<begin>1700000000</begin>', '<begin>1700000000junk</begin>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsReportWithImplausibleFarFutureBeginDate(): void
+    {
+        $xml = str_replace('<begin>1700000000</begin>', '<begin>99999999999</begin>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
     public function testRejectsUnknownPolicyValue(): void
     {
         $xml = str_replace('<p>none</p>', '<p>bogus</p>', $this->sample());

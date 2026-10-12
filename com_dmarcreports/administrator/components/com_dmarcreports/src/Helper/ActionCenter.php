@@ -101,18 +101,18 @@ final class ActionCenter
         } elseif ($policy === '' || $policy === 'none') {
             if ($rolloutPassRate < $quarantineThreshold) {
                 $items[] = self::item('stay_at_none', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $quarantineThreshold]);
-            } elseif ($rejectUnderP > 0) {
-                // Threshold met, but legitimate-looking mail still fails: resolve
-                // those senders before tightening instead of calling it safe.
-                $items[] = self::item('resolve_before_quarantine', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectUnderP]);
             } else {
+                // The configured threshold is the safety line: once the current
+                // window clears it the advance is recommended. Any residual
+                // failing mail is surfaced separately below as a
+                // would_be_rejected / align_source warning rather than silently
+                // blocking the move, which would make the threshold ineffective
+                // (only a 100% pass rate would ever advance).
                 $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $rolloutPassRate]);
             }
         } elseif ($policy === 'quarantine') {
             if ($rolloutPassRate < $rejectThreshold) {
                 $items[] = self::item('stay_at_quarantine', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectThreshold]);
-            } elseif ($rejectUnderP > 0) {
-                $items[] = self::item('resolve_before_reject', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectUnderP]);
             } else {
                 $items[] = self::item('move_to_reject', 'policy', 3, $domainId, [$domain, $rolloutPassRate]);
             }
