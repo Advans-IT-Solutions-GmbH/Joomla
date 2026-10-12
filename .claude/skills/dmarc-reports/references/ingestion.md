@@ -31,11 +31,23 @@ Streaming design (do not revert to loading all messages into an array):
   `UID EXPUNGE`, RFC 3501), so flags and expunges reference the exact message even as the mailbox
   changes — do not revert to sequence-number operations. The `uid` field in a message array is a
   real IMAP UID.
+- `fetchBody()` reads the `UID FETCH` response **line by line** until the `{NNN}` literal that
+  carries the body or the tagged completion arrives, because the FETCH may be preceded by
+  unsolicited untagged responses (for example `* 5 EXISTS`). Do not revert to inspecting only the
+  first response line — that would miss the literal and silently skip a valid report.
 - Only successfully-ingested messages are advanced/deleted — `Ingestor::ingestMessage()` returns a
   success bool that the callback checks.
 
 IMAP is **not** integration-tested in CI (no IMAP server); correctness rests on review. Keep the
 streaming contract intact.
+
+## MIME reader (`MimeMessage`)
+
+`attachments()` walks the multipart tree and decodes the transfer encodings DMARC reporters use.
+The `boundary` parameter is read by a dedicated `boundary()` helper that matches the quoted form
+(`boundary="report part"`, which may legally contain spaces) and the bare-token form separately, so
+a quoted boundary is never truncated at its first space — truncation would split none of the parts
+and silently drop the whole report. Both the top-level and nested multipart call sites use it.
 
 ## Parser (`DmarcParser`)
 
@@ -59,7 +71,12 @@ or `0`. Coercion would commit the report fingerprint while keeping an invalid ro
 copy of the same report would later be discarded as a duplicate while the bad row skews metrics.
 The `count` must also fit the signed integer PHP binds and the `BIGINT UNSIGNED` column stores
 (capped at `PHP_INT_MAX`); a digit string beyond that range is rejected up front, because it would
-otherwise overflow on insert and make the message retry forever.
+otherwise overflow on insert and make the message retry forever. The **cumulative** per-report
+total is guarded the same way with overflow-safe addition: individually valid counts that sum past
+`PHP_INT_MAX` are rejected before storage (otherwise `array_sum()` would spill into a float and the
+cast back would yield `PHP_INT_MIN`, failing the unsigned insert on every retry). The parser carries
+the validated total forward as `message_count`, and the `Ingestor` stores that value rather than
+recomputing it.
 
 ## Idempotent storage (`Ingestor`)
 

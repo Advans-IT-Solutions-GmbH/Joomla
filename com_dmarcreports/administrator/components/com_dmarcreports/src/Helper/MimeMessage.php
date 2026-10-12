@@ -42,11 +42,34 @@ final class MimeMessage
             return $part === null ? [] : [$part];
         }
 
-        if (!preg_match('/boundary="?([^";\s]+)"?/i', $contentType, $m)) {
+        $boundary = self::boundary($contentType);
+
+        if ($boundary === null) {
             return [];
         }
 
-        return self::walk($body, $m[1]);
+        return self::walk($body, $boundary);
+    }
+
+    /**
+     * Read the boundary parameter from a Content-Type header. RFC 2045 allows a
+     * boundary to be either a bare token or a quoted string, and a quoted value
+     * may legally contain spaces (for example boundary="report part"). The two
+     * forms are matched separately so a quoted boundary is not truncated at its
+     * first space, which would otherwise split none of the parts and silently
+     * drop the whole report.
+     */
+    private static function boundary(string $contentType): ?string
+    {
+        if (preg_match('/boundary="([^"]+)"/i', $contentType, $m)) {
+            return $m[1];
+        }
+
+        if (preg_match('/boundary=([^";\s]+)/i', $contentType, $m)) {
+            return $m[1];
+        }
+
+        return null;
     }
 
     /**
@@ -68,10 +91,12 @@ final class MimeMessage
             [$headers, $partBody] = self::split($segment);
 
             $contentType = $headers['content-type'] ?? '';
+            $childBoundary = stripos($contentType, 'multipart/') !== false
+                ? self::boundary($contentType)
+                : null;
 
-            if (stripos($contentType, 'multipart/') !== false
-                && preg_match('/boundary="?([^";\s]+)"?/i', $contentType, $m)) {
-                $attachments = array_merge($attachments, self::walk($partBody, $m[1]));
+            if ($childBoundary !== null) {
+                $attachments = array_merge($attachments, self::walk($partBody, $childBoundary));
                 continue;
             }
 

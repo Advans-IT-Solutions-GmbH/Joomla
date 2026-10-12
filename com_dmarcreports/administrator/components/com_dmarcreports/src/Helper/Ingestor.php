@@ -296,7 +296,7 @@ final class Ingestor
             'policy_pct'     => (int) $report['policy']['pct'],
             'policy_adkim'   => $this->clip((string) $report['policy']['adkim'], 1),
             'policy_aspf'    => $this->clip((string) $report['policy']['aspf'], 1),
-            'message_count'  => (int) array_sum(array_column($report['records'], 'count')),
+            'message_count'  => (int) ($report['message_count'] ?? array_sum(array_column($report['records'], 'count'))),
             'created'        => Factory::getDate()->toSql(),
         ];
 

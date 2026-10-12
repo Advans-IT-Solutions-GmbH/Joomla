@@ -105,6 +105,29 @@ XML;
         $this->assertSame(0, $second['spf_aligned']);
     }
 
+    public function testMessageCountIsValidatedSumOfRecordCounts(): void
+    {
+        $report = DmarcParser::parse($this->sample());
+
+        // Sample records carry counts 7 and 3; the parser carries the validated
+        // total forward so the Ingestor never recomputes it with a float-prone
+        // array_sum().
+        $this->assertSame(10, $report['message_count']);
+    }
+
+    public function testRejectsCumulativeCountOverflow(): void
+    {
+        // Two individually valid counts whose sum exceeds PHP_INT_MAX would make
+        // the unsigned message_count insert fail forever, so the whole report is
+        // rejected up front.
+        $max = (string) PHP_INT_MAX;
+        $xml = str_replace('<count>7</count>', '<count>' . $max . '</count>', $this->sample());
+        $xml = str_replace('<count>3</count>', '<count>' . $max . '</count>', $xml);
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
     public function testFingerprintIsStableAndDeduplicates(): void
     {
         $a = DmarcParser::parse($this->sample());

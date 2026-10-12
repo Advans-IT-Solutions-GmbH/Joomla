@@ -351,30 +351,34 @@ final class ImapClient
         $tag = $this->nextTag();
         $this->write($tag . ' UID FETCH ' . $id . ' (BODY.PEEK[])');
 
-        $raw  = '';
-        $line = $this->readLine();
+        $raw = '';
 
-        // The server announces the literal size as {NNN}.
-        if (preg_match('/\{(\d+)\}\s*$/', $line, $m)) {
-            $size = (int) $m[1];
-
-            // Drain oversized literals off the socket without buffering them, so
-            // one huge message cannot exhaust memory, then skip this message.
-            if ($size > self::MAX_LITERAL_BYTES) {
-                $this->discardBytes($size);
-                $raw = '';
-            } else {
-                $raw = $this->readBytes($size);
-            }
-        }
-
-        // Drain until the tagged completion line.
+        // The FETCH response may be preceded by unsolicited untagged responses
+        // (for example "* 5 EXISTS"), so read line by line until the literal
+        // that carries the body arrives or the tagged completion is reached,
+        // rather than inspecting only the first line.
         while (true) {
             $line = $this->readLine();
 
             if (str_starts_with($line, $tag . ' ')) {
                 $this->assertOk($line, 'Unable to fetch a message.');
                 break;
+            }
+
+            // The server announces the literal size as {NNN}.
+            if (preg_match('/\{(\d+)\}\s*$/', $line, $m)) {
+                $size = (int) $m[1];
+
+                // Drain oversized literals off the socket without buffering
+                // them, so one huge message cannot exhaust memory, then skip
+                // this message.
+                if ($size > self::MAX_LITERAL_BYTES) {
+                    $this->discardBytes($size);
+                } else {
+                    $raw = $this->readBytes($size);
+                }
+                // Keep reading: the rest of the response and the tagged
+                // completion line still follow the literal on the socket.
             }
         }
 

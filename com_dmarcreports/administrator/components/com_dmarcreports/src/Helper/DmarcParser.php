@@ -81,6 +81,7 @@ final class DmarcParser
                 'aspf'   => self::alignmentMode($policy->aspf ?? null),
             ],
             'records'    => [],
+            'message_count' => 0,
         ];
 
         if ($report['report_id'] === '' || $report['policy']['domain'] === '') {
@@ -100,6 +101,8 @@ final class DmarcParser
         if ($report['date_end'] < $report['date_begin']) {
             throw new \InvalidArgumentException('The report has an inverted date range.');
         }
+
+        $total = 0;
 
         foreach ($feedback->record as $record) {
             $row        = $record->row;
@@ -135,6 +138,18 @@ final class DmarcParser
                 throw new \InvalidArgumentException('A report record has a non-positive message count.');
             }
 
+            // Guard the running total with overflow-safe addition. Individually
+            // valid counts can still sum past PHP_INT_MAX, where array_sum()
+            // would spill into a float and casting it back yields PHP_INT_MIN,
+            // so the unsigned message_count insert would fail deterministically
+            // and the message would be retried forever. Reject the whole report
+            // up front and carry the validated total forward for storage.
+            if ($count > PHP_INT_MAX - $total) {
+                throw new \InvalidArgumentException('The report total message count exceeds the storable range.');
+            }
+
+            $total += $count;
+
             $report['records'][] = [
                 'source_ip'     => $sourceIp,
                 'count'         => $count,
@@ -152,6 +167,8 @@ final class DmarcParser
         if ($report['records'] === []) {
             throw new \InvalidArgumentException('The report contains no records.');
         }
+
+        $report['message_count'] = $total;
 
         return $report;
     }

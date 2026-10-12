@@ -65,4 +65,37 @@ class MimeMessageTest extends TestCase
 
         $this->assertSame([], MimeMessage::attachments($raw));
     }
+
+    public function testExtractsAttachmentWithQuotedBoundaryContainingSpaces(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // A quoted boundary may legally contain spaces; the parser must not
+        // truncate it at the first space, which would drop the whole report.
+        $xml     = '<?xml version="1.0"?><feedback><report_metadata/></feedback>';
+        $encoded = chunk_split(base64_encode(gzencode($xml)));
+
+        $raw = "From: dmarc@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"report part\"\r\n"
+            . "\r\n"
+            . "--report part\r\n"
+            . "Content-Type: text/plain\r\n"
+            . "\r\n"
+            . "This is a DMARC aggregate report.\r\n"
+            . "--report part\r\n"
+            . "Content-Type: application/gzip; name=\"example.org!1700000000.xml.gz\"\r\n"
+            . "Content-Transfer-Encoding: base64\r\n"
+            . "Content-Disposition: attachment; filename=\"example.org!1700000000.xml.gz\"\r\n"
+            . "\r\n"
+            . $encoded . "\r\n"
+            . "--report part--\r\n";
+
+        $attachments = MimeMessage::attachments($raw);
+
+        $this->assertCount(1, $attachments);
+        $this->assertStringEndsWith('.xml.gz', $attachments[0]['filename']);
+    }
 }
