@@ -375,6 +375,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $domains[] = $consents;
         }
 
+        // Guest records of an earlier template override that name the request or account address.
+        $legacy = $this->createLegacyGuestConsentsDomain($emails);
+        if ($legacy !== null) {
+            $domains[] = $legacy;
+        }
+
         if ($user && $this->params->get('include_joomla_data', 1)) {
             $domains[] = $this->createJoomlaUserDomain($user);
             $domains[] = $this->createJoomlaProfileDomain($user);
@@ -470,6 +476,35 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 'state'    => (int) $record->state,
                 'created'  => (string) $record->created,
                 'consent'  => preg_replace("/\n{2,}/", "\n", $text),
+            ], $record->id));
+        }
+
+        return $domain;
+    }
+
+    /**
+     * Guest consent records (user_id 0) of an earlier template override that name one of $emails
+     * as a complete address (null if none). They are exported unchanged.
+     *
+     * @param   string[]  $emails
+     */
+    protected function createLegacyGuestConsentsDomain(array $emails): ?Domain
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $domain = null;
+
+        foreach ((new ConsentRepository($this->getDatabase()))->findLegacyGuestConsents($emails) as $record) {
+            $domain ??= $this->createDomain('legacy_consents', 'Privacy consents of an earlier shop template (guest records)');
+            $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
+
+            $domain->addItem($this->createItemFromArray([
+                'state'   => (int) $record->state,
+                'created' => (string) $record->created,
+                'consent' => preg_replace("/\n{2,}/", "\n", html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8')),
             ], $record->id));
         }
 

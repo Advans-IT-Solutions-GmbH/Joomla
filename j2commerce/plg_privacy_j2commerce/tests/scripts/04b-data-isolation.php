@@ -777,6 +777,13 @@ class DataIsolationTest
                     json_encode($consentItems));
             }
 
+            $legacyItems = $this->guestTestDomainItems($domains, 'legacy_consents');
+            sort($legacyItems);
+            $legacyWanted = [(string) $legacy['guest'], (string) $legacy['wrapped']];
+            sort($legacyWanted);
+            $this->test('Guest export: legacy consent records naming the guest address are exported, records of other addresses are not',
+                $legacyItems === $legacyWanted, json_encode($legacyItems));
+
             $this->test('Guest export: no Joomla account data domains without an account',
                 $this->guestTestDomainItems($domains, 'joomla_user') === [] && !in_array('joomla_user', array_map(fn ($d) => $d->name, $domains), true));
 
@@ -1182,6 +1189,167 @@ class DataIsolationTest
         }
     }
 
+    /** Last HTTP exchange of the confirmation page tests (for failure messages). */
+    private string $lastHttp = '';
+
+    /**
+     * Request against the test site. $query goes into the URL, $post into the body (POST).
+     */
+    private function guestHttp(string $jar, string $method, array $query, array $post = []): string
+    {
+        $url = 'http://localhost/index.php?' . http_build_query($query);
+        $ch  = curl_init($url);
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_COOKIEJAR      => $jar,
+            CURLOPT_COOKIEFILE     => $jar,
+            CURLOPT_FOLLOWLOCATION => $method === 'GET',
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 60,
+            CURLOPT_USERAGENT      => 'GuestConfirmHttpTest/1.0',
+        ]);
+
+        if ($method === 'POST') {
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post));
+        }
+
+        $body   = (string) curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $final  = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+        unset($ch); // writes the cookie jar
+
+        $this->lastHttp = sprintf('HTTP %d %s %s | %s', $status, $method, $final, mb_substr(trim(preg_replace('/\s+/', ' ', strip_tags($body))), 0, 200));
+
+        return $body;
+    }
+
+    /** Joomla form token of the confirmation form in $body ('' if none). */
+    private function guestFormToken(string $body): string
+    {
+        return preg_match('/<form[^>]*>.*?name="([a-f0-9]{32})"\s+value="1"/s', $body, $m) ? $m[1] : '';
+    }
+
+    /**
+     * The confirmation page through the real com_ajax endpoint as a guest: GET form, POST without
+     * form token, wrong code, valid code, attempt limit, option off, and the event result of the
+     * JSON address task.
+     */
+    private function testConfirmationPageHttp(): void
+    {
+        echo "\n--- Confirmation page over HTTP (com_ajax, guest session) ---\n";
+
+        if (!$this->test('PHP curl extension available for HTTP tests', function_exists('curl_init'))) {
+            return;
+        }
+
+        $class = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class;
+        parse_str((string) parse_url($class::CONFIRM_ROUTE, PHP_URL_QUERY), $route);
+
+        $email   = 'http.confirm.' . random_int(1000, 9999) . '@example.com';
+        $token   = md5('http-confirm-' . random_int(1, PHP_INT_MAX));
+        $request = (object) [
+            'email'                    => $email,
+            'requested_at'             => gmdate('Y-m-d H:i:s'),
+            'status'                   => 0,
+            'request_type'             => 'export',
+            'confirm_token'            => \Joomla\CMS\User\UserHelper::hashPassword($token),
+            'confirm_token_created_at' => gmdate('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__privacy_requests', $request, 'id');
+        $requestId = (int) $request->id;
+        $status    = fn (): int => (int) $this->db->setQuery('SELECT status FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . $requestId)->loadResult();
+        $jars      = [];
+        $params    = null;
+        $pluginId  = 0;
+
+        try {
+            // GET as a guest: the form, the code prefilled from the link, a form token.
+            $jars[] = $jar = tempnam(sys_get_temp_dir(), 'guest-confirm-');
+            $page   = $this->guestHttp($jar, 'GET', $route + ['confirm_token' => $token]);
+            $form   = $this->guestFormToken($page);
+            $this->test('GET as guest: confirmation form with e-mail field, prefilled code and form token',
+                str_contains($page, 'j2commerce-privacy-confirm') && str_contains($page, 'name="email"')
+                && str_contains($page, 'value="' . $token . '"') && $form !== '', $this->lastHttp);
+            $this->test('GET as guest: no redirect to the login page', !str_contains($page, 'com_users') || str_contains($page, 'j2commerce-privacy-confirm'), $this->lastHttp);
+
+            // POST without form token: refused, nothing changes.
+            $answer = $this->guestHttp($jar, 'POST', $route, ['email' => $email, 'confirm_token' => $token]);
+            $this->test('POST without form token: refused, request still pending', str_contains($answer, 'alert-danger') && $status() === 0, $this->lastHttp);
+
+            // POST with form token and a wrong code: generic failure, nothing changes.
+            $answer = $this->guestHttp($jar, 'POST', $route, ['email' => $email, 'confirm_token' => md5('wrong'), $form => '1']);
+            $this->test('POST with a wrong code: generic failure, request still pending',
+                str_contains($answer, 'alert-danger') && str_contains($answer, 'name="email"') && $status() === 0, $this->lastHttp);
+
+            // POST with form token and the valid code (address in other letter case): confirmed.
+            $answer = $this->guestHttp($jar, 'POST', $route, ['email' => strtoupper($email), 'confirm_token' => $token, $form => '1']);
+            $this->test('POST with the valid code: confirmed (status 1), success message', str_contains($answer, 'alert-success') && $status() === 1, $this->lastHttp);
+
+            // Attempt limit in a new session.
+            $jars[] = $jar2 = tempnam(sys_get_temp_dir(), 'guest-confirm-');
+            $form2  = $this->guestFormToken($this->guestHttp($jar2, 'GET', $route));
+
+            for ($i = 0; $i < $class::CONFIRM_MAX_FAILURES; $i++) {
+                $this->guestHttp($jar2, 'POST', $route, ['email' => $email, 'confirm_token' => md5('wrong' . $i), $form2 => '1']);
+            }
+
+            $answer = $this->guestHttp($jar2, 'POST', $route, ['email' => $email, 'confirm_token' => md5('wrong-last'), $form2 => '1']);
+            $this->test('Attempt limit: after the maximum of failed attempts the page refuses', str_contains($answer, 'alert-danger') && !str_contains($answer, 'name="email"'), $this->lastHttp);
+
+            // JSON address task as a guest: the plugin answer reaches the response through the event.
+            $json = json_decode($this->guestHttp($jar, 'GET', ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy', 'format' => 'json', 'task' => 'deleteAddress', 'address_id' => 1]), true);
+            $this->test('JSON address task: the plugin answer is in data (refused without form token and login)',
+                is_array($json) && isset($json['data'][0]['success']) && $json['data'][0]['success'] === false, $this->lastHttp);
+
+            // Option "Guest Request Confirmation" off: the page is not available.
+            $pluginId = (int) $this->db->setQuery(
+                'SELECT extension_id FROM ' . $this->db->quoteName('#__extensions') . " WHERE type = 'plugin' AND folder = 'privacy' AND element = 'j2commerce'"
+            )->loadResult();
+            $params = (string) $this->db->setQuery('SELECT params FROM ' . $this->db->quoteName('#__extensions') . ' WHERE extension_id = ' . $pluginId)->loadResult();
+            $off    = json_decode($params ?: '{}', true) ?: [];
+            $off['guest_confirmation'] = 0;
+            $this->db->setQuery(
+                'UPDATE ' . $this->db->quoteName('#__extensions') . ' SET params = ' . $this->db->quote(json_encode($off)) . ' WHERE extension_id = ' . $pluginId
+            )->execute();
+            $this->clearSiteCache();
+
+            $answer = $this->guestHttp($jar, 'GET', $route + ['confirm_token' => $token]);
+            $this->test('Option off: the page answers that it is not available, no form', str_contains($answer, 'alert-warning') && !str_contains($answer, 'name="email"'), $this->lastHttp);
+        } catch (\Throwable $e) {
+            $this->test('Confirmation page HTTP tests ran without error', false, get_class($e) . ': ' . $e->getMessage());
+        } finally {
+            if ($pluginId > 0 && $params !== null) {
+                $this->db->setQuery(
+                    'UPDATE ' . $this->db->quoteName('#__extensions') . ' SET params = ' . $this->db->quote($params) . ' WHERE extension_id = ' . $pluginId
+                )->execute();
+                $this->clearSiteCache();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . $requestId)->execute();
+            // Super user notification and action log entry of the confirmation.
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__messages') . ' WHERE ' . $this->db->quoteName('message') . ' LIKE ' . $this->db->quote('%' . $email . '%'))->execute();
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__action_logs') . ' WHERE ' . $this->db->quoteName('message') . ' LIKE ' . $this->db->quote('%' . $email . '%'))->execute();
+
+            foreach ($jars as $file) {
+                @unlink($file);
+            }
+        }
+    }
+
+    /** Remove Joomla's file cache so the site reads changed plugin params. */
+    private function clearSiteCache(): void
+    {
+        foreach (['/cache', '/administrator/cache'] as $dir) {
+            foreach (glob(JPATH_BASE . $dir . '/*', GLOB_ONLYDIR) ?: [] as $group) {
+                foreach (glob($group . '/*') ?: [] as $file) {
+                    @unlink($file);
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
 
     public function run(): bool
@@ -1195,6 +1363,7 @@ class DataIsolationTest
         $this->testGuestRequests();
         $this->testRequestConfirmation();
         $this->testAdminRequestMailLink();
+        $this->testConfirmationPageHttp();
 
         echo "\n=== Data Isolation Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

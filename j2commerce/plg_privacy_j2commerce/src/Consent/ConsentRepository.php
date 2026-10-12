@@ -125,6 +125,74 @@ final class ConsentRepository
         return array_map(static fn (string $token): string => mb_strtolower(rtrim($token, '.'), 'UTF-8'), $matches[0]);
     }
 
+    /**
+     * Whether one of the complete address tokens of $body is a key of $wanted (lower case).
+     *
+     * @param   array<string, mixed>  $wanted
+     */
+    private static function bodyHasAddress(string $body, array $wanted): bool
+    {
+        foreach (self::addressTokens($body) as $token) {
+            if (isset($wanted[$token])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Guest records (user_id 0) of an earlier template override (LEGACY_SUBJECT) that name one
+     * of $emails as a complete address, for a privacy export; nothing is changed. Joomla's consent
+     * plugin exports only records of an account (user_id), never guest records.
+     *
+     * @param   string[]  $emails
+     *
+     * @return  object[]  Rows with id, state, created, subject and body, ordered by ID
+     */
+    public function findLegacyGuestConsents(array $emails): array
+    {
+        $emails = array_values(array_unique(array_filter(array_map(static fn ($email): string => mb_strtolower(trim((string) $email), 'UTF-8'), $emails), 'strlen')));
+
+        if ($emails === []) {
+            return [];
+        }
+
+        $wanted = array_flip($emails);
+        $likes  = array_map(
+            fn (string $email): string => 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
+                . $this->db->quote('%' . $this->db->escape(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), true) . '%', false),
+            $emails
+        );
+        $rows   = [];
+        $lastId = 0;
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
+                ->where($this->db->quoteName('user_id') . ' = 0')
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+
+            $this->db->setQuery($query);
+            $batch = $this->db->loadObjectList() ?: [];
+
+            foreach ($batch as $row) {
+                $lastId = max($lastId, (int) $row->id);
+
+                if (self::bodyHasAddress((string) $row->body, $wanted)) {
+                    $rows[] = $row;
+                }
+            }
+        } while (\count($batch) === self::BATCH_SIZE);
+
+        return $rows;
+    }
+
     public static function isValidOrderId(string $orderId): bool
     {
         return $orderId !== '' && \strlen($orderId) <= 100 && preg_match('/^[A-Za-z0-9_.\-]+$/', $orderId) === 1;
@@ -591,12 +659,7 @@ final class ConsentRepository
                 $own = $userId === null || ($userId > 0 && (int) $row->user_id === $userId);
 
                 if (!$own && (int) $row->user_id === 0) {
-                    foreach (self::addressTokens((string) $row->body) as $token) {
-                        if (isset($wanted[$token])) {
-                            $own = true;
-                            break;
-                        }
-                    }
+                    $own = self::bodyHasAddress((string) $row->body, $wanted);
                 }
 
                 if ($own) {
