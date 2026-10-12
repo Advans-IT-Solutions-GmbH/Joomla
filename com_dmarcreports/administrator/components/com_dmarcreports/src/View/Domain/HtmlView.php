@@ -34,6 +34,10 @@ class HtmlView extends BaseHtmlView
 
         $this->addToolbar();
 
+        // This view only ever renders the edit form; pin the layout so the
+        // default URL (view=domain, no layout) resolves to tmpl/domain/edit.php.
+        $this->setLayout('edit');
+
         return parent::display($tpl);
     }
 
