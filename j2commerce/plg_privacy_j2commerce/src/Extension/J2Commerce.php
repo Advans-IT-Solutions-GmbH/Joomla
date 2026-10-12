@@ -89,6 +89,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     public const CONFIRM_ATTEMPT_WINDOW = 900;
 
+    /** Hash verifications per confirmation attempt (one per request type: export, remove). */
+    private const CONFIRM_HASH_CHECKS = 2;
+
     /** Validity of a confirmation token, as in Joomla's com_privacy ConfirmModel. */
     private const CONFIRM_TOKEN_LIFETIME = 'P1D';
 
@@ -2169,23 +2172,28 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->where($db->quoteName('confirm_token_created_at') . ' IS NOT NULL')
                     ->where('LOWER(TRIM(' . $db->quoteName('email') . ')) = :email')
                     ->bind(':email', $emails[0])
-                    ->order($db->quoteName('id') . ' ASC')
+                    ->order($db->quoteName('id') . ' DESC')
+                    ->setLimit(self::CONFIRM_HASH_CHECKS)
             );
             $rows = $db->loadObjectList() ?: [];
         }
 
+        // Always the same number of hash verifications (com_privacy allows one open request per
+        // type, so at most export and removal): the answer time does not tell whether or how many
+        // requests exist for the address, nor which of them matched.
         $match = null;
 
-        foreach ($rows as $row) {
-            if (UserHelper::verifyPassword($token, (string) $row->confirm_token)) {
-                $match = $row;
-                break;
-            }
-        }
+        for ($i = 0; $i < self::CONFIRM_HASH_CHECKS; $i++) {
+            $row = $rows[$i] ?? null;
 
-        if ($rows === []) {
-            // Same work as a wrong token: the answer time does not tell whether a request exists.
-            password_verify($token !== '' ? $token : 'invalid', self::DUMMY_TOKEN_HASH);
+            if ($row === null) {
+                password_verify($token !== '' ? $token : 'invalid', self::DUMMY_TOKEN_HASH);
+                continue;
+            }
+
+            if (UserHelper::verifyPassword($token, (string) $row->confirm_token) && $match === null) {
+                $match = $row;
+            }
         }
 
         if ($match === null) {
