@@ -66,6 +66,11 @@ runs:
           ver=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' "$RUNNER_TEMP/j2c6-manifest.xml" | head -1)
           ver=$(printf '%s' "$ver" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
           [ -n "$ver" ] || continue
+          # The J6 lanes test J2Commerce 6. A newer major on main is not "the latest 6".
+          case "$ver" in
+            6.*) ;;
+            *) echo "Skipping $sha: manifest $ver is not J2Commerce 6"; continue ;;
+          esac
           sqlfiles=$(git -C "$work" ls-tree -r --name-only "$sha" "$sqldir" 2>/dev/null | grep -E '\.sql$' || true)
           if [ "$(php "$align" "$sqlfiles" "$ver")" != "ALIGNED" ]; then
             echo "Skipping $sha: highest SQL base exceeds manifest $ver (not aligned)"
@@ -81,21 +86,22 @@ runs:
           break
         done
         if ! printf '%s' "$resolved" | grep -qE '^[0-9a-f]{40}$'; then
-          echo "ERROR: no commit in the last 50 of j2commerce/j2commerce main is aligned and >= $MIN_VER." >&2
+          echo "ERROR: no commit in the last 50 of j2commerce/j2commerce main is 6.x, aligned and >= $MIN_VER." >&2
           exit 1
         fi
         echo "j2c6_ref=$resolved" >> "$GITHUB_OUTPUT"
 
-        RELEASE=$(curl --fail --silent --show-error --proto '=https' --proto-redir '=https' -L \
+        # The newest published 4.x release, not `releases/latest`: that is the newest release of any
+        # major, and a 5.x release would hide a newer 4.x one. Drafts and pre-releases never count.
+        RELEASES=$(curl --fail --silent --show-error --proto '=https' --proto-redir '=https' -L \
           --retry 3 --retry-all-errors \
           -H "Authorization: Bearer $GH_TOKEN" \
           -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/j2commerce/j2cart/releases/latest)
-        TAG=$(printf '%s' "$RELEASE" | jq -r '.tag_name // empty')
-        case "$TAG" in
-          v4.*|4.*) ;;
-          *) echo "ERROR: latest j2commerce/j2cart release is '$TAG', not 4.x. The J5 lanes test J2Store 4." >&2; exit 1 ;;
-        esac
+          "https://api.github.com/repos/j2commerce/j2cart/releases?per_page=100")
+        RELEASE=$(printf '%s' "$RELEASES" | jq -c '[.[] | select((.draft | not) and (.prerelease | not) and (.tag_name | test("^v?4\\.[0-9]+\\.[0-9]+$")))]
+          | sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber)) | last // empty')
+        [ -n "$RELEASE" ] || { echo "ERROR: j2commerce/j2cart has no published 4.x release. The J5 lanes test J2Store 4." >&2; exit 1; }
+        TAG=$(printf '%s' "$RELEASE" | jq -r '.tag_name')
         ASSET=$(printf '%s' "$RELEASE" | jq -c '[.assets[] | select(.name | test("^com_j2store.*\\.zip$"))] | first // empty')
         [ -n "$ASSET" ] || { echo "ERROR: release $TAG has no com_j2store*.zip asset." >&2; exit 1; }
         URL=$(printf '%s' "$ASSET" | jq -r '.browser_download_url // empty')
