@@ -145,6 +145,60 @@ final class Metrics
     }
 
     /**
+     * A lean metric bundle for the Action Center, built from a per-domain
+     * summary row that the dashboard has already fetched in a single grouped
+     * query (domainSummaries). Only the fields the Action Center additionally
+     * needs are queried here: the aligned-source lists and the rolling window
+     * figures, which depend on each domain's own newest report and so cannot be
+     * folded into the one grouped summary query without non-portable window
+     * functions. The drill-down-only data (top sources, timeline) and the
+     * lifetime totals, latest policy and domain row are deliberately not
+     * recomputed, which removes the bulk of the former per-domain fan-out.
+     *
+     * @param   array<string, mixed>  $summary  One row from domainSummaries().
+     *
+     * @return  array<string, mixed>
+     */
+    public function actionMetrics(array $summary): array
+    {
+        $domainId = (int) ($summary['id'] ?? 0);
+
+        $metrics = [
+            'domain_id'          => $domainId,
+            'domain'             => (string) ($summary['domain'] ?? ''),
+            'expected_policy'    => (string) ($summary['expected_policy'] ?? 'reject'),
+            'current_policy'     => (string) ($summary['current_policy'] ?? ''),
+            'current_policy_pct' => (int) ($summary['current_policy_pct'] ?? 100),
+            'total'              => (int) ($summary['total'] ?? 0),
+            'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
+            'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
+            'unaligned_sources'  => $this->unalignedSources($domainId),
+            'new_sources'        => $this->newSources($domainId),
+            'pass_rate_prev'     => null,
+        ];
+
+        $metrics['pass_rate'] = self::rate($metrics['dmarc_pass'], $metrics['total']);
+
+        $anchor = $this->latestReportEnd($domainId);
+        $window = 7 * 86400;
+
+        $current = $anchor > 0
+            ? $this->windowTotals($domainId, $anchor - $window, $anchor)
+            : ['total' => 0, 'pass' => 0, 'reject_under_p' => 0];
+
+        $metrics['window_total']          = $current['total'];
+        $metrics['window_reject_under_p'] = $current['reject_under_p'];
+        $metrics['pass_rate_window']      = $current['total'] > 0
+            ? self::rate($current['pass'], $current['total'])
+            : null;
+        $metrics['pass_rate_prev'] = $anchor > 0
+            ? $this->windowPassRate($domainId, $anchor - (2 * $window), $anchor - $window)
+            : null;
+
+        return $metrics;
+    }
+
+    /**
      * @return array<string, int>
      */
     private function totals(int $domainId): array

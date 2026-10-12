@@ -53,8 +53,12 @@ Streaming design (do not revert to loading all messages into an array):
   carries the body or the tagged completion arrives, because the FETCH may be preceded by
   unsolicited untagged responses (for example `* 5 EXISTS`). Do not revert to inspecting only the
   first response line — that would miss the literal and silently skip a valid report.
-- Only successfully-ingested messages are advanced/deleted — `Ingestor::ingestMessage()` returns a
-  success bool that the callback checks.
+- Only messages the ingestor could safely process are advanced/deleted.
+  `Ingestor::ingestMessage()` returns a **`RESULT_*` string**, not a boolean: `RESULT_NEW`
+  (stored a report) and `RESULT_SKIP` (duplicate or unparseable) are both advanced, while
+  `RESULT_RETRY` (a transient failure, e.g. the DB transaction could not commit) leaves the
+  message untouched so the next run retries it. The callback advances on anything except
+  `RESULT_RETRY`.
 
 IMAP is **not** integration-tested in CI (no IMAP server); correctness rests on review. Keep the
 streaming contract intact.

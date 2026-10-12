@@ -109,9 +109,7 @@ class DashboardModel extends BaseDatabaseModel
         $items   = [];
 
         foreach ($this->getSummaries() as $summary) {
-            $domainId = (int) $summary['id'];
-
-            foreach (ActionCenter::generate($metrics->domainMetrics($domainId), $config) as $item) {
+            foreach (ActionCenter::generate($metrics->actionMetrics($summary), $config) as $item) {
                 $item['domain'] = $summary['domain'];
                 $items[]        = $item;
             }

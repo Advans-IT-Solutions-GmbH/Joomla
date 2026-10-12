@@ -104,14 +104,34 @@ final class MimeMessage
 
         $attachments = [];
 
-        // Cap the materialised segment count by the remaining budget: explode()
-        // allocates its whole array up front, so an unbounded split on a short,
-        // heavily repeated boundary is the core exhaustion vector.
-        $segments = explode('--' . $boundary, $body, $budget + 1);
+        // RFC 2046 boundary delimiters only ever appear on their own line: the
+        // literal "--boundary" must be followed by optional whitespace and then
+        // the end of the line (optionally with a closing "--"). Splitting on a
+        // bare "--boundary" substring would also cut on boundary-like text that
+        // legitimately appears *inside* a raw or quoted-printable XML attachment
+        // (e.g. a line such as "--boundary is part of the report body"),
+        // truncating the report; the IMAP path would then mark the message
+        // processed as unparseable. The pattern is newline-anchored (a leading
+        // newline is prepended so a delimiter at the very start of the body is
+        // matched too) and matches both the opening and the closing delimiter;
+        // the epilogue left after the closing one carries no part headers and is
+        // skipped below. The split is still capped by the remaining budget:
+        // preg_split() allocates its whole array up front, so an unbounded split
+        // on a short, heavily repeated boundary is the core exhaustion vector.
+        $pattern  = '/\n--' . preg_quote($boundary, '/') . '(?:--)?[\t ]*(?=\n|$)/';
+        $segments = preg_split($pattern, "\n" . $body, $budget + 1);
+
+        if ($segments === false) {
+            return [];
+        }
+
+        // Drop the preamble before the opening delimiter; it is never a part.
+        array_shift($segments);
 
         foreach ($segments as $segment) {
-            $segment = ltrim($segment, "\n");
-            $segment = preg_replace('/^-+\n?/', '', $segment) ?? $segment;
+            // Strip the remainder of the delimiter line (its trailing CR/LF and
+            // any transport padding) before the part headers begin.
+            $segment = ltrim($segment, "\r\n");
 
             if (trim($segment) === '') {
                 continue;

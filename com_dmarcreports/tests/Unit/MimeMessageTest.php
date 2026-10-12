@@ -56,6 +56,47 @@ class MimeMessageTest extends TestCase
         $this->assertStringContainsString('<feedback>', $documents[0]);
     }
 
+    public function testBoundaryMatchIsAnchoredToWholeLines(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // A part body may legitimately contain a line that merely starts with
+        // the boundary token (for example "--BOUNDARY..."). Such a line is NOT
+        // a real MIME delimiter, so it must not split the message and truncate
+        // the following attachment. The reader anchors on full delimiter lines.
+        $xml     = '<?xml version="1.0"?><feedback><report_metadata/></feedback>';
+        $encoded = chunk_split(base64_encode(gzencode($xml)));
+
+        $raw = "From: dmarc@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n"
+            . "\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: text/plain\r\n"
+            . "\r\n"
+            . "This is a DMARC aggregate report.\r\n"
+            . "--BOUNDARY is written inside the text and is not a delimiter.\r\n"
+            . "More explanatory text after the look-alike line.\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: application/gzip; name=\"example.org!1700000000.xml.gz\"\r\n"
+            . "Content-Transfer-Encoding: base64\r\n"
+            . "Content-Disposition: attachment; filename=\"example.org!1700000000.xml.gz\"\r\n"
+            . "\r\n"
+            . $encoded . "\r\n"
+            . "--BOUND--\r\n";
+
+        $attachments = MimeMessage::attachments($raw);
+
+        $this->assertCount(1, $attachments);
+        $this->assertStringEndsWith('.xml.gz', $attachments[0]['filename']);
+
+        $documents = ReportArchive::extract($attachments[0]['content'], $attachments[0]['filename']);
+        $this->assertCount(1, $documents);
+        $this->assertStringContainsString('<feedback>', $documents[0]);
+    }
+
     public function testIgnoresMessageWithoutAttachments(): void
     {
         $raw = "From: someone@example.net\r\n"

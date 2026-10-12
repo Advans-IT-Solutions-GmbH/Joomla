@@ -47,6 +47,19 @@ final class ImapClient
     private int $timeout;
 
     /**
+     * Optional transport factory, used only to make the protocol handling
+     * testable against a scripted in-memory socket. In production it is null and
+     * the client opens a real encrypted stream socket; a test may inject a
+     * factory that returns a connected {@see stream_socket_pair()} endpoint so
+     * the full command/response parser runs without a live server. The factory
+     * receives the transport prefix, host and port and returns a stream
+     * resource or false.
+     *
+     * @var (callable(string, string, int): (resource|false))|null
+     */
+    private $socketFactory;
+
+    /**
      * Whether the server advertised the UIDPLUS capability (RFC 4315). When it
      * does, imported messages can be removed with a targeted "UID EXPUNGE",
      * which only expunges the messages we name; without it a plain EXPUNGE would
@@ -54,9 +67,15 @@ final class ImapClient
      */
     private bool $uidplus = false;
 
-    public function __construct(int $timeout = 20)
+    /**
+     * @param   int  $timeout  Socket timeout in seconds (minimum 5).
+     * @param   (callable(string, string, int): (resource|false))|null  $socketFactory
+     *          Test-only transport factory; null uses a real stream socket.
+     */
+    public function __construct(int $timeout = 20, ?callable $socketFactory = null)
     {
-        $this->timeout = max(5, $timeout);
+        $this->timeout       = max(5, $timeout);
+        $this->socketFactory = $socketFactory;
     }
 
     /**
@@ -243,7 +262,32 @@ final class ImapClient
     private function connect(string $host, int $port, string $security): void
     {
         $transport = $security === 'ssl' ? 'ssl://' : 'tcp://';
-        $context   = stream_context_create(
+
+        if ($this->socketFactory !== null) {
+            // Test seam: a scripted in-memory socket replaces the real transport
+            // so the protocol parser can be exercised deterministically. TLS
+            // upgrade is skipped because the injected endpoint is already the
+            // plaintext pipe the fake server speaks over.
+            $socket = ($this->socketFactory)($transport, $host, $port);
+
+            if ($socket === false || !\is_resource($socket)) {
+                throw new \RuntimeException('Unable to connect to the mail server.');
+            }
+
+            $this->socket = $socket;
+
+            @stream_set_timeout($this->socket, $this->timeout);
+
+            $greeting = $this->readLine();
+
+            if (stripos($greeting, '* OK') !== 0) {
+                throw new \RuntimeException('The mail server did not send a valid IMAP greeting.');
+            }
+
+            return;
+        }
+
+        $context = stream_context_create(
             ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]
         );
 
