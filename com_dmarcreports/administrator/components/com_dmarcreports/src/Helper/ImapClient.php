@@ -22,6 +22,14 @@ defined('_JEXEC') or die;
  */
 final class ImapClient
 {
+    /**
+     * Largest message body accepted from the server. The IMAP server announces
+     * each literal's size up front; a hostile or misbehaving server could claim
+     * a huge size and make the client allocate it, so anything above this
+     * ceiling is drained and skipped rather than buffered.
+     */
+    private const MAX_LITERAL_BYTES = 33554432; // 32 MiB
+
     /** @var resource|null */
     private $socket;
 
@@ -180,7 +188,16 @@ final class ImapClient
 
         // The server announces the literal size as {NNN}.
         if (preg_match('/\{(\d+)\}\s*$/', $line, $m)) {
-            $raw = $this->readBytes((int) $m[1]);
+            $size = (int) $m[1];
+
+            // Drain oversized literals off the socket without buffering them, so
+            // one huge message cannot exhaust memory, then skip this message.
+            if ($size > self::MAX_LITERAL_BYTES) {
+                $this->discardBytes($size);
+                $raw = '';
+            } else {
+                $raw = $this->readBytes($size);
+            }
         }
 
         // Drain until the tagged completion line.
@@ -283,6 +300,25 @@ final class ImapClient
         }
 
         return $buffer;
+    }
+
+    /**
+     * Read and discard a literal of the given size in bounded chunks, keeping
+     * the connection in sync without ever holding the whole literal in memory.
+     */
+    private function discardBytes(int $length): void
+    {
+        $remaining = $length;
+
+        while ($remaining > 0 && \is_resource($this->socket) && !feof($this->socket)) {
+            $chunk = fread($this->socket, min(8192, $remaining));
+
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+
+            $remaining -= \strlen($chunk);
+        }
     }
 
     private function quote(string $value): string

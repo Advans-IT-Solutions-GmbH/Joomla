@@ -28,6 +28,12 @@ $badge = [
     EnvironmentCheck::ERROR   => 'danger',
 ];
 
+$statusLabel = [
+    EnvironmentCheck::OK      => 'COM_DMARCREPORTS_CHECK_STATUS_OK',
+    EnvironmentCheck::WARNING => 'COM_DMARCREPORTS_CHECK_STATUS_WARNING',
+    EnvironmentCheck::ERROR   => 'COM_DMARCREPORTS_CHECK_STATUS_ERROR',
+];
+
 $detailFor = static function (string $id, array $params): string {
     $value = $params[0] ?? '';
 
@@ -70,7 +76,7 @@ $detailFor = static function (string $id, array $params): string {
                             <td><?php echo htmlspecialchars($label); ?></td>
                             <td class="text-center">
                                 <span class="badge bg-<?php echo $badge[$status] ?? 'secondary'; ?>">
-                                    <?php echo htmlspecialchars(strtoupper($status)); ?>
+                                    <?php echo htmlspecialchars(Text::_($statusLabel[$status] ?? 'COM_DMARCREPORTS_CHECK_STATUS_WARNING')); ?>
                                 </span>
                             </td>
                             <td><?php echo htmlspecialchars($detail); ?></td>

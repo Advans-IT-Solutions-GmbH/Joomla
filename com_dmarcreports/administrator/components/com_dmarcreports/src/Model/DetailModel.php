@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
+use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\DnsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
 use Joomla\CMS\Component\ComponentHelper;
@@ -96,10 +97,14 @@ class DetailModel extends BaseDatabaseModel
     {
         $params = ComponentHelper::getParams('com_dmarcreports');
         $config = [
-            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 98),
+            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 95),
             'reject_pass_threshold'     => (float) $params->get('reject_pass_threshold', 99),
         ];
 
-        return ActionCenter::generate($metrics, $config, $dns['findings'] ?? []);
+        $items = ActionCenter::generate($metrics, $config, $dns['findings'] ?? []);
+
+        // Respect the status the operator has already set for these items on the
+        // dashboard (done, ignored or snoozed) so the drill-down stays in sync.
+        return (new ActionStatus($this->getDatabase()))->partition($items)['active'];
     }
 }

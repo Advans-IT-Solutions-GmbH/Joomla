@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     default-mysql-client \
+    libzip-dev \
+    && docker-php-ext-install zip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN echo "[client]\nskip-ssl" > /etc/mysql/conf.d/no-ssl.cnf

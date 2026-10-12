@@ -68,6 +68,12 @@ class ParserTest
 
         $this->test('Zip container is extracted', function () {
             if (!class_exists('ZipArchive')) {
+                // Under strict skip a missing zip extension is a failure, since the
+                // production Docker images install it and the code path must be tested.
+                if (getenv('TEST_STRICT_SKIP') === '1') {
+                    echo "  (ZipArchive missing while TEST_STRICT_SKIP=1)\n";
+                    return false;
+                }
                 return true;
             }
             $tmp = tempnam(sys_get_temp_dir(), 'dmarc');

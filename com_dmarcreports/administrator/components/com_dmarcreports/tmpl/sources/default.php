@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -14,7 +15,8 @@ use Joomla\CMS\Session\Session;
 
 defined('_JEXEC') or die;
 
-$token = Session::getFormToken();
+$token     = Session::getFormToken();
+$canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest', 'com_dmarcreports');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>" method="post" name="adminForm" id="adminForm">
     <div class="row">
@@ -53,10 +55,12 @@ $token = Session::getFormToken();
                                         : Text::_('COM_DMARCREPORTS_SOURCE_NEVER_RUN'); ?>
                                 </td>
                                 <td class="text-center">
+                                    <?php if ($canIngest) : ?>
                                     <a class="btn btn-sm btn-primary"
                                        href="<?php echo Route::_('index.php?option=com_dmarcreports&task=ingest.import&source_id=' . (int) $item->id . '&' . $token . '=1'); ?>">
                                         <?php echo Text::_('COM_DMARCREPORTS_SOURCE_RUN_IMPORT'); ?>
                                     </a>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -72,3 +76,26 @@ $token = Session::getFormToken();
     <input type="hidden" name="boxchecked" value="0">
     <?php echo HTMLHelper::_('form.token'); ?>
 </form>
+
+<?php if ($canIngest) : ?>
+<div class="card mt-4">
+    <div class="card-header">
+        <h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_UPLOAD_HEADING'); ?></h3>
+    </div>
+    <div class="card-body">
+        <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_UPLOAD_INTRO'); ?></p>
+        <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
+            <div class="col-auto">
+                <input type="file" name="report_file" class="form-control" accept=".xml,.gz,.zip" required>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-success">
+                    <?php echo Text::_('COM_DMARCREPORTS_UPLOAD_SUBMIT'); ?>
+                </button>
+            </div>
+            <input type="hidden" name="task" value="ingest.upload">
+            <?php echo HTMLHelper::_('form.token'); ?>
+        </form>
+    </div>
+</div>
+<?php endif; ?>

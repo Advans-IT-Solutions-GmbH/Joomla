@@ -72,7 +72,7 @@ final class EnvironmentCheck
     {
         $missing = [];
 
-        foreach (['dom', 'libxml', 'mbstring', 'openssl'] as $extension) {
+        foreach (['simplexml', 'libxml', 'mbstring', 'openssl'] as $extension) {
             if (!\extension_loaded($extension)) {
                 $missing[] = $extension;
             }

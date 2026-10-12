@@ -30,6 +30,17 @@ final class ReportArchive
     private const MAX_BYTES = 33554432; // 32 MiB
 
     /**
+     * Largest total uncompressed payload accepted from a single archive, so a
+     * zip bomb packing many entries cannot exhaust memory one entry at a time.
+     */
+    private const MAX_TOTAL_BYTES = 134217728; // 128 MiB
+
+    /**
+     * Largest number of XML documents extracted from a single archive.
+     */
+    private const MAX_DOCUMENTS = 256;
+
+    /**
      * Extract every XML document contained in a raw attachment payload.
      *
      * @param   string  $payload   The raw bytes of the attachment.
@@ -60,6 +71,11 @@ final class ReportArchive
         $trimmed = ltrim($payload);
 
         if (str_starts_with($trimmed, '<?xml') || stripos($trimmed, '<feedback') !== false) {
+            // A raw document is its own uncompressed size, so bound it directly.
+            if (\strlen($payload) > self::MAX_BYTES) {
+                return [];
+            }
+
             return [self::clean($payload)];
         }
 
@@ -97,6 +113,7 @@ final class ReportArchive
         }
 
         $documents = [];
+        $total     = 0;
 
         try {
             file_put_contents($tmp, $payload);
@@ -108,10 +125,22 @@ final class ReportArchive
             }
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
+                if (\count($documents) >= self::MAX_DOCUMENTS) {
+                    break;
+                }
+
                 $entry = $zip->statIndex($i);
 
                 if ($entry === false || $entry['size'] > self::MAX_BYTES) {
                     continue;
+                }
+
+                // Bound the cumulative uncompressed size across all entries, so a
+                // zip packing many small-but-numerous files cannot exhaust memory.
+                $total += (int) $entry['size'];
+
+                if ($total > self::MAX_TOTAL_BYTES) {
+                    break;
                 }
 
                 if (!str_ends_with(strtolower($entry['name']), '.xml')) {

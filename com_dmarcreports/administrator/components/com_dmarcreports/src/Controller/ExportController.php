@@ -70,9 +70,7 @@ class ExportController extends BaseController
                 $db->quoteName('rep.id') . ' = ' . $db->quoteName('rec.report_id'))
             ->where($db->quoteName('rec.domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->order($db->quoteName('rep.date_begin') . ' DESC');
-
-        $rows = $db->setQuery($query)->loadAssocList() ?: [];
+            ->order($db->quoteName('rep.date_begin') . ' DESC, ' . $db->quoteName('rec.id') . ' ASC');
 
         $app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);
         $app->setHeader('Content-Disposition', 'attachment; filename="dmarc-records-' . $domainId . '.csv"', true);
@@ -84,16 +82,44 @@ class ExportController extends BaseController
             'dkim_result', 'spf_result', 'dkim_aligned', 'spf_aligned', 'header_from',
         ]);
 
-        foreach ($rows as $row) {
-            $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
-            $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
-            fputcsv($out, $row);
-        }
+        // Stream the records in bounded chunks so a domain with a very large
+        // history does not have to be buffered in memory all at once.
+        $chunk  = 2000;
+        $offset = 0;
+
+        do {
+            $query->setLimit($chunk, $offset);
+            $rows = $db->setQuery($query)->loadAssocList() ?: [];
+
+            foreach ($rows as $row) {
+                $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
+                $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
+                fputcsv($out, array_map([self::class, 'sanitiseCell'], $row));
+            }
+
+            $offset += $chunk;
+        } while (\count($rows) === $chunk);
 
         fclose($out);
 
         $app->close();
 
         return true;
+    }
+
+    /**
+     * Neutralise CSV formula injection: a spreadsheet treats a cell beginning
+     * with =, +, -, @ or a control character as a formula, so such values are
+     * prefixed with a single quote to force literal text.
+     */
+    private static function sanitiseCell($value): string
+    {
+        $value = (string) $value;
+
+        if ($value !== '' && \in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'" . $value;
+        }
+
+        return $value;
     }
 }

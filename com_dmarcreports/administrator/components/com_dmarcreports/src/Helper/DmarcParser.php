@@ -87,6 +87,13 @@ final class DmarcParser
             throw new \InvalidArgumentException('The report is missing a report id or published policy domain.');
         }
 
+        // The fingerprint is built from org name, report id and begin date; a
+        // report missing either of the remaining two parts cannot be deduplicated
+        // reliably and is rejected so distinct reports never collide on one hash.
+        if ($report['org_name'] === '' || $report['date_begin'] <= 0) {
+            throw new \InvalidArgumentException('The report is missing an organisation name or a valid begin date.');
+        }
+
         foreach ($feedback->record as $record) {
             $row        = $record->row;
             $evaluated  = $row->policy_evaluated;

@@ -16,6 +16,12 @@ use Joomla\CMS\Session\Session;
 defined('_JEXEC') or die;
 
 $token = Session::getFormToken();
+
+$statusLabels = [
+    'done'     => 'COM_DMARCREPORTS_ACTION_STATUS_DONE',
+    'ignored'  => 'COM_DMARCREPORTS_ACTION_STATUS_IGNORED',
+    'snoozed'  => 'COM_DMARCREPORTS_ACTION_STATUS_SNOOZED',
+];
 ?>
 <div class="com-dmarcreports-dashboard">
     <div class="card mb-4">
@@ -79,6 +85,39 @@ $token = Session::getFormToken();
             <?php endif; ?>
         </div>
     </div>
+
+    <?php if (!empty($this->suppressed)) : ?>
+    <div class="card mb-4">
+        <div class="card-header">
+            <h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_ACTION_HANDLED_HEADING'); ?></h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_ACTION_HANDLED_INTRO'); ?></p>
+            <ul class="list-group">
+                <?php foreach ($this->suppressed as $item) : ?>
+                    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap">
+                        <div class="ms-2 me-auto">
+                            <span class="badge bg-light text-dark me-2">
+                                <?php echo Text::_($statusLabels[(string) $item['status']] ?? 'COM_DMARCREPORTS_ACTION_STATUS_DONE'); ?>
+                            </span>
+                            <?php echo htmlspecialchars((string) $item['domain']); ?> &middot;
+                            <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
+                        </div>
+                        <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2">
+                            <input type="hidden" name="task" value="actions.reopen">
+                            <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
+                            <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
+                            <input type="hidden" name="<?php echo $token; ?>" value="1">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">
+                                <?php echo Text::_('COM_DMARCREPORTS_ACTION_REOPEN'); ?>
+                            </button>
+                        </form>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div class="row mb-4">
         <div class="col-md-3 col-6">

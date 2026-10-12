@@ -32,13 +32,17 @@ class HtmlView extends BaseHtmlView
     /** @var array<int, array<string, mixed>> */
     protected $actions = [];
 
+    /** @var array<int, array<string, mixed>> */
+    protected $suppressed = [];
+
     public function display($tpl = null)
     {
         $model = $this->getModel();
 
-        $this->summaries = $model->getSummaries();
-        $this->totals    = $model->getTotals();
-        $this->actions   = $model->getActions();
+        $this->summaries  = $model->getSummaries();
+        $this->totals     = $model->getTotals();
+        $this->actions    = $model->getActions();
+        $this->suppressed = $model->getSuppressedActions();
 
         $this->addToolbar();
 

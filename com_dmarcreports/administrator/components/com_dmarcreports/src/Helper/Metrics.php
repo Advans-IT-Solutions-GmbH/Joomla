@@ -114,8 +114,9 @@ final class Metrics
             }
         }
 
-        $metrics['pass_rate']      = self::rate((int) $metrics['dmarc_pass'], (int) $metrics['total']);
-        $metrics['pass_rate_prev'] = $this->previousPassRate($domainId);
+        $metrics['pass_rate']        = self::rate((int) $metrics['dmarc_pass'], (int) $metrics['total']);
+        $metrics['pass_rate_window'] = $this->reportPassRate($this->reportIdAtOffset($domainId, 0));
+        $metrics['pass_rate_prev']   = $this->reportPassRate($this->reportIdAtOffset($domainId, 1));
 
         return $metrics;
     }
@@ -259,10 +260,11 @@ final class Metrics
             ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
             ->group($this->db->quoteName('rep.date_begin'))
-            ->order($this->db->quoteName('rep.date_begin') . ' ASC');
+            ->order($this->db->quoteName('rep.date_begin') . ' DESC');
 
+        // Take the newest 90 days, then restore chronological order for display.
         $query->setLimit(90);
-        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
+        $rows = array_reverse($this->db->setQuery($query)->loadAssocList() ?: []);
 
         return array_map(
             static fn (array $r): array => [
@@ -274,11 +276,14 @@ final class Metrics
         );
     }
 
-    private function previousPassRate(int $domainId): ?float
+    /**
+     * Pass rate of a single report's records, or null when the report is empty
+     * or does not exist. Used to compare the latest reporting window against the
+     * one immediately before it rather than against all accumulated history.
+     */
+    private function reportPassRate(int $reportId): ?float
     {
-        $latest = $this->latestReportId($domainId);
-
-        if ($latest === 0) {
+        if ($reportId <= 0) {
             return null;
         }
 
@@ -292,15 +297,31 @@ final class Metrics
                 ]
             )
             ->from($this->db->quoteName('#__dmarc_records'))
-            ->where($this->db->quoteName('domain_id') . ' = :domainId')
-            ->where($this->db->quoteName('report_id') . ' <> :latest')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->bind(':latest', $latest, ParameterType::INTEGER);
+            ->where($this->db->quoteName('report_id') . ' = :reportId')
+            ->bind(':reportId', $reportId, ParameterType::INTEGER);
 
         $row   = $this->db->setQuery($query)->loadAssoc() ?: [];
         $total = (int) ($row['total'] ?? 0);
 
         return $total === 0 ? null : self::rate((int) ($row['pass'] ?? 0), $total);
+    }
+
+    /**
+     * The report id at the given age for a domain: offset 0 is the most recent
+     * report, offset 1 the one before it, and so on.
+     */
+    private function reportIdAtOffset(int $domainId, int $offset): int
+    {
+        $query = $this->query()
+            ->select($this->db->quoteName('id'))
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' = :domainId')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->order($this->db->quoteName('date_end') . ' DESC, ' . $this->db->quoteName('id') . ' DESC');
+
+        $query->setLimit(1, max(0, $offset));
+
+        return (int) $this->db->setQuery($query)->loadResult();
     }
 
     private function latestReportId(int $domainId): int

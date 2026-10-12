@@ -11,6 +11,7 @@ namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
+use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -46,5 +47,44 @@ class DomainModel extends AdminModel
         }
 
         return $data;
+    }
+
+    /**
+     * Delete the given domains together with every child row that belongs to
+     * them. Without this cascade the reports, records, actions and sources of a
+     * removed domain would be orphaned (there are no database-level foreign
+     * keys), so they are cleaned up transactionally before the domains go.
+     *
+     * @param   array  &$pks  The primary keys of the domains to delete.
+     *
+     * @return  boolean
+     */
+    public function delete(&$pks)
+    {
+        $ids = array_values(array_filter(array_map('intval', (array) $pks), static fn ($id) => $id > 0));
+
+        if ($ids === []) {
+            return parent::delete($pks);
+        }
+
+        $db = $this->getDatabase();
+        $db->transactionStart();
+
+        try {
+            foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
+                $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                    ->delete($db->quoteName($table))
+                    ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
+
+        return parent::delete($pks);
     }
 }

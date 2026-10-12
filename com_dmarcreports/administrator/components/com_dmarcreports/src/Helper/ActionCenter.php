@@ -37,7 +37,7 @@ final class ActionCenter
      */
     public static function generate(array $metrics, array $config, array $dnsFindings = []): array
     {
-        $quarantineThreshold = (float) ($config['quarantine_pass_threshold'] ?? 98);
+        $quarantineThreshold = (float) ($config['quarantine_pass_threshold'] ?? 95);
         $rejectThreshold     = (float) ($config['reject_pass_threshold'] ?? 99);
 
         $domainId = (int) ($metrics['domain_id'] ?? 0);
@@ -45,6 +45,13 @@ final class ActionCenter
         $total    = (int) ($metrics['total'] ?? 0);
         $policy   = strtolower((string) ($metrics['current_policy'] ?? ''));
         $passRate = $total > 0 ? round(($metrics['dmarc_pass'] ?? 0) / $total * 100, 1) : 0.0;
+
+        // The configured enforcement target caps the rollout: a domain deliberately
+        // kept at p=none or p=quarantine must not be nudged past its chosen target.
+        $rank       = ['none' => 0, 'quarantine' => 1, 'reject' => 2];
+        $target     = strtolower((string) ($metrics['expected_policy'] ?? 'reject'));
+        $targetRank = $rank[$target] ?? 2;
+        $policyRank = $rank[$policy === '' ? 'none' : $policy] ?? 0;
 
         $items = [];
 
@@ -54,8 +61,13 @@ final class ActionCenter
             return self::finalise($items, $domainId, $dnsFindings);
         }
 
-        // Policy rollout guidance along none -> quarantine -> reject.
-        if ($policy === '' || $policy === 'none') {
+        // Policy rollout guidance along none -> quarantine -> reject, stopping at
+        // the configured target so the Action Center never over-recommends.
+        if ($policy === 'reject') {
+            $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
+        } elseif ($policyRank >= $targetRank) {
+            $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
+        } elseif ($policy === '' || $policy === 'none') {
             if ($passRate >= $quarantineThreshold) {
                 $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $passRate]);
             } else {
@@ -67,8 +79,6 @@ final class ActionCenter
             } else {
                 $items[] = self::item('stay_at_quarantine', 'policy', 2, $domainId, [$domain, $passRate, $rejectThreshold]);
             }
-        } elseif ($policy === 'reject') {
-            $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
         }
 
         // Messages that would be rejected under p=reject: a tightening risk.
@@ -106,11 +116,14 @@ final class ActionCenter
             $items[] = self::item('new_source', 'source', 2, $domainId, [$ip, $count], $ip);
         }
 
-        // A drop in the pass rate against the previous window.
+        // A drop in the pass rate of the latest reporting window against the one
+        // immediately before it (window-to-window, not against all history).
         $previous = $metrics['pass_rate_prev'] ?? null;
+        $window   = $metrics['pass_rate_window'] ?? null;
+        $current  = $window !== null ? (float) $window : $passRate;
 
-        if ($previous !== null && $passRate < ((float) $previous - 5)) {
-            $items[] = self::item('pass_rate_drop', 'alignment', 3, $domainId, [(float) $previous, $passRate]);
+        if ($previous !== null && $current < ((float) $previous - 5)) {
+            $items[] = self::item('pass_rate_drop', 'alignment', 3, $domainId, [(float) $previous, $current]);
         }
 
         return self::finalise($items, $domainId, $dnsFindings);

@@ -124,6 +124,45 @@ class ActionCenterTest extends TestCase
         $this->assertSame(0, $item['severity']);
     }
 
+    public function testQuarantineTargetStopsRolloutAtQuarantine(): void
+    {
+        $items = ActionCenter::generate(
+            [
+                'domain_id'       => 4,
+                'domain'          => 'example.org',
+                'total'           => 1000,
+                'current_policy'  => 'quarantine',
+                'expected_policy' => 'quarantine',
+                'dmarc_pass'      => 999,
+            ],
+            self::CONFIG
+        );
+
+        $item = $this->find($items, 'at_target');
+        $this->assertNotNull($item);
+        $this->assertSame(0, $item['severity']);
+        $this->assertSame('quarantine', $item['params'][1]);
+        $this->assertNotContains('move_to_reject', $this->codes($items));
+    }
+
+    public function testNoneTargetStopsRolloutAtNone(): void
+    {
+        $items = ActionCenter::generate(
+            [
+                'domain_id'       => 5,
+                'domain'          => 'example.org',
+                'total'           => 1000,
+                'current_policy'  => 'none',
+                'expected_policy' => 'none',
+                'dmarc_pass'      => 999,
+            ],
+            self::CONFIG
+        );
+
+        $this->assertContains('at_target', $this->codes($items));
+        $this->assertNotContains('move_to_quarantine', $this->codes($items));
+    }
+
     public function testUnalignedSourceWithHighVolumeIsActNow(): void
     {
         $items = ActionCenter::generate(
@@ -174,6 +213,27 @@ class ActionCenterTest extends TestCase
                 'current_policy' => 'quarantine',
                 'dmarc_pass'     => 850,
                 'pass_rate_prev' => 97.0,
+            ],
+            self::CONFIG
+        );
+
+        $this->assertContains('pass_rate_drop', $this->codes($items));
+    }
+
+    public function testPassRateDropUsesWindowRateNotOverallRate(): void
+    {
+        // Overall pass rate is high (990/1000), but the latest window dropped to
+        // 80%, well below the previous window's 97%. The drop must be flagged
+        // from the window rate, not hidden by the accumulated overall rate.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'        => 1,
+                'domain'           => 'example.org',
+                'total'            => 1000,
+                'current_policy'   => 'quarantine',
+                'dmarc_pass'       => 990,
+                'pass_rate_prev'   => 97.0,
+                'pass_rate_window' => 80.0,
             ],
             self::CONFIG
         );

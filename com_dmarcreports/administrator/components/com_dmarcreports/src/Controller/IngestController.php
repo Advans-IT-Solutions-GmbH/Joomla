@@ -67,7 +67,7 @@ class IngestController extends BaseController
                 ]
             );
 
-            $summary = (new Ingestor())->ingestMessages($messages, $sourceId);
+            $summary = (new Ingestor())->ingestMessages($messages, $sourceId, (int) $source->domain_id);
             $this->recordRun($sourceId, 'ok', $this->summaryText($summary));
 
             $this->setRedirect($redirect, $this->summaryText($summary), 'message');

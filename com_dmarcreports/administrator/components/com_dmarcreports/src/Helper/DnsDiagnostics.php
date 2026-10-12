@@ -15,7 +15,9 @@ defined('_JEXEC') or die;
  * Read-only DNS diagnostics for a monitored domain. It inspects the published
  * DMARC and SPF records and reports machine readable finding codes (mapped to
  * localised text at display time) plus a suggested DMARC record when none is
- * found. It never changes DNS and transmits nothing.
+ * found. It never changes DNS, but it does resolve TXT records for the domain
+ * and its _dmarc subdomain, so the configured resolver (and any upstream DNS
+ * server) learns which domains are being inspected.
  *
  * @since  1.0.0
  */
@@ -54,7 +56,9 @@ final class DnsDiagnostics
                 $findings[] = ['code' => 'dns_dmarc_no_rua', 'severity' => 1, 'params' => [$domain]];
             }
 
-            if ($dmarc['pct'] < 100 && $dmarc['pct'] > 0) {
+            // Any pct below 100 only partially enforces the policy, including
+            // pct=0, which disables enforcement entirely while still publishing.
+            if ($dmarc['pct'] < 100) {
                 $findings[] = ['code' => 'dns_dmarc_pct', 'severity' => 1, 'params' => [$dmarc['pct']]];
             }
         }

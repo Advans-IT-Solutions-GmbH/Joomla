@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Helper;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -36,17 +37,21 @@ final class Ingestor
      * Ingest the decoded attachments of raw IMAP messages.
      *
      * @param   array<int, array{uid?: int, raw: string}>  $messages
+     * @param   int|null  $sourceId        The source these messages came from, or null.
+     * @param   int       $forcedDomainId  When > 0, assign every report to this domain
+     *                                     instead of resolving it from the report XML
+     *                                     (an operator binding a mailbox to one domain).
      *
      * @return  array<string, int>  imported, duplicates, failed, records
      */
-    public function ingestMessages(array $messages, ?int $sourceId = null): array
+    public function ingestMessages(array $messages, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
         $summary = $this->newSummary();
 
         foreach ($messages as $message) {
             foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
                 $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
-                $this->ingestDocuments($documents, $sourceId, $summary);
+                $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
             }
         }
 
@@ -58,7 +63,7 @@ final class Ingestor
      *
      * @return  array<string, int>
      */
-    public function ingestFile(string $path, string $filename, ?int $sourceId = null): array
+    public function ingestFile(string $path, string $filename, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
         $summary = $this->newSummary();
         $payload = is_readable($path) ? (string) file_get_contents($path) : '';
@@ -70,7 +75,7 @@ final class Ingestor
         }
 
         $documents = ReportArchive::extract($payload, $filename);
-        $this->ingestDocuments($documents, $sourceId, $summary);
+        $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary);
 
         return $summary;
     }
@@ -79,8 +84,16 @@ final class Ingestor
      * @param   string[]            $documents
      * @param   array<string, int>  $summary
      */
-    private function ingestDocuments(array $documents, ?int $sourceId, array &$summary): void
+    private function ingestDocuments(array $documents, ?int $sourceId, int $forcedDomainId, array &$summary): void
     {
+        // An attachment or upload that yields no usable document is a failed
+        // ingestion, not a silent success.
+        if ($documents === []) {
+            $summary['failed']++;
+
+            return;
+        }
+
         foreach ($documents as $xml) {
             try {
                 $report = DmarcParser::parse($xml);
@@ -89,7 +102,7 @@ final class Ingestor
                 continue;
             }
 
-            $this->store($report, $sourceId, $summary);
+            $this->store($report, $sourceId, $forcedDomainId, $summary);
         }
     }
 
@@ -97,7 +110,7 @@ final class Ingestor
      * @param   array<string, mixed>  $report
      * @param   array<string, int>    $summary
      */
-    private function store(array $report, ?int $sourceId, array &$summary): void
+    private function store(array $report, ?int $sourceId, int $forcedDomainId, array &$summary): void
     {
         $hash = DmarcParser::fingerprint($report);
 
@@ -107,7 +120,7 @@ final class Ingestor
             return;
         }
 
-        $domainId = $this->resolveDomain($report['policy']['domain']);
+        $domainId = $forcedDomainId > 0 ? $forcedDomainId : $this->resolveDomain($report['policy']['domain']);
 
         $this->db->transactionStart();
 
@@ -165,7 +178,7 @@ final class Ingestor
         $insert = (object) [
             'domain'          => $domain,
             'title'           => $domain,
-            'expected_policy' => 'reject',
+            'expected_policy' => $this->defaultPolicyTarget(),
             'published'       => 1,
             'created'         => $now,
         ];
@@ -175,13 +188,26 @@ final class Ingestor
     }
 
     /**
+     * The enforcement target assigned to domains discovered automatically from
+     * incoming reports, taken from the component configuration (default reject).
+     */
+    private function defaultPolicyTarget(): string
+    {
+        $target = strtolower(
+            (string) ComponentHelper::getParams('com_dmarcreports')->get('default_policy_target', 'reject')
+        );
+
+        return \in_array($target, ['none', 'quarantine', 'reject'], true) ? $target : 'reject';
+    }
+
+    /**
      * @param   array<string, mixed>  $report
      */
     private function insertReport(array $report, string $hash, int $domainId, ?int $sourceId): int
     {
         $row = (object) [
             'domain_id'      => $domainId,
-            'source_id'      => $sourceId ?: null,
+            'source_id'      => $sourceId ?: 0,
             'org_name'       => $report['org_name'],
             'org_email'      => $report['org_email'],
             'report_id'      => $report['report_id'],

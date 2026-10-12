@@ -131,4 +131,20 @@ XML;
         $this->expectException(\InvalidArgumentException::class);
         DmarcParser::parse('   ');
     }
+
+    public function testRejectsReportWithoutOrgName(): void
+    {
+        $xml = str_replace('<org_name>example.net</org_name>', '<org_name></org_name>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsReportWithNonPositiveBeginDate(): void
+    {
+        $xml = str_replace('<begin>1700000000</begin>', '<begin>0</begin>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
 }

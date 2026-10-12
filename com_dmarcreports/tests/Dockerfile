@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     default-mysql-client \
+    libzip-dev \
+    && docker-php-ext-install zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure MySQL client to skip SSL.

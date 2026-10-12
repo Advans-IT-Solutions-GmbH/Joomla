@@ -10,9 +10,9 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
+use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
 use Joomla\CMS\Component\ComponentHelper;
-use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\Database\DatabaseInterface;
 
@@ -30,12 +30,22 @@ defined('_JEXEC') or die;
  */
 class DashboardModel extends BaseDatabaseModel
 {
+    /** @var array<int, array<string, mixed>>|null */
+    private ?array $summaries = null;
+
+    /** @var array{active: array<int, array<string, mixed>>, suppressed: array<int, array<string, mixed>>}|null */
+    private ?array $actions = null;
+
     /**
      * @return array<int, array<string, mixed>>
      */
     public function getSummaries(): array
     {
-        return (new Metrics($this->getDb()))->domainSummaries();
+        if ($this->summaries === null) {
+            $this->summaries = (new Metrics($this->getDb()))->domainSummaries();
+        }
+
+        return $this->summaries;
     }
 
     /**
@@ -67,63 +77,55 @@ class DashboardModel extends BaseDatabaseModel
      */
     public function getActions(): array
     {
-        $config   = $this->config();
-        $metrics  = new Metrics($this->getDb());
-        $statuses = $this->persistedStatuses();
-        $now      = time();
-        $active   = [];
-
-        foreach ($this->getSummaries() as $summary) {
-            $domainId = (int) $summary['id'];
-            $items    = ActionCenter::generate($metrics->domainMetrics($domainId), $config);
-
-            foreach ($items as $item) {
-                $state = $statuses[$item['action_key']] ?? ['status' => 'open', 'snooze_until' => 0];
-
-                if ($state['status'] === 'ignored' || $state['status'] === 'done') {
-                    continue;
-                }
-
-                if ($state['status'] === 'snoozed' && $state['snooze_until'] > $now) {
-                    continue;
-                }
-
-                $item['domain']        = $summary['domain'];
-                $item['status']        = $state['status'];
-                $active[]              = $item;
-            }
-        }
-
-        usort(
-            $active,
-            static fn (array $a, array $b): int => ($b['severity'] <=> $a['severity'])
-                ?: strcmp((string) $a['domain'], (string) $b['domain'])
-        );
-
-        return $active;
+        return $this->buildActions()['active'];
     }
 
     /**
-     * @return array<string, array{status: string, snooze_until: int}>
+     * The action items the operator has already handled (done, ignored or
+     * currently snoozed), so the dashboard can offer to reopen them.
+     *
+     * @return array<int, array<string, mixed>>
      */
-    private function persistedStatuses(): array
+    public function getSuppressedActions(): array
     {
-        $db    = $this->getDb();
-        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
-            ->select([$db->quoteName('action_key'), $db->quoteName('status'), $db->quoteName('snooze_until')])
-            ->from($db->quoteName('#__dmarc_actions'));
+        return $this->buildActions()['suppressed'];
+    }
 
-        $rows = $db->setQuery($query)->loadObjectList() ?: [];
-        $map  = [];
-
-        foreach ($rows as $row) {
-            $map[(string) $row->action_key] = [
-                'status'       => (string) $row->status,
-                'snooze_until' => $row->snooze_until ? strtotime((string) $row->snooze_until) : 0,
-            ];
+    /**
+     * Generate the Action Center for every domain once, partition the items into
+     * active and suppressed by their persisted status, and sort both by severity.
+     *
+     * @return array{active: array<int, array<string, mixed>>, suppressed: array<int, array<string, mixed>>}
+     */
+    private function buildActions(): array
+    {
+        if ($this->actions !== null) {
+            return $this->actions;
         }
 
-        return $map;
+        $config  = $this->config();
+        $metrics = new Metrics($this->getDb());
+        $status  = new ActionStatus($this->getDb());
+        $items   = [];
+
+        foreach ($this->getSummaries() as $summary) {
+            $domainId = (int) $summary['id'];
+
+            foreach (ActionCenter::generate($metrics->domainMetrics($domainId), $config) as $item) {
+                $item['domain'] = $summary['domain'];
+                $items[]        = $item;
+            }
+        }
+
+        $partition = $status->partition($items);
+
+        $sort = static fn (array $a, array $b): int => ($b['severity'] <=> $a['severity'])
+            ?: strcmp((string) $a['domain'], (string) $b['domain']);
+
+        usort($partition['active'], $sort);
+        usort($partition['suppressed'], $sort);
+
+        return $this->actions = $partition;
     }
 
     /**
@@ -134,7 +136,7 @@ class DashboardModel extends BaseDatabaseModel
         $params = ComponentHelper::getParams('com_dmarcreports');
 
         return [
-            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 98),
+            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 95),
             'reject_pass_threshold'     => (float) $params->get('reject_pass_threshold', 99),
         ];
     }

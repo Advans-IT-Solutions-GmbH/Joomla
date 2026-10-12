@@ -73,6 +73,39 @@ class ReportArchiveTest extends TestCase
         $this->assertSame([], ReportArchive::extract('', 'empty'));
     }
 
+    public function testOversizedRawXmlIsRejected(): void
+    {
+        // A raw document larger than the 32 MiB ceiling must be refused outright
+        // rather than buffered, to bound memory on a hostile attachment.
+        $payload = '<?xml version="1.0"?><feedback>' . str_repeat('A', 33554432) . '</feedback>';
+
+        $this->assertSame([], ReportArchive::extract($payload, 'huge.xml'));
+    }
+
+    public function testZipDocumentCountIsCapped(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+
+        // Pack more XML entries than the per-archive document cap (256).
+        for ($i = 0; $i < 300; $i++) {
+            $zip->addFromString('report-' . $i . '.xml', self::XML);
+        }
+
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $documents = ReportArchive::extract($payload, 'many.zip');
+
+        $this->assertLessThanOrEqual(256, \count($documents));
+    }
+
     public function testDetectsGzipByMagicBytesDespiteWrongName(): void
     {
         if (!\function_exists('gzencode')) {
