@@ -7,7 +7,11 @@ Both feed `Ingestor`, which parses and stores idempotently.
 
 `IngestController` accepts an uploaded `.xml`, `.gz` or `.zip`. `ReportArchive` detects the
 container and yields the inner XML (gzip decode, zip entry extraction, or raw XML passthrough),
-then `DmarcParser` runs. Upload is CSRF-protected and works without the IMAP transport.
+then `DmarcParser` runs. Upload is CSRF-protected and works without the IMAP transport. A manual
+upload is deliberately **unbound**: the form offers no source selector, so `upload()` never reads a
+client-supplied `source_id` (storing it as `0`) and the domain is resolved from the published policy
+under the same ACL gate as every other path. Trusting a posted `source_id` would let a crafted
+request attach arbitrary or nonexistent provenance to a report.
 
 `ReportArchive::extract()` distinguishes *malformed* from *undecodable*: a recognised gzip or zip
 container that cannot be decoded because the host lacks the PHP extension (`gzdecode` / `ZipArchive`)
@@ -63,6 +67,13 @@ The `boundary` parameter is read by a dedicated `boundary()` helper that matches
 a quoted boundary is never truncated at its first space — truncation would split none of the parts
 and silently drop the whole report. Both the top-level and nested multipart call sites use it.
 
+Because mailbox content is untrusted, `attachments()` enforces two hard bounds before materialising
+any part: a maximum nesting depth (`MAX_DEPTH`) and a single global part budget (`MAX_PARTS`) shared
+across the whole recursion. The segment `explode()` is capped by the remaining budget, so a crafted
+message that repeats a short boundary millions of times cannot allocate a huge array, and deeply
+nested multiparts stop at the depth ceiling instead of recursing without bound. A legitimate report
+has a handful of parts and shallow nesting, so the ceilings never reject a real report.
+
 A leaf part is treated as a report when it has an attachment filename, a gzip/zip media type, or an
 `application/xml` / `text/xml` media type **combined with** `Content-Disposition: attachment`. The
 disposition requirement on bare XML parts is deliberate: some reporters attach the raw aggregate XML
@@ -116,7 +127,9 @@ recomputing it.
 
 ## Idempotent storage (`Ingestor`)
 
-`report_hash` (reporter org + report id) is a UNIQUE key on `#__dmarc_reports`. Re-ingesting the
+`report_hash` (reporter org + report id + report-window start) is a UNIQUE key on
+`#__dmarc_reports`. Including the window start keeps a reporter that reuses a report id for a later
+window as two distinct reports. Re-ingesting the
 same report is a no-op: the insert is skipped and no duplicate records are written. `ingestMessages()`
 loops `ingestMessage()` over the streamed messages; `newSummary()` builds the per-run result
 (counts of new / duplicate / failed / skipped) shown back to the admin and written to `last_run` /

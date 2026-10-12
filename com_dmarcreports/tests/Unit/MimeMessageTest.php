@@ -151,4 +151,43 @@ class MimeMessageTest extends TestCase
 
         $this->assertSame([], MimeMessage::attachments($raw));
     }
+
+    public function testBoundsPartFloodWithoutExhaustingMemory(): void
+    {
+        // A crafted message that repeats a short boundary a huge number of times
+        // must not make the reader materialise an unbounded segment array. The
+        // parser caps the part budget, so this returns quickly with no report
+        // rather than trying to allocate millions of segments.
+        $raw = "From: attacker@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"B\"\r\n"
+            . "\r\n"
+            . str_repeat("--B\r\n", 500000)
+            . "--B--\r\n";
+
+        $this->assertSame([], MimeMessage::attachments($raw));
+    }
+
+    public function testBoundsDeeplyNestedMultipart(): void
+    {
+        // Nesting multiparts past the depth ceiling must degrade to an empty
+        // result instead of recursing without bound. Each level declares a new
+        // multipart boundary that opens the next level.
+        $body = "deepest\r\n";
+
+        for ($level = 40; $level >= 1; $level--) {
+            $boundary = 'B' . $level;
+            $body = "Content-Type: multipart/mixed; boundary=\"$boundary\"\r\n"
+                . "\r\n"
+                . "--$boundary\r\n"
+                . $body
+                . "--$boundary--\r\n";
+        }
+
+        $raw = "From: attacker@example.net\r\nMIME-Version: 1.0\r\n" . $body;
+
+        // No attachment is present, and the depth guard prevents unbounded
+        // recursion; the call simply returns an empty set.
+        $this->assertSame([], MimeMessage::attachments($raw));
+    }
 }

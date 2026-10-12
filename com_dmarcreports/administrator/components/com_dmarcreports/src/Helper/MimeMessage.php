@@ -22,6 +22,17 @@ defined('_JEXEC') or die;
 final class MimeMessage
 {
     /**
+     * Hard caps applied to untrusted mailbox content before any part is
+     * materialised. A crafted 32 MiB message can repeat a short boundary
+     * millions of times or nest multiparts arbitrarily deep; without bounds the
+     * segment array alone could dwarf the raw-message limit and exhaust memory.
+     * A legitimate aggregate-report mail has a handful of parts and shallow
+     * nesting, so these ceilings never reject a real report.
+     */
+    private const MAX_DEPTH = 20;
+    private const MAX_PARTS = 1000;
+
+    /**
      * Extract every decoded attachment from a raw message.
      *
      * @param   string  $raw  The raw RFC 822 message.
@@ -48,7 +59,11 @@ final class MimeMessage
             return [];
         }
 
-        return self::walk($body, $boundary);
+        // A single global budget is shared across the whole recursion so nested
+        // multiparts cannot multiply the work past the overall part ceiling.
+        $budget = self::MAX_PARTS;
+
+        return self::walk($body, $boundary, 1, $budget);
     }
 
     /**
@@ -73,12 +88,26 @@ final class MimeMessage
     }
 
     /**
+     * @param   int  $depth   Current nesting depth (1 at the top-level body).
+     * @param   int  $budget  Remaining global part budget, decremented in place.
+     *
      * @return array<int, array{filename: string, content: string}>
      */
-    private static function walk(string $body, string $boundary): array
+    private static function walk(string $body, string $boundary, int $depth, int &$budget): array
     {
+        // Stop recursing past the nesting ceiling or once the shared part budget
+        // is spent, so a deeply nested or part-flooded message degrades to an
+        // empty result instead of exhausting memory.
+        if ($depth > self::MAX_DEPTH || $budget <= 0) {
+            return [];
+        }
+
         $attachments = [];
-        $segments    = explode('--' . $boundary, $body);
+
+        // Cap the materialised segment count by the remaining budget: explode()
+        // allocates its whole array up front, so an unbounded split on a short,
+        // heavily repeated boundary is the core exhaustion vector.
+        $segments = explode('--' . $boundary, $body, $budget + 1);
 
         foreach ($segments as $segment) {
             $segment = ltrim($segment, "\n");
@@ -88,6 +117,12 @@ final class MimeMessage
                 continue;
             }
 
+            if ($budget <= 0) {
+                break;
+            }
+
+            $budget--;
+
             [$headers, $partBody] = self::split($segment);
 
             $contentType = $headers['content-type'] ?? '';
@@ -96,7 +131,7 @@ final class MimeMessage
                 : null;
 
             if ($childBoundary !== null) {
-                $attachments = array_merge($attachments, self::walk($partBody, $childBoundary));
+                $attachments = array_merge($attachments, self::walk($partBody, $childBoundary, $depth + 1, $budget));
                 continue;
             }
 

@@ -22,7 +22,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest
 - Manual upload of `.xml`, `.gz` and `.zip` aggregate reports as an alternative input
 - Native RFC 7489 aggregate-report XML parser (no external tools)
-- Idempotent storage: reports are de-duplicated by reporter org and report id
+- Idempotent storage: reports are de-duplicated by reporter org, report id and report-window start date, so a reporter that reuses a report id for a later window still stores both
 - Dashboard with per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 - Per-domain drill-down: top sending IPs, pass/fail breakdown and a timeline
 - **Action Center**: prioritised, data-driven next steps along the `none → quarantine → reject` rollout

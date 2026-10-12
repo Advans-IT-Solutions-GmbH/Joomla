@@ -99,7 +99,6 @@ class IngestController extends BaseController
         $this->authorise();
 
         $app      = Factory::getApplication();
-        $sourceId = (int) $app->getInput()->getInt('source_id', 0);
         $redirect = Route::_('index.php?option=com_dmarcreports&view=dashboard', false);
         $file     = $app->getInput()->files->get('report_file', null, 'raw');
 
@@ -110,10 +109,17 @@ class IngestController extends BaseController
         }
 
         try {
+            // A manual upload is never bound to a configured source: the form
+            // offers no source selector, so no client-supplied source_id is
+            // read or trusted. The report is stored unbound (source_id 0) and
+            // its domain is resolved from the published policy under the same
+            // ACL gate as every other ingest path. Honouring a posted source_id
+            // here would let a crafted request attach arbitrary or nonexistent
+            // provenance to a report.
             $summary = (new Ingestor(null, $this->canAutoCreateDomains()))->ingestFile(
                 (string) $file['tmp_name'],
                 (string) ($file['name'] ?? 'report'),
-                $sourceId ?: null
+                null
             );
 
             $type = $summary['imported'] > 0 ? 'message' : 'warning';
