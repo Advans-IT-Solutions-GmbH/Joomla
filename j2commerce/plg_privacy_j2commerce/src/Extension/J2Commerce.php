@@ -413,14 +413,21 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 return [];
             }
 
+            $pkCol = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
             $db->setQuery(
                 $this->createDbQuery()
-                    ->select($db->quoteName('order_id'))
+                    ->select($db->quoteName([$pkCol, 'order_id']))
                     ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
                     ->where($this->ownerCondition(0, $emails))
             );
+            $pkByNumber = [];
 
-            return $db->loadColumn() ?: [];
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                $pkByNumber[(string) $row->order_id][] = (int) $row->$pkCol;
+            }
+
+            // A number shared with an order outside the request cannot be attributed.
+            return array_keys(array_diff_key($pkByNumber, $this->sharedOrderNumbers($pkByNumber)));
         }) as $orderIds) {
             foreach ($orderIds as $orderId) {
                 $ids[(string) $orderId] = true;
@@ -850,7 +857,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($owner);
 
             $db->setQuery($query);
-            $rows = $db->loadAssocList();
+            $rows   = $db->loadAssocList();
+            $shared = $this->sharedNumbersOfRows($rows);
 
             $orders = [];
             foreach ($rows as $row) {
@@ -862,13 +870,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         'order_total'        => $row['order_total'],
                         'currency_code'      => $row['currency_code'],
                         'created_on'         => $row['created_on'],
-                        'billing_first_name' => $row['billing_first_name'],
-                        'billing_last_name'  => $row['billing_last_name'],
+                        'billing_first_name' => isset($shared[(string) $row['order_id']]) ? '' : $row['billing_first_name'],
+                        'billing_last_name'  => isset($shared[(string) $row['order_id']]) ? '' : $row['billing_last_name'],
                         'user_email'         => $row['user_email'],
                         'items'              => [],
                     ];
                 }
-                if ($row['orderitem_name']) {
+                if ($row['orderitem_name'] && !isset($shared[(string) $row['order_id']])) {
                     $orders[$orderId]['items'][] = [
                         'name'     => $row['orderitem_name'],
                         'sku'      => $row['orderitem_sku'],
@@ -890,7 +898,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->where($owner);
 
             $db->setQuery($query);
-            $rows = $db->loadAssocList();
+            $rows   = $db->loadAssocList();
+            $shared = $this->sharedNumbersOfRows($rows);
 
             $orders = [];
             foreach ($rows as $row) {
@@ -902,13 +911,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         'order_total'        => $row['order_total'],
                         'currency_code'      => $row['currency_code'],
                         'created_on'         => $row['created_on'],
-                        'billing_first_name' => $row['billing_first_name'] ?? '',
-                        'billing_last_name'  => $row['billing_last_name'] ?? '',
+                        'billing_first_name' => isset($shared[(string) $row['order_id']]) ? '' : ($row['billing_first_name'] ?? ''),
+                        'billing_last_name'  => isset($shared[(string) $row['order_id']]) ? '' : ($row['billing_last_name'] ?? ''),
                         'user_email'         => $row['user_email'],
                         'items'              => [],
                     ];
                 }
-                if (!empty($row['orderitem_name'])) {
+                if (!empty($row['orderitem_name']) && !isset($shared[(string) $row['order_id']])) {
                     $orders[$orderId]['items'][] = [
                         'name'     => $row['orderitem_name'],
                         'sku'      => $row['orderitem_sku'],
@@ -924,6 +933,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         return $domain;
+    }
+
+    /**
+     * Order numbers of exported order rows that also belong to an order outside the request:
+     * their order items and billing names are joined only by the order number and are not
+     * exported, they could be another customer's.
+     *
+     * @param   array<int, array<string, mixed>>  $rows  Rows with order_id and the primary key
+     *
+     * @return  array<string, true>
+     */
+    protected function sharedNumbersOfRows(array $rows): array
+    {
+        $pkCol      = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $pkByNumber = [];
+
+        foreach ($rows as $row) {
+            $pkByNumber[(string) $row['order_id']][(int) $row[$pkCol]] = (int) $row[$pkCol];
+        }
+
+        $shared = $this->sharedOrderNumbers(array_map('array_values', $pkByNumber));
+
+        if ($shared !== []) {
+            Log::add('Export: order numbers shared with another order, items and billing names not exported: ' . implode(', ', array_keys($shared)), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        return $shared;
     }
 
     /**
@@ -1645,6 +1681,45 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Order numbers of $pkByNumber that also belong to an order outside it, in the orders table of
+     * the current data set. Order info rows, order items and checkout consent records are linked
+     * only by the order number, so for such a number they cannot be told apart.
+     *
+     * @param   array<string, int[]>  $pkByNumber  Order number => primary keys of the request's orders
+     *
+     * @return  array<string, true>
+     */
+    protected function sharedOrderNumbers(array $pkByNumber): array
+    {
+        if ($pkByNumber === []) {
+            return [];
+        }
+
+        $db          = $this->getDatabase();
+        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $pkCol       = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $ownPks      = array_flip(array_merge(...array_values($pkByNumber)));
+        $shared      = [];
+
+        foreach (array_chunk(array_map('strval', array_keys($pkByNumber)), 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName([$pkCol, 'order_id']))
+                    ->from($db->quoteName($ordersTable))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            );
+
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                if (!isset($ownPks[(int) $row->$pkCol])) {
+                    $shared[(string) $row->order_id] = true;
+                }
+            }
+        }
+
+        return $shared;
+    }
+
+    /**
      * Anonymize orders that are OUTSIDE the retention period.
      * Orders within retention period (default 10 years) are kept intact
      * due to Swiss legal requirements (OR Art. 958f, MWSTG Art. 70).
@@ -1688,24 +1763,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $orderIds = array_map('strval', array_keys($pkByNumber));
         $ownPks   = array_flip(array_merge(...array_values($pkByNumber)));
-
-        // Order numbers that also belong to an order outside this request.
-        $shared = [];
-
-        foreach (array_chunk($orderIds, 500) as $chunk) {
-            $db->setQuery(
-                $this->createDbQuery()
-                    ->select($db->quoteName([$pkCol, 'order_id']))
-                    ->from($db->quoteName($ordersTable))
-                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
-            );
-
-            foreach ($db->loadObjectList() ?: [] as $row) {
-                if (!isset($ownPks[(int) $row->$pkCol])) {
-                    $shared[(string) $row->order_id] = true;
-                }
-            }
-        }
+        $shared   = $this->sharedOrderNumbers($pkByNumber);
 
         if ($shared !== []) {
             Log::add(

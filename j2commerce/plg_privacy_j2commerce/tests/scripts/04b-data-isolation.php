@@ -700,6 +700,30 @@ class DataIsolationTest
             sort($expected);
 
             $this->test('Guest export (no account): both guest orders of the address, matched case-insensitively', $exported === $expected, json_encode($exported));
+            if ($sharedPossible) {
+                // The guest's order shares its number with an order of account 9913: billing names
+                // and items are joined only by that number and are not exported.
+                $sharedPk = (string) $this->db->setQuery(
+                    'SELECT ' . $this->tp . '_order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders')
+                    . ' WHERE order_id = ' . $this->db->quote($orders['shared']) . ' AND user_id = 0'
+                )->loadResult();
+                $sharedFields = [];
+
+                foreach ($domains as $domain) {
+                    foreach ($domain->name === 'orders' ? $domain->getItems() : [] as $item) {
+                        if ((string) $item->id === $sharedPk) {
+                            foreach ($item->getFields() as $field) {
+                                $sharedFields[$field->name] = (string) $field->value;
+                            }
+                        }
+                    }
+                }
+
+                $this->test('Guest export: an order number shared with another account exports no joined billing name',
+                    ($sharedFields['billing_first_name'] ?? null) === '' && ($sharedFields['user_email'] ?? '') === 'guest.buyer@example.com',
+                    json_encode($sharedFields));
+            }
+
             $this->test('Guest export: no order of another guest with the same name or of an account with the same address',
                 !in_array($orders['other_guest'], $exported, true) && !in_array($orders['other_account'], $exported, true));
             $this->test('Guest export: the guest address is exported, the other guest address is not',

@@ -158,7 +158,7 @@ For export and removal requests this plugin matches, in every J2Commerce data se
 | Carts | `user_id` of the account only. Guest carts carry no e-mail address and expire with the session; a request without account never touches carts |
 | AcyMailing, records of an earlier template override | the request and account address (as before) |
 
-The comparison ignores case and surrounding spaces. Orders of **another account** are never matched, even if they carry the same e-mail address, and guest orders of other addresses are never matched, even with the same name. The placeholder `anonymized@deleted.invalid` of anonymized orders is never used as a request address. A request without account and without a valid address changes nothing.
+The comparison ignores case and surrounding spaces. Order items, billing data and checkout consents are linked to an order only by its order number; if that number also belongs to an order outside the request, they are neither exported nor anonymized for it (logged). Orders of **another account** are never matched, even if they carry the same e-mail address, and guest orders of other addresses are never matched, even with the same name. The placeholder `anonymized@deleted.invalid` of anonymized orders is never used as a request address. A request without account and without a valid address changes nothing.
 
 This applies to both cases:
 
