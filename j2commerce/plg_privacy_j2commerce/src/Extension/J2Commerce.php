@@ -388,13 +388,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /**
      * Order numbers of the guest orders (user_id 0) placed with one of $emails, in every
-     * J2Commerce data set.
+     * J2Commerce data set or only in the J2Commerce 6 tables.
      *
      * @param   string[]  $emails
+     * @param   bool      $j2commerce6Only  Only #__j2commerce_orders (checkout consents are recorded
+     *                                      for these orders only, identified by the order number)
      *
      * @return  string[]
      */
-    protected function guestOrderIds(array $emails): array
+    protected function guestOrderIds(array $emails, bool $j2commerce6Only = false): array
     {
         if (self::requestEmails($emails) === []) {
             return [];
@@ -403,7 +405,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $db  = $this->getDatabase();
         $ids = [];
 
-        foreach ($this->forEachDataSet(function () use ($db, $emails): array {
+        foreach ($this->forEachDataSet(function () use ($db, $emails, $j2commerce6Only): array {
+            if ($j2commerce6Only && $this->isJ2Commerce4()) {
+                return [];
+            }
+
             $db->setQuery(
                 $this->createDbQuery()
                     ->select($db->quoteName('order_id'))
@@ -423,13 +429,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /**
      * Checkout consent records of the guest orders placed with one of $emails, in every state
-     * (valid, obsolete, invalidated), with their state (null if there is none).
+     * (valid, obsolete, invalidated), with their state (null if there is none). The consent system
+     * plugin records consents for J2Commerce 6 orders only and marks them with the order number,
+     * so only J2Commerce 6 orders are looked up: an order number of the J2Store tables could
+     * belong to another customer's J2Commerce 6 order.
      *
      * @param   string[]  $emails
      */
     protected function createGuestConsentsDomain(array $emails): ?Domain
     {
-        $orderIds = $this->guestOrderIds($emails);
+        $orderIds = $this->guestOrderIds($emails, true);
 
         if ($orderIds === []) {
             return null;

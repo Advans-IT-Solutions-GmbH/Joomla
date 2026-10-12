@@ -639,6 +639,8 @@ class DataIsolationTest
         $legacy['other']           = $this->insertGuestTestLegacyConsent('other.buyer@example.com');
         // Contains the guest address only as part of a longer address: another customer.
         $legacy['similar']         = $this->insertGuestTestLegacyConsent('myguest.buyer@example.com');
+        // Another address with an apostrophe, stored HTML-escaped: o'guest.buyer@example.com.
+        $legacy['escaped']         = $this->insertGuestTestLegacyConsent('o&#039;guest.buyer@example.com');
 
         foreach (['guest' => 'Guest.Buyer@example.com', 'other' => 'other.buyer@example.com'] as $key => $email) {
             $address = (object) [
@@ -695,13 +697,21 @@ class DataIsolationTest
                 in_array((string) $addresses['guest'], $this->guestTestDomainItems($domains, 'addresses'), true)
                 && !in_array((string) $addresses['other'], $this->guestTestDomainItems($domains, 'addresses'), true));
             $consentItems = $this->guestTestDomainItems($domains, 'checkout_consents');
-            $this->test('Guest export: checkout consents of the guest orders in every state (incl. IP address) are exported, not those of others',
-                in_array((string) $consents['guest_expired'], $consentItems, true) && in_array((string) $consents['guest_recent'], $consentItems, true)
-                && in_array((string) $consents['guest_invalid'], $consentItems, true)
-                && in_array('-1', $this->guestTestDomainValues($domains, 'checkout_consents', 'state'), true)
-                && !in_array((string) $consents['other_guest'], $consentItems, true)
-                && in_array(true, array_map(fn ($v) => str_contains($v, '203.0.113.60'), $this->guestTestDomainValues($domains, 'checkout_consents', 'consent')), true),
-                json_encode($consentItems));
+
+            if ($this->tp !== 'j2commerce') {
+                // Consents are recorded for J2Commerce 6 orders only; a J2Store order number could
+                // be another customer's J2Commerce 6 order, so J2Store orders export no consent.
+                $this->test('Guest export (J2Store): no checkout consents looked up through J2Store order numbers', $consentItems === [], json_encode($consentItems));
+            } else {
+                $this->test('Guest export: checkout consents of the guest orders in every state (incl. IP address) are exported, not those of others',
+                    in_array((string) $consents['guest_expired'], $consentItems, true) && in_array((string) $consents['guest_recent'], $consentItems, true)
+                    && in_array((string) $consents['guest_invalid'], $consentItems, true)
+                    && in_array('-1', $this->guestTestDomainValues($domains, 'checkout_consents', 'state'), true)
+                    && !in_array((string) $consents['other_guest'], $consentItems, true)
+                    && in_array(true, array_map(fn ($v) => str_contains($v, '203.0.113.60'), $this->guestTestDomainValues($domains, 'checkout_consents', 'consent')), true),
+                    json_encode($consentItems));
+            }
+
             $this->test('Guest export: no Joomla account data domains without an account',
                 $this->guestTestDomainItems($domains, 'joomla_user') === [] && !in_array('joomla_user', array_map(fn ($d) => $d->name, $domains), true));
 
@@ -748,6 +758,7 @@ class DataIsolationTest
             $this->test('Guest removal: legacy consent record of the guest address anonymized', $legacySubject($legacy['guest']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
             $this->test('Guest removal: legacy consent record of another guest untouched', $legacySubject($legacy['other']) === 'PLG_PRIVACY_J2COMMERCE');
             $this->test('Guest removal: legacy record of a longer address that contains the guest address untouched', $legacySubject($legacy['similar']) === 'PLG_PRIVACY_J2COMMERCE');
+            $this->test('Guest removal: legacy record of an HTML-escaped address with an apostrophe before the guest address untouched', $legacySubject($legacy['escaped']) === 'PLG_PRIVACY_J2COMMERCE');
 
             $addressCount = fn (int $id): int => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id

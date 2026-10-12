@@ -513,9 +513,11 @@ final class ConsentRepository
         $lastId  = 0;
 
         // The SQL LIKE below only preselects: "anna@example.com" is also contained in
-        // "joanna@example.com". A guest record counts only when the address stands on its own.
+        // "joanna@example.com" and "o'anna@example.com". A guest record counts only when the
+        // address stands on its own in the entity-decoded body: no character that may belong to
+        // the local part (RFC 5322 atext and dot) before it, no domain character after it.
         $patterns = array_map(
-            static fn (string $email): string => '/(?<![A-Za-z0-9._%+\-])' . preg_quote(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), '/') . '(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/i',
+            static fn (string $email): string => '/(?<![A-Za-z0-9!#$%&\'*+\/=?^_`{|}~.\-])' . preg_quote($email, '/') . '(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/iu',
             $emails
         );
 
@@ -552,8 +554,10 @@ final class ConsentRepository
                 $own = $userId === null || ($userId > 0 && (int) $row->user_id === $userId);
 
                 if (!$own && (int) $row->user_id === 0) {
+                    $text = html_entity_decode((string) $row->body, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
                     foreach ($patterns as $pattern) {
-                        if (preg_match($pattern, (string) $row->body)) {
+                        if (preg_match($pattern, $text)) {
                             $own = true;
                             break;
                         }
