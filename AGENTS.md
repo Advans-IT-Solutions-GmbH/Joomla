@@ -98,7 +98,7 @@ Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus.
 
 Festgehaltene Entscheidungen (Details im Skill `joomla-extensions`):
 - Alle Extensions verlangen Joomla 5.4 oder neuer; die Anhebung der Mindestversion wird als Patch-Release ausgeliefert.
-- Die CI testet immer die neuesten Joomla-5.4.x- und 6.x-Releases; J2Commerce 6 ist auf einen Commit gepinnt.
+- Die CI testet immer die neuesten Joomla-5.4.x- und 6.x-Releases und die neuesten Shop-Stände, nie einen Pin: J2Commerce 6 als neuester abgeglichener Commit von `main`, J2Store 4 als neuestes Release mit geprüfter sha256-Prüfsumme (`.github/actions/resolve-shops`, einmal je Lauf).
 - Deprecation-Gate in den produktionsnahen Lanes und statischer Scan nach veralteten Joomla-APIs in jeder Workflow-Datei; beide müssen grün sein.
 - Plugin-Service-Provider übergeben den Dispatcher weder im Konstruktor noch per `setDispatcher()`.
 - Pro Extension existiert nur das neueste GitHub-Release; ältere Releases und Tags löscht der Publish-Workflow bewusst.

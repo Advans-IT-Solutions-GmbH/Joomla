@@ -277,7 +277,7 @@ This component has automated tests that run via GitHub Actions (`j2commerce-impo
 
 ### Test Scope Note
 
-The compatibility jobs install the extension ZIP into official Joomla Docker images with real J2Commerce runtimes: the newest Joomla 5.4.x (PHP 8.3) with J2Store/J2Commerce 4.1.4 and the newest Joomla 6.x (PHP 8.4) with a J2Commerce 6 package built from a pinned commit of the official `j2commerce/j2commerce` repository. No Joomla patch version is pinned, so incompatibilities with a new Joomla release show up immediately; each job log prints the tested versions (`Tested versions: Joomla X.Y.Z, PHP A.B.C`). Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
+The compatibility jobs install the extension ZIP into official Joomla Docker images with real J2Commerce runtimes: the newest Joomla 5.4.x (PHP 8.3) with the latest J2Store/J2Commerce 4 release and the newest Joomla 6.x (PHP 8.4) with a J2Commerce 6 package built from the newest aligned commit of the official `j2commerce/j2commerce` repository, both resolved once per run and never pinned. No Joomla patch version is pinned, so incompatibilities with a new Joomla release show up immediately; each job log prints the tested versions (`Tested versions: Joomla X.Y.Z, PHP A.B.C`). Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
 
 The export controller is now covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs a multipart upload to `task=import.upload`, runs `task=import.process`, asserts the product is actually created in the live `#__j2store_*` / `#__j2commerce_*` tables, and verifies the upload is rejected without a CSRF token. Both HTTP tests run on both stacks.
 
@@ -300,7 +300,7 @@ Order as in `tests/test.env`:
 
 ### Running Tests Locally
 
-Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves (listed in the summary of the job `Resolve Shop Releases`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash
 # in j2commerce/com_j2commerce_importexport

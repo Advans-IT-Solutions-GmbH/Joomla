@@ -39,8 +39,30 @@ continues into the two previous minors of the same major (patch 20 down to 0), s
 break the lane. Downloads use curl retries/timeouts so transient network or 5xx failures do not make the SEF
 fixture flaky.
 
-Pinned on purpose: J2Commerce 4 stays on release 4.1.4; J2Commerce 6 is built from the commits listed
-under "J2Commerce 6 package" below.
+## Shop Releases Under Test
+
+The shop runtimes are not pinned either: every workflow tests against the latest releases (same
+approach as our other repositories). The job `Resolve Shop Releases` resolves them once per workflow
+run with the composite action `.github/actions/resolve-shops` and hands them to the lane jobs through
+`needs`, so all jobs of one run test the same versions. Its job summary lists them under "Shop
+releases under test".
+
+- **J2Commerce 6** publishes no tags or releases. The action takes the newest first-parent commit
+  among the last 50 of `j2commerce/j2commerce` `main` that is *aligned*, which means upstream's own
+  `build_package.php` accepts it (highest SQL update base not above the manifest `<version>`, checked
+  by `.github/scripts/check-sql-alignment.php`), and whose manifest version is at least 6.6.1. The
+  result must be a full 40-character SHA; if no commit qualifies, the run fails. The Joomla 6 jobs
+  read it from `J2C6_REF`.
+- **J2Store 4:** the latest release of `j2commerce/j2cart`, major 4 only, asset `com_j2store*.zip`
+  under `https://github.com/j2commerce/j2cart/releases/download/`, with the sha256 digest the release
+  API reports (a release without a digest fails the run). The Joomla 5 images receive both as the
+  build args `J2C4_URL` and `J2C4_SHA256` (Compose passes them from the job environment, AJAX Forms
+  `tests-j2c4/` uses `--build-arg`) and verify the download with `sha256sum -c`. Without these args
+  (local builds) the Dockerfiles fall back to release 4.1.5, unverified.
+
+A red run can therefore also come from a new shop release: compare the summary with the last green
+run. A manual OSMap run can override the J2Commerce 6 ref with the `j2commerce6_ref` input (J6, J6 SEF
+and update lanes); its production-like lane always uses the resolved latest commit.
 
 CI sets `TEST_STRICT_SKIP=1`, so a test that would SKIP fails instead. Set it locally to reproduce CI.
 
@@ -74,11 +96,12 @@ cp *.zip tests/extension.zip
 # tests/ (Joomla 5 and Joomla 6, no J2Commerce)
 cp plg_ajax_joomlaajaxforms/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests/extension.zip
 
-# tests-j2c4/ (Joomla 5 + J2Commerce 4; the J2Commerce 4 ZIP is downloaded during the image build)
+# tests-j2c4/ (Joomla 5 + J2Commerce 4; the J2Commerce 4 ZIP is downloaded during the image build).
+# Without --build-arg J2C4_URL=<url> --build-arg J2C4_SHA256=<sha256> (values from the CI summary
+# "Shop releases under test") the Dockerfile uses its fallback release, unverified.
 cp plg_ajax_joomlaajaxforms/plg_ajax_joomlaajaxforms_*.zip plg_ajax_joomlaajaxforms/tests-j2c4/extension.zip
 docker build \
   -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
-  --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.4/com_j2store_v4-4.1.4-pro.zip \
   -t plg_ajax_j2c4_test \
   .
 
@@ -92,20 +115,19 @@ docker build \
 
 ### 2. J2Commerce 6 package as `j2commerce6.zip` (Joomla 6 stacks only)
 
-J2Commerce 6 publishes no release ZIP. CI builds it from a pinned commit of
-`j2commerce/j2commerce` (PHP 8.3 with the `zip` extension). All workflows and all Joomla 6 jobs use
-the same pin, `7edb6e11ae9148bf996b06c47a0d8266865af7b2` (the commit used in production), and build
-it with `--no-minify` (without it, `build_package.php` of this commit requires esbuild). OSMap reads
-the pin from `J2C6_REF`, which a manual run can override with the `j2commerce6_ref` input; its
-production-like lane uses `J2C6_PROD_REF` and ignores that input. Cleanup sets it as `J2C6_COMMIT`
-in the job `Build J2Commerce 6`.
+J2Commerce 6 publishes no release ZIP. CI builds it from the latest aligned commit of
+`j2commerce/j2commerce` `main` (see "Shop Releases Under Test"; PHP 8.3 with the `zip` extension),
+with `--no-minify` (without it, `build_package.php` requires esbuild). Every Joomla 6 job reads the
+commit from `J2C6_REF`, set from the outputs of the job `Resolve Shop Releases` (Cleanup builds the
+package once in the job `Build J2Commerce 6`).
 
-Commands from the workflow step `Build J2Commerce 6 from source`; only `$GITHUB_WORKSPACE` is
-replaced by the repository root. Run from the repository root; `/tmp/j2commerce6-src` must not exist
-from an earlier run.
+Commands from the workflow step `Build J2Commerce 6 from source (latest aligned)`; only
+`$GITHUB_WORKSPACE` is replaced by the repository root. Run from the repository root;
+`/tmp/j2commerce6-src` must not exist from an earlier run. To test what CI tests, take the
+J2Commerce 6 SHA from the summary "Shop releases under test" of a recent CI run.
 
 ```bash
-J2C6_REF=7edb6e11ae9148bf996b06c47a0d8266865af7b2
+J2C6_REF=<40-character SHA from the CI summary>
 REPO_ROOT="$(pwd)"
 git init /tmp/j2commerce6-src
 git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
@@ -154,7 +176,7 @@ SEF fixture gives every product URL a `/de/` prefix their exact URL assertions d
 SEF stack, `all` with `TEST_STRICT_SKIP=1` therefore fails too, run `sitemap-http-sef` by name.
 
 Production-like lane for Privacy and OSMap (`tests/docker-compose.production.yml`, needs
-`tests/j2commerce6.zip` from the pin `7edb6e11…`), commands from the workflow:
+`tests/j2commerce6.zip`, see step 2 of "Local Prerequisites"), commands from the workflow:
 
 ```bash
 docker compose -f docker-compose.production.yml up -d
@@ -218,8 +240,9 @@ Notable test details:
 ## CI
 
 - **Triggers:** each `Build & Test` workflow runs on push and pull request to `main` for
-  `<extension path>/**`, the files under `shared/` the extension really uses and its own workflow
-  file, and manually (`workflow_dispatch`).
+  `<extension path>/**`, the files under `shared/` the extension really uses, its own workflow
+  file and the shop resolution (`.github/actions/resolve-shops/**`,
+  `.github/scripts/check-sql-alignment.php`), and manually (`workflow_dispatch`).
 - **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
   `shared-install-messages.php` are used by all six extensions and start all six.
@@ -265,13 +288,16 @@ Notable test details:
     `release: <prefix> v` commit on `main` (older release tags are deleted by the publish workflow,
     see `release-workflow.md`), installs it, and updates to the package under test
     (`shared-update-from-previous.php`).
-  - `Production-like (newest J6, PHP 8.4, MariaDB 10.6, J2C6 production pin)`: Privacy/OSMap via
+  - `Production-like (newest J6, PHP 8.4, MariaDB 10.6, latest J2C6)`: Privacy/OSMap via
     `tests/docker-compose.production.yml`; AJAX Forms via `tests-j2c6/Dockerfile` built with
     `--build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
     Runs all suites (`./run-tests.sh all`; OSMap runs each suite by name without the SEF-only `sitemap-http-sef`), then `shared-deprecations.php`.
-- **J2Commerce 6 pin:** every workflow builds J2Commerce 6 from
-  `7edb6e11ae9148bf996b06c47a0d8266865af7b2` with `build_package.php --no-minify` (see
-  "J2Commerce 6 package" above).
+- **Latest shop releases:** every `Build & Test` workflow starts with the job `Resolve Shop Releases`
+  (composite action `.github/actions/resolve-shops`); the lane jobs `need` it and build J2Commerce 6
+  from its `j2c6_ref` with `build_package.php --no-minify` and the Joomla 5 images with its
+  `j2store_url`/`j2store_sha256` (see "Shop Releases Under Test" above). The action and
+  `.github/scripts/check-sql-alignment.php` are in the `push`/`pull_request` paths of every
+  `Build & Test` workflow, so a change to them runs all six.
 - **Required check:** only `collect-results.yml` produces the required status check
   `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every
   workflow, matches them against the files changed by the pull request, waits for those workflow runs
