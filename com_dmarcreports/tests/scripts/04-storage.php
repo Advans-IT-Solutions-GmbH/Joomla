@@ -41,9 +41,16 @@ class StorageTest
         });
 
         $this->test('Duplicate insert is rejected by the UNIQUE hash', function () use ($insert) {
-            $ok = $insert();
-            // A duplicate must fail; mysqli returns false and errno 1062.
-            return $ok === false && $this->db->errno === 1062;
+            // Under PHP 8.1+ mysqli reports errors as exceptions by default, so a
+            // duplicate key throws rather than returning false. Either way the
+            // import must be refused; accept both signals as a rejection.
+            try {
+                $ok = $insert();
+
+                return $ok === false && $this->db->errno === 1062;
+            } catch (\mysqli_sql_exception $e) {
+                return $e->getCode() === 1062;
+            }
         });
 
         $this->test('Exactly one row is stored for the report', function () use ($table, $hash) {
