@@ -1618,16 +1618,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'orders'           => [],
             'lifetime_expired' => [],
         ];
-        $seen = ['orders' => [], 'lifetime_expired' => []];
+        $checks = $this->forEachDataSet(fn (): array => $this->checkRetentionPeriod($userId, $emails));
+        $seen   = [];
 
-        foreach ($this->forEachDataSet(fn (): array => $this->checkRetentionPeriod($userId, $emails)) as $check) {
-            foreach (['orders', 'lifetime_expired'] as $key) {
+        // One seen set for both lists: an order number is reported once. A copy that is still
+        // within the retention period in one set wins over an expired copy in another set (the
+        // order is kept, so it is reported as kept).
+        foreach (['orders', 'lifetime_expired'] as $key) {
+            foreach ($checks as $check) {
                 foreach ($check[$key] ?? [] as $order) {
                     $number = (string) $order['order_number'];
 
-                    if (!isset($seen[$key][$number])) {
-                        $seen[$key][$number] = true;
-                        $result[$key][]      = $order;
+                    if (!isset($seen[$number])) {
+                        $seen[$number] = true;
+                        $result[$key][] = $order;
                     }
                 }
             }

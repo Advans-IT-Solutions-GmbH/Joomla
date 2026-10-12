@@ -918,12 +918,12 @@ class DataIsolationTest
             };
             $order       = fn (string $number): array => ['order_number' => $number, 'order_date' => '01.01.2026', 'retention_end' => '31.12.2036', 'lifetime' => false];
             $multi->sets = [
-                ['orders' => [$order('SET6-A'), $order('BOTH-C')], 'lifetime_expired' => []],
-                ['orders' => [$order('BOTH-C'), $order('SET4-B')], 'lifetime_expired' => [['order_number' => 'SET4-L', 'order_date' => '01.01.2010']]],
+                ['orders' => [$order('SET6-A'), $order('BOTH-C')], 'lifetime_expired' => [['order_number' => 'CROSS-X', 'order_date' => '01.01.2010']]],
+                ['orders' => [$order('BOTH-C'), $order('SET4-B'), $order('CROSS-X')], 'lifetime_expired' => [['order_number' => 'SET4-L', 'order_date' => '01.01.2010']]],
             ];
             $merged = $multi->call('retentionOverDataSets', 0, ['guest.buyer@example.com']);
-            $this->test('Retention report over all data sets: orders of both sets, a copied order once',
-                array_column($merged['orders'], 'order_number') === ['SET6-A', 'BOTH-C', 'SET4-B']
+            $this->test('Retention report over all data sets: orders of both sets, a copied order once, also across the kept and lifetime lists (kept wins)',
+                array_column($merged['orders'], 'order_number') === ['SET6-A', 'BOTH-C', 'SET4-B', 'CROSS-X']
                 && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
                 json_encode($merged));
 
