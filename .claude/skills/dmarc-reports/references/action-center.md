@@ -1,0 +1,53 @@
+# Action Center
+
+The Action Center (`ActionCenter`, rendered via `ActionPresenter`, persisted via `ActionStatus`)
+is what makes the component actionable: it reads the stored metrics and emits prioritised,
+plain-language next steps so a non-expert admin knows what to do first.
+
+## Severity scale
+
+`3` = act now (danger) · `2` = plan soon (warning) · `1` = review (info) · `0` = informational (success).
+Items are sorted by severity descending, then by `action_key`. The presenter maps severity to a
+Bootstrap badge class in `ActionPresenter` (3→danger, 2→warning, 1→info, else success).
+
+## Finding keys
+
+Each finding is `self::item(key, category, severity, domainId, params[, dedupeSuffix])`. `params`
+are positional and fed into the matching language key by `ActionPresenter::title()`/`text()`.
+
+| Key | Category | When |
+|-----|----------|------|
+| `no_data` | data | No reports stored for the domain yet |
+| `stay_at_none` | policy | At `p=none` but pass rate below the quarantine threshold — not safe yet |
+| `move_to_quarantine` | policy | At `p=none` and pass rate ≥ quarantine threshold — safe to tighten |
+| `stay_at_quarantine` | policy | At `p=quarantine` but pass rate below the reject threshold |
+| `move_to_reject` | policy | At `p=quarantine` and pass rate ≥ reject threshold |
+| `at_target` / `enforced` | policy | Already at the configured target / at `p=reject` |
+| `would_be_rejected` | policy | Share of mail that would be blocked today under `p=reject` (sev 3 if ≥2%) |
+| `align_source` | alignment | An unaligned sender (IP) — fix SPF/DKIM before tightening (sev by share) |
+| `new_source` | source | A sending IP not seen before — review it |
+| `pass_rate_drop` | alignment | Aligned-pass rate fell vs the previous period |
+| `dns_*` | dns | From `DnsDiagnostics` — missing/broken SPF or DMARC record (see below) |
+
+Policy decisions use a `rank = none<quarantine<reject` comparison against the domain's
+`expected_policy` / the `default_policy_target` option and the two threshold options.
+
+## DNS diagnostics
+
+`DnsDiagnostics` checks the published SPF and DMARC records via `DnsResolverInterface`
+(`SystemDnsResolver` wraps `dns_get_record`). `txt()` returns `?array`: **null = lookup error**,
+**`[]` = no records**. A null result emits a `dns_lookup_error` finding and suppresses the
+"publish this record" suggestion (we cannot know what is missing when the lookup itself failed) —
+distinct from a genuinely missing record. Keep that distinction when editing.
+
+## Persistence
+
+Findings are stored in `#__dmarc_actions` keyed by `(domain_id, action_key)` so an admin can mark
+an item done or snooze it (`snooze_until`) and the state survives the next ingestion; `first_seen`
+/ `last_seen` track recurrence. `ActionStatus` reconciles freshly-derived findings with stored rows.
+
+## Language
+
+Every title and body is a language key with placeholders (`%s`), written out in full in en-GB,
+de-DE and fr-FR — no runtime assembly of admin-visible text. Adding a finding key means adding the
+aligned `_TITLE` / `_TEXT` keys to all three locales (lang-lint enforces alignment).

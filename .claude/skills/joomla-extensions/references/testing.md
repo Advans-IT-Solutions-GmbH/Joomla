@@ -142,6 +142,7 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | Import/Export | `CONTAINER_NAME=com_j2commerce_importexport_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh all` |
 | Product Compare | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all` |
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
+| DMARC Reports | `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all` |
 | AJAX Forms | `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all` |
 | AJAX Forms `tests-j2c4/`, `tests-j2c6/` | `./run-tests.sh all` (own `test.env` with the right container) |
 

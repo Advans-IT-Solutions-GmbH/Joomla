@@ -22,6 +22,7 @@ Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` 
 
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).
+- `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center).
 
 ## Architektur / Das große Bild
 
