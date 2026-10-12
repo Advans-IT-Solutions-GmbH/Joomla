@@ -37,6 +37,13 @@ enforcement (`pct<100`) is handled before the target/advance branches for both `
 (`partial_enforcement`) and `p=quarantine` (`partial_quarantine`), so a policy that applies to only
 part of the mail stream is never reported as the reached target or treated as safe to advance.
 
+The rollout decision (pass rate, would-be-rejected count and its share) reflects the **current
+reporting window**, not accumulated lifetime totals. `Metrics::domainMetrics()` supplies
+`window_total`, `pass_rate_window` and `window_reject_under_p`; when a window is present the Action
+Center uses them, otherwise it falls back to the lifetime `total` / pass rate / `reject_under_p`.
+This prevents a single historical failure — which keeps the lifetime `reject_under_p` above zero
+forever — from permanently blocking the next policy step once the current window is clean.
+
 `align_source` is driven by `Metrics::unalignedSources()`, which queries failing senders
 independently of the display-oriented `topSources()` top-N list (`GROUP BY source_ip HAVING
 SUM(fail) > 0 ORDER BY fail DESC`). A heavy failing sender ranked below the top 20 by total volume

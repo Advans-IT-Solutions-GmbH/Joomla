@@ -47,6 +47,11 @@ final class ReportArchive
      * @param   string  $filename  The attachment file name (used as a hint).
      *
      * @return  string[]  A list of XML document strings (possibly empty).
+     *
+     * @throws  DecoderUnavailableException  When the payload is a recognised
+     *          compressed container but the PHP extension needed to decode it
+     *          (zlib for gzip, zip for zip) is unavailable, so the caller can
+     *          defer the message instead of dropping a still-valid report.
      */
     public static function extract(string $payload, string $filename = ''): array
     {
@@ -58,6 +63,12 @@ final class ReportArchive
 
         // gzip magic number 0x1f 0x8b.
         if (str_starts_with($payload, "\x1f\x8b") || str_ends_with($name, '.gz')) {
+            if (!\function_exists('gzdecode')) {
+                throw new DecoderUnavailableException(
+                    'The PHP zlib extension is required to read gzip-compressed DMARC reports.'
+                );
+            }
+
             $xml = self::gunzip($payload);
 
             return $xml === null ? [] : [self::clean($xml)];
@@ -65,6 +76,12 @@ final class ReportArchive
 
         // zip magic number "PK\x03\x04".
         if (str_starts_with($payload, "PK\x03\x04") || str_ends_with($name, '.zip')) {
+            if (!class_exists(\ZipArchive::class)) {
+                throw new DecoderUnavailableException(
+                    'The PHP zip extension is required to read zip-compressed DMARC reports.'
+                );
+            }
+
             return self::unzip($payload);
         }
 

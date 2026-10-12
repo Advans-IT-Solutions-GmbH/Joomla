@@ -9,6 +9,15 @@ Both feed `Ingestor`, which parses and stores idempotently.
 container and yields the inner XML (gzip decode, zip entry extraction, or raw XML passthrough),
 then `DmarcParser` runs. Upload is CSRF-protected and works without the IMAP transport.
 
+`ReportArchive::extract()` distinguishes *malformed* from *undecodable*: a recognised gzip or zip
+container that cannot be decoded because the host lacks the PHP extension (`gzdecode` / `ZipArchive`)
+throws `DecoderUnavailableException`, whereas genuinely corrupt data returns `[]`. The two paths are
+handled differently: on IMAP ingest `Ingestor::ingestMessage()` catches the exception and returns
+`RESULT_RETRY`, so the message is left unread and re-imported once the extension is installed instead
+of being marked `\Seen` and lost; on upload `ingestFile()` lets it propagate so `IngestController`
+shows the concrete requirement (`COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE`) rather than a generic
+failure.
+
 ## IMAP client (`ImapClient`)
 
 Connects over an encrypted stream socket — it does **not** require the PHP `imap` extension, so it
@@ -54,6 +63,12 @@ The `boundary` parameter is read by a dedicated `boundary()` helper that matches
 a quoted boundary is never truncated at its first space — truncation would split none of the parts
 and silently drop the whole report. Both the top-level and nested multipart call sites use it.
 
+A leaf part is treated as a report when it has an attachment filename, a gzip/zip media type, or an
+`application/xml` / `text/xml` media type **combined with** `Content-Disposition: attachment`. The
+disposition requirement on bare XML parts is deliberate: some reporters attach the raw aggregate XML
+with no filename, which must still be picked up, while inline human-readable XML (no attachment
+disposition) is not a report and must be ignored.
+
 ## Parser (`DmarcParser`)
 
 Parses the aggregate XML into one report header + N record rows (see `dmarc-domain.md` for the
@@ -92,5 +107,14 @@ recomputing it.
 `report_hash` (reporter org + report id) is a UNIQUE key on `#__dmarc_reports`. Re-ingesting the
 same report is a no-op: the insert is skipped and no duplicate records are written. `ingestMessages()`
 loops `ingestMessage()` over the streamed messages; `newSummary()` builds the per-run result
-(counts of new / duplicate / failed) shown back to the admin and written to `last_run` /
+(counts of new / duplicate / failed / skipped) shown back to the admin and written to `last_run` /
 `last_status` / `last_message` on the source.
+
+Auto-registering an unknown domain is gated by ACL. The constructor takes an `allowAutoCreate` flag
+that `IngestController` sets from the current user's `core.create` privilege on the component: an
+ingest-only operator may import reports for already-configured domains but may not create new
+monitored-domain rows. When a report's policy domain is unknown and `allowAutoCreate` is false,
+`resolveDomain()` returns `0` and `store()` increments the `skipped` counter and writes nothing,
+rather than registering a domain the operator is not entitled to or storing an orphan report
+(`domain_id = 0`). IMAP import for a source bound to a domain passes that id as `forcedDomainId`, so
+auto-discovery only applies to unbound sources and uploads.

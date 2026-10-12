@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Controller;
 
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
+use Advans\Component\DmarcReports\Administrator\Helper\DecoderUnavailableException;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
 use Joomla\CMS\Factory;
@@ -53,7 +54,7 @@ class IngestController extends BaseController
         try {
             $client   = new ImapClient((int) $this->getConfig('imap_timeout', 20));
             $limit    = (int) $this->getConfig('max_messages_per_run', 200);
-            $ingestor = new Ingestor();
+            $ingestor = new Ingestor(null, $this->canAutoCreateDomains());
             $summary  = $ingestor->newSummary();
             $domainId = (int) $source->domain_id;
 
@@ -109,7 +110,7 @@ class IngestController extends BaseController
         }
 
         try {
-            $summary = (new Ingestor())->ingestFile(
+            $summary = (new Ingestor(null, $this->canAutoCreateDomains()))->ingestFile(
                 (string) $file['tmp_name'],
                 (string) ($file['name'] ?? 'report'),
                 $sourceId ?: null
@@ -117,6 +118,13 @@ class IngestController extends BaseController
 
             $type = $summary['imported'] > 0 ? 'message' : 'warning';
             $this->setRedirect($redirect, $this->summaryText($summary), $type);
+        } catch (DecoderUnavailableException $e) {
+            // The uploaded report is a compressed container the host cannot
+            // decode because the required PHP extension is missing. Surface a
+            // concrete requirement rather than a generic failure.
+            $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE'), 'error');
+
+            return false;
         } catch (\Throwable $e) {
             $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_INGEST_FAILED'), 'error');
 
@@ -131,6 +139,17 @@ class IngestController extends BaseController
         if (!Factory::getApplication()->getIdentity()->authorise('dmarc.ingest', 'com_dmarcreports')) {
             throw new \Joomla\CMS\Access\Exception\NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
+    }
+
+    /**
+     * Whether the current user may auto-register an unknown domain discovered in
+     * an incoming report. Registering a monitored domain is a configuration
+     * change, so it requires core.create: an ingest-only operator can import
+     * reports for already-configured domains but cannot create new ones.
+     */
+    private function canAutoCreateDomains(): bool
+    {
+        return (bool) Factory::getApplication()->getIdentity()->authorise('core.create', 'com_dmarcreports');
     }
 
     private function loadSource(int $sourceId): ?object
@@ -175,7 +194,8 @@ class IngestController extends BaseController
             'COM_DMARCREPORTS_INGEST_SUMMARY',
             (int) ($summary['imported'] ?? 0),
             (int) ($summary['duplicates'] ?? 0),
-            (int) ($summary['failed'] ?? 0)
+            (int) ($summary['failed'] ?? 0),
+            (int) ($summary['skipped'] ?? 0)
         );
     }
 

@@ -122,8 +122,20 @@ final class Metrics
         $anchor = $this->latestReportEnd($domainId);
         $window = 7 * 86400;
 
-        $metrics['pass_rate_window'] = $anchor > 0
-            ? $this->windowPassRate($domainId, $anchor - $window, $anchor)
+        // The rollout guidance must reflect the current reporting window, not
+        // the accumulated lifetime: a single historical failure would otherwise
+        // keep the lifetime reject-under-p count above zero forever and block
+        // the Action Center from ever recommending the next policy step. The
+        // window volume, pass rate and would-be-rejected count are therefore
+        // exposed alongside the lifetime totals for the Action Center to prefer.
+        $current = $anchor > 0
+            ? $this->windowTotals($domainId, $anchor - $window, $anchor)
+            : ['total' => 0, 'pass' => 0, 'reject_under_p' => 0];
+
+        $metrics['window_total']          = $current['total'];
+        $metrics['window_reject_under_p'] = $current['reject_under_p'];
+        $metrics['pass_rate_window']      = $current['total'] > 0
+            ? self::rate($current['pass'], $current['total'])
             : null;
         $metrics['pass_rate_prev'] = $anchor > 0
             ? $this->windowPassRate($domainId, $anchor - (2 * $window), $anchor - $window)
@@ -354,6 +366,23 @@ final class Metrics
      */
     private function windowPassRate(int $domainId, int $startTs, int $endTs): ?float
     {
+        $totals = $this->windowTotals($domainId, $startTs, $endTs);
+
+        return $totals['total'] === 0 ? null : self::rate($totals['pass'], $totals['total']);
+    }
+
+    /**
+     * Volume, DMARC-passing volume and would-be-rejected volume across every
+     * record whose report window begins in the half-open interval
+     * (startTs, endTs]. Bucketing by the report's own start time keeps compared
+     * windows non-overlapping regardless of how many reporters contribute, and
+     * lets the Action Center reason about the current window rather than the
+     * accumulated lifetime.
+     *
+     * @return array{total: int, pass: int, reject_under_p: int}
+     */
+    private function windowTotals(int $domainId, int $startTs, int $endTs): array
+    {
         $query = $this->query()
             ->select(
                 [
@@ -361,6 +390,9 @@ final class Metrics
                     'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 OR '
                         . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count')
                         . ' ELSE 0 END), 0) AS pass',
+                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND '
+                        . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count')
+                        . ' ELSE 0 END), 0) AS reject_under_p',
                 ]
             )
             ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
@@ -373,10 +405,13 @@ final class Metrics
             ->bind(':startTs', $startTs, ParameterType::INTEGER)
             ->bind(':endTs', $endTs, ParameterType::INTEGER);
 
-        $row   = $this->db->setQuery($query)->loadAssoc() ?: [];
-        $total = (int) ($row['total'] ?? 0);
+        $row = $this->db->setQuery($query)->loadAssoc() ?: [];
 
-        return $total === 0 ? null : self::rate((int) ($row['pass'] ?? 0), $total);
+        return [
+            'total'          => (int) ($row['total'] ?? 0),
+            'pass'           => (int) ($row['pass'] ?? 0),
+            'reject_under_p' => (int) ($row['reject_under_p'] ?? 0),
+        ];
     }
 
     /**

@@ -130,4 +130,17 @@ class ReportArchiveTest extends TestCase
         $this->assertCount(1, $documents);
         $this->assertStringContainsString('<feedback>', $documents[0]);
     }
+
+    public function testMalformedGzipYieldsNothingWhenDecoderAvailable(): void
+    {
+        if (!\function_exists('gzdecode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // Recognised as gzip by its magic bytes but not valid gzip data. With
+        // the decoder present this is a malformed payload, which must yield an
+        // empty result rather than the decoder-unavailable exception: the two
+        // outcomes are deliberately distinct so a caller only defers the latter.
+        $this->assertSame([], ReportArchive::extract("\x1f\x8bnot really gzip data", 'broken.xml.gz'));
+    }
 }

@@ -45,9 +45,19 @@ final class Ingestor
 
     private DatabaseInterface $db;
 
-    public function __construct(?DatabaseInterface $db = null)
+    /**
+     * Whether an unknown policy domain may be auto-registered as a monitored
+     * domain on first sight. Creating a domain is a configuration change, so a
+     * caller acting for an operator without the core.create privilege passes
+     * false: unknown domains are then skipped rather than silently creating a
+     * monitored-domain row the operator is not entitled to add.
+     */
+    private bool $allowAutoCreate;
+
+    public function __construct(?DatabaseInterface $db = null, bool $allowAutoCreate = true)
     {
-        $this->db = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
+        $this->db              = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
+        $this->allowAutoCreate = $allowAutoCreate;
     }
 
     /**
@@ -90,7 +100,17 @@ final class Ingestor
         $retry  = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
-            $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
+            try {
+                $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
+            } catch (DecoderUnavailableException) {
+                // The host cannot decompress this container (missing PHP zlib or
+                // zip extension). The report is valid, so leave the message in
+                // place: once the extension is installed a later run imports it,
+                // instead of marking a still-unread report processed and lost.
+                $retry = true;
+                continue;
+            }
+
             $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
         }
 
@@ -108,6 +128,10 @@ final class Ingestor
      * Ingest a single uploaded report file (.xml, .gz or .zip).
      *
      * @return  array<string, int>
+     *
+     * @throws  DecoderUnavailableException  When the file is a recognised
+     *          compressed container but the PHP extension needed to decode it is
+     *          not installed, so the caller can show a concrete requirement.
      */
     public function ingestFile(string $path, string $filename, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
@@ -188,6 +212,16 @@ final class Ingestor
 
         $domainId = $forcedDomainId > 0 ? $forcedDomainId : $this->resolveDomain($report['policy']['domain']);
 
+        if ($domainId <= 0) {
+            // Either the report carries no usable policy domain, or an operator
+            // without the core.create privilege may not auto-register an unknown
+            // domain. Skip rather than storing an orphan report or creating a
+            // monitored-domain configuration row the operator is not entitled to.
+            $summary['skipped']++;
+
+            return;
+        }
+
         $this->db->transactionStart();
 
         try {
@@ -244,6 +278,13 @@ final class Ingestor
 
         if ($id > 0) {
             return $id;
+        }
+
+        if (!$this->allowAutoCreate) {
+            // The caller is acting for an operator who may not create domains,
+            // so an unknown domain is reported as unresolved and the report is
+            // skipped by the caller instead of registering a new configuration.
+            return 0;
         }
 
         $now    = Factory::getDate()->toSql();
@@ -353,6 +394,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'records' => 0];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'records' => 0];
     }
 }

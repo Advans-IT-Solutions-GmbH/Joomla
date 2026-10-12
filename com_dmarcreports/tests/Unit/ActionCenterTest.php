@@ -441,4 +441,59 @@ class ActionCenterTest extends TestCase
         rsort($sorted);
         $this->assertSame($sorted, $severities);
     }
+
+    public function testRolloutUsesCurrentWindowNotLifetimeTotals(): void
+    {
+        // Lifetime history shows failures (reject_under_p = 40, 96% pass) that
+        // would permanently block advancement, but the current reporting window
+        // is fully aligned. The rollout must advance based on the window.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'             => 1,
+                'domain'                => 'example.org',
+                'total'                 => 1000,
+                'current_policy'        => 'none',
+                'dmarc_pass'            => 960,
+                'reject_under_p'        => 40,
+                'window_total'          => 500,
+                'window_reject_under_p' => 0,
+                'pass_rate_window'      => 100.0,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('move_to_quarantine', $codes);
+        $this->assertNotContains('resolve_before_quarantine', $codes);
+        $this->assertNotContains('would_be_rejected', $codes);
+    }
+
+    public function testRolloutFlagsFailuresFromCurrentWindow(): void
+    {
+        // Lifetime totals are spotless, but the current window still has failing
+        // senders. The engine must downgrade and size the risk from the window.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'             => 1,
+                'domain'                => 'example.org',
+                'total'                 => 1000,
+                'current_policy'        => 'none',
+                'dmarc_pass'            => 1000,
+                'reject_under_p'        => 0,
+                'window_total'          => 500,
+                'window_reject_under_p' => 25,
+                'pass_rate_window'      => 99.0,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('resolve_before_quarantine', $codes);
+        $this->assertNotContains('move_to_quarantine', $codes);
+
+        $wouldBe = $this->find($items, 'would_be_rejected');
+        $this->assertNotNull($wouldBe);
+        // Share is measured over the window total (25 / 500 = 5%), not lifetime.
+        $this->assertSame(5.0, $wouldBe['params'][1]);
+    }
 }

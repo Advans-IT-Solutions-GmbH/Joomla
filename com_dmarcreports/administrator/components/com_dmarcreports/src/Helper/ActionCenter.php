@@ -63,8 +63,20 @@ final class ActionCenter
 
         // Messages that would be rejected under p=reject: the still-failing
         // senders. Advancement must not be presented as "safe" while these
-        // remain, so it is computed before the rollout guidance below.
-        $rejectUnderP = (int) ($metrics['reject_under_p'] ?? 0);
+        // remain. The rollout decision reflects the CURRENT reporting window,
+        // not the accumulated lifetime: a single historical failure keeps the
+        // lifetime count above zero forever and would permanently block the
+        // next policy step. When a rolling window is available its volume, pass
+        // rate and would-be-rejected count are used; otherwise (sparse or
+        // legacy data without a window) the lifetime totals are the fallback.
+        $windowTotal = (int) ($metrics['window_total'] ?? 0);
+        $hasWindow   = $windowTotal > 0 && ($metrics['pass_rate_window'] ?? null) !== null;
+
+        $rolloutTotal    = $hasWindow ? $windowTotal : $total;
+        $rolloutPassRate = $hasWindow ? (float) $metrics['pass_rate_window'] : $passRate;
+        $rejectUnderP    = $hasWindow
+            ? (int) ($metrics['window_reject_under_p'] ?? 0)
+            : (int) ($metrics['reject_under_p'] ?? 0);
 
         // Policy rollout guidance along none -> quarantine -> reject, stopping at
         // the configured target so the Action Center never over-recommends.
@@ -87,29 +99,30 @@ final class ActionCenter
         } elseif ($policyRank >= $targetRank) {
             $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
         } elseif ($policy === '' || $policy === 'none') {
-            if ($passRate < $quarantineThreshold) {
-                $items[] = self::item('stay_at_none', 'policy', 2, $domainId, [$domain, $passRate, $quarantineThreshold]);
+            if ($rolloutPassRate < $quarantineThreshold) {
+                $items[] = self::item('stay_at_none', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $quarantineThreshold]);
             } elseif ($rejectUnderP > 0) {
                 // Threshold met, but legitimate-looking mail still fails: resolve
                 // those senders before tightening instead of calling it safe.
-                $items[] = self::item('resolve_before_quarantine', 'policy', 2, $domainId, [$domain, $passRate, $rejectUnderP]);
+                $items[] = self::item('resolve_before_quarantine', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectUnderP]);
             } else {
-                $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $passRate]);
+                $items[] = self::item('move_to_quarantine', 'policy', 3, $domainId, [$domain, $rolloutPassRate]);
             }
         } elseif ($policy === 'quarantine') {
-            if ($passRate < $rejectThreshold) {
-                $items[] = self::item('stay_at_quarantine', 'policy', 2, $domainId, [$domain, $passRate, $rejectThreshold]);
+            if ($rolloutPassRate < $rejectThreshold) {
+                $items[] = self::item('stay_at_quarantine', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectThreshold]);
             } elseif ($rejectUnderP > 0) {
-                $items[] = self::item('resolve_before_reject', 'policy', 2, $domainId, [$domain, $passRate, $rejectUnderP]);
+                $items[] = self::item('resolve_before_reject', 'policy', 2, $domainId, [$domain, $rolloutPassRate, $rejectUnderP]);
             } else {
-                $items[] = self::item('move_to_reject', 'policy', 3, $domainId, [$domain, $passRate]);
+                $items[] = self::item('move_to_reject', 'policy', 3, $domainId, [$domain, $rolloutPassRate]);
             }
         }
 
         // The same still-failing senders are also surfaced as an explicit
-        // tightening risk so the admin sees the volume at stake.
+        // tightening risk so the admin sees the volume at stake, measured over
+        // the same current window as the rollout decision above.
         if ($rejectUnderP > 0 && $policy !== 'reject') {
-            $share    = round($rejectUnderP / $total * 100, 1);
+            $share    = $rolloutTotal > 0 ? round($rejectUnderP / $rolloutTotal * 100, 1) : 0.0;
             $severity = $share >= 2 ? 3 : 2;
             $items[]  = self::item('would_be_rejected', 'policy', $severity, $domainId, [$rejectUnderP, $share]);
         }
