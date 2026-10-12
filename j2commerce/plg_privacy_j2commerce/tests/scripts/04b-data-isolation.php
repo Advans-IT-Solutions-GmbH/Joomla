@@ -509,11 +509,11 @@ class DataIsolationTest
     }
 
     /** Insert a checkout consent record of an order; returns its ID. */
-    private function insertGuestTestConsent(string $orderId, string $ip): int
+    private function insertGuestTestConsent(string $orderId, string $ip, int $state = 1): int
     {
         $row = (object) [
             'user_id' => 0,
-            'state'   => 1,
+            'state'   => $state,
             'created' => gmdate('Y-m-d H:i:s', strtotime('-1 day')),
             'subject' => 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT',
             'body'    => "<p>Order $orderId</p><p>IP address: $ip</p><p>User agent: GuestTestAgent/1.0</p><!-- j2commerce-order:$orderId -->",
@@ -633,8 +633,12 @@ class DataIsolationTest
         $consents['guest_expired'] = $this->insertGuestTestConsent($orders['guest_expired'], '203.0.113.60');
         $consents['guest_recent']  = $this->insertGuestTestConsent($orders['guest_recent'], '203.0.113.61');
         $consents['other_guest']   = $this->insertGuestTestConsent($orders['other_guest'], '203.0.113.62');
+        // An invalidated record (state -1) of a guest order: still personal data of the guest.
+        $consents['guest_invalid'] = $this->insertGuestTestConsent($orders['guest_recent'], '203.0.113.63', -1);
         $legacy['guest']           = $this->insertGuestTestLegacyConsent('guest.buyer@example.com');
         $legacy['other']           = $this->insertGuestTestLegacyConsent('other.buyer@example.com');
+        // Contains the guest address only as part of a longer address: another customer.
+        $legacy['similar']         = $this->insertGuestTestLegacyConsent('myguest.buyer@example.com');
 
         foreach (['guest' => 'Guest.Buyer@example.com', 'other' => 'other.buyer@example.com'] as $key => $email) {
             $address = (object) [
@@ -691,8 +695,10 @@ class DataIsolationTest
                 in_array((string) $addresses['guest'], $this->guestTestDomainItems($domains, 'addresses'), true)
                 && !in_array((string) $addresses['other'], $this->guestTestDomainItems($domains, 'addresses'), true));
             $consentItems = $this->guestTestDomainItems($domains, 'checkout_consents');
-            $this->test('Guest export: checkout consents of the guest orders (incl. IP address) are exported, not those of others',
+            $this->test('Guest export: checkout consents of the guest orders in every state (incl. IP address) are exported, not those of others',
                 in_array((string) $consents['guest_expired'], $consentItems, true) && in_array((string) $consents['guest_recent'], $consentItems, true)
+                && in_array((string) $consents['guest_invalid'], $consentItems, true)
+                && in_array('-1', $this->guestTestDomainValues($domains, 'checkout_consents', 'state'), true)
                 && !in_array((string) $consents['other_guest'], $consentItems, true)
                 && in_array(true, array_map(fn ($v) => str_contains($v, '203.0.113.60'), $this->guestTestDomainValues($domains, 'checkout_consents', 'consent')), true),
                 json_encode($consentItems));
@@ -741,6 +747,7 @@ class DataIsolationTest
             $legacySubject = fn (int $id): string => (string) $this->db->setQuery('SELECT subject FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $id)->loadResult();
             $this->test('Guest removal: legacy consent record of the guest address anonymized', $legacySubject($legacy['guest']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
             $this->test('Guest removal: legacy consent record of another guest untouched', $legacySubject($legacy['other']) === 'PLG_PRIVACY_J2COMMERCE');
+            $this->test('Guest removal: legacy record of a longer address that contains the guest address untouched', $legacySubject($legacy['similar']) === 'PLG_PRIVACY_J2COMMERCE');
 
             $addressCount = fn (int $id): int => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id

@@ -366,6 +366,46 @@ final class ConsentRepository
     }
 
     /**
+     * All checkout consent records of the given orders, whatever their state (valid, obsolete,
+     * invalidated): for a privacy export every record of the data subject counts.
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  object[]  Rows with id, user_id, state, created, subject, body and order_id, ordered by ID
+     */
+    public function findConsentsForOrders(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('strval', $orderIds), [self::class, 'isValidOrderId'])));
+        $rows     = [];
+
+        foreach (array_chunk($orderIds, 50) as $chunk) {
+            $wanted = array_flip($chunk);
+            $likes  = array_map(fn (string $orderId): string => $this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId), $chunk);
+            $query  = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'user_id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->order($this->db->quoteName('id') . ' ASC');
+
+            $this->db->setQuery($query);
+
+            foreach ($this->db->loadObjectList() ?: [] as $row) {
+                $row->order_id = self::extractOrderId((string) $row->body);
+
+                // Only records whose order marker names one of the orders.
+                if ($row->order_id !== null && isset($wanted[$row->order_id])) {
+                    $rows[(int) $row->id] = $row;
+                }
+            }
+        }
+
+        ksort($rows);
+
+        return array_values($rows);
+    }
+
+    /**
      * Record consent for an order unless a valid record already exists (no duplicates). Two
      * parallel requests (double submit) can both insert; the later rows are removed again, so one
      * record per order remains.
@@ -472,9 +512,16 @@ final class ConsentRepository
         $changed = $userId === null ? $this->repairLegacyAnonymizedBodies($body) : 0;
         $lastId  = 0;
 
+        // The SQL LIKE below only preselects: "anna@example.com" is also contained in
+        // "joanna@example.com". A guest record counts only when the address stands on its own.
+        $patterns = array_map(
+            static fn (string $email): string => '/(?<![A-Za-z0-9._%+\-])' . preg_quote(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), '/') . '(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/i',
+            $emails
+        );
+
         do {
             $query = $this->createQuery()
-                ->select($this->db->quoteName('id'))
+                ->select($this->db->quoteName(['id', 'user_id', 'body']))
                 ->from($this->db->quoteName('#__privacy_consents'))
                 ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
                 ->where($this->db->quoteName('id') . ' > ' . $lastId)
@@ -493,24 +540,45 @@ final class ConsentRepository
             }
 
             $this->db->setQuery($query);
-            $ids = array_map('intval', $this->db->loadColumn() ?: []);
+            $rows = $this->db->loadObjectList() ?: [];
 
-            if ($ids === []) {
+            if ($rows === []) {
                 break;
             }
 
-            $update = $this->createQuery()
-                ->update($this->db->quoteName('#__privacy_consents'))
-                ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
-                ->set($this->db->quoteName('body') . ' = :body')
-                ->set($this->db->quoteName('state') . ' = -1')
-                ->whereIn($this->db->quoteName('id'), $ids)
-                ->bind(':body', $body);
-            $this->db->setQuery($update)->execute();
+            $ids = [];
+
+            foreach ($rows as $row) {
+                $own = $userId === null || ($userId > 0 && (int) $row->user_id === $userId);
+
+                if (!$own && (int) $row->user_id === 0) {
+                    foreach ($patterns as $pattern) {
+                        if (preg_match($pattern, (string) $row->body)) {
+                            $own = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($own) {
+                    $ids[] = (int) $row->id;
+                }
+            }
+
+            if ($ids !== []) {
+                $update = $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->set($this->db->quoteName('state') . ' = -1')
+                    ->whereIn($this->db->quoteName('id'), $ids)
+                    ->bind(':body', $body);
+                $this->db->setQuery($update)->execute();
+            }
 
             $changed += \count($ids);
-            $lastId   = max($ids);
-        } while (\count($ids) === self::BATCH_SIZE);
+            $lastId   = max(array_map(static fn (object $row): int => (int) $row->id, $rows));
+        } while (\count($rows) === self::BATCH_SIZE);
 
         return $changed;
     }

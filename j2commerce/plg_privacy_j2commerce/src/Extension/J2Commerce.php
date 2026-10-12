@@ -422,21 +422,24 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Checkout consent records of the guest orders placed with one of $emails (null if none).
+     * Checkout consent records of the guest orders placed with one of $emails, in every state
+     * (valid, obsolete, invalidated), with their state (null if there is none).
      *
      * @param   string[]  $emails
      */
     protected function createGuestConsentsDomain(array $emails): ?Domain
     {
+        $orderIds = $this->guestOrderIds($emails);
+
+        if ($orderIds === []) {
+            return null;
+        }
+
         self::loadHelperClasses();
-        $repository = new ConsentRepository($this->getDatabase());
-        $domain     = null;
+        $domain = null;
 
-        foreach ($this->guestOrderIds($emails) as $orderId) {
-            $orderId = (string) $orderId;
-            $record  = $repository->findOrderConsent($orderId);
-
-            if ($record === null || (int) $record->user_id !== 0) {
+        foreach ((new ConsentRepository($this->getDatabase()))->findConsentsForOrders($orderIds) as $record) {
+            if ((int) $record->user_id !== 0) {
                 continue;
             }
 
@@ -444,7 +447,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
 
             $domain->addItem($this->createItemFromArray([
-                'order_id' => $orderId,
+                'order_id' => (string) $record->order_id,
+                'state'    => (int) $record->state,
                 'created'  => (string) $record->created,
                 'consent'  => preg_replace("/\n{2,}/", "\n", $text),
             ], $record->id));
@@ -1916,8 +1920,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      *
      * GET shows a form (e-mail address, token from the mail, prefilled from the link). POST checks
      * the form token, the number of failed attempts in this session and then the request
-     * (confirmPrivacyRequest()). Every failure shows the same message, except an expired token
-     * after the token itself was proven correct.
+     * (confirmPrivacyRequest()). A wrong code, an address without a pending request and a request
+     * that is no longer pending get the same message, so the page does not tell whether a request
+     * exists. Only a matching code that has expired gets its own message.
      */
     protected function handleConfirmationPage($app): string
     {
