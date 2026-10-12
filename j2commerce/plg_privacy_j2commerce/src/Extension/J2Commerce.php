@@ -2203,9 +2203,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->set($db->quoteName('confirm_token_created_at') . ' = NULL')
                     ->where($db->quoteName('id') . ' = ' . (int) $match->id)
                     ->where($db->quoteName('status') . ' = 0')
+                    ->where($db->quoteName('confirm_token') . ' = :hash')
+                    ->bind(':hash', $match->confirm_token)
             )->execute();
 
-            return self::CONFIRM_EXPIRED;
+            // A new code issued in the meantime (request resent) is not touched.
+            return (int) $db->getAffectedRows() === 1 ? self::CONFIRM_EXPIRED : self::CONFIRM_FAILED;
         }
 
         // Only the request still pending with this token: a parallel confirmation wins once.
