@@ -293,4 +293,31 @@ XML;
         $this->expectException(\InvalidArgumentException::class);
         DmarcParser::parse($xml);
     }
+
+    public function testRejectsFutureEndDateBeyondClockSkew(): void
+    {
+        // A crafted far-future end would otherwise become the rolling-window
+        // anchor and pin the displayed current policy indefinitely, so an end
+        // well beyond the clock-skew allowance is rejected.
+        $future = (string) (time() + 30 * 86400);
+        $xml    = str_replace('<begin>1700000000</begin>', '<begin>' . (string) (time() - 86400) . '</begin>', $this->sample());
+        $xml    = str_replace('<end>1700086400</end>', '<end>' . $future . '</end>', $xml);
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testAcceptsRecentEndWithinClockSkew(): void
+    {
+        // An end a little in the future (within the skew allowance) is tolerated
+        // because reporter and local clocks are rarely perfectly aligned.
+        $begin = (string) (time() - 86400);
+        $end   = (string) (time() + 3600);
+        $xml   = str_replace('<begin>1700000000</begin>', '<begin>' . $begin . '</begin>', $this->sample());
+        $xml   = str_replace('<end>1700086400</end>', '<end>' . $end . '</end>', $xml);
+
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame((int) $end, $report['date_end']);
+    }
 }

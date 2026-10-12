@@ -62,7 +62,6 @@
             default="ssl">
             <option value="ssl">COM_DMARCREPORTS_SECURITY_SSL</option>
             <option value="tls">COM_DMARCREPORTS_SECURITY_TLS</option>
-            <option value="none">COM_DMARCREPORTS_SECURITY_NONE</option>
         </field>
 
         <field

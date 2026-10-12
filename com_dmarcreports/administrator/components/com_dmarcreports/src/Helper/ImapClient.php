@@ -78,7 +78,7 @@ final class ImapClient
      * into deletion); "retry" messages are left untouched so the next run can
      * try them again instead of losing them.
      *
-     * @param   array<string, mixed>  $config     host, port, security (ssl|tls|none),
+     * @param   array<string, mixed>  $config     host, port, security (ssl|tls),
      *                                            username, password, folder, limit,
      *                                            unseen_only, delete_after_import.
      * @param   callable(array{uid: int, raw: string}): string  $onMessage
@@ -99,6 +99,14 @@ final class ImapClient
 
         if ($host === '') {
             throw new \RuntimeException('No IMAP host configured.');
+        }
+
+        // Only encrypted transports are permitted. A plaintext (tcp://) session
+        // would send the mailbox credentials and the fetched report contents in
+        // the clear, so an unencrypted option is rejected here as well as in the
+        // form, ensuring forged submissions or legacy rows cannot re-enable it.
+        if (!\in_array($security, ['ssl', 'tls'], true)) {
+            throw new \RuntimeException('An encrypted IMAP connection (SSL/TLS) is required.');
         }
 
         $this->connect($host, $port, $security);

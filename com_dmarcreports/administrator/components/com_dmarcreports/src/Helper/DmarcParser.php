@@ -25,6 +25,13 @@ defined('_JEXEC') or die;
 final class DmarcParser
 {
     /**
+     * Clock-skew allowance for a report's end timestamp, in seconds. Reporter
+     * and local clocks are rarely perfectly aligned, so an end slightly in the
+     * future is tolerated; anything beyond this is rejected as implausible.
+     */
+    private const MAX_CLOCK_SKEW = 172800;
+
+    /**
      * Parse one aggregate report document.
      *
      * @param   string  $xml  The raw XML of a single <feedback> document.
@@ -100,6 +107,16 @@ final class DmarcParser
         // whose range does not run forwards is rejected before it is stored.
         if ($report['date_end'] < $report['date_begin']) {
             throw new \InvalidArgumentException('The report has an inverted date range.');
+        }
+
+        // A report range cannot plausibly end in the future. Metrics anchor the
+        // rolling windows and the displayed current policy on the maximum
+        // date_end, so a crafted far-future report could otherwise push every
+        // legitimate report outside the Action Center windows and pin the shown
+        // policy indefinitely. Reject end timestamps beyond a small clock-skew
+        // allowance (reporter and local clocks are rarely perfectly aligned).
+        if ($report['date_end'] > time() + self::MAX_CLOCK_SKEW) {
+            throw new \InvalidArgumentException('The report end date is implausibly far in the future.');
         }
 
         $total = 0;

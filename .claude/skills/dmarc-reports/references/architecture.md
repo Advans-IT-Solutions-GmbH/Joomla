@@ -52,4 +52,10 @@ call shapes. Prepared statements / bound parameters only.
 - Mailbox password encrypted at rest via `CryptoHelper` (Joomla secret); never logged, never
   round-tripped to the browser. `SourceModel`/`SourceController` strip it from re-displayed form state.
 - Every admin write action checks a CSRF token and the component ACL.
+- The default `DisplayController` also authorises the guessable `view=domain`/`view=source` edit
+  views (`core.edit` or `core.create`, else HTTP 403) so a direct URL cannot reach an editable form
+  and read mailbox configuration or domain notes, bypassing the task controllers' own ACL checks.
+- The component options expose a standard `permissions` fieldset (a `rules` field over `access.xml`)
+  so the custom `dmarc.ingest` action — and the core actions — can be granted to non-Super-Users
+  through Joomla's component permissions UI.
 - Manual upload and IMAP data are treated as untrusted input; the parser uses safe XML loading.

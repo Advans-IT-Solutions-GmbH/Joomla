@@ -16,6 +16,11 @@ degrades gracefully where that extension is absent (the system check / `Environm
 the transport state). Credentials come from `#__dmarc_sources` with the password decrypted via
 `CryptoHelper`.
 
+Only encrypted transports are allowed. `security` accepts `ssl` (implicit TLS, `ssl://`) or `tls`
+(STARTTLS over `tcp://`); the plaintext option was removed from `source.xml` and `process()` rejects
+any value other than `ssl`/`tls` server-side, so a forged submission or a legacy row cannot reopen a
+cleartext session that would leak the mailbox credentials and report contents.
+
 Streaming design (do not revert to loading all messages into an array):
 
 - `process(array $config, callable $onMessage): array` — searches `UNSEEN` oldest-first,
@@ -64,7 +69,11 @@ policy and suppress all guidance. `sp` is optional and validated only when prese
 
 Report-level and record-level fields are validated the same way. A report with an inverted date
 range (`date_end < date_begin`) is rejected before storage, because an out-of-order range would
-misplace it on the timeline and could anchor the rolling comparison windows incorrectly. Every
+misplace it on the timeline and could anchor the rolling comparison windows incorrectly. A report
+whose `date_end` is more than a small clock-skew allowance (`MAX_CLOCK_SKEW`, 48 h) in the future
+is also rejected: metrics anchor the rolling windows and the displayed current policy on the maximum
+`date_end`, so one crafted far-future report could otherwise push every legitimate report outside
+the Action Center windows and pin the shown policy indefinitely. Every
 `record` row must carry a routable `source_ip` (`FILTER_VALIDATE_IP`) and a positive integer
 `count`; a missing or malformed value rejects the whole report rather than being coerced to `''`
 or `0`. Coercion would commit the report fingerprint while keeping an invalid row, so a corrected
