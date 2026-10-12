@@ -61,8 +61,9 @@ releases under test".
   (local builds) the Dockerfiles fall back to release 4.1.5, unverified.
 
 A red run can therefore also come from a new shop release: compare the summary with the last green
-run. A manual OSMap run can override the J2Commerce 6 ref with the `j2commerce6_ref` input (J6, J6 SEF
-and update lanes); its production-like lane always uses the resolved latest commit.
+run. A manual OSMap run can override the J2Commerce 6 commit with the `j2commerce6_ref` input, a
+full 40-character SHA (J6, J6 SEF and update lanes; a branch or tag name is refused because it could
+move between the jobs of one run); its production-like lane always uses the resolved latest commit.
 
 CI sets `TEST_STRICT_SKIP=1`, so a test that would SKIP fails instead. Set it locally to reproduce CI.
 

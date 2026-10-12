@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       j2commerce6_ref:
-        description: 'J2Commerce 6 git ref (commit SHA) to build from; empty = latest aligned commit of main. The production-like lane always uses the latest.'
+        description: 'J2Commerce 6 commit to build from, full 40-character SHA; empty = latest aligned commit of main. The production-like lane always uses the latest.'
         required: false
         default: ''
   push:
@@ -96,8 +96,10 @@ jobs:
             echo "j2c6_lane_ref=$LATEST" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! printf '%s' "$OVERRIDE" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
-            echo "ERROR: j2commerce6_ref '$OVERRIDE' is not a valid git ref." >&2
+          # A full commit SHA only: a branch or tag name could move between the jobs of this run,
+          # and the J6, J6 SEF and update lanes fetch the ref independently.
+          if ! printf '%s' "$OVERRIDE" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "ERROR: j2commerce6_ref '$OVERRIDE' must be a full 40-character commit SHA." >&2
             exit 1
           fi
           echo "j2c6_lane_ref=$OVERRIDE" >> "$GITHUB_OUTPUT"

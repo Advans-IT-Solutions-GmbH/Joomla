@@ -22,11 +22,11 @@
   findet. Nach jedem Fix-Push Copilot erneut anfordern. Gilt für Entwickler und Agenten. Ablauf:
   Review + Threads via `gh api repos/{owner}/{repo}/pulls/{pull_number}/reviews` und die GraphQL-Query `reviewThreads` holen; jeden offenen
   Thread behandeln; Fixes pushen; Threads mit der GraphQL-Mutation `resolveReviewThread`
-  schließen; Copilot über GraphQL erneut anfordern, zuerst die Anforderung mit
-  `requestReviews(input:{pullRequestId, botIds:[], union:false})` entfernen, dann mit
-  `requestReviews(input:{pullRequestId, botIds:["BOT_kgDOCnlnWA"], union:true})` neu setzen (der
-  REST-Aufruf `POST …/requested_reviewers` meldet Erfolg, startet aber keine neue Runde);
-  wiederholen, bis nichts mehr kommt.
+  schließen; Copilot mit der GraphQL-Mutation
+  `rerequestReviews(input:{pullRequestId, botIds:["BOT_kgDOCnlnWA"]})` erneut anfordern (lässt alle
+  anderen angeforderten Reviewer unberührt; der REST-Aufruf `POST …/requested_reviewers` meldet
+  Erfolg, startet aber keine neue Runde; die allererste Anforderung geht mit `requestReviews` und
+  `union:true`); wiederholen, bis nichts mehr kommt.
 - **Merge-Empfehlung ist Pflicht:** Die letzte Copilot-Übersicht auf dem aktuellen Kopf-Commit muss
   „🟢 Approval recommended“ lauten. „🔵 Needs a closer look“ oder „🟡 Changes recommended“ ist nie
   fertig, auch nicht mit 0 Funden, ohne „Previously missed“ und mit grüner CI: den genannten Grund
