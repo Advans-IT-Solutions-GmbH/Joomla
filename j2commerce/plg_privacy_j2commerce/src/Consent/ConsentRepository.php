@@ -515,9 +515,10 @@ final class ConsentRepository
         // The SQL LIKE below only preselects: "anna@example.com" is also contained in
         // "joanna@example.com" and "o'anna@example.com". A guest record counts only when the
         // address stands on its own in the entity-decoded body: no character that may belong to
-        // the local part (RFC 5322 atext and dot) before it, no domain character after it.
+        // the local part (letters and digits of any script, RFC 5322 atext, dot) before it, no
+        // domain character after it.
         $patterns = array_map(
-            static fn (string $email): string => '/(?<![A-Za-z0-9!#$%&\'*+\/=?^_`{|}~.\-])' . preg_quote($email, '/') . '(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/iu',
+            static fn (string $email): string => '/(?<![\p{L}\p{M}\p{N}!#$%&\'*+\/=?^_`{|}~.\-])' . preg_quote($email, '/') . '(?![\p{L}\p{M}\p{N}_\-]|\.[\p{L}\p{N}])/iu',
             $emails
         );
 

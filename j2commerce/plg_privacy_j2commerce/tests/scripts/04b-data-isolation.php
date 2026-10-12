@@ -650,6 +650,8 @@ class DataIsolationTest
         $legacy['similar']         = $this->insertGuestTestLegacyConsent('myguest.buyer@example.com');
         // Another address with an apostrophe, stored HTML-escaped: o'guest.buyer@example.com.
         $legacy['escaped']         = $this->insertGuestTestLegacyConsent('o&#039;guest.buyer@example.com');
+        // Another address with a non-ASCII letter before the guest address.
+        $legacy['unicode']         = $this->insertGuestTestLegacyConsent('éguest.buyer@example.com');
 
         foreach (['guest' => 'Guest.Buyer@example.com', 'other' => 'other.buyer@example.com'] as $key => $email) {
             $address = (object) [
@@ -822,6 +824,7 @@ class DataIsolationTest
             $this->test('Guest removal: legacy consent record of another guest untouched', $legacySubject($legacy['other']) === 'PLG_PRIVACY_J2COMMERCE');
             $this->test('Guest removal: legacy record of a longer address that contains the guest address untouched', $legacySubject($legacy['similar']) === 'PLG_PRIVACY_J2COMMERCE');
             $this->test('Guest removal: legacy record of an HTML-escaped address with an apostrophe before the guest address untouched', $legacySubject($legacy['escaped']) === 'PLG_PRIVACY_J2COMMERCE');
+            $this->test('Guest removal: legacy record of an address with a non-ASCII letter before the guest address untouched', $legacySubject($legacy['unicode']) === 'PLG_PRIVACY_J2COMMERCE');
 
             $addressCount = fn (int $id): int => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id
