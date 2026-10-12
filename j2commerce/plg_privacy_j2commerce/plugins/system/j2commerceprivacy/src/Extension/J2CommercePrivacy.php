@@ -17,10 +17,12 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Log\Log;
+use Joomla\CMS\Mail\MailTemplate;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Event\EventInterface;
 use Joomla\Event\SubscriberInterface;
@@ -59,6 +61,11 @@ use Joomla\Utilities\IpHelper;
  *    recordAcceptedOrderConsent()). Not on onJ2CommerceAfterSaveOrder: J2Commerce saves an
  *    incomplete order already when the confirmation step is rendered.
  * 5. onJ2CommerceCheckoutCleanup: the consent is removed from the session.
+ *
+ * PRIVACY REQUEST MAIL
+ * onMailBeforeRendering points the confirmation links of the com_privacy mail for requests an
+ * administrator created to the confirmation page of the privacy plugin, which customers without
+ * an account can use (com_privacy's own page requires a login).
  */
 class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
 {
@@ -94,7 +101,67 @@ class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             'onAfterRoute'                            => 'onAfterRoute',
             'onJ2CommerceAfterDisplayShippingPayment' => 'onJ2CommerceAfterDisplayShippingPayment',
             'onJ2CommerceCheckoutCleanup'             => 'onJ2CommerceCheckoutCleanup',
+            'onMailBeforeRendering'                   => 'onMailBeforeRendering',
         ];
+    }
+
+    /** Mail templates of com_privacy for a request an administrator created in the backend. */
+    public const ADMIN_REQUEST_MAIL_TEMPLATES = [
+        'com_privacy.notification.admin.export',
+        'com_privacy.notification.admin.remove',
+    ];
+
+    /**
+     * Confirmation page of the privacy plugin (J2Commerce::CONFIRM_ROUTE in plg_privacy_j2commerce;
+     * repeated here so the link does not depend on loading that class).
+     */
+    public const GUEST_CONFIRM_ROUTE = 'index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=html&task=confirmRequest';
+
+    /**
+     * Link the administrator request mail of com_privacy to the confirmation page of the privacy
+     * plugin. Joomla's own links ({TOKENURL}, {FORMURL}) lead to com_privacy's confirmation form,
+     * which only logged-in users can open; a customer without an account (guest order) could not
+     * confirm the request. The page of the privacy plugin works with and without an account
+     * (e-mail address plus token). Only while "Guest Request Confirmation" is on.
+     */
+    public function onMailBeforeRendering(EventInterface $event): void
+    {
+        $templateId = method_exists($event, 'getTemplateId') ? (string) $event->getTemplateId() : (string) $event->getArgument('templateId');
+
+        if (!\in_array($templateId, self::ADMIN_REQUEST_MAIL_TEMPLATES, true)) {
+            return;
+        }
+
+        $privacyParams = $this->getPrivacyParams();
+
+        if ($privacyParams === null || !(int) $privacyParams->get('guest_confirmation', 1)) {
+            return;
+        }
+
+        $template = method_exists($event, 'getTemplate') ? $event->getTemplate() : $event->getArgument('subject');
+
+        if ($template instanceof MailTemplate) {
+            self::addGuestConfirmationLinks($template, Uri::root());
+        }
+    }
+
+    /**
+     * Point {TOKENURL} and {FORMURL} of the mail to the confirmation page. {TOKENURL} keeps the
+     * token: its value contains the tag {TOKEN}, which MailTemplate::replaceTags() fills in
+     * afterwards, because it replaces the tags in the order of the template data and
+     * com_privacy's RequestModel::notifyUserAdminCreatedRequest() lists tokenurl before token
+     * (addTemplateData() keeps the position of an existing key). Should that order ever change,
+     * the link carries the literal {TOKEN}; the page ignores it and the customer pastes the
+     * token shown in the mail.
+     */
+    public static function addGuestConfirmationLinks(MailTemplate $template, string $siteRoot): void
+    {
+        $url = rtrim($siteRoot, '/') . '/' . self::GUEST_CONFIRM_ROUTE;
+
+        $template->addTemplateData([
+            'tokenurl' => $url . '&confirm_token={TOKEN}',
+            'formurl'  => $url,
+        ]);
     }
 
     /**

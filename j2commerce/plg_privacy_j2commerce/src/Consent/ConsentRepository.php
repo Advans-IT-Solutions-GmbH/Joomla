@@ -448,16 +448,24 @@ final class ConsentRepository
      * IP address and user agent are removed; the body gets a neutral note and the subject
      * LEGACY_DONE_SUBJECT and state -1 (invalid). Such records are not counted as consent.
      *
-     * @param   int|null  $userId  Only this user's records (null: all)
+     * @param   int|null  $userId  Only this user's records (null: all; 0: no account, only the
+     *                             guest records of $emails)
      * @param   string[]  $emails  With $userId: also guest records (user_id 0) mentioning one of these addresses
      *
      * @return  int  Number of records anonymized
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
+        $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
+
+        // A request without account and without an address has no records of its own; "user_id 0"
+        // alone would match the guest records of every customer.
+        if ($userId !== null && $userId <= 0 && $emails === []) {
+            return 0;
+        }
+
         [$text, $tag] = self::legacyBody(self::loadSiteBodyLanguage());
         $body         = $text . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($tag);
-        $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
         // The raw-key body repair is a data migration for records anonymized by an older version.
         // It runs only in the unscoped cleanup/installer path; a scoped removal request must not
         // touch other users' already-anonymized records or inflate the returned count.
@@ -474,7 +482,7 @@ final class ConsentRepository
                 ->setLimit(self::BATCH_SIZE);
 
             if ($userId !== null) {
-                $scope = [$this->db->quoteName('user_id') . ' = ' . (int) $userId];
+                $scope = $userId > 0 ? [$this->db->quoteName('user_id') . ' = ' . (int) $userId] : [];
 
                 foreach ($emails as $email) {
                     $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->db->quoteName('body') . ' LIKE '

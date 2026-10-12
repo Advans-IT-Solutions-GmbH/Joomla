@@ -6,6 +6,10 @@
  * - deleteCartData() must not touch another user's carts/cartitems
  * - deleteUserAddress() must reject deleting another user's address (IDOR guard)
  * - checkRetentionPeriod() return structure is correct for both can_delete states
+ * - guest privacy requests: export and removal by the request e-mail address (no account), an
+ *   account with earlier guest orders, another customer's guest order with the same name stays
+ *   untouched, case-insensitive matching, the confirmation of a request without login and the
+ *   link in the administrator request mail
  *
  * Covers issues #97 and #105 (J6 branch coverage).
  */
@@ -18,8 +22,87 @@ $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
+// Extension namespaces (com_privacy tables and events, plugin helpers) as the application would load them.
+JLoader::register('JNamespacePsr4Map', JPATH_LIBRARIES . '/namespacemap.php');
+(new JNamespacePsr4Map())->load();
+
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
+
+foreach ([
+    \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class        => JPATH_BASE . '/plugins/privacy/j2commerce/src/Extension/J2Commerce.php',
+    \Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy::class => JPATH_BASE . '/plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php',
+] as $class => $file) {
+    if (!class_exists($class) && is_file($file)) {
+        require_once $file;
+    }
+}
+
+if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class)) {
+    /** Test double: no application feedback, no lifetime licenses, recorded confirmations. */
+    class GuestRequestTestPlugin extends \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce
+    {
+        public array $confirmed = [];
+
+        protected function feedbackApplication(): ?object
+        {
+            return null;
+        }
+
+        protected function lifetimeOrderIds(array $orderIds): array
+        {
+            return [];
+        }
+
+        protected function afterRequestConfirmed(object $request): void
+        {
+            $this->confirmed[] = (int) $request->id;
+        }
+
+        public function call(string $method, ...$args)
+        {
+            return $this->$method(...$args);
+        }
+    }
+}
+
+if (class_exists(\Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy::class)) {
+    /** System plugin with fixed privacy plugin params. */
+    class GuestMailTestSystemPlugin extends \Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy
+    {
+        public ?\Joomla\Registry\Registry $privacyParams = null;
+
+        protected function getPrivacyParams(): ?\Joomla\Registry\Registry
+        {
+            return $this->privacyParams;
+        }
+    }
+}
+
+/** Mail template that renders its body text with the template data, as send() does. */
+class GuestMailTestTemplate extends \Joomla\CMS\Mail\MailTemplate
+{
+    public function render(string $text): string
+    {
+        return $this->replaceTags($text, $this->data);
+    }
+}
+
+/** Session stand-in with get() and set(). */
+class GuestTestSession
+{
+    private array $data = [];
+
+    public function get($name, $default = null)
+    {
+        return $this->data[$name] ?? $default;
+    }
+
+    public function set($name, $value)
+    {
+        $this->data[$name] = $value;
+    }
+}
 
 class DataIsolationTest
 {
@@ -336,6 +419,563 @@ class DataIsolationTest
     }
 
     // -------------------------------------------------------------------------
+    // Guest privacy requests
+    // -------------------------------------------------------------------------
+
+    /** Insert an order with its orderinfo; returns the order number. */
+    private function insertGuestTestOrder(string $orderId, int $userId, string $email, string $createdOn, string $firstName): string
+    {
+        $isJ6   = $this->tp === 'j2commerce';
+        $order  = (object) [
+            'order_id'            => $orderId,
+            'cart_id'             => 0,
+            'invoice_prefix'      => 'INV-',
+            'invoice_number'      => random_int(100000, 999999),
+            'token'               => 'guest-token-' . $orderId,
+            'user_id'             => $userId,
+            'user_email'          => $email,
+            'order_total'         => 20.00000,
+            'order_subtotal'      => 20.00000,
+            'order_tax'           => 0.00000,
+            'order_shipping'      => 0.00000,
+            'order_shipping_tax'  => 0.00000,
+            'order_discount'      => 0.00000,
+            'order_credit'        => 0.00000,
+            'order_surcharge'     => 0.00000,
+            'orderpayment_type'   => 'manual',
+            'transaction_id'      => '',
+            'transaction_status'  => 'confirmed',
+            'transaction_details' => '',
+            'currency_id'         => 1,
+            'order_state_id'      => 1,
+            'order_state'         => 'confirmed',
+            'currency_code'       => 'CHF',
+            'currency_value'      => 1.00000000,
+            'customer_note'       => 'Note of ' . $firstName,
+            'ip_address'          => '198.51.100.7',
+            'is_shippable'        => 0,
+            'is_including_tax'    => 1,
+            'customer_language'   => '*',
+            'customer_group'      => 'default',
+            'created_on'          => $createdOn,
+            'modified_on'         => $createdOn,
+        ];
+        $this->db->insertObject('#__' . $this->tp . '_orders', $order, $isJ6 ? 'j2commerce_order_id' : 'j2store_order_id');
+
+        $info = (object) [
+            'order_id'             => $orderId,
+            'billing_first_name'   => $firstName,
+            'billing_last_name'    => 'Muster',
+            'billing_middle_name'  => '',
+            'billing_address_1'    => 'Bahnhofstrasse 1',
+            'billing_address_2'    => '',
+            'billing_city'         => 'Zürich',
+            'billing_zip'          => '8001',
+            'billing_phone_1'      => '+41 44 000 00 00',
+            'billing_phone_2'      => '',
+            'billing_fax'          => '',
+            'billing_company'      => '',
+            'billing_tax_number'   => '',
+            'shipping_first_name'  => $firstName,
+            'shipping_last_name'   => 'Muster',
+            'shipping_middle_name' => '',
+            'shipping_address_1'   => 'Bahnhofstrasse 1',
+            'shipping_address_2'   => '',
+            'shipping_city'        => 'Zürich',
+            'shipping_zip'         => '8001',
+            'shipping_phone_1'     => '',
+            'shipping_phone_2'     => '',
+            'shipping_fax'         => '',
+            'shipping_company'     => '',
+            'shipping_tax_number'  => '',
+            'all_billing'          => '',
+            'all_shipping'         => '',
+            'all_payment'          => '',
+        ];
+        $this->db->insertObject('#__' . $this->tp . '_orderinfos', $info, $isJ6 ? 'j2commerce_orderinfo_id' : 'j2store_orderinfo_id');
+
+        return $orderId;
+    }
+
+    /** user_email, ip_address and billing first name of an order (null if missing). */
+    private function loadGuestTestOrder(string $orderId): ?object
+    {
+        return $this->db->setQuery(
+            'SELECT o.user_email, o.ip_address, o.customer_note, i.billing_first_name, i.billing_address_1'
+            . ' FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders', 'o')
+            . ' LEFT JOIN ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos', 'i') . ' ON i.order_id = o.order_id'
+            . ' WHERE o.order_id = ' . $this->db->quote($orderId)
+        )->loadObject() ?: null;
+    }
+
+    /** Insert a checkout consent record of an order; returns its ID. */
+    private function insertGuestTestConsent(string $orderId, string $ip): int
+    {
+        $row = (object) [
+            'user_id' => 0,
+            'state'   => 1,
+            'created' => gmdate('Y-m-d H:i:s', strtotime('-1 day')),
+            'subject' => 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT',
+            'body'    => "<p>Order $orderId</p><p>IP address: $ip</p><p>User agent: GuestTestAgent/1.0</p><!-- j2commerce-order:$orderId -->",
+            'remind'  => 0,
+            'token'   => '',
+        ];
+        $this->db->insertObject('#__privacy_consents', $row, 'id');
+
+        return (int) $row->id;
+    }
+
+    /** Insert a legacy consent record (earlier template override) mentioning $email; returns its ID. */
+    private function insertGuestTestLegacyConsent(string $email): int
+    {
+        $row = (object) [
+            'user_id' => 0,
+            'state'   => 1,
+            'created' => gmdate('Y-m-d H:i:s', strtotime('-2 days')),
+            'subject' => 'PLG_PRIVACY_J2COMMERCE',
+            'body'    => 'Consent given by ' . $email . ' (IP 198.51.100.9)',
+            'remind'  => 0,
+            'token'   => '',
+        ];
+        $this->db->insertObject('#__privacy_consents', $row, 'id');
+
+        return (int) $row->id;
+    }
+
+    /** com_privacy request record as the events carry it (only the e-mail address is read). */
+    private function guestTestRequest(string $email): object
+    {
+        $class   = \Joomla\Component\Privacy\Administrator\Table\RequestTable::class;
+        $request = (new ReflectionClass($class))->newInstanceWithoutConstructor();
+        $request->email        = $email;
+        $request->request_type = 'remove';
+        $request->status       = 1;
+
+        return $request;
+    }
+
+    /**
+     * Item IDs of a named domain of an export (domains of all data sets with the same base name).
+     *
+     * @return string[]
+     */
+    private function guestTestDomainItems(array $domains, string $name): array
+    {
+        $ids = [];
+
+        foreach ($domains as $domain) {
+            if ($domain->name === $name || str_ends_with((string) $domain->name, '_' . $name)) {
+                foreach ($domain->getItems() as $item) {
+                    $ids[] = (string) $item->id;
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    /** Values of a field over all items of the named domain. */
+    private function guestTestDomainValues(array $domains, string $name, string $field): array
+    {
+        $values = [];
+
+        foreach ($domains as $domain) {
+            if ($domain->name !== $name) {
+                continue;
+            }
+
+            foreach ($domain->getItems() as $item) {
+                foreach ($item->getFields() as $itemField) {
+                    if ($itemField->name === $field) {
+                        $values[] = (string) $itemField->value;
+                    }
+                }
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Export and removal of a guest customer (no Joomla account) by the request e-mail address,
+     * and of an account with earlier guest orders. Orders of other customers, also with the same
+     * name or with the same address under another account, stay untouched.
+     */
+    private function testGuestRequests(): void
+    {
+        echo "\n--- Guest privacy requests: export and removal by e-mail address ---\n";
+
+        if (!class_exists('GuestRequestTestPlugin')) {
+            $this->test('Plugin class loadable for guest requests', false);
+            return;
+        }
+
+        $suffix    = (string) time() . random_int(100, 999);
+        $expired   = gmdate('Y-m-d H:i:s', strtotime('-12 years'));
+        $recent    = gmdate('Y-m-d H:i:s', strtotime('-1 year'));
+        $orders    = [];
+        $consents  = [];
+        $legacy    = [];
+        $addresses = [];
+        $cartId    = 0;
+
+        // Guest customer: stored in mixed case, requested in lower case.
+        $orders['guest_expired']   = $this->insertGuestTestOrder('GUEST-EXP-' . $suffix, 0, 'Guest.Buyer@Example.COM', $expired, 'Hans');
+        $orders['guest_recent']    = $this->insertGuestTestOrder('GUEST-REC-' . $suffix, 0, 'guest.buyer@example.com', $recent, 'Hans');
+        // Another guest with the same name but another address.
+        $orders['other_guest']     = $this->insertGuestTestOrder('GUEST-OTH-' . $suffix, 0, 'other.buyer@example.com', $expired, 'Hans');
+        // An account order that carries the guest's address: belongs to that account, not to the guest.
+        $orders['other_account']   = $this->insertGuestTestOrder('GUEST-ACC-' . $suffix, 9911, 'guest.buyer@example.com', $expired, 'Hans');
+        // Account 9912 with an earlier guest order under its address.
+        $orders['account_guest']   = $this->insertGuestTestOrder('GUEST-AGO-' . $suffix, 0, 'Account.Holder@example.com', $expired, 'Anna');
+        $orders['account_recent']  = $this->insertGuestTestOrder('GUEST-AOR-' . $suffix, 9912, 'account.holder@example.com', $recent, 'Anna');
+
+        $consents['guest_expired'] = $this->insertGuestTestConsent($orders['guest_expired'], '203.0.113.60');
+        $consents['guest_recent']  = $this->insertGuestTestConsent($orders['guest_recent'], '203.0.113.61');
+        $consents['other_guest']   = $this->insertGuestTestConsent($orders['other_guest'], '203.0.113.62');
+        $legacy['guest']           = $this->insertGuestTestLegacyConsent('guest.buyer@example.com');
+        $legacy['other']           = $this->insertGuestTestLegacyConsent('other.buyer@example.com');
+
+        foreach (['guest' => 'Guest.Buyer@example.com', 'other' => 'other.buyer@example.com'] as $key => $email) {
+            $address = (object) [
+                'user_id'    => 0,
+                'first_name' => 'Hans',
+                'last_name'  => 'Muster',
+                'address_1'  => 'Bahnhofstrasse 1',
+                'city'       => 'Zürich',
+                'zip'        => '8001',
+                'email'      => $email,
+                'type'       => 'billing',
+            ];
+            $this->db->insertObject('#__' . $this->tp . '_addresses', $address, $this->tp . '_address_id');
+            $addresses[$key] = (int) $this->db->insertid();
+        }
+
+        $cart = (object) [
+            'user_id'        => 0,
+            'session_id'     => 'guest-request-test-' . $suffix,
+            'cart_type'      => 'cart',
+            'created_on'     => gmdate('Y-m-d H:i:s'),
+            'modified_on'    => gmdate('Y-m-d H:i:s'),
+            'customer_ip'    => '127.0.0.1',
+            'cart_params'    => '{}',
+            'cart_browser'   => '{}',
+            'cart_analytics' => '{}',
+        ];
+        $this->db->insertObject('#__' . $this->tp . '_carts', $cart, $this->tp . '_cart_id');
+        $cartId = (int) $this->db->insertid();
+
+        try {
+            $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]);
+            $plugin->setDatabase($this->db);
+
+            // --- Export of a guest customer through the com_privacy event (user = null) ---
+            $event = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', [
+                'subject' => $this->guestTestRequest('  GUEST.buyer@example.com '),
+                'user'    => null,
+            ]);
+            $plugin->onPrivacyExportRequest($event);
+            $domains = array_merge(...array_values(array_filter($event->getArgument('result', []) ?? [], 'is_array')));
+            $orderIds = $this->guestTestDomainValues($domains, 'orders', 'order_id');
+            $exported = array_map(fn ($id) => (string) $this->db->setQuery(
+                'SELECT order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE ' . $this->tp . '_order_id = ' . (int) $id
+            )->loadResult(), $orderIds);
+            sort($exported);
+            $expected = [$orders['guest_expired'], $orders['guest_recent']];
+            sort($expected);
+
+            $this->test('Guest export (no account): both guest orders of the address, matched case-insensitively', $exported === $expected, json_encode($exported));
+            $this->test('Guest export: no order of another guest with the same name or of an account with the same address',
+                !in_array($orders['other_guest'], $exported, true) && !in_array($orders['other_account'], $exported, true));
+            $this->test('Guest export: the guest address is exported, the other guest address is not',
+                in_array((string) $addresses['guest'], $this->guestTestDomainItems($domains, 'addresses'), true)
+                && !in_array((string) $addresses['other'], $this->guestTestDomainItems($domains, 'addresses'), true));
+            $consentItems = $this->guestTestDomainItems($domains, 'checkout_consents');
+            $this->test('Guest export: checkout consents of the guest orders (incl. IP address) are exported, not those of others',
+                in_array((string) $consents['guest_expired'], $consentItems, true) && in_array((string) $consents['guest_recent'], $consentItems, true)
+                && !in_array((string) $consents['other_guest'], $consentItems, true)
+                && in_array(true, array_map(fn ($v) => str_contains($v, '203.0.113.60'), $this->guestTestDomainValues($domains, 'checkout_consents', 'consent')), true),
+                json_encode($consentItems));
+            $this->test('Guest export: no Joomla account data domains without an account',
+                $this->guestTestDomainItems($domains, 'joomla_user') === [] && !in_array('joomla_user', array_map(fn ($d) => $d->name, $domains), true));
+
+            $empty = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', [
+                'subject' => $this->guestTestRequest('not-an-address'),
+                'user'    => null,
+            ]);
+            $plugin->onPrivacyExportRequest($empty);
+            $this->test('Export without account and without a valid address adds nothing', ($empty->getArgument('result', []) ?? []) === []);
+
+            // --- Retention list of the guest ---
+            $check    = $plugin->call('checkRetentionPeriod', 0, ['guest.buyer@example.com']);
+            $retained = array_column($check['orders'], 'order_number');
+            $this->test('Guest retention check lists the recent guest order only', $retained === [$orders['guest_recent']], json_encode($retained));
+            $this->test('No account and no address: nothing is matched', $plugin->call('checkRetentionPeriod', 0, [])['orders'] === []);
+
+            // --- Removal of the guest through the com_privacy event (user = null) ---
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest('GUEST.BUYER@example.com'),
+                'user'    => null,
+            ]));
+
+            $guestExpired = $this->loadGuestTestOrder($orders['guest_expired']);
+            $this->test('Guest removal: the expired guest order is anonymized (e-mail, IP, note, billing data)',
+                $guestExpired && $guestExpired->user_email === 'anonymized@deleted.invalid' && $guestExpired->ip_address === ''
+                && $guestExpired->customer_note === '' && $guestExpired->billing_first_name === 'Anonymized' && $guestExpired->billing_address_1 === '',
+                json_encode($guestExpired));
+            $guestRecent = $this->loadGuestTestOrder($orders['guest_recent']);
+            $this->test('Guest removal: the guest order within the retention period is kept intact',
+                $guestRecent && $guestRecent->user_email === 'guest.buyer@example.com' && $guestRecent->billing_first_name === 'Hans', json_encode($guestRecent));
+
+            foreach (['other_guest' => 'other guest with the same name', 'other_account' => 'account order with the same address'] as $key => $label) {
+                $row = $this->loadGuestTestOrder($orders[$key]);
+                $this->test("Guest removal: $label untouched",
+                    $row && $row->user_email !== 'anonymized@deleted.invalid' && $row->ip_address === '198.51.100.7' && $row->billing_first_name === 'Hans', json_encode($row));
+            }
+
+            $consentBody = fn (int $id): string => (string) $this->db->setQuery('SELECT body FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $id)->loadResult();
+            $this->test('Guest removal: consent of the anonymized guest order loses the IP address', !str_contains($consentBody($consents['guest_expired']), '203.0.113.60'));
+            $this->test('Guest removal: consent of the retained guest order unchanged', str_contains($consentBody($consents['guest_recent']), '203.0.113.61'));
+            $this->test('Guest removal: consent of the other guest unchanged', str_contains($consentBody($consents['other_guest']), '203.0.113.62'));
+
+            $legacySubject = fn (int $id): string => (string) $this->db->setQuery('SELECT subject FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $id)->loadResult();
+            $this->test('Guest removal: legacy consent record of the guest address anonymized', $legacySubject($legacy['guest']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
+            $this->test('Guest removal: legacy consent record of another guest untouched', $legacySubject($legacy['other']) === 'PLG_PRIVACY_J2COMMERCE');
+
+            $addressCount = fn (int $id): int => (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id
+            )->loadResult();
+            $this->test('Guest removal: the guest address is deleted', $addressCount($addresses['guest']) === 0);
+            $this->test('Guest removal: the address of the other guest is kept', $addressCount($addresses['other']) === 1);
+            $this->test('Guest removal: guest carts (user_id 0) are not touched',
+                (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_carts') . ' WHERE ' . $this->tp . '_cart_id = ' . $cartId)->loadResult() === 1);
+
+            // --- Account with an earlier guest order ---
+            $account           = new \Joomla\CMS\User\User();
+            $account->id       = 9912;
+            $account->username = 'guest-request-account-9912';
+            $account->email    = 'account.holder@example.com';
+
+            $accountDomains = $plugin->call('collectExportDomains', $account, 'account.holder@example.com');
+            $accountOrders  = array_map(fn ($id) => (string) $this->db->setQuery(
+                'SELECT order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE ' . $this->tp . '_order_id = ' . (int) $id
+            )->loadResult(), $this->guestTestDomainValues($accountDomains, 'orders', 'order_id'));
+            sort($accountOrders);
+            $expectedAccount = [$orders['account_guest'], $orders['account_recent']];
+            sort($expectedAccount);
+            $this->test('Account export: the account order and the earlier guest order under the account address', $accountOrders === $expectedAccount, json_encode($accountOrders));
+
+            $plugin->onPrivacyCanRemoveData(null, $account);
+            $plugin->onPrivacyRemoveData(null, $account);
+
+            $accountGuest = $this->loadGuestTestOrder($orders['account_guest']);
+            $this->test('Account removal: the earlier expired guest order is anonymized',
+                $accountGuest && $accountGuest->user_email === 'anonymized@deleted.invalid' && $accountGuest->billing_first_name === 'Anonymized', json_encode($accountGuest));
+            $accountRecent = $this->loadGuestTestOrder($orders['account_recent']);
+            $this->test('Account removal: the recent account order is kept', $accountRecent && $accountRecent->billing_first_name === 'Anna', json_encode($accountRecent));
+            $other = $this->loadGuestTestOrder($orders['other_account']);
+            $this->test('Account removal: the order of account 9911 stays untouched', $other && $other->billing_first_name === 'Hans' && $other->user_email === 'guest.buyer@example.com');
+
+            // Matching rules
+            $this->test('requestEmails(): trimmed, lower case, placeholder and invalid values dropped, no duplicates',
+                $plugin::requestEmails([' A@Example.com ', 'a@example.com', 'anonymized@deleted.invalid', 'no-address', '']) === ['a@example.com']);
+        } catch (\Throwable $e) {
+            $this->test('Guest request tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $orderList = implode(',', array_map([$this->db, 'quote'], array_values($orders)));
+
+            if ($orderList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+            }
+
+            $consentList = implode(',', array_map('intval', array_merge(array_values($consents), array_values($legacy))));
+
+            if ($consentList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id IN (' . $consentList . ')')->execute();
+            }
+
+            foreach ($addresses as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . (int) $id)->execute();
+            }
+
+            if ($cartId > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_carts') . ' WHERE ' . $this->tp . '_cart_id = ' . $cartId)->execute();
+            }
+        }
+    }
+
+    /**
+     * Confirmation of a privacy request without login: valid token, wrong, used and expired
+     * token, a request that is not pending, another address.
+     */
+    private function testRequestConfirmation(): void
+    {
+        echo "\n--- Confirmation of privacy requests without login ---\n";
+
+        if (!class_exists('GuestRequestTestPlugin')) {
+            $this->test('Plugin class loadable for request confirmation', false);
+            return;
+        }
+
+        $ids    = [];
+        $insert = function (string $email, int $status, string $token, string $createdAt) use (&$ids): int {
+            $row = (object) [
+                'email'                    => $email,
+                'requested_at'             => gmdate('Y-m-d H:i:s'),
+                'status'                   => $status,
+                'request_type'             => 'remove',
+                'confirm_token'            => $token === '' ? '' : \Joomla\CMS\User\UserHelper::hashPassword($token),
+                'confirm_token_created_at' => $createdAt,
+            ];
+            $this->db->insertObject('#__privacy_requests', $row, 'id');
+            $ids[] = (int) $row->id;
+
+            return (int) $row->id;
+        };
+        $status = fn (int $id): object => $this->db->setQuery(
+            'SELECT status, confirm_token FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . $id
+        )->loadObject();
+
+        $now     = gmdate('Y-m-d H:i:s');
+        $token   = md5('guest-confirm-' . random_int(1, PHP_INT_MAX));
+        $other   = md5('guest-other-' . random_int(1, PHP_INT_MAX));
+        $old     = md5('guest-old-' . random_int(1, PHP_INT_MAX));
+        $done    = md5('guest-done-' . random_int(1, PHP_INT_MAX));
+
+        try {
+            $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]);
+            $plugin->setDatabase($this->db);
+
+            $pending  = $insert('Confirm.Guest@example.com', 0, $token, $now);
+            $wrongTok = $insert('wrong.token@example.com', 0, $other, $now);
+            $expired  = $insert('expired.guest@example.com', 0, $old, gmdate('Y-m-d H:i:s', strtotime('-2 days')));
+            $expired2 = $insert('expired.other@example.com', 0, $old, gmdate('Y-m-d H:i:s', strtotime('-2 days')));
+            $notOpen  = $insert('done.guest@example.com', 1, $done, $now);
+
+            $this->test('Wrong token: refused', $plugin->confirmPrivacyRequest('wrong.token@example.com', md5('nope')) === 'failed');
+            $this->test('Wrong token: request stays pending', (int) $status($wrongTok)->status === 0);
+            $this->test('Valid token of another address: refused', $plugin->confirmPrivacyRequest('wrong.token@example.com', $token) === 'failed');
+            $this->test('Unfilled placeholder {TOKEN}: refused', $plugin->confirmPrivacyRequest('confirm.guest@example.com', '{TOKEN}') === 'failed');
+            $this->test('Request that is not pending (status 1): refused', $plugin->confirmPrivacyRequest('done.guest@example.com', $done) === 'failed');
+            $this->test('No confirmation side effects for refused attempts', $plugin->confirmed === []);
+
+            $this->test('Valid token, address in other case: confirmed', $plugin->confirmPrivacyRequest(' confirm.GUEST@example.com', $token) === 'confirmed');
+            $row = $status($pending);
+            $this->test('Confirmed request has status 1 and no token left', (int) $row->status === 1 && (string) $row->confirm_token === '', json_encode($row));
+            $this->test('Confirmation notifies like com_privacy (super users, action log)', $plugin->confirmed === [$pending], json_encode($plugin->confirmed));
+            $this->test('Used token: refused the second time', $plugin->confirmPrivacyRequest('confirm.guest@example.com', $token) === 'failed');
+
+            $this->test('Expired token with a wrong value: refused, request untouched',
+                $plugin->confirmPrivacyRequest('expired.other@example.com', md5('nope')) === 'failed' && (int) $status($expired2)->status === 0);
+            $this->test('Expired token: reported as expired', $plugin->confirmPrivacyRequest('expired.guest@example.com', $old) === 'expired');
+            $this->test('Expired token: request invalidated (status -1) as in com_privacy', (int) $status($expired)->status === -1);
+
+            $class   = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class;
+            $session = new GuestTestSession();
+            $start   = 1_700_000_000;
+
+            for ($i = 0; $i < $class::CONFIRM_MAX_FAILURES - 1; $i++) {
+                $class::registerConfirmFailure($session, $start + $i);
+            }
+
+            $this->test('Attempt limit: not reached below the maximum', !$class::confirmAttemptsExceeded($session, $start + 10));
+            $class::registerConfirmFailure($session, $start + 10);
+            $this->test('Attempt limit: reached at the maximum within the window', $class::confirmAttemptsExceeded($session, $start + 20));
+            $this->test('Attempt limit: released after the window', !$class::confirmAttemptsExceeded($session, $start + $class::CONFIRM_ATTEMPT_WINDOW + 20));
+            $this->test('cleanConfirmToken() keeps a Joomla token and drops placeholders',
+                $class::cleanConfirmToken($token) === $token && $class::cleanConfirmToken('{TOKEN}') === '' && $class::cleanConfirmToken('abc') === '');
+        } catch (\Throwable $e) {
+            $this->test('Request confirmation tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            if ($ids !== []) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id IN (' . implode(',', array_map('intval', $ids)) . ')')->execute();
+            }
+        }
+    }
+
+    /**
+     * The mail com_privacy sends for a request an administrator created links to the
+     * confirmation page of the privacy plugin, including the token.
+     */
+    private function testAdminRequestMailLink(): void
+    {
+        echo "\n--- Administrator request mail links to the confirmation page ---\n";
+
+        if (!class_exists('GuestMailTestSystemPlugin')) {
+            $this->test('System plugin class loadable for the mail link', false);
+            return;
+        }
+
+        $privacy = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class;
+        $system  = \Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy::class;
+        $this->test('Confirmation route is the same in both plugins', $privacy::CONFIRM_ROUTE === $system::GUEST_CONFIRM_ROUTE);
+
+        $token = md5('mail-token');
+        $body  = "1. Visit the following URL: {TOKENURL}\n2. URL: {FORMURL}\nToken: {TOKEN}";
+
+        // Template data in the order of com_privacy's RequestModel::notifyUserAdminCreatedRequest().
+        $makeTemplate = function (string $templateId) use ($token): GuestMailTestTemplate {
+            $mailer   = (new ReflectionClass(\Joomla\CMS\Mail\Mail::class))->newInstanceWithoutConstructor();
+            $template = new GuestMailTestTemplate($templateId, 'en-GB', $mailer);
+            $template->addTemplateData([
+                'sitename' => 'Test Shop',
+                'url'      => 'http://localhost/',
+                'tokenurl' => 'http://localhost/index.php?option=com_privacy&view=confirm&confirm_token=' . $token,
+                'formurl'  => 'http://localhost/index.php?option=com_privacy&view=confirm',
+                'token'    => $token,
+            ]);
+
+            return $template;
+        };
+
+        try {
+            $plugin = new GuestMailTestSystemPlugin(['name' => 'j2commerceprivacy', 'type' => 'system', 'params' => new \Joomla\Registry\Registry([])]);
+            $plugin->privacyParams = new \Joomla\Registry\Registry([]);
+
+            foreach (['com_privacy.notification.admin.export', 'com_privacy.notification.admin.remove'] as $templateId) {
+                $template = $makeTemplate($templateId);
+                $plugin->onMailBeforeRendering(new \Joomla\CMS\Event\Mail\BeforeRenderingMailTemplateEvent('onMailBeforeRendering', [
+                    'templateId' => $templateId,
+                    'subject'    => $template,
+                ]));
+                $text = $template->render($body);
+                $this->test("$templateId: the token link opens the confirmation page with the token",
+                    str_contains($text, $system::GUEST_CONFIRM_ROUTE . '&confirm_token=' . $token . "\n"), $text);
+                $this->test("$templateId: the form link opens the confirmation page",
+                    str_contains($text, 'URL: ' . rtrim(\Joomla\CMS\Uri\Uri::root(), '/') . '/' . $system::GUEST_CONFIRM_ROUTE . "\n"), $text);
+                $this->test("$templateId: no com_privacy confirm link and no unfilled tag left",
+                    !str_contains($text, 'view=confirm') && !str_contains($text, '{TOKEN}'), $text);
+            }
+
+            $template = $makeTemplate('com_privacy.notification.export');
+            $plugin->onMailBeforeRendering(new \Joomla\CMS\Event\Mail\BeforeRenderingMailTemplateEvent('onMailBeforeRendering', [
+                'templateId' => 'com_privacy.notification.export',
+                'subject'    => $template,
+            ]));
+            $this->test('Mail of a request the user created himself: unchanged', str_contains($template->render($body), 'view=confirm&confirm_token=' . $token));
+
+            $plugin->privacyParams = new \Joomla\Registry\Registry(['guest_confirmation' => 0]);
+            $template              = $makeTemplate('com_privacy.notification.admin.remove');
+            $plugin->onMailBeforeRendering(new \Joomla\CMS\Event\Mail\BeforeRenderingMailTemplateEvent('onMailBeforeRendering', [
+                'templateId' => 'com_privacy.notification.admin.remove',
+                'subject'    => $template,
+            ]));
+            $this->test('Guest Request Confirmation off: the mail keeps the com_privacy links', str_contains($template->render($body), 'view=confirm&confirm_token=' . $token));
+
+            $plugin->privacyParams = null;
+            $template              = $makeTemplate('com_privacy.notification.admin.remove');
+            $plugin->onMailBeforeRendering(new \Joomla\CMS\Event\Mail\BeforeRenderingMailTemplateEvent('onMailBeforeRendering', [
+                'templateId' => 'com_privacy.notification.admin.remove',
+                'subject'    => $template,
+            ]));
+            $this->test('Privacy plugin disabled: the mail keeps the com_privacy links', str_contains($template->render($body), 'view=confirm&confirm_token=' . $token));
+        } catch (\Throwable $e) {
+            $this->test('Mail link tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        }
+    }
+
+    // -------------------------------------------------------------------------
 
     public function run(): bool
     {
@@ -345,6 +985,9 @@ class DataIsolationTest
         $this->testDeleteCartDataIsolation();
         $this->testDeleteUserAddressIdorGuard();
         $this->testCheckRetentionPeriod();
+        $this->testGuestRequests();
+        $this->testRequestConfirmation();
+        $this->testAdminRequestMailLink();
 
         echo "\n=== Data Isolation Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

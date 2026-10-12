@@ -209,6 +209,18 @@
                     <option value="1">JYES</option>
                     <option value="0">JNO</option>
                 </field>
+
+                <field
+                    name="guest_confirmation"
+                    type="radio"
+                    label="PLG_PRIVACY_J2COMMERCE_GUEST_CONFIRMATION_LABEL"
+                    description="PLG_PRIVACY_J2COMMERCE_GUEST_CONFIRMATION_DESC"
+                    default="1"
+                    class="btn-group btn-group-yesno"
+                >
+                    <option value="1">JYES</option>
+                    <option value="0">JNO</option>
+                </field>
             </fieldset>
 
             <!-- Admin Notifications & Logging -->

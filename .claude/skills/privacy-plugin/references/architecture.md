@@ -36,8 +36,11 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │       │                              lifetime orders keep user_email; consent IP/UA removed
 │       ├── removeAcyMailingData()   — lookup by captured e-mails
 │       └── reportRetainedOrders()   — customer e-mail first, then administrator message
-└── onAjaxJ2commercePrivacy()     — AJAX address deletion
-    └── deleteUserAddress()
+└── onAjaxJ2commercePrivacy()     — com_ajax entry (result via $event->addResult())
+    ├── handleAccountTask()      — deleteAddress (logged-in, form token)
+    │   └── deleteUserAddress()
+    └── handleConfirmationPage() — confirmRequest (no login, HTML form, form token, attempt limit)
+        └── confirmPrivacyRequest()  — e-mail + code as com_privacy ConfirmModel, status 0 -> 1
 
 J2CommercePrivacy extends CMSPlugin implements SubscriberInterface — separate task plugin:
 │                    plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php
@@ -57,6 +60,14 @@ Address deletion uses Joomla's `com_ajax` (CSRF token required, logged-in users 
 ```
 index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=json&task=deleteAddress&address_id={id}
 ```
+
+Confirmation page for privacy requests (no login, HTML in the site template):
+```
+index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=html&task=confirmRequest[&confirm_token=...]
+```
+The system plugin (`onMailBeforeRendering`) links the mails `com_privacy.notification.admin.export` / `.remove` to it.
+
+Guest matching: `ownerCondition(userId, emails, column, alias)` builds `user_id = X OR (user_id = 0 AND LOWER(TRIM(column)) IN (...))`; used by the export, `checkRetentionPeriod()`, `anonymizeOrders()` (selects the order numbers once, then updates by order number), `deleteAddresses()` and `customerLanguage()`.
 
 No dependency on `plg_ajax_joomlaajaxforms` — uses Joomla Core `com_ajax` only.
 
@@ -90,4 +101,4 @@ AcyMailing (optional, detected via a table ending in `acym_configuration`): `acy
 
 `#__license_keys` is not used.
 
-`#__privacy_consents` (Joomla core): checkout consent on J2Commerce 6, one row per order, `user_id` of the order (0 = guest), subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT`, body = order number + IP address + user agent + marker `<!-- j2commerce-order:ID -->`; no e-mail copied. Written by the bundled system plugin (`plugins/system/j2commerceprivacy`), read by `src/Consent/ConsentRepository.php`. IP address and user agent are kept as long as the order: when the plugin or the cleanup task anonymizes an order, `ConsentRepository::removeOrderEvidence()` replaces the body with order number + marker `<!-- j2commerce-evidence-removed -->` in the website's default site language (record, `created`, `subject`, `user_id`, `state` kept). Every written body also carries the marker `<!-- j2commerce-lang:xx-XX -->` (`ConsentRepository::languageMarker()` / `extractLanguageTag()`): the record is evidence, so it keeps the wording the customer saw and names the language it is written in. No body text is built into the code; when the site language does not resolve a key, the packaged en-GB file is read, and only if that is missing too the key itself is stored and repaired on the next unscoped cleanup. Guest rows are not covered by com_privacy export or deletion.
+`#__privacy_consents` (Joomla core): checkout consent on J2Commerce 6, one row per order, `user_id` of the order (0 = guest), subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT`, body = order number + IP address + user agent + marker `<!-- j2commerce-order:ID -->`; no e-mail copied. Written by the bundled system plugin (`plugins/system/j2commerceprivacy`), read by `src/Consent/ConsentRepository.php`. IP address and user agent are kept as long as the order: when the plugin or the cleanup task anonymizes an order, `ConsentRepository::removeOrderEvidence()` replaces the body with order number + marker `<!-- j2commerce-evidence-removed -->` in the website's default site language (record, `created`, `subject`, `user_id`, `state` kept). Every written body also carries the marker `<!-- j2commerce-lang:xx-XX -->` (`ConsentRepository::languageMarker()` / `extractLanguageTag()`): the record is evidence, so it keeps the wording the customer saw and names the language it is written in. No body text is built into the code; when the site language does not resolve a key, the packaged en-GB file is read, and only if that is missing too the key itself is stored and repaired on the next unscoped cleanup. Guest rows are not covered by Joomla's consent plugin; this plugin exports the records of guest orders matched by the request e-mail (domain `checkout_consents`) and removes their evidence when it anonymizes the order.

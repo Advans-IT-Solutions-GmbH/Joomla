@@ -2,7 +2,7 @@
 
 ## How Retention Works
 
-`checkRetentionPeriod(int $userId): array` checks all orders for the user:
+`checkRetentionPeriod(int $userId, array $emails = []): array` checks all orders of the user and the guest orders (`user_id = 0`) with one of the request e-mails:
 
 1. Retention end per order = end of the fiscal year of the order (`fiscal_year_end`, MM-DD, default 12-31) + `retention_years` (`src/Retention/RetentionPeriod.php`, OR Art. 958f). The fiscal year is determined in the site time zone (`offset`); `created_on` is UTC, `RetentionPeriod::cutoff()` returns the UTC boundary: `created_on <= cutoff` means expired (checked against `isExpired()` in test 05, four zones). `02-29` = last day of February; non-existent days are rejected by the form rule `FiscalyearendRule` (`src/Rule`, `addruleprefix` on both forms) and otherwise count as 12-31 (task logs it).
 2. Orders within the retention period are listed under `orders` with `retention_end` but do **not** block the request (`can_delete` stays true): `processDataRemoval()` deletes addresses, carts, AcyMailing data, anonymizes expired orders, keeps these orders and reports them (admin flash message, admin notification/log, e-mail to the request address). Joomla's `plg_privacy_user` pseudonymises the account in the same request.
@@ -12,7 +12,7 @@
 
 ## Anonymization (orders outside retention)
 
-`anonymizeOrders(int $userId)` sets these fields on expired orders:
+`anonymizeOrders(int $userId, array $emails = [])` sets these fields on expired orders (account and guest orders of the request e-mails, updated by order number):
 
 | Field | Value |
 |-------|-------|
