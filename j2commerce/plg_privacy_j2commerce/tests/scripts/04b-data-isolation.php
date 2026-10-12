@@ -783,6 +783,32 @@ class DataIsolationTest
             $other = $this->loadGuestTestOrder($orders['other_account']);
             $this->test('Account removal: the order of account 9911 stays untouched', $other && $other->billing_first_name === 'Hans' && $other->user_email === 'guest.buyer@example.com');
 
+            // Migrated site: the report covers the orders of every data set, each order number once.
+            $multi = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]) extends GuestRequestTestPlugin {
+                public array $sets = [];
+                private int $calls = 0;
+
+                protected function forEachDataSet(callable $callback): array
+                {
+                    return [$callback(false), $callback(true)];
+                }
+
+                protected function checkRetentionPeriod(int $userId, array $emails = []): array
+                {
+                    return $this->sets[$this->calls++];
+                }
+            };
+            $order       = fn (string $number): array => ['order_number' => $number, 'order_date' => '01.01.2026', 'retention_end' => '31.12.2036', 'lifetime' => false];
+            $multi->sets = [
+                ['orders' => [$order('SET6-A'), $order('BOTH-C')], 'lifetime_expired' => []],
+                ['orders' => [$order('BOTH-C'), $order('SET4-B')], 'lifetime_expired' => [['order_number' => 'SET4-L', 'order_date' => '01.01.2010']]],
+            ];
+            $merged = $multi->call('retentionOverDataSets', 0, ['guest.buyer@example.com']);
+            $this->test('Retention report over all data sets: orders of both sets, a copied order once',
+                array_column($merged['orders'], 'order_number') === ['SET6-A', 'BOTH-C', 'SET4-B']
+                && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
+                json_encode($merged));
+
             // Matching rules
             $this->test('requestEmails(): trimmed, lower case, placeholder and invalid values dropped, no duplicates',
                 $plugin::requestEmails([' A@Example.com ', 'a@example.com', 'anonymized@deleted.invalid', 'no-address', '']) === ['a@example.com']);

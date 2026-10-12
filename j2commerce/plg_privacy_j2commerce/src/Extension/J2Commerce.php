@@ -1124,7 +1124,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
-        $check         = $this->checkRetentionPeriod($userId, $emails);
+        $check         = $this->retentionOverDataSets($userId, $emails);
         $retained      = $check['orders'];
         $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
 
@@ -1196,18 +1196,29 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function customerLanguage(int $userId, array $emails = []): string
     {
-        $db = $this->getDatabase();
+        $db     = $this->getDatabase();
+        $tag    = '';
+        $newest = '';
 
         try {
-            $db->setQuery(
-                $this->createDbQuery()
-                    ->select($db->quoteName('customer_language'))
-                    ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
-                    ->where($this->ownerCondition($userId, $emails))
-                    ->order($db->quoteName('created_on') . ' DESC')
-                    ->setLimit(1)
-            );
-            $tag = trim((string) $db->loadResult());
+            // Newest order over every J2Commerce data set (a migrated site keeps #__j2store_*).
+            foreach ($this->forEachDataSet(function () use ($db, $userId, $emails): ?object {
+                $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName(['customer_language', 'created_on']))
+                        ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
+                        ->where($this->ownerCondition($userId, $emails))
+                        ->order($db->quoteName('created_on') . ' DESC')
+                        ->setLimit(1)
+                );
+
+                return $db->loadObject() ?: null;
+            }) as $order) {
+                if ($order !== null && (string) $order->created_on > $newest) {
+                    $newest = (string) $order->created_on;
+                    $tag    = trim((string) $order->customer_language);
+                }
+            }
         } catch (\Throwable $e) {
             $tag = '';
         }
@@ -1433,8 +1444,42 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * checkRetentionPeriod() over every J2Commerce data set, as the removal itself runs on every
+     * set: a migrated site can hold an order only in the inactive copy. An order number found in
+     * several sets (migration copy) is listed once, the active set first.
+     *
+     * @param   int       $userId  Joomla user ID (0: no account)
+     * @param   string[]  $emails  E-mail addresses of the request
+     */
+    protected function retentionOverDataSets(int $userId, array $emails = []): array
+    {
+        $result = [
+            'can_delete'       => true,
+            'retention_years'  => (int) $this->params->get('retention_years', 10),
+            'orders'           => [],
+            'lifetime_expired' => [],
+        ];
+        $seen = ['orders' => [], 'lifetime_expired' => []];
+
+        foreach ($this->forEachDataSet(fn (): array => $this->checkRetentionPeriod($userId, $emails)) as $check) {
+            foreach (['orders', 'lifetime_expired'] as $key) {
+                foreach ($check[$key] ?? [] as $order) {
+                    $number = (string) $order['order_number'];
+
+                    if (!isset($seen[$key][$number])) {
+                        $seen[$key][$number] = true;
+                        $result[$key][]      = $order;
+                    }
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Orders of a removal request within the retention period (kept and reported) and expired
-     * lifetime-license orders (anonymized, e-mail kept).
+     * lifetime-license orders (anonymized, e-mail kept), in the current data set.
      *
      * @param   int       $userId  Joomla user ID (0: no account)
      * @param   string[]  $emails  E-mail addresses of the request: guest orders (user_id 0) with
