@@ -49,6 +49,21 @@ class ExportController extends BaseController
         }
 
         $db    = Factory::getContainer()->get(DatabaseInterface::class);
+
+        // Snapshot the highest record id now and bound every chunk to it. Records
+        // are append-only (ingestion inserts rows with higher auto-increment ids
+        // and never reorders or rewrites existing ones), so an id ceiling freezes
+        // the ordered result set: rows ingested during a long export get a higher
+        // id and are excluded from all pages, keeping OFFSET pagination stable so
+        // no record is duplicated or skipped as later pages are read.
+        $maxId = (int) $db->setQuery(
+            (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->select('MAX(' . $db->quoteName('id') . ')')
+                ->from($db->quoteName('#__dmarc_records'))
+                ->where($db->quoteName('domain_id') . ' = :domainId')
+                ->bind(':domainId', $domainId, ParameterType::INTEGER)
+        )->loadResult();
+
         $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
             ->select(
                 [
@@ -69,7 +84,9 @@ class ExportController extends BaseController
             ->join('INNER', $db->quoteName('#__dmarc_reports', 'rep'),
                 $db->quoteName('rep.id') . ' = ' . $db->quoteName('rec.report_id'))
             ->where($db->quoteName('rec.domain_id') . ' = :domainId')
+            ->where($db->quoteName('rec.id') . ' <= :maxId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->bind(':maxId', $maxId, ParameterType::INTEGER)
             ->order($db->quoteName('rep.date_begin') . ' DESC, ' . $db->quoteName('rec.id') . ' ASC');
 
         $app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);

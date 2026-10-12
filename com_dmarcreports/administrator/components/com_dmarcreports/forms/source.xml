@@ -43,6 +43,7 @@
             label="COM_DMARCREPORTS_FIELD_HOST_LABEL"
             description="COM_DMARCREPORTS_FIELD_HOST_DESC"
             filter="string"
+            required="true"
             size="40" />
 
         <field

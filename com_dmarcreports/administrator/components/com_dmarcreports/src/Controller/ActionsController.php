@@ -77,26 +77,10 @@ class ActionsController extends BaseController
         $snoozeUntil = $snoozeDays > 0 ? Factory::getDate('+' . $snoozeDays . ' days')->toSql() : null;
         $userId      = (int) $app->getIdentity()->id;
 
-        $existingId = (int) $db->setQuery(
-            $this->createDbQuery($db)
-                ->select($db->quoteName('id'))
-                ->from($db->quoteName('#__dmarc_actions'))
-                ->where($db->quoteName('domain_id') . ' = :domainId')
-                ->where($db->quoteName('action_key') . ' = :actionKey')
-                ->bind(':domainId', $domainId, ParameterType::INTEGER)
-                ->bind(':actionKey', $actionKey)
-        )->loadResult();
+        $existingId = $this->findActionId($db, $domainId, $actionKey);
 
         if ($existingId > 0) {
-            $row = (object) [
-                'id'           => $existingId,
-                'status'       => $status,
-                'snooze_until' => $snoozeUntil,
-                'last_seen'    => $now,
-                'modified'     => $now,
-                'modified_by'  => $userId,
-            ];
-            $db->updateObject('#__dmarc_actions', $row, 'id');
+            $this->applyStatus($db, $existingId, $status, $snoozeUntil, $now, $userId);
         } else {
             $row = (object) [
                 'domain_id'    => $domainId,
@@ -111,12 +95,60 @@ class ActionsController extends BaseController
                 'modified'     => $now,
                 'modified_by'  => $userId,
             ];
-            $db->insertObject('#__dmarc_actions', $row);
+
+            try {
+                $db->insertObject('#__dmarc_actions', $row);
+            } catch (\RuntimeException $e) {
+                // The read-then-insert is not atomic: a concurrent request can
+                // create the same (domain_id, action_key) row between the lookup
+                // above and this insert, so the unique index rejects it. Recover
+                // the race by re-reading the row the other request created and
+                // applying the requested status as an update instead of failing.
+                $raceId = $this->findActionId($db, $domainId, $actionKey);
+
+                if ($raceId <= 0) {
+                    throw $e;
+                }
+
+                $this->applyStatus($db, $raceId, $status, $snoozeUntil, $now, $userId);
+            }
         }
 
         $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_ACTION_UPDATED'), 'message');
 
         return true;
+    }
+
+    private function findActionId(DatabaseInterface $db, int $domainId, string $actionKey): int
+    {
+        return (int) $db->setQuery(
+            $this->createDbQuery($db)
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__dmarc_actions'))
+                ->where($db->quoteName('domain_id') . ' = :domainId')
+                ->where($db->quoteName('action_key') . ' = :actionKey')
+                ->bind(':domainId', $domainId, ParameterType::INTEGER)
+                ->bind(':actionKey', $actionKey)
+        )->loadResult();
+    }
+
+    private function applyStatus(
+        DatabaseInterface $db,
+        int $id,
+        string $status,
+        ?string $snoozeUntil,
+        string $now,
+        int $userId
+    ): void {
+        $row = (object) [
+            'id'           => $id,
+            'status'       => $status,
+            'snooze_until' => $snoozeUntil,
+            'last_seen'    => $now,
+            'modified'     => $now,
+            'modified_by'  => $userId,
+        ];
+        $db->updateObject('#__dmarc_actions', $row, 'id');
     }
 
     private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface

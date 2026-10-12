@@ -33,12 +33,45 @@ final class SystemDnsResolver implements DnsResolverInterface
 
         $records = @dns_get_record($host, DNS_TXT);
 
-        // dns_get_record() returns false on failure; an empty array is a valid
-        // answer meaning the host genuinely publishes no TXT records.
-        if (!\is_array($records)) {
-            return null;
+        if (\is_array($records)) {
+            // A successful answer, including an empty array meaning the host
+            // genuinely publishes no TXT records (NODATA).
+            return $this->flatten($records);
         }
 
+        // dns_get_record() returns false both for a non-existent host (NXDOMAIN)
+        // and for a genuine resolver/transport failure, without exposing the
+        // response code. Because _dmarc.<domain> very commonly does not exist
+        // when DMARC is simply absent, mapping every false to a resolver error
+        // would hide the normal "no DMARC record" case. Probe the resolver with
+        // a neutral query that discloses nothing about the monitored domain: if
+        // the resolver can answer it, the earlier false was NXDOMAIN/no-data (a
+        // successful empty answer); if even this fails, it is a real resolver
+        // failure (null).
+        return $this->resolverIsHealthy() ? [] : null;
+    }
+
+    /**
+     * Confirm the system resolver can answer at all, using the root zone SOA as
+     * a neutral probe that never names the monitored domain. A working resolver
+     * answers it; a dead or unreachable one does not.
+     */
+    private function resolverIsHealthy(): bool
+    {
+        $root = @dns_get_record('.', DNS_SOA);
+
+        return \is_array($root) && $root !== [];
+    }
+
+    /**
+     * Flatten dns_get_record() TXT rows into plain strings.
+     *
+     * @param   array<int, array<string, mixed>>  $records
+     *
+     * @return  string[]
+     */
+    private function flatten(array $records): array
+    {
         $out = [];
 
         foreach ($records as $record) {
