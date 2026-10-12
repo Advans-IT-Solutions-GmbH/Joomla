@@ -88,6 +88,43 @@ final class ConsentRepository
      * Whether an order number can be referenced safely. J2Commerce generates numeric order IDs;
      * the character set is limited so the marker can never break out of its HTML comment.
      */
+    /**
+     * Characters of an e-mail address token: everything except white space, "@" and the RFC 5322
+     * specials that never occur in an unquoted address (parentheses, angle and square brackets,
+     * braces, quote, comma, semicolon, colon, backslash). Used for request addresses and for
+     * the addresses found in a consent body, so both follow the same syntax.
+     */
+    public const ADDRESS_CHARS = '[^\s@<>()\[\]{}",;:\\\\]';
+
+    /**
+     * Whether $email (trimmed, lower case) is a request address: local part "@" domain with a dot,
+     * only ADDRESS_CHARS, no leading or trailing dot, at most 320 bytes.
+     */
+    public static function isAddress(string $email): bool
+    {
+        return $email !== '' && \strlen($email) <= 320
+            && !str_starts_with($email, '.') && !str_ends_with($email, '.')
+            && preg_match('/^' . self::ADDRESS_CHARS . '+@' . self::ADDRESS_CHARS . '+\.' . self::ADDRESS_CHARS . '+$/u', $email) === 1;
+    }
+
+    /**
+     * The complete e-mail address tokens of a text (HTML tags removed, entities decoded), lower
+     * case, a sentence-ending dot removed. A token is a maximal run of ADDRESS_CHARS around "@",
+     * so "o'anna@example.com" or "💡anna@example.com" is never the token "anna@example.com".
+     *
+     * @return  string[]
+     */
+    public static function addressTokens(string $text): array
+    {
+        $text = html_entity_decode(strip_tags(str_replace('<', ' <', $text)), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        if (!preg_match_all('/' . self::ADDRESS_CHARS . '+@' . self::ADDRESS_CHARS . '+/u', $text, $matches)) {
+            return [];
+        }
+
+        return array_map(static fn (string $token): string => mb_strtolower(rtrim($token, '.'), 'UTF-8'), $matches[0]);
+    }
+
     public static function isValidOrderId(string $orderId): bool
     {
         return $orderId !== '' && \strlen($orderId) <= 100 && preg_match('/^[A-Za-z0-9_.\-]+$/', $orderId) === 1;
@@ -513,14 +550,10 @@ final class ConsentRepository
         $lastId  = 0;
 
         // The SQL LIKE below only preselects: "anna@example.com" is also contained in
-        // "joanna@example.com" and "o'anna@example.com". A guest record counts only when the
-        // address stands on its own in the entity-decoded body: no character that may belong to
-        // the local part (letters and digits of any script, RFC 5322 atext, dot) before it, no
-        // domain character after it.
-        $patterns = array_map(
-            static fn (string $email): string => '/(?<![\p{L}\p{M}\p{N}!#$%&\'*+\/=?^_`{|}~.\-])' . preg_quote($email, '/') . '(?![\p{L}\p{M}\p{N}_\-]|\.[\p{L}\p{N}])/iu',
-            $emails
-        );
+        // "joanna@example.com", "o'anna@example.com" or "💡anna@example.com". A guest record
+        // counts only when one of the complete address tokens of its body (addressTokens(), the
+        // same syntax as an accepted request address) equals a request address.
+        $wanted = array_flip(array_map(static fn (string $email): string => mb_strtolower($email, 'UTF-8'), $emails));
 
         do {
             $query = $this->createQuery()
@@ -558,10 +591,8 @@ final class ConsentRepository
                 $own = $userId === null || ($userId > 0 && (int) $row->user_id === $userId);
 
                 if (!$own && (int) $row->user_id === 0) {
-                    $text = html_entity_decode((string) $row->body, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-                    foreach ($patterns as $pattern) {
-                        if (preg_match($pattern, $text)) {
+                    foreach (self::addressTokens((string) $row->body) as $token) {
+                        if (isset($wanted[$token])) {
                             $own = true;
                             break;
                         }

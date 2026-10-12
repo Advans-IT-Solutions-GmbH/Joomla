@@ -152,17 +152,17 @@ For export and removal requests this plugin matches, in every J2Commerce data se
 
 | Data | Matched by |
 |------|-----------|
-| Orders (incl. order items and billing/shipping data) | `user_id` of the account, **and** guest orders (`user_id = 0`) whose `user_email` equals the request address or the account address |
+| Orders (incl. order items and the complete order info row: billing and shipping name, address, phone, company, tax number) | `user_id` of the account, **and** guest orders (`user_id = 0`) whose `user_email` equals the request address or the account address |
 | Saved addresses | `user_id` of the account, and guest addresses (`user_id = 0`) whose `email` equals one of these addresses |
 | Checkout consent records of guest orders | the J2Commerce 6 order (marker with the order number; consents are recorded for J2Commerce 6 orders only, so J2Store order numbers are not used for the lookup); every record of the order is exported with its state (valid, obsolete, invalidated), IP address and user agent are removed when the order is anonymized |
 | Carts | `user_id` of the account only. Guest carts carry no e-mail address and expire with the session; a request without account never touches carts |
-| AcyMailing, records of an earlier template override | the request and account address (as before) |
+| AcyMailing, records of an earlier template override | the request and account address. A guest record of an earlier template override counts only when one of the complete addresses in its text equals a request address (same address syntax as a request address, case-insensitive), so `anna@example.com` never matches `joanna@`, `o'anna@`, `éanna@` or `💡anna@` |
 
 The comparison ignores case and surrounding spaces. Order items, billing data and checkout consents are linked to an order only by its order number; if that number also belongs to an order outside the request, they are neither exported nor anonymized for it (logged). Orders of **another account** are never matched, even if they carry the same e-mail address, and guest orders of other addresses are never matched, even with the same name. The placeholder `anonymized@deleted.invalid` of anonymized orders is never used as a request address. A request without account and without a valid address changes nothing.
 
 This applies to both cases:
 
-- **Guest customer without account:** the export contains the guest orders, guest addresses and checkout consents of the address. A removal request anonymizes the guest orders outside the retention period, keeps and reports the others (e-mail to the request address, administrator message) and deletes the guest addresses.
+- **Guest customer without account:** the export contains the guest orders, guest addresses and checkout consents of the address. A removal request anonymizes the guest orders outside the retention period, keeps and reports the others (e-mail to the request address, administrator message) and deletes the guest addresses while **Delete Addresses** is on. The customer e-mail names only what was removed: it says saved addresses were deleted only with that option on.
 - **Account with earlier guest orders:** the export and the removal request cover the account's orders and the guest orders placed with the request or account address before the account existed.
 
 Retention works as for registered users: every order is kept until the end of its retention period (**Retention Period**, counted from the end of the fiscal year of the order) and anonymized afterwards. Orders with a lifetime license keep their order e-mail address. Guest orders kept by a removal request are anonymized later by the cleanup task (guest orders outside the retention period, per order). A removal request is never refused.

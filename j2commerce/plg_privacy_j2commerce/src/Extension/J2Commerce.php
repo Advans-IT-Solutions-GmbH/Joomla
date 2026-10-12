@@ -112,14 +112,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     public static function requestEmails(array $emails): array
     {
+        self::loadHelperClasses();
         $result = [];
 
         foreach ($emails as $email) {
-            $email = mb_strtolower(trim((string) $email));
+            $email = mb_strtolower(trim((string) $email), 'UTF-8');
 
-            if ($email === '' || $email === self::ANONYMIZED_EMAIL || \strlen($email) > 320
-                || !preg_match('/^[^@\s]+@[^@\s]+\.[^@\s]+$/u', $email)
-            ) {
+            // Same address syntax as the address tokens of consent bodies (ConsentRepository).
+            if ($email === self::ANONYMIZED_EMAIL || !ConsentRepository::isAddress($email)) {
                 continue;
             }
 
@@ -928,11 +928,66 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        foreach ($orders as $order) {
+        // Complete billing and shipping data of each order (order info row), except for order
+        // numbers shared with an order outside the request.
+        $pkCol      = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $numberByPk = [];
+
+        foreach ($rows as $row) {
+            $numberByPk[$row[$pkCol]] = (string) $row['order_id'];
+        }
+
+        $infos = $this->orderInfoRows(array_values(array_diff(array_unique(array_values($numberByPk)), array_map('strval', array_keys($shared)))));
+
+        foreach ($orders as $pk => $order) {
+            $orderInfos = $infos[$numberByPk[$pk] ?? ''] ?? [];
+
+            if ($orderInfos !== []) {
+                // Order fields keep precedence over equally named order info columns.
+                $order += array_shift($orderInfos);
+
+                if ($orderInfos !== []) {
+                    $order['additional_order_info'] = $orderInfos;
+                }
+            }
+
             $domain->addItem($this->createItemFromArray($order, $order['order_id']));
         }
 
         return $domain;
+    }
+
+    /**
+     * Order info rows (billing and shipping data) of the given order numbers in the current data
+     * set, without their own key and the order number.
+     *
+     * @param   string[]  $orderNumbers
+     *
+     * @return  array<string, array<int, array<string, mixed>>>  Order number => rows
+     */
+    protected function orderInfoRows(array $orderNumbers): array
+    {
+        $db     = $this->getDatabase();
+        $table  = $this->isJ2Commerce4() ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+        $infoPk = $this->isJ2Commerce4() ? 'j2store_orderinfo_id' : 'j2commerce_orderinfo_id';
+        $result = [];
+
+        foreach (array_chunk(array_map('strval', $orderNumbers), 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select('*')
+                    ->from($db->quoteName($table))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            );
+
+            foreach ($db->loadAssocList() ?: [] as $info) {
+                $number = (string) $info['order_id'];
+                unset($info['order_id'], $info[$infoPk]);
+                $result[$number][] = $info;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -1408,6 +1463,25 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Language key of the customer e-mail text: it names only what this request removed (an
+     * account exists or not, saved addresses deleted by the option "Delete Addresses" or kept).
+     */
+    protected function customerNoticeBodyKey(): string
+    {
+        $addressesDeleted = (bool) (int) $this->params->get('delete_addresses', 1);
+
+        if ($this->guestRequest) {
+            return $addressesDeleted
+                ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST'
+                : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT';
+        }
+
+        return $addressesDeleted
+            ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY'
+            : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT';
+    }
+
+    /**
      * E-mail the kept orders to the customer, in the customer's language.
      *
      * @return  string  'sent', 'invalid' (no valid address) or 'failed'
@@ -1425,7 +1499,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
             $mailer->setBody(
-                $language->_($this->guestRequest ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST' : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY') . "\n\n"
+                $language->_($this->customerNoticeBodyKey()) . "\n\n"
                 . $this->formatRetainedOrders($retained, $lifetime, $language)
                 . sprintf($language->_('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT'), (string) ($this->params->get('support_email') ?: $app->get('mailfrom')))
             );

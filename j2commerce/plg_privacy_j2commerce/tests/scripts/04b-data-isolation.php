@@ -652,6 +652,11 @@ class DataIsolationTest
         $legacy['escaped']         = $this->insertGuestTestLegacyConsent('o&#039;guest.buyer@example.com');
         // Another address with a non-ASCII letter before the guest address.
         $legacy['unicode']         = $this->insertGuestTestLegacyConsent('éguest.buyer@example.com');
+        // Other addresses with a symbol or punctuation prefix (valid address characters).
+        $legacy['emoji']           = $this->insertGuestTestLegacyConsent('💡guest.buyer@example.com');
+        $legacy['punctuation']     = $this->insertGuestTestLegacyConsent('!guest.buyer@example.com');
+        // The guest address itself in markup and brackets, other letter case.
+        $legacy['wrapped']         = $this->insertGuestTestLegacyConsent('(<strong>Guest.Buyer@Example.com</strong>).');
 
         foreach (['guest' => 'Guest.Buyer@example.com', 'other' => 'other.buyer@example.com'] as $key => $email) {
             $address = (object) [
@@ -721,10 +726,35 @@ class DataIsolationTest
                     }
                 }
 
-                $this->test('Guest export: an order number shared with another account exports no joined billing name',
-                    ($sharedFields['billing_first_name'] ?? null) === '' && ($sharedFields['user_email'] ?? '') === 'guest.buyer@example.com',
+                $this->test('Guest export: an order number shared with another account exports no joined billing or shipping data',
+                    ($sharedFields['billing_first_name'] ?? null) === '' && ($sharedFields['user_email'] ?? '') === 'guest.buyer@example.com'
+                    && !isset($sharedFields['billing_address_1']) && !isset($sharedFields['shipping_city']),
                     json_encode($sharedFields));
             }
+
+            // Complete order info (billing and shipping data) of the guest's own order.
+            $expiredPk     = (string) $this->db->setQuery(
+                'SELECT ' . $this->tp . '_order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders')
+                . ' WHERE order_id = ' . $this->db->quote($orders['guest_expired'])
+            )->loadResult();
+            $expiredFields = [];
+
+            foreach ($domains as $domain) {
+                foreach ($domain->name === 'orders' ? $domain->getItems() : [] as $item) {
+                    if ((string) $item->id === $expiredPk) {
+                        foreach ($item->getFields() as $field) {
+                            $expiredFields[$field->name] = (string) $field->value;
+                        }
+                    }
+                }
+            }
+
+            $this->test('Guest export: billing address, phone and all shipping fields of the order info are exported',
+                ($expiredFields['billing_address_1'] ?? '') === 'Bahnhofstrasse 1' && ($expiredFields['billing_phone_1'] ?? '') === '+41 44 000 00 00'
+                && ($expiredFields['billing_zip'] ?? '') === '8001' && ($expiredFields['shipping_first_name'] ?? '') === 'Hans'
+                && ($expiredFields['shipping_address_1'] ?? '') === 'Bahnhofstrasse 1' && ($expiredFields['shipping_city'] ?? '') === 'Zürich'
+                && !isset($expiredFields[$this->tp . '_orderinfo_id']) && ($expiredFields['order_id'] ?? '') === $expiredPk,
+                json_encode($expiredFields, JSON_UNESCAPED_UNICODE));
 
             $this->test('Guest export: no order of another guest with the same name or of an account with the same address',
                 !in_array($orders['other_guest'], $exported, true) && !in_array($orders['other_account'], $exported, true));
@@ -825,6 +855,10 @@ class DataIsolationTest
             $this->test('Guest removal: legacy record of a longer address that contains the guest address untouched', $legacySubject($legacy['similar']) === 'PLG_PRIVACY_J2COMMERCE');
             $this->test('Guest removal: legacy record of an HTML-escaped address with an apostrophe before the guest address untouched', $legacySubject($legacy['escaped']) === 'PLG_PRIVACY_J2COMMERCE');
             $this->test('Guest removal: legacy record of an address with a non-ASCII letter before the guest address untouched', $legacySubject($legacy['unicode']) === 'PLG_PRIVACY_J2COMMERCE');
+            $this->test('Guest removal: legacy records of addresses with a symbol or punctuation prefix untouched',
+                $legacySubject($legacy['emoji']) === 'PLG_PRIVACY_J2COMMERCE' && $legacySubject($legacy['punctuation']) === 'PLG_PRIVACY_J2COMMERCE');
+            $this->test('Guest removal: legacy record with the guest address in markup, brackets and other letter case anonymized',
+                $legacySubject($legacy['wrapped']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY');
 
             $addressCount = fn (int $id): int => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $id
@@ -886,9 +920,36 @@ class DataIsolationTest
                 && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
                 json_encode($merged));
 
+            // Customer e-mail text names only what the request removed.
+            $guestFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'guestRequest');
+            $guestFlag->setAccessible(true);
+            $keys = [];
+
+            foreach ([[true, 1], [true, 0], [false, 1], [false, 0]] as [$guest, $deleteAddresses]) {
+                $mailPlugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['delete_addresses' => $deleteAddresses])]);
+                $guestFlag->setValue($mailPlugin, $guest);
+                $keys[] = $mailPlugin->call('customerNoticeBodyKey');
+            }
+
+            $this->test('Customer e-mail text follows the request type and the option Delete Addresses', $keys === [
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT',
+            ], json_encode($keys));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $kept   = [(string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT'] ?? ''), (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT'] ?? '')];
+                $this->test("$tag: texts for kept addresses exist and do not mention the saved addresses as deleted",
+                    $kept[0] !== '' && $kept[1] !== ''
+                    && !preg_match('/(saved addresses|gespeicherten Adressen|adresses enregistrées)[^.]*(were deleted|wurden gelöscht|ont été supprimées)/iu', implode(' ', $kept)));
+            }
+
             // Matching rules
             $this->test('requestEmails(): trimmed, lower case, placeholder and invalid values dropped, no duplicates',
-                $plugin::requestEmails([' A@Example.com ', 'a@example.com', 'anonymized@deleted.invalid', 'no-address', '']) === ['a@example.com']);
+                $plugin::requestEmails([' A@Example.com ', 'a@example.com', 'anonymized@deleted.invalid', 'no-address', '', '(a@example.com', 'a@example.com.', 'a@localhost']) === ['a@example.com']);
         } catch (\Throwable $e) {
             $this->test('Guest request tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
