@@ -12,11 +12,11 @@ namespace Advans\Component\DmarcReports\Administrator\Helper;
 defined('_JEXEC') or die;
 
 /**
- * A small IMAP4rev1 client built directly on PHP stream sockets, so the
- * component works even when the optional PHP imap extension is not installed.
- * It implements just enough of the protocol to log in, open a folder, find
- * messages and fetch their raw source. Credentials are only used to
- * authenticate and are never written to a log.
+ * A small IMAP4rev1 client built directly on PHP stream sockets. The component
+ * never uses the PHP imap extension — it is not a dependency and need not be
+ * installed or enabled. The client implements just enough of the protocol to
+ * log in, open a folder, find messages and fetch their raw source. Credentials
+ * are only used to authenticate and are never written to a log.
  *
  * @since  1.0.0
  */

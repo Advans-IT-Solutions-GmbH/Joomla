@@ -12,9 +12,9 @@ Administrator component that turns raw DMARC aggregate reports into a readable d
 
 Mailbox providers send DMARC aggregate reports (RFC 7489) as compressed XML attachments that are unreadable by hand. The DMARC Reports Component collects those reports directly inside your [Joomla](https://github.com/joomla/joomla-cms) installation, parses them in native PHP, and presents the result as per-domain statistics: mail volume, SPF and DKIM pass rates, alignment, top sending sources, and how much legitimate mail would be rejected under `p=reject`.
 
-Everything runs on your own server. No report data ever leaves the host — there is no external service, no Python, no Elasticsearch, and no cloud dependency. Reports are fetched on demand from a configured mailbox over IMAP, or uploaded by hand.
+Everything runs on your own server. No report data ever leaves the host — there is no external service, no Python, no Elasticsearch, and no cloud dependency. Reports are fetched on demand from a configured mailbox over IMAP, or uploaded by hand. By default the component makes no outbound connection at all except to the mailbox you configure.
 
-The one outbound exception is DNS: the DNS diagnostics and the detail view for an unmonitored domain call `dns_get_record()` to read that domain's published SPF and DMARC records. Like any DNS lookup this discloses the domain name being queried to your configured resolver, but no report contents are ever transmitted and the parsed report data is never sent to a third-party analysis service.
+The one optional outbound exception is DNS: the DNS diagnostics in the per-domain detail view call `dns_get_record()` to read that domain's published SPF and DMARC records. This is **off by default** and must be enabled in the component options, because — like any DNS lookup — it discloses the domain name being queried to your configured resolver and the upstream servers it consults. Even when enabled, no report contents are ever transmitted and the parsed report data is never sent to a third-party analysis service.
 
 Beyond showing the numbers, the component includes an **Action Center** that reads the parsed data and produces prioritised, plain-language recommendations: when it is safe to move a domain from `p=none` to `quarantine` to `reject`, which unaligned senders need SPF or DKIM before you tighten policy, and which new or failing sources need attention first. A non-expert administrator can see exactly where action is required.
 
@@ -28,7 +28,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - Dashboard with per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 - Per-domain drill-down: top sending IPs, pass/fail breakdown and a timeline
 - **Action Center**: prioritised, data-driven next steps along the `none → quarantine → reject` rollout
-- DNS diagnostics: detects missing or broken SPF/DMARC records and suggests the record to publish
+- DNS diagnostics (optional, off by default): detects missing or broken SPF/DMARC records and suggests the record to publish
 - CSV export of the per-domain record data
 - System check view that reports whether the IMAP transport is available
 - Administrator-only, behind Joomla ACL — the data never appears on the public site
@@ -71,6 +71,7 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Reject pass threshold | `99` | Aligned-pass rate (%) at which moving to `p=reject` is suggested |
 | IMAP timeout | `20` | Seconds to wait for the mailbox connection |
 | Max messages per run | `200` | Upper bound of messages fetched per ingestion run |
+| DNS diagnostics | `Off` | When on, the per-domain detail view checks published DMARC/SPF records; each check discloses the domain name to your DNS resolver |
 
 Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log.
 

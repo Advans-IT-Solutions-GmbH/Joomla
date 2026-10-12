@@ -115,6 +115,18 @@
                     max="2000"
                     step="10"
                 />
+
+                <field
+                    name="dns_diagnostics"
+                    type="radio"
+                    layout="joomla.form.field.radio.switcher"
+                    label="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_LABEL"
+                    description="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_DESC"
+                    default="0"
+                >
+                    <option value="0">JNO</option>
+                    <option value="1">JYES</option>
+                </field>
             </fieldset>
 
             <fieldset

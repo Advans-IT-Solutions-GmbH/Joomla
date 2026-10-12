@@ -76,13 +76,30 @@ class DetailModel extends BaseDatabaseModel
     /**
      * Live DNS diagnostics for the selected domain.
      *
+     * The lookups are opt-in: they are only performed when the operator has
+     * enabled the "dns_diagnostics" option, because each lookup discloses the
+     * monitored domain to the configured resolver. When the option is off the
+     * method returns a neutral, disabled result so the drill-down keeps working
+     * without any outbound DNS traffic.
+     *
      * @param   array<string, mixed>  $metrics
      *
      * @return  array<string, mixed>
      */
     public function getDnsDiagnostics(array $metrics): array
     {
-        return (new DnsDiagnostics())->inspect((string) $metrics['domain']);
+        if ((int) ComponentHelper::getParams('com_dmarcreports')->get('dns_diagnostics', 0) !== 1) {
+            return [
+                'enabled'   => false,
+                'domain'    => (string) $metrics['domain'],
+                'dmarc'     => ['present' => false, 'error' => false, 'record' => ''],
+                'spf'       => ['present' => false, 'error' => false, 'record' => ''],
+                'findings'  => [],
+                'suggested' => '',
+            ];
+        }
+
+        return ['enabled' => true] + (new DnsDiagnostics())->inspect((string) $metrics['domain']);
     }
 
     /**

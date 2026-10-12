@@ -112,14 +112,15 @@ class ExportController extends BaseController
 
     /**
      * Neutralise CSV formula injection: a spreadsheet treats a cell beginning
-     * with =, +, -, @ or a control character as a formula, so such values are
-     * prefixed with a single quote to force literal text.
+     * with =, +, -, @ or a leading control character (tab, carriage return or
+     * line feed) as a formula, so such values are prefixed with a single quote
+     * to force literal text.
      */
     private static function sanitiseCell($value): string
     {
         $value = (string) $value;
 
-        if ($value !== '' && \in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+        if ($value !== '' && \in_array($value[0], ['=', '+', '-', '@', "\t", "\r", "\n"], true)) {
             return "'" . $value;
         }
 

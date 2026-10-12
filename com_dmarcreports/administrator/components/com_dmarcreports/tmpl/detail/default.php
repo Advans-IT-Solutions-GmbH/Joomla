@@ -90,6 +90,9 @@ defined('_JEXEC') or die;
         <div class="card mb-4">
             <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_HEADING'); ?></h3></div>
             <div class="card-body">
+                <?php if (empty($this->dns['enabled'])) : ?>
+                    <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_DISABLED'); ?></div>
+                <?php else : ?>
                 <dl class="row mb-0">
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_DMARC'); ?></dt>
                     <dd class="col-sm-9">
@@ -116,6 +119,7 @@ defined('_JEXEC') or die;
                         <?php endif; ?>
                     </dd>
                 </dl>
+                <?php endif; ?>
             </div>
         </div>
 
