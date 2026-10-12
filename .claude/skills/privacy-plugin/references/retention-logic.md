@@ -12,7 +12,7 @@
 
 ## Anonymization (orders outside retention)
 
-`anonymizeOrders(int $userId, array $emails = [])` sets these fields on expired orders (account and guest orders of the request e-mails, updated by order number):
+`anonymizeOrders(int $userId, array $emails = [])` sets these fields on expired orders (account and guest orders of the request e-mails, orders table updated by primary key, order info and consent evidence by order number unless another order shares it; consent evidence only in the J2Commerce 6 data set):
 
 | Field | Value |
 |-------|-------|

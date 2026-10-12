@@ -629,6 +629,15 @@ class DataIsolationTest
         // Account 9912 with an earlier guest order under its address.
         $orders['account_guest']   = $this->insertGuestTestOrder('GUEST-AGO-' . $suffix, 0, 'Account.Holder@example.com', $expired, 'Anna');
         $orders['account_recent']  = $this->insertGuestTestOrder('GUEST-AOR-' . $suffix, 9912, 'account.holder@example.com', $recent, 'Anna');
+        // Two orders with the same order number: an expired guest order and an order of account 9913.
+        $orders['shared']          = $this->insertGuestTestOrder('GUEST-SHR-' . $suffix, 0, 'guest.buyer@example.com', $expired, 'Hans');
+        try {
+            $this->insertGuestTestOrder('GUEST-SHR-' . $suffix, 9913, 'shared.account@example.com', $expired, 'Hans');
+            $sharedPossible = true;
+        } catch (\Throwable $e) {
+            // The schema enforces unique order numbers: the case cannot occur.
+            $sharedPossible = false;
+        }
 
         $consents['guest_expired'] = $this->insertGuestTestConsent($orders['guest_expired'], '203.0.113.60');
         $consents['guest_recent']  = $this->insertGuestTestConsent($orders['guest_recent'], '203.0.113.61');
@@ -687,7 +696,7 @@ class DataIsolationTest
                 'SELECT order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE ' . $this->tp . '_order_id = ' . (int) $id
             )->loadResult(), $orderIds);
             sort($exported);
-            $expected = [$orders['guest_expired'], $orders['guest_recent']];
+            $expected = [$orders['guest_expired'], $orders['guest_recent'], $orders['shared']];
             sort($expected);
 
             $this->test('Guest export (no account): both guest orders of the address, matched case-insensitively', $exported === $expected, json_encode($exported));
@@ -750,7 +759,37 @@ class DataIsolationTest
             }
 
             $consentBody = fn (int $id): string => (string) $this->db->setQuery('SELECT body FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $id)->loadResult();
-            $this->test('Guest removal: consent of the anonymized guest order loses the IP address', !str_contains($consentBody($consents['guest_expired']), '203.0.113.60'));
+            if ($this->tp === 'j2commerce') {
+                $this->test('Guest removal: consent of the anonymized guest order loses the IP address', !str_contains($consentBody($consents['guest_expired']), '203.0.113.60'));
+            } else {
+                $this->test('Guest removal (J2Store): consent records are J2Commerce 6 records and stay unchanged', str_contains($consentBody($consents['guest_expired']), '203.0.113.60'));
+            }
+
+            // An order number that also belongs to another account's order: the guest's order row
+            // is anonymized by primary key, the other account's row and the shared order info stay.
+            $sharedNo = 'GUEST-SHR-' . $suffix;
+
+            if (!$sharedPossible) {
+                $this->test('Shared order number: order numbers are unique in this schema', true);
+            } else {
+                $this->db->setQuery(
+                    'SELECT ' . $this->tp . '_order_id AS pk, user_id, user_email, ip_address FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders')
+                    . ' WHERE order_id = ' . $this->db->quote($sharedNo) . ' ORDER BY user_id'
+                );
+                $sharedRows = $this->db->loadObjectList();
+                $sharedInfo = $this->db->setQuery(
+                    'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos')
+                    . ' WHERE order_id = ' . $this->db->quote($sharedNo) . ' AND billing_first_name = ' . $this->db->quote('Hans')
+                )->loadResult();
+                $this->test('Shared order number: the guest order row is anonymized',
+                    count($sharedRows) === 2 && (int) $sharedRows[0]->user_id === 0 && $sharedRows[0]->user_email === 'anonymized@deleted.invalid' && $sharedRows[0]->ip_address === '',
+                    json_encode($sharedRows));
+                $this->test('Shared order number: the order of the other account is untouched',
+                    count($sharedRows) === 2 && (int) $sharedRows[1]->user_id === 9913 && $sharedRows[1]->user_email === 'shared.account@example.com' && $sharedRows[1]->ip_address === '198.51.100.7',
+                    json_encode($sharedRows));
+                $this->test('Shared order number: the order info rows are left alone', (int) $sharedInfo === 2, (string) $sharedInfo);
+            }
+
             $this->test('Guest removal: consent of the retained guest order unchanged', str_contains($consentBody($consents['guest_recent']), '203.0.113.61'));
             $this->test('Guest removal: consent of the other guest unchanged', str_contains($consentBody($consents['other_guest']), '203.0.113.62'));
 

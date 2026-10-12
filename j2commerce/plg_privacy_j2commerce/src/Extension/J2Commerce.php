@@ -1647,8 +1647,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * due to Swiss legal requirements (OR Art. 958f, MWSTG Art. 70).
      *
      * The orders are those of the account and the guest orders (user_id 0) placed with one of
-     * $emails. They are selected once; every update below works on that list of order numbers,
-     * because the first update replaces the e-mail address the guest orders were found by.
+     * $emails. They are selected once by primary key; the updates of the orders table use these
+     * keys, because the first update replaces the e-mail address the guest orders were found by.
+     * Order info rows and checkout consent records are linked only by the order number: an order
+     * number that also belongs to an order outside this request is left alone there (logged).
      *
      * @param int      $userId User ID (0: no account)
      * @param string[] $emails E-mail addresses of the request (guest orders)
@@ -1656,38 +1658,81 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected function anonymizeOrders(int $userId, array $emails = []): void
     {
         $db          = $this->getDatabase();
-        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
-        $infosTable  = $this->isJ2Commerce4() ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+        $isJ4        = $this->isJ2Commerce4();
+        $ordersTable = $isJ4 ? '#__j2store_orders' : '#__j2commerce_orders';
+        $infosTable  = $isJ4 ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+        $pkCol       = $isJ4 ? 'j2store_order_id' : 'j2commerce_order_id';
 
         // Only orders whose retention period (from the end of their fiscal year) has ended
         $db->setQuery(
             $this->createDbQuery()
-                ->select($db->quoteName('order_id'))
+                ->select($db->quoteName([$pkCol, 'order_id']))
                 ->from($db->quoteName($ordersTable))
                 ->where($this->ownerCondition($userId, $emails))
                 ->where($db->quoteName('created_on') . ' <= ' . $db->quote($this->retentionCutoff()))
         );
-        $anonymizedOrderIds = array_values(array_unique(array_map('strval', $db->loadColumn() ?: [])));
+        $rows = $db->loadObjectList() ?: [];
 
-        if ($anonymizedOrderIds === []) {
+        if ($rows === []) {
             return;
         }
 
-        // Lifetime-license orders keep their order e-mail address (provisional rule, pending confirmation).
-        $lifetimeIds = array_flip($this->lifetimeOrderIds($anonymizedOrderIds));
-        $emailIds    = array_values(array_filter($anonymizedOrderIds, static fn (string $id): bool => !isset($lifetimeIds[$id])));
+        $pkByNumber = [];
 
-        foreach (array_chunk($emailIds, 500) as $chunk) {
+        foreach ($rows as $row) {
+            $pkByNumber[(string) $row->order_id][] = (int) $row->$pkCol;
+        }
+
+        $orderIds = array_map('strval', array_keys($pkByNumber));
+        $ownPks   = array_flip(array_merge(...array_values($pkByNumber)));
+
+        // Order numbers that also belong to an order outside this request.
+        $shared = [];
+
+        foreach (array_chunk($orderIds, 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName([$pkCol, 'order_id']))
+                    ->from($db->quoteName($ordersTable))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            );
+
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                if (!isset($ownPks[(int) $row->$pkCol])) {
+                    $shared[(string) $row->order_id] = true;
+                }
+            }
+        }
+
+        if ($shared !== []) {
+            Log::add(
+                'Order numbers shared with another order, order info and consent evidence not anonymized: ' . implode(', ', array_keys($shared)),
+                Log::WARNING,
+                'plg_privacy_j2commerce'
+            );
+        }
+
+        // Lifetime-license orders keep their order e-mail address (provisional rule, pending confirmation).
+        $lifetimeIds = array_flip($this->lifetimeOrderIds($orderIds));
+        $emailPks    = [];
+
+        foreach ($pkByNumber as $orderId => $pks) {
+            if (!isset($lifetimeIds[(string) $orderId])) {
+                array_push($emailPks, ...$pks);
+            }
+        }
+
+        foreach (array_chunk($emailPks, 500) as $chunk) {
             $db->setQuery(
                 $this->createDbQuery()
                     ->update($db->quoteName($ordersTable))
                     ->set($db->quoteName('user_email') . ' = ' . $db->quote(self::ANONYMIZED_EMAIL))
-                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                    ->whereIn($db->quoteName($pkCol), $chunk)
             )->execute();
         }
 
-        foreach (array_chunk($anonymizedOrderIds, 500) as $chunk) {
-            // Anonymize orders table
+        // Anonymize orders table
+        foreach (array_chunk(array_keys($ownPks), 500) as $chunk) {
             $db->setQuery(
                 $this->createDbQuery()
                     ->update($db->quoteName($ordersTable))
@@ -1695,10 +1740,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         $db->quoteName('customer_note') . ' = ' . $db->quote(''),
                         $db->quoteName('ip_address') . ' = ' . $db->quote(''),
                     ])
-                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                    ->whereIn($db->quoteName($pkCol), $chunk)
             )->execute();
+        }
 
-            // Billing/shipping data is in the orderinfos table (J2Commerce 4 and 6), not in the orders table
+        $ownNumbers = array_values(array_filter($orderIds, static fn (string $id): bool => !isset($shared[$id])));
+
+        // Billing/shipping data is in the orderinfos table (J2Commerce 4 and 6), not in the orders table
+        foreach (array_chunk($ownNumbers, 500) as $chunk) {
             $db->setQuery(
                 $this->createDbQuery()
                     ->update($db->quoteName($infosTable))
@@ -1735,8 +1784,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             )->execute();
         }
 
-        // Anonymized orders: their checkout consent records lose IP address and user agent.
-        (new ConsentRepository($db))->removeOrderEvidence($anonymizedOrderIds);
+        // Checkout consents are recorded for J2Commerce 6 orders only and name the order number:
+        // their IP address and user agent are removed in the J2Commerce 6 data set. A J2Store
+        // order number could belong to another customer's J2Commerce 6 order.
+        if (!$isJ4 && $ownNumbers !== []) {
+            (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
+        }
     }
 
     /**
