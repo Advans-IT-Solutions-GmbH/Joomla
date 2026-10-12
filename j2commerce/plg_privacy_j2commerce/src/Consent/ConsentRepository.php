@@ -534,9 +534,12 @@ final class ConsentRepository
             if ($userId !== null) {
                 $scope = $userId > 0 ? [$this->db->quoteName('user_id') . ' = ' . (int) $userId] : [];
 
+                // LOWER on both sides: the preselection must not depend on the column collation.
+                // Under a case-sensitive collation "Anna@Example.com" in the body would otherwise
+                // never reach the case-insensitive check below.
                 foreach ($emails as $email) {
-                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->db->quoteName('body') . ' LIKE '
-                        . $this->db->quote('%' . $this->db->escape(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), true) . '%', false) . ')';
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND LOWER(' . $this->db->quoteName('body') . ') LIKE '
+                        . $this->db->quote('%' . $this->db->escape(htmlspecialchars(mb_strtolower($email, 'UTF-8'), ENT_QUOTES, 'UTF-8'), true) . '%', false) . ')';
                 }
 
                 $query->where('(' . implode(' OR ', $scope) . ')');
