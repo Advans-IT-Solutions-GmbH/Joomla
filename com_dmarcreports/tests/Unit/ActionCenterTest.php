@@ -124,6 +124,51 @@ class ActionCenterTest extends TestCase
         $this->assertSame(0, $item['severity']);
     }
 
+    public function testRejectWithPartialPercentageIsNotFullEnforcement(): void
+    {
+        // p=reject but pct=10: only a tenth of mail is subject to the policy,
+        // so this must surface as plan-soon partial enforcement, never as the
+        // informational "Enforcement reached".
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 3,
+                'domain'             => 'example.org',
+                'total'              => 500,
+                'current_policy'     => 'reject',
+                'current_policy_pct' => 10,
+                'dmarc_pass'         => 500,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('partial_enforcement', $codes);
+        $this->assertNotContains('enforced', $codes);
+
+        $item = $this->find($items, 'partial_enforcement');
+        $this->assertSame(2, $item['severity']);
+        $this->assertSame(10, $item['params'][1]);
+    }
+
+    public function testRejectWithFullPercentageIsEnforced(): void
+    {
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 3,
+                'domain'             => 'example.org',
+                'total'              => 500,
+                'current_policy'     => 'reject',
+                'current_policy_pct' => 100,
+                'dmarc_pass'         => 500,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('enforced', $codes);
+        $this->assertNotContains('partial_enforcement', $codes);
+    }
+
     public function testQuarantineTargetStopsRolloutAtQuarantine(): void
     {
         $items = ActionCenter::generate(

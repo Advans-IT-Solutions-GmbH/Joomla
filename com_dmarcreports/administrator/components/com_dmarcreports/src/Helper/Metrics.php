@@ -70,9 +70,11 @@ final class Metrics
         $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
 
         foreach ($rows as &$row) {
-            $row                   = array_map(static fn ($v) => is_numeric($v) ? $v + 0 : $v, $row);
-            $row['current_policy'] = $this->currentPolicy((int) $row['id']);
-            $row['pass_rate']      = self::rate((int) $row['dmarc_pass'], (int) $row['total']);
+            $row                       = array_map(static fn ($v) => is_numeric($v) ? $v + 0 : $v, $row);
+            $latest                    = $this->latestPolicy((int) $row['id']);
+            $row['current_policy']     = $latest['p'];
+            $row['current_policy_pct'] = $latest['pct'];
+            $row['pass_rate']          = self::rate((int) $row['dmarc_pass'], (int) $row['total']);
         }
 
         return $rows;
@@ -88,11 +90,14 @@ final class Metrics
     {
         $domain = $this->domainRow($domainId);
 
+        $latestPolicy = $this->latestPolicy($domainId);
+
         $metrics = [
-            'domain_id'         => $domainId,
-            'domain'            => $domain['domain'] ?? '',
-            'expected_policy'   => $domain['expected_policy'] ?? 'reject',
-            'current_policy'    => $this->currentPolicy($domainId),
+            'domain_id'          => $domainId,
+            'domain'             => $domain['domain'] ?? '',
+            'expected_policy'    => $domain['expected_policy'] ?? 'reject',
+            'current_policy'     => $latestPolicy['p'],
+            'current_policy_pct' => $latestPolicy['pct'],
             'total'             => 0,
             'dmarc_pass'        => 0,
             'dkim_pass'         => 0,
@@ -351,10 +356,18 @@ final class Metrics
         return (int) $this->db->setQuery($query)->loadResult();
     }
 
-    private function currentPolicy(int $domainId): string
+    /**
+     * The policy disposition and percentage from the most recent stored report,
+     * ordered by end date then id. The percentage matters for the rollout
+     * guidance: p=reject with pct<100 only subjects that share of mail to the
+     * policy, so it must not be presented as full enforcement.
+     *
+     * @return  array{p: string, pct: int}
+     */
+    private function latestPolicy(int $domainId): array
     {
         $query = $this->query()
-            ->select($this->db->quoteName('policy_p'))
+            ->select([$this->db->quoteName('policy_p'), $this->db->quoteName('policy_pct')])
             ->from($this->db->quoteName('#__dmarc_reports'))
             ->where($this->db->quoteName('domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
@@ -362,7 +375,13 @@ final class Metrics
 
         $query->setLimit(1);
 
-        return (string) $this->db->setQuery($query)->loadResult();
+        $row = $this->db->setQuery($query)->loadAssoc();
+
+        if (!$row) {
+            return ['p' => '', 'pct' => 100];
+        }
+
+        return ['p' => (string) $row['policy_p'], 'pct' => (int) $row['policy_pct']];
     }
 
     /**

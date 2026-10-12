@@ -22,7 +22,8 @@ are positional and fed into the matching language key by `ActionPresenter::title
 | `move_to_quarantine` | policy | At `p=none` and pass rate ≥ quarantine threshold — safe to tighten |
 | `stay_at_quarantine` | policy | At `p=quarantine` but pass rate below the reject threshold |
 | `move_to_reject` | policy | At `p=quarantine` and pass rate ≥ reject threshold |
-| `at_target` / `enforced` | policy | Already at the configured target / at `p=reject` |
+| `at_target` / `enforced` | policy | Already at the configured target / at `p=reject` with `pct=100` |
+| `partial_enforcement` | policy | At `p=reject` but `pct<100`, so only that share of mail is enforced — not full enforcement |
 | `would_be_rejected` | policy | Share of mail that would be blocked today under `p=reject` (sev 3 if ≥2%) |
 | `align_source` | alignment | An unaligned sender (IP) — fix SPF/DKIM before tightening (sev by share) |
 | `new_source` | source | A sending IP not seen before — review it |

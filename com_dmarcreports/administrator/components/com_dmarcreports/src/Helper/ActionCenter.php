@@ -68,8 +68,17 @@ final class ActionCenter
 
         // Policy rollout guidance along none -> quarantine -> reject, stopping at
         // the configured target so the Action Center never over-recommends.
+        $policyPct = (int) ($metrics['current_policy_pct'] ?? 100);
+
         if ($policy === 'reject') {
-            $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
+            if ($policyPct >= 100) {
+                $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
+            } else {
+                // p=reject with pct<100 only subjects that share of mail to the
+                // policy; the rest falls through to quarantine, so this is not
+                // full enforcement and must not be reported as "done".
+                $items[] = self::item('partial_enforcement', 'policy', 2, $domainId, [$domain, $policyPct]);
+            }
         } elseif ($policyRank >= $targetRank) {
             $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
         } elseif ($policy === '' || $policy === 'none') {

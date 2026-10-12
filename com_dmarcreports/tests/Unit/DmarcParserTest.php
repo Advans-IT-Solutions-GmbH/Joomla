@@ -147,4 +147,52 @@ XML;
         $this->expectException(\InvalidArgumentException::class);
         DmarcParser::parse($xml);
     }
+
+    public function testRejectsUnknownPolicyValue(): void
+    {
+        $xml = str_replace('<p>none</p>', '<p>bogus</p>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsMissingPolicy(): void
+    {
+        $xml = str_replace('<p>none</p>', '<p></p>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsNonNumericPercentage(): void
+    {
+        $xml = str_replace('<pct>100</pct>', '<pct>abc</pct>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsOutOfRangePercentage(): void
+    {
+        $xml = str_replace('<pct>100</pct>', '<pct>150</pct>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testPreservesValidPartialPercentage(): void
+    {
+        $xml    = str_replace('<pct>100</pct>', '<pct>25</pct>', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame(25, $report['policy']['pct']);
+    }
+
+    public function testDefaultsPercentageToHundredWhenAbsent(): void
+    {
+        $xml    = str_replace('<pct>100</pct>', '', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame(100, $report['policy']['pct']);
+    }
 }

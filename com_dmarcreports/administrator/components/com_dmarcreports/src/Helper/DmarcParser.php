@@ -74,9 +74,9 @@ final class DmarcParser
             'date_end'   => $end,
             'policy'     => [
                 'domain' => strtolower(self::text($policy->domain ?? null)),
-                'p'      => strtolower(self::text($policy->p ?? null)),
-                'sp'     => strtolower(self::text($policy->sp ?? null)),
-                'pct'    => isset($policy->pct) && self::text($policy->pct) !== '' ? (int) $policy->pct : 100,
+                'p'      => self::policyDisposition($policy->p ?? null, true),
+                'sp'     => self::policyDisposition($policy->sp ?? null, false),
+                'pct'    => self::percentage($policy->pct ?? null),
                 'adkim'  => self::alignmentMode($policy->adkim ?? null),
                 'aspf'   => self::alignmentMode($policy->aspf ?? null),
             ],
@@ -148,6 +148,63 @@ final class DmarcParser
         $value = strtolower(self::text($node));
 
         return $value === 's' ? 's' : 'r';
+    }
+
+    /**
+     * Validates a published policy disposition tag (p or sp). The main policy is
+     * required and must be one of the three RFC 7489 values; the subdomain
+     * policy is optional and an absent value simply inherits the main policy.
+     * An unknown value is rejected rather than stored, because the latest stored
+     * policy drives the dashboard and the rollout guidance: one malformed report
+     * must not be able to display a bogus policy and suppress all guidance.
+     *
+     * @param   \SimpleXMLElement|null  $node      The policy tag, if present.
+     * @param   bool                    $required  Whether an empty value is an error.
+     *
+     * @return  string  A validated disposition, or '' for an absent optional tag.
+     */
+    private static function policyDisposition($node, bool $required): string
+    {
+        $value = strtolower(self::text($node));
+
+        if ($value === '') {
+            if ($required) {
+                throw new \InvalidArgumentException('The report does not publish a DMARC policy (p).');
+            }
+
+            return '';
+        }
+
+        if (!\in_array($value, ['none', 'quarantine', 'reject'], true)) {
+            throw new \InvalidArgumentException('The report publishes an unknown DMARC policy value.');
+        }
+
+        return $value;
+    }
+
+    /**
+     * Validates the published policy percentage. When absent it defaults to 100
+     * (the RFC default); when present it must be a whole number from 0 through
+     * 100. A malformed value such as "abc" or an out-of-range one such as 150 is
+     * rejected instead of being coerced to a misleading number.
+     *
+     * @param   \SimpleXMLElement|null  $node  The pct tag, if present.
+     *
+     * @return  int  A percentage from 0 to 100.
+     */
+    private static function percentage($node): int
+    {
+        $value = self::text($node);
+
+        if ($value === '') {
+            return 100;
+        }
+
+        if (!ctype_digit($value) || (int) $value > 100) {
+            throw new \InvalidArgumentException('The published policy percentage must be a whole number between 0 and 100.');
+        }
+
+        return (int) $value;
     }
 
     private static function disposition($node): string

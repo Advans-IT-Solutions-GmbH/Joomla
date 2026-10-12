@@ -85,6 +85,10 @@ class MetricsTest
             return $bundle['current_policy'] === 'quarantine';
         });
 
+        $this->test('Current policy percentage is read from the newest report', function () use ($bundle) {
+            return (int) $bundle['current_policy_pct'] === 100;
+        });
+
         $this->test('New sources list the IP seen only in the latest report', function () use ($bundle) {
             $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['new_sources']);
 

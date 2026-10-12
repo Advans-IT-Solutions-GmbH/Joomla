@@ -22,10 +22,15 @@ Streaming design (do not revert to loading all messages into an array):
   `array_slice(0, $limit)` by `max_messages_per_run`, then fetches **one** body at a time and
   passes `['uid' => seq, 'raw' => $raw]` to the callback, `unset($raw)` between messages.
 - A `MAX_TOTAL_BYTES` (128 MiB) run budget caps memory for a single run.
-- `advance()` flags a message `\Seen`, or `\Deleted` + `EXPUNGE` when `delete_after_import` is set.
-  Flags are STOREd **before** any EXPUNGE because EXPUNGE renumbers sequence numbers.
-- Plain `SEARCH` returns **sequence numbers**, not UIDs; STORE/FETCH/EXPUNGE all use them. The
-  `uid` field in a message array is really a seq number (pre-existing naming).
+- `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When
+  `delete_after_import` is set it removes it instead: with the UIDPLUS capability (RFC 4315) it
+  marks the message `\Deleted` and issues a **targeted `UID EXPUNGE`** so only the named messages
+  go; without UIDPLUS it marks them `\Deleted \Seen` and **defers** removal (a plain `EXPUNGE`
+  would drop every `\Deleted` message, including other clients', so it is never issued).
+- All mailbox operations address messages by **UID** (`UID SEARCH`, `UID FETCH`, `UID STORE`,
+  `UID EXPUNGE`, RFC 3501), so flags and expunges reference the exact message even as the mailbox
+  changes — do not revert to sequence-number operations. The `uid` field in a message array is a
+  real IMAP UID.
 - Only successfully-ingested messages are advanced/deleted — `Ingestor::ingestMessage()` returns a
   success bool that the callback checks.
 
@@ -38,6 +43,12 @@ Parses the aggregate XML into one report header + N record rows (see `dmarc-doma
 XML shape). Loads XML safely (no external entity expansion). Maps `policy_published` and each
 `record` into the `#__dmarc_reports` / `#__dmarc_records` columns, computing `spf_aligned` /
 `dkim_aligned` from the auth results.
+
+The published policy is validated, not just copied: `p` must be `none`, `quarantine` or `reject`
+and `pct`, when present, must be a whole number 0–100 (absent defaults to 100). A malformed or
+out-of-range value rejects the whole report instead of being coerced, because the latest stored
+policy drives the dashboard and the rollout guidance — one bogus report must not display a fake
+policy and suppress all guidance. `sp` is optional and validated only when present.
 
 ## Idempotent storage (`Ingestor`)
 

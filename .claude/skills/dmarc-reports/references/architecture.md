@@ -5,7 +5,8 @@ Standard Joomla 5/6 administrator MVC component, namespace `Advans\Component\Dma
 
 ## Wiring
 
-- `services/provider.php` — DI service provider (registers the component, MVC factory, router).
+- `services/provider.php` — DI service provider (registers the component dispatcher factory and
+  the MVC factory; no router, as an admin-only component needs none).
   Does not pass a dispatcher in constructors or call `setDispatcher()` (Joomla sets it on load).
 - `src/Extension/` — the component entry/boot class.
 - `forms/domain.xml`, `forms/source.xml` — JForm definitions for the domain and source editors.
