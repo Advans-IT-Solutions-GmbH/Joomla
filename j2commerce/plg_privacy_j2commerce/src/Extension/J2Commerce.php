@@ -96,10 +96,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     private const CONFIRM_TOKEN_LIFETIME = 'P1D';
 
     /**
-     * bcrypt hash of a random value: verified when no request matches the e-mail address, so a
-     * missing request takes about as long as a wrong token.
+     * Hash of a random value, created like a confirmation token hash (UserHelper::hashPassword(),
+     * same algorithm and cost) once per request: verified in place of a missing request, so a
+     * missing request takes as long as a wrong token.
      */
-    private const DUMMY_TOKEN_HASH = '$2y$10$.jp48NMybK/m/ftOKcV/Ku7ucs4qJHdmKYTGDuQWWNzVPpp81eGKa';
+    private static ?string $dummyTokenHash = null;
 
     /**
      * E-mail addresses of a privacy request as they are compared with order and address data:
@@ -2356,11 +2357,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // requests exist for the address, nor which of them matched.
         $match = null;
 
+        // Created on every first attempt of a request, whether or not it is needed, so its cost
+        // does not tell either.
+        self::$dummyTokenHash ??= UserHelper::hashPassword(UserHelper::genRandomPassword(32));
+
         for ($i = 0; $i < self::CONFIRM_HASH_CHECKS; $i++) {
             $row = $rows[$i] ?? null;
 
             if ($row === null) {
-                password_verify($token !== '' ? $token : 'invalid', self::DUMMY_TOKEN_HASH);
+                UserHelper::verifyPassword($token !== '' ? $token : 'invalid', self::$dummyTokenHash);
                 continue;
             }
 
