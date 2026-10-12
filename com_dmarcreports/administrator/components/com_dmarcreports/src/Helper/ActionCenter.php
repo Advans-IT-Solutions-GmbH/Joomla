@@ -40,6 +40,13 @@ final class ActionCenter
         $quarantineThreshold = (float) ($config['quarantine_pass_threshold'] ?? 95);
         $rejectThreshold     = (float) ($config['reject_pass_threshold'] ?? 99);
 
+        // Reject enforcement demands a stricter pass rate than quarantine. If the
+        // options are misconfigured so that reject sits below quarantine, raise the
+        // reject bar to the quarantine bar so the rollout advice stays monotonic.
+        if ($rejectThreshold < $quarantineThreshold) {
+            $rejectThreshold = $quarantineThreshold;
+        }
+
         $domainId = (int) ($metrics['domain_id'] ?? 0);
         $domain   = (string) ($metrics['domain'] ?? '');
         $total    = (int) ($metrics['total'] ?? 0);

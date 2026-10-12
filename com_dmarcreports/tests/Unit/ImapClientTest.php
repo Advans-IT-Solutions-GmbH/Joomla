@@ -118,7 +118,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'deferred' => 0],
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0],
             $result['stats']
         );
 
@@ -158,13 +158,49 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'deferred' => 1],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1],
             $result['stats']
         );
 
         // A deferred (transient failure) message must not be advanced: no STORE
         // keeps it in the UNSEEN set for the next run.
         $this->assertStringNotContainsString('UID STORE', $result['sent']);
+    }
+
+    public function testCountsEmptyBodyAsTransportSkipWithoutCallback(): void
+    {
+        // A zero-length literal models an empty body (or one dropped by the
+        // per-message cap in fetchBody): the callback must never run, yet the
+        // message is advanced and surfaced as a transport skip.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, '', 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $called = 0;
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0],
+            static function () use (&$called): string {
+                $called++;
+
+                return 'new';
+            }
+        );
+
+        $this->assertSame(0, $called);
+        $this->assertSame(
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0],
+            $result['stats']
+        );
+
+        // The empty message is still flagged \Seen so it drops out of the next run.
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Seen)', $result['sent']);
     }
 
     public function testDeletesImportedMessagesWithUidplus(): void

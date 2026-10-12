@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
 use Joomla\Database\ParameterType;
@@ -25,6 +26,28 @@ class DomainModel extends AdminModel
     public function getTable($name = 'Domain', $prefix = 'Administrator', $options = [])
     {
         return parent::getTable($name, $prefix, $options);
+    }
+
+    /**
+     * Load a domain, seeding a new record's rollout target from the component's
+     * default_policy_target option so a manually created domain follows the same
+     * configured target as one auto-created during ingestion, rather than a
+     * value hard-coded in the form.
+     *
+     * @param   integer  $pk  The primary key, or null for the state value.
+     *
+     * @return  mixed  The item object on success, false on failure.
+     */
+    public function getItem($pk = null)
+    {
+        $item = parent::getItem($pk);
+
+        if ($item && empty($item->id)) {
+            $item->expected_policy = (string) ComponentHelper::getParams('com_dmarcreports')
+                ->get('default_policy_target', 'reject');
+        }
+
+        return $item;
     }
 
     public function getForm($data = [], $loadData = true)

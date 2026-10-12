@@ -445,4 +445,66 @@ XML;
         $this->assertSame('r', $report['policy']['adkim']);
         $this->assertSame('r', $report['policy']['aspf']);
     }
+
+    /**
+     * Build a feedback document with the given number of identical records, used
+     * to exercise the per-document record cap without materialising the full
+     * production limit.
+     */
+    private function sampleWithRecords(int $records): string
+    {
+        $record = <<<'XML'
+  <record>
+    <row>
+      <source_ip>192.0.2.10</source_ip>
+      <count>1</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>pass</dkim>
+        <spf>pass</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>example.org</header_from>
+    </identifiers>
+  </record>
+
+XML;
+
+        $header = <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+  <report_metadata>
+    <org_name>example.net</org_name>
+    <email>dmarc@example.net</email>
+    <report_id>cap-test</report_id>
+    <date_range>
+      <begin>1700000000</begin>
+      <end>1700086400</end>
+    </date_range>
+  </report_metadata>
+  <policy_published>
+    <domain>example.org</domain>
+    <p>none</p>
+  </policy_published>
+
+XML;
+
+        return $header . str_repeat($record, $records) . "</feedback>\n";
+    }
+
+    public function testAcceptsRecordCountUpToTheCap(): void
+    {
+        $report = DmarcParser::parse($this->sampleWithRecords(3), 3);
+
+        // Exactly at the cap is accepted and every record is materialised.
+        $this->assertCount(3, $report['records']);
+    }
+
+    public function testRejectsRecordCountAboveTheCap(): void
+    {
+        // One record past the cap is rejected outright rather than truncated.
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($this->sampleWithRecords(4), 3);
+    }
 }

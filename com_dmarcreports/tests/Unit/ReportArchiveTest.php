@@ -131,6 +131,29 @@ class ReportArchiveTest extends TestCase
         $this->assertStringContainsString('<feedback>', $documents[0]);
     }
 
+    public function testDetectsZipByMagicBytesDespiteGzExtension(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        // A real ZIP archive carrying a ".gz" filename must be decoded as a ZIP
+        // (by its magic bytes) rather than being handed to the gzip branch and
+        // silently discarded.
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+        $zip->addFromString('report.xml', self::XML);
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $documents = ReportArchive::extract($payload, 'report.gz');
+
+        $this->assertCount(1, $documents);
+        $this->assertStringContainsString('<feedback>', $documents[0]);
+    }
+
     public function testMalformedGzipYieldsNothingWhenDecoderAvailable(): void
     {
         if (!\function_exists('gzdecode')) {

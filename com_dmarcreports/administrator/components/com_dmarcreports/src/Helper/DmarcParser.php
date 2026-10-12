@@ -55,17 +55,31 @@ final class DmarcParser
     private const MAX_METADATA_LENGTH = 255;
 
     /**
+     * Maximum number of <record> rows accepted from a single document. The byte
+     * ceiling (MAX_TOTAL_BYTES) bounds the input size but not the row count: a
+     * permitted document can still pack a very large number of tiny records,
+     * each materialised as a nested PHP array here, so an untrusted attachment
+     * could exhaust worker memory. Legitimate aggregate reports stay far below
+     * this, so a document exceeding it is rejected as a parse failure.
+     */
+    private const MAX_RECORDS = 100000;
+
+    /**
      * Parse one aggregate report document.
      *
-     * @param   string  $xml  The raw XML of a single <feedback> document.
+     * @param   string    $xml         The raw XML of a single <feedback> document.
+     * @param   int|null  $maxRecords  Maximum <record> rows to accept; defaults
+     *                                 to MAX_RECORDS. Exposed only so the record
+     *                                 cap can be exercised cheaply in tests.
      *
      * @return  array<string, mixed>  Normalised report data.
      *
      * @throws  \InvalidArgumentException  When the document is not a usable report.
      */
-    public static function parse(string $xml): array
+    public static function parse(string $xml, ?int $maxRecords = null): array
     {
-        $xml = trim($xml);
+        $maxRecords = ($maxRecords !== null && $maxRecords > 0) ? $maxRecords : self::MAX_RECORDS;
+        $xml        = trim($xml);
 
         if ($xml === '') {
             throw new \InvalidArgumentException('Empty DMARC report document.');
@@ -160,8 +174,18 @@ final class DmarcParser
         }
 
         $total = 0;
+        $recordCount = 0;
 
         foreach ($feedback->record as $record) {
+            // Enforce the record cap before materialising the row, so a document
+            // packed with many tiny records cannot exhaust memory one array at a
+            // time. The whole report is rejected rather than truncated, because a
+            // partial store would commit the fingerprint and discard a corrected
+            // copy later as a duplicate.
+            if (++$recordCount > $maxRecords) {
+                throw new \InvalidArgumentException('The report contains more records than are supported.');
+            }
+
             $row        = $record->row;
             $evaluated  = $row->policy_evaluated;
             $identifier = $record->identifiers;

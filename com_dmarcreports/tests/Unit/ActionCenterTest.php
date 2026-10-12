@@ -150,6 +150,34 @@ class ActionCenterTest extends TestCase
         $this->assertSame(10, $item['params'][1]);
     }
 
+    public function testMisconfiguredRejectBelowQuarantineIsClampedUp(): void
+    {
+        // Operator error: the reject bar is configured below the quarantine bar.
+        // The engine must raise reject to the quarantine bar so a quarantine
+        // domain is not advanced to reject on a pass rate that only clears the
+        // lower (invalid) threshold.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 7,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'quarantine',
+                'dmarc_pass'     => 950,
+            ],
+            [
+                'quarantine_pass_threshold' => 98,
+                'reject_pass_threshold'     => 90,
+            ]
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('stay_at_quarantine', $codes);
+        $this->assertNotContains('move_to_reject', $codes);
+
+        $item = $this->find($items, 'stay_at_quarantine');
+        $this->assertSame(98.0, $item['params'][2]);
+    }
+
     public function testRejectWithFullPercentageIsEnforced(): void
     {
         $items = ActionCenter::generate(

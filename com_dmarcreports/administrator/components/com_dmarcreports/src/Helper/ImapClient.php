@@ -102,7 +102,7 @@ final class ImapClient
      *                                            delete_after_import.
      * @param   callable(array{uid: int, raw: string}): string  $onMessage
      *
-     * @return  array{seen: int, ingested: int, skipped: int, deferred: int}
+     * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int}
      *
      * @throws  \RuntimeException  On any connection, authentication or protocol error.
      */
@@ -129,7 +129,7 @@ final class ImapClient
 
         $this->connect($host, $port, $security);
 
-        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'deferred' => 0];
+        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0];
 
         try {
             $this->login((string) ($config['username'] ?? ''), (string) ($config['password'] ?? ''));
@@ -158,9 +158,12 @@ final class ImapClient
                 if ($raw === '') {
                     // An empty body here means the literal was empty or exceeded
                     // the per-message cap in fetchBody(): the message is advanced
-                    // without producing a report, so it is counted as skipped to
-                    // keep the operator-visible totals honest.
+                    // without producing a report. It is counted as a transport
+                    // skip, kept separate from callback-level skips so the caller
+                    // can surface it in the operator summary without the callback
+                    // ever seeing this message (and without double-counting).
                     $stats['skipped']++;
+                    $stats['transport_skipped']++;
                     $touched[] = $id;
                     continue;
                 }

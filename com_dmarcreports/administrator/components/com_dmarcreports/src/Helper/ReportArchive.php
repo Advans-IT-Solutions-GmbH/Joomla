@@ -61,8 +61,19 @@ final class ReportArchive
 
         $name = strtolower($filename);
 
-        // gzip magic number 0x1f 0x8b.
-        if (str_starts_with($payload, "\x1f\x8b") || str_ends_with($name, '.gz')) {
+        // Determine the container from its magic bytes first, so a mislabelled
+        // attachment (for example a real ZIP named "report.gz") is decoded by its
+        // actual format instead of being discarded in the wrong branch. The
+        // filename extension is only a fallback when no known signature matches.
+        $isGzip = str_starts_with($payload, "\x1f\x8b");   // gzip magic 0x1f 0x8b
+        $isZip  = str_starts_with($payload, "PK\x03\x04");  // zip magic "PK\x03\x04"
+
+        if (!$isGzip && !$isZip) {
+            $isGzip = str_ends_with($name, '.gz');
+            $isZip  = str_ends_with($name, '.zip');
+        }
+
+        if ($isGzip) {
             if (!\function_exists('gzdecode')) {
                 throw new DecoderUnavailableException(
                     'The PHP zlib extension is required to read gzip-compressed DMARC reports.'
@@ -74,8 +85,7 @@ final class ReportArchive
             return $xml === null ? [] : [self::clean($xml)];
         }
 
-        // zip magic number "PK\x03\x04".
-        if (str_starts_with($payload, "PK\x03\x04") || str_ends_with($name, '.zip')) {
+        if ($isZip) {
             if (!class_exists(\ZipArchive::class)) {
                 throw new DecoderUnavailableException(
                     'The PHP zip extension is required to read zip-compressed DMARC reports.'

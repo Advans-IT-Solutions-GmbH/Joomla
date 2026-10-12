@@ -60,7 +60,7 @@ class IngestController extends BaseController
 
             // Bodies are streamed one at a time into the ingestor and released
             // immediately, so a large mailbox cannot be buffered into memory.
-            $client->process(
+            $stats = $client->process(
                 [
                     'host'                => $source->host,
                     'port'                => (int) $source->port,
@@ -75,6 +75,12 @@ class IngestController extends BaseController
                     return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
                 }
             );
+
+            // Transport-level skips (empty or oversized bodies) never reach the
+            // callback, so merge them into the operator summary here. Only the
+            // transport count is added; callback-level skips are already recorded
+            // by the ingestor, so this cannot double-count.
+            $summary['skipped'] += (int) ($stats['transport_skipped'] ?? 0);
 
             $this->recordRun($sourceId, 'ok', $this->summaryText($summary));
 
