@@ -1240,7 +1240,10 @@ class DataIsolationTest
     {
         echo "\n--- Confirmation page over HTTP (com_ajax, guest session) ---\n";
 
-        if (!$this->test('PHP curl extension available for HTTP tests', function_exists('curl_init'))) {
+        // test() returns nothing: check the condition itself.
+        $this->test('PHP curl extension available for HTTP tests', function_exists('curl_init'));
+
+        if (!function_exists('curl_init')) {
             return;
         }
 
