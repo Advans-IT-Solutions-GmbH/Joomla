@@ -44,7 +44,17 @@ distinct from a genuinely missing record. Keep that distinction when editing.
 A present record is validated before it is read as healthy: more than one DMARC (or SPF) record is
 reported as a duplicate, and a malformed required tag — an unknown `p` value or a `pct` that is not
 a whole number 0–100 — is reported as invalid (`dns_dmarc_invalid`) rather than silently treated as
-a working policy.
+a working policy. The version token is matched on a word boundary: `v=DMARC1` / `v=spf1` must end
+at the prefix or be followed by a separator, so a lookalike such as `v=DMARC10` or `v=spf10` is not
+mistaken for a valid version and the record is treated as missing.
+
+## New-source detection
+
+`Metrics::newSources()` flags sending IPs that appear in the **current reporting window** (every
+report whose range begins in the latest rolling window) but never in any earlier report. Detection
+spans the whole window rather than the single newest report id, because a domain commonly receives
+several overlapping reports from different organisations for the same window; a source first seen in
+a contemporaneous report from another reporter would otherwise be missed.
 
 ## Persistence
 

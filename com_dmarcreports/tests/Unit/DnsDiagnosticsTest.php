@@ -169,6 +169,32 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertContains('dns_dmarc_invalid', $this->codes($diagnostics->inspect('example.org')));
     }
 
+    public function testVersionTokenLookalikeIsNotTreatedAsDmarcRecord(): void
+    {
+        // "v=DMARC10" must not satisfy the "v=DMARC1" version prefix check.
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC10; p=reject'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+
+        $this->assertFalse($result['dmarc']['present']);
+        $this->assertContains('dns_dmarc_missing', $this->codes($result));
+    }
+
+    public function testSpfVersionTokenLookalikeIsNotTreatedAsSpfRecord(): void
+    {
+        // "v=spf10" must not satisfy the "v=spf1" version prefix check.
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; rua=mailto:dmarc@example.org'],
+            'example.org'        => ['v=spf10 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+
+        $this->assertFalse($result['spf']['present']);
+        $this->assertContains('dns_spf_missing', $this->codes($result));
+    }
+
     public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void    {
         $resolver = new class implements DnsResolverInterface {
             public function txt(string $host): ?array

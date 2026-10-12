@@ -187,11 +187,25 @@ final class DnsDiagnostics
     private function allMatching(array $records, string $prefix): array
     {
         $matches = [];
+        $length  = strlen($prefix);
 
         foreach ($records as $txt) {
-            if (stripos(ltrim((string) $txt), $prefix) === 0) {
-                $matches[] = trim((string) $txt);
+            $value = ltrim((string) $txt);
+
+            if (stripos($value, $prefix) !== 0) {
+                continue;
             }
+
+            // The version token must end at the prefix: anything directly after
+            // it has to be a tag separator or whitespace, otherwise "v=DMARC10"
+            // or "v=spf10" would be mistaken for a valid "v=DMARC1"/"v=spf1".
+            $next = $value[$length] ?? '';
+
+            if ($next !== '' && $next !== ';' && !ctype_space($next)) {
+                continue;
+            }
+
+            $matches[] = trim($value);
         }
 
         return $matches;

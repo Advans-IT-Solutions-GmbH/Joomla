@@ -212,17 +212,36 @@ final class Metrics
     }
 
     /**
-     * Sources seen only in the most recent report and never before.
+     * Sources that appear in the current reporting window but never in any
+     * earlier report. A domain commonly receives several overlapping reports
+     * from different organisations for the same window, so detection spans every
+     * report whose range begins inside the window rather than the single newest
+     * report id; otherwise a source first seen in a contemporaneous report from
+     * another reporter would be missed.
      *
      * @return array<int, array<string, mixed>>
      */
     private function newSources(int $domainId): array
     {
-        $latest = $this->latestReportId($domainId);
+        $anchor = $this->latestReportEnd($domainId);
 
-        if ($latest === 0) {
+        if ($anchor === 0) {
             return [];
         }
+
+        $windowStart = $anchor - (7 * 86400);
+
+        $prior = (string) $this->query()
+            ->select('1')
+            ->from($this->db->quoteName('#__dmarc_reports', 'prep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'prec'),
+                $this->db->quoteName('prec.report_id') . ' = ' . $this->db->quoteName('prep.id')
+            )
+            ->where($this->db->quoteName('prep.domain_id') . ' = :domainIdPrev')
+            ->where($this->db->quoteName('prec.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
+            ->where($this->db->quoteName('prep.date_begin') . ' <= :windowStartPrev');
 
         $query = $this->query()
             ->select(
@@ -231,19 +250,21 @@ final class Metrics
                     'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
                 ]
             )
-            ->from($this->db->quoteName('#__dmarc_records', 'cur'))
-            ->where($this->db->quoteName('cur.report_id') . ' = :latest')
-            ->where(
-                'NOT EXISTS (' . (string) $this->query()
-                    ->select('1')
-                    ->from($this->db->quoteName('#__dmarc_records', 'prev'))
-                    ->where($this->db->quoteName('prev.domain_id') . ' = :domainId')
-                    ->where($this->db->quoteName('prev.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
-                    ->where($this->db->quoteName('prev.report_id') . ' <> :latest2') . ')'
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'cur'),
+                $this->db->quoteName('cur.report_id') . ' = ' . $this->db->quoteName('rep.id')
             )
-            ->bind(':latest', $latest, ParameterType::INTEGER)
-            ->bind(':latest2', $latest, ParameterType::INTEGER)
+            ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
+            ->where($this->db->quoteName('rep.date_begin') . ' > :windowStart')
+            ->where($this->db->quoteName('rep.date_begin') . ' <= :anchor')
+            ->where('NOT EXISTS (' . $prior . ')')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->bind(':domainIdPrev', $domainId, ParameterType::INTEGER)
+            ->bind(':windowStart', $windowStart, ParameterType::INTEGER)
+            ->bind(':windowStartPrev', $windowStart, ParameterType::INTEGER)
+            ->bind(':anchor', $anchor, ParameterType::INTEGER)
             ->group($this->db->quoteName('cur.source_ip'))
             ->order('total DESC');
 
@@ -338,20 +359,6 @@ final class Metrics
             ->from($this->db->quoteName('#__dmarc_reports'))
             ->where($this->db->quoteName('domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER);
-
-        return (int) $this->db->setQuery($query)->loadResult();
-    }
-
-    private function latestReportId(int $domainId): int
-    {
-        $query = $this->query()
-            ->select($this->db->quoteName('id'))
-            ->from($this->db->quoteName('#__dmarc_reports'))
-            ->where($this->db->quoteName('domain_id') . ' = :domainId')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->order($this->db->quoteName('date_end') . ' DESC, ' . $this->db->quoteName('id') . ' DESC');
-
-        $query->setLimit(1);
 
         return (int) $this->db->setQuery($query)->loadResult();
     }

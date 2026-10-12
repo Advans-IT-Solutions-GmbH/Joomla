@@ -50,6 +50,14 @@ out-of-range value rejects the whole report instead of being coerced, because th
 policy drives the dashboard and the rollout guidance — one bogus report must not display a fake
 policy and suppress all guidance. `sp` is optional and validated only when present.
 
+Report-level and record-level fields are validated the same way. A report with an inverted date
+range (`date_end < date_begin`) is rejected before storage, because an out-of-order range would
+misplace it on the timeline and could anchor the rolling comparison windows incorrectly. Every
+`record` row must carry a routable `source_ip` (`FILTER_VALIDATE_IP`) and a positive integer
+`count`; a missing or malformed value rejects the whole report rather than being coerced to `''`
+or `0`. Coercion would commit the report fingerprint while keeping an invalid row, so a corrected
+copy of the same report would later be discarded as a duplicate while the bad row skews metrics.
+
 ## Idempotent storage (`Ingestor`)
 
 `report_hash` (reporter org + report id) is a UNIQUE key on `#__dmarc_reports`. Re-ingesting the

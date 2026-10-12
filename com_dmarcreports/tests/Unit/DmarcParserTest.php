@@ -195,4 +195,60 @@ XML;
 
         $this->assertSame(100, $report['policy']['pct']);
     }
+
+    public function testRejectsRecordWithMalformedSourceIp(): void
+    {
+        $xml = str_replace('<source_ip>192.0.2.10</source_ip>', '<source_ip>not-an-ip</source_ip>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithEmptySourceIp(): void
+    {
+        $xml = str_replace('<source_ip>192.0.2.10</source_ip>', '<source_ip></source_ip>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithZeroCount(): void
+    {
+        $xml = str_replace('<count>7</count>', '<count>0</count>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithNonNumericCount(): void
+    {
+        $xml = str_replace('<count>7</count>', '<count>abc</count>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsRecordWithNegativeCount(): void
+    {
+        $xml = str_replace('<count>7</count>', '<count>-5</count>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testParsesIpv6SourceAddress(): void
+    {
+        $xml    = str_replace('<source_ip>192.0.2.10</source_ip>', '<source_ip>2001:db8::1</source_ip>', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame('2001:db8::1', $report['records'][0]['source_ip']);
+    }
+
+    public function testRejectsInvertedDateRange(): void
+    {
+        $xml = str_replace('<end>1700086400</end>', '<end>1699000000</end>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
 }

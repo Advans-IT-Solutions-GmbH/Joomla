@@ -94,14 +94,38 @@ final class DmarcParser
             throw new \InvalidArgumentException('The report is missing an organisation name or a valid begin date.');
         }
 
+        // An inverted or absent end date would misplace the report on the
+        // timeline and could anchor the rolling windows incorrectly, so a report
+        // whose range does not run forwards is rejected before it is stored.
+        if ($report['date_end'] < $report['date_begin']) {
+            throw new \InvalidArgumentException('The report has an inverted date range.');
+        }
+
         foreach ($feedback->record as $record) {
             $row        = $record->row;
             $evaluated  = $row->policy_evaluated;
             $identifier = $record->identifiers;
 
+            $sourceIp = self::text($row->source_ip ?? null);
+
+            // A row is only meaningful with a routable source address and a
+            // positive message count. Coercing a malformed value to 0 or '' and
+            // storing it would commit the report fingerprint while keeping an
+            // invalid row, so a corrected copy would later be rejected as a
+            // duplicate. Reject the whole report instead.
+            if (filter_var($sourceIp, FILTER_VALIDATE_IP) === false) {
+                throw new \InvalidArgumentException('A report record has a missing or malformed source IP.');
+            }
+
+            $countText = self::text($row->count ?? null);
+
+            if (!ctype_digit($countText) || (int) $countText < 1) {
+                throw new \InvalidArgumentException('A report record has a missing or non-positive message count.');
+            }
+
             $report['records'][] = [
-                'source_ip'     => self::text($row->source_ip ?? null),
-                'count'         => max(0, (int) ($row->count ?? 0)),
+                'source_ip'     => $sourceIp,
+                'count'         => (int) $countText,
                 'disposition'   => self::disposition($evaluated->disposition ?? null),
                 'dkim_result'   => strtolower(self::text($evaluated->dkim ?? null)),
                 'spf_result'    => strtolower(self::text($evaluated->spf ?? null)),

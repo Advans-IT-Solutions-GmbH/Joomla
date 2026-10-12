@@ -60,20 +60,20 @@ class MetricsTest
         $bundle  = $metrics->domainMetrics($this->domainId);
 
         $this->test('Lifetime volume sums every stored record', function () use ($bundle) {
-            return (int) $bundle['total'] === 500;
+            return (int) $bundle['total'] === 600;
         });
 
         $this->test('Lifetime DMARC pass counts aligned mail only', function () use ($bundle) {
-            return (int) $bundle['dmarc_pass'] === 380;
+            return (int) $bundle['dmarc_pass'] === 480;
         });
 
         $this->test('Lifetime pass rate is volume weighted', function () use ($bundle) {
-            return abs((float) $bundle['pass_rate'] - 76.0) < 0.01;
+            return abs((float) $bundle['pass_rate'] - 80.0) < 0.01;
         });
 
         $this->test('Current rolling window rate covers only the newest window', function () use ($bundle) {
             return $bundle['pass_rate_window'] !== null
-                && abs((float) $bundle['pass_rate_window'] - 90.0) < 0.01;
+                && abs((float) $bundle['pass_rate_window'] - 93.3) < 0.01;
         });
 
         $this->test('Previous rolling window rate is non-overlapping', function () use ($bundle) {
@@ -89,10 +89,12 @@ class MetricsTest
             return (int) $bundle['current_policy_pct'] === 100;
         });
 
-        $this->test('New sources list the IP seen only in the latest report', function () use ($bundle) {
+        $this->test('New sources list every source first seen in the current window', function () use ($bundle) {
             $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['new_sources']);
 
-            return in_array('10.0.0.3', $ips, true) && !in_array('10.0.0.1', $ips, true);
+            return in_array('10.0.0.3', $ips, true)
+                && in_array('10.0.0.4', $ips, true)
+                && !in_array('10.0.0.1', $ips, true);
         });
 
         $this->test('Unaligned senders surface a failing source', function () use ($bundle) {
@@ -104,7 +106,7 @@ class MetricsTest
         $this->test('Timeline is chronological and spans every report day', function () use ($bundle) {
             $days = array_map(static fn (array $t): string => $t['day'], $bundle['timeline']);
 
-            if (count($days) !== 3) {
+            if (count($days) !== 4) {
                 return false;
             }
 
@@ -117,7 +119,7 @@ class MetricsTest
         $this->test('Domain summary row reflects the seeded totals', function () use ($metrics) {
             foreach ($metrics->domainSummaries() as $row) {
                 if (($row['domain'] ?? '') === self::DOMAIN) {
-                    return (int) $row['total'] === 500 && abs((float) $row['pass_rate'] - 76.0) < 0.01;
+                    return (int) $row['total'] === 600 && abs((float) $row['pass_rate'] - 80.0) < 0.01;
                 }
             }
 
@@ -146,19 +148,26 @@ class MetricsTest
         $this->db->insertObject('#__dmarc_domains', $domain, 'id');
         $this->domainId = (int) $domain->id;
 
-        // Three reports: one outside both rolling windows, one in the previous
-        // window, one in the current window, from different reporters.
+        // Four reports: one outside both rolling windows, one in the previous
+        // window, and two contemporaneous reports in the current window from
+        // different reporters. The second current-window report proves that a
+        // new source is detected across the whole window, not just the single
+        // newest report id.
         $old  = $this->insertReport('historic', self::ANCHOR - 30 * self::DAY, 'none');
         $prev = $this->insertReport('orgB', self::ANCHOR - 10 * self::DAY, 'none');
-        $cur  = $this->insertReport('orgA', self::ANCHOR - 2 * self::DAY, 'quarantine', self::ANCHOR);
+        $curA = $this->insertReport('orgA', self::ANCHOR - 2 * self::DAY, 'quarantine', self::ANCHOR);
+        $curB = $this->insertReport('orgC', self::ANCHOR - 3 * self::DAY, 'none');
 
-        // 10.0.0.1 is an established, aligned sender present in every report.
+        // 10.0.0.1 is an established, aligned sender present in every window.
         $this->insertRecord($old, '10.0.0.1', 100, 1);
         $this->insertRecord($prev, '10.0.0.1', 100, 1);
         $this->insertRecord($prev, '10.0.0.2', 100, 0);
-        $this->insertRecord($cur, '10.0.0.1', 180, 1);
+        $this->insertRecord($curA, '10.0.0.1', 180, 1);
         // 10.0.0.3 appears only in the newest report: a genuinely new source.
-        $this->insertRecord($cur, '10.0.0.3', 20, 0);
+        $this->insertRecord($curA, '10.0.0.3', 20, 0);
+        // 10.0.0.4 appears only in a second, contemporaneous report from another
+        // reporter: still a new source for the current window.
+        $this->insertRecord($curB, '10.0.0.4', 100, 1);
     }
 
     private function insertReport(string $org, int $begin, string $policy, ?int $end = null): int
