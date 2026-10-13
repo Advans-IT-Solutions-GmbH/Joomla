@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+    <fieldset name="basic">
+        <field
+            name="default_policy_target"
+            type="list"
+            label="COM_DMARCREPORTS_CONFIG_POLICY_TARGET_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_POLICY_TARGET_DESC"
+            default="reject"
+        >
+            <option value="none">COM_DMARCREPORTS_POLICY_NONE</option>
+            <option value="quarantine">COM_DMARCREPORTS_POLICY_QUARANTINE</option>
+            <option value="reject">COM_DMARCREPORTS_POLICY_REJECT</option>
+        </field>
+
+        <field
+            name="quarantine_pass_threshold"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_QUARANTINE_THRESHOLD_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_QUARANTINE_THRESHOLD_DESC"
+            default="95"
+            min="50"
+            max="100"
+            step="1"
+        />
+
+        <field
+            name="reject_pass_threshold"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_REJECT_THRESHOLD_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_REJECT_THRESHOLD_DESC"
+            default="99"
+            min="50"
+            max="100"
+            step="1"
+        />
+
+        <field
+            name="imap_timeout"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_IMAP_TIMEOUT_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_IMAP_TIMEOUT_DESC"
+            default="20"
+            min="5"
+            max="120"
+            step="5"
+        />
+
+        <field
+            name="max_messages_per_run"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_MESSAGES_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_MESSAGES_DESC"
+            default="200"
+            min="10"
+            max="2000"
+            step="10"
+        />
+
+        <field
+            name="dns_diagnostics"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_DESC"
+            default="0"
+        >
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+    </fieldset>
+
+    <fieldset
+        name="permissions"
+        label="JCONFIG_PERMISSIONS_LABEL"
+        description="JCONFIG_PERMISSIONS_DESC"
+    >
+        <field
+            name="rules"
+            type="rules"
+            label="JCONFIG_PERMISSIONS_LABEL"
+            class="inputbox"
+            validate="rules"
+            filter="rules"
+            component="com_dmarcreports"
+            section="component"
+        />
+    </fieldset>
+</config>

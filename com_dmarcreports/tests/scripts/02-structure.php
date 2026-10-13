@@ -51,6 +51,7 @@ class StructureTest
             'Install SQL'          => $this->base . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'        => $this->base . '/sql/uninstall.mysql.utf8.sql',
             'LICENSE.txt'          => $this->base . '/LICENSE.txt',
+            'Options config.xml'   => $this->base . '/config.xml',
         ];
 
         foreach ($files as $label => $path) {
@@ -58,6 +59,60 @@ class StructureTest
                 return file_exists($path);
             });
         }
+
+        // config.xml must carry every option field so the com_config Options
+        // screen can load them; the manifest <config> block is not read for a
+        // component's global options. Assert the complete migrated field set so
+        // a dropped field cannot ship an incomplete Options screen undetected.
+        // The XPath is intentionally restricted to fields directly under a
+        // <config>/<fieldset> so the check also fails if a manifest-style
+        // <fields name="params"> wrapper is reintroduced, which com_config
+        // cannot bind or persist for a standalone component.
+        $this->test('config.xml defines every migrated option field', function () {
+            $xml = @simplexml_load_file($this->base . '/config.xml');
+
+            if ($xml === false) {
+                return false;
+            }
+
+            $names = [];
+
+            foreach ($xml->xpath('/config/fieldset/field[@name]') as $field) {
+                $names[] = (string) $field['name'];
+            }
+
+            $expected = [
+                'default_policy_target',
+                'quarantine_pass_threshold',
+                'reject_pass_threshold',
+                'imap_timeout',
+                'max_messages_per_run',
+                'dns_diagnostics',
+                'rules',
+            ];
+
+            return \count(array_diff($expected, $names)) === 0;
+        });
+
+        // The edit layouts must load the form.validate web asset, otherwise
+        // document.formvalidator is undefined and Save/Apply throw silently,
+        // leaving the toolbar buttons dead.
+        foreach (['source', 'domain'] as $editView) {
+            $this->test("{$editView} edit layout loads the form validator script", function () use ($editView) {
+                $contents = file_get_contents($this->base . "/tmpl/{$editView}/edit.php");
+
+                return strpos($contents, "useScript('form.validate')") !== false;
+            });
+        }
+
+        // The source domain picker must map the SQL label column explicitly,
+        // otherwise Joomla's SqlField defaults value_field to the field name and
+        // renders the stored id instead of the domain name.
+        $this->test('source form maps the domain picker label column', function () {
+            $contents = file_get_contents($this->base . '/forms/source.xml');
+
+            return strpos($contents, 'value_field="text"') !== false;
+        });
 
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
