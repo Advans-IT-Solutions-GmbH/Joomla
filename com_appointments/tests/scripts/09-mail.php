@@ -36,9 +36,10 @@ $inspect = static function (array $before, array $booking, string $method, strin
             && str_contains($ics, 'STATUS:' . $status . "\r\n")
             && str_contains($ics, 'UID:' . $booking['uid'] . "\r\n")
             && str_contains($ics, 'SEQUENCE:' . $booking['sequence'] . "\r\n"), 'Actual calendar carries stable UID, state and sequence');
-        if (str_contains($unfolded, 'invitee@example.test') || str_contains($unfolded, 'guest@example.test')) {
-            $check(str_contains($mime, 'action=reschedule') && str_contains($mime, 'action=cancel')
-                && str_contains($mime, 'action=erase'), 'Mandatory action links survive customized template content');
+        if (preg_match('/^To:.*(?:invitee|guest)@example\.test/mi', $unfolded)) {
+            $decoded = AppointmentsMail::decoded($mime);
+            $check(str_contains($decoded, 'action=reschedule') && str_contains($decoded, 'action=cancel')
+                && str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
             if ($localizedSubject === 'Validé :') {
                 $decoded = AppointmentsMail::decoded($mime);
                 $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),

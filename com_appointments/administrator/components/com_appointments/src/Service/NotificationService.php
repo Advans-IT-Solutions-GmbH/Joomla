@@ -37,8 +37,14 @@ final class NotificationService
             throw new \InvalidArgumentException('Unsupported notification purpose.');
         }
 
-        $event = $this->event((int) $booking['eventtype_id']);
         $app = Factory::getApplication();
+        // Joomla intentionally returns true when global mail delivery is disabled.
+        // A booking notification must not report that no-op as delivered.
+        if (!$app->get('mailonline', true)) {
+            Log::add('Appointment notification disabled: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
+            throw new NotificationException('Appointment mail delivery is disabled.');
+        }
+        $event = $this->event((int) $booking['eventtype_id']);
         $hostParams = json_decode((string) $event['host_params'], true) ?: [];
         $hostLanguage = (string) ($hostParams['language'] ?? 'en-GB');
         $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage : 'en-GB';
