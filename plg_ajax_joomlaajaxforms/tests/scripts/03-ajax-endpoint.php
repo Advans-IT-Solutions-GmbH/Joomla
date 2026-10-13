@@ -619,8 +619,15 @@ class AjaxEndpointTest
     }
 
     /**
-     * The script builds the endpoint URL itself. It must use a raw & so that a
-     * redirect of the language filter keeps every parameter.
+     * The script builds the endpoint URL itself, in config.baseUrl. It must use
+     * a raw & so that a redirect of the language filter keeps every parameter.
+     *
+     * Only the return values of that function are inspected, not the whole
+     * script, so a commented-out URL elsewhere plays no part. The function is
+     * plain ES5 (identifiers, string literals, comments, no template or regex
+     * literal), where the PHP tokenizer splits strings and comments exactly as
+     * JavaScript does. A template or regex literal in it fails the check, so
+     * this assumption cannot silently stop holding.
      */
     private function testScriptEndpointUrlIsRaw(): bool
     {
@@ -636,14 +643,53 @@ class AjaxEndpointTest
             return false;
         }
 
-        // Only executable code counts: a commented-out URL must neither keep
-        // the check green nor fail it.
-        preg_match_all('/[\'"`]([^\'"`]*option=com_ajax[^\'"`]*)[\'"`]/', $this->jsWithoutComments($source), $m);
-        $urls     = $m[1];
-        $problems = [];
+        // Exactly one definition: a second one (for example a commented-out
+        // copy) would make it unclear which one the check reads.
+        $found = preg_match_all('/^[ \t]*baseUrl\s*:\s*\(function\s*\(\)\s*\{(.*?)\n[ \t]*\}\)\(\)/ms', $source, $blocks);
 
-        if ($urls === []) {
-            $problems[] = 'no endpoint URL found in the script';
+        if ($found !== 1) {
+            echo "FAIL (expected one config.baseUrl function, found " . (int) $found . ")\n";
+
+            return false;
+        }
+
+        $urls     = [];
+        $problems = [];
+        $tokens   = token_get_all('<?php ' . $blocks[1][0]);
+
+        foreach ($tokens as $i => $token) {
+            $text = is_array($token) ? $token[1] : $token;
+
+            // Where the two lexers could disagree, fail instead of guessing: a
+            // template literal (backtick), a bare slash (regex literal or
+            // division, neither belongs in a URL builder), a "#" (a comment
+            // in PHP, a private field in JavaScript) and a closing PHP tag
+            // (ends PHP mode, the rest would be read as inline HTML).
+            if ($text === '`' || $text === '/'
+                || (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML], true))
+                || (is_array($token) && $token[0] === T_COMMENT && $text[0] === '#')
+            ) {
+                $problems[] = 'config.baseUrl contains code this check cannot read reliably: ' . trim($text);
+                break;
+            }
+
+            if (!is_array($token) || $token[0] !== T_RETURN) {
+                continue;
+            }
+
+            // The string literals of this return statement (comments are
+            // separate tokens and never count).
+            for ($j = $i + 1, $n = count($tokens); $j < $n && $tokens[$j] !== ';'; $j++) {
+                if (is_array($tokens[$j]) && $tokens[$j][0] === T_CONSTANT_ENCAPSED_STRING
+                    && strpos($tokens[$j][1], 'option=com_ajax') !== false
+                ) {
+                    $urls[] = substr($tokens[$j][1], 1, -1);
+                }
+            }
+        }
+
+        if ($problems === [] && $urls === []) {
+            $problems[] = 'config.baseUrl returns no endpoint URL';
         }
 
         foreach ($urls as $u) {
@@ -684,155 +730,6 @@ class AjaxEndpointTest
         return array_values(array_filter(token_get_all($code), static function ($t): bool {
             return !is_array($t) || !in_array($t[0], [T_COMMENT, T_DOC_COMMENT, T_WHITESPACE], true);
         }));
-    }
-
-    /**
-     * JavaScript source with every comment removed. String and regular
-     * expression literals are kept as they are, so a comment marker inside
-     * them does not start a comment. Template literals are kept as well, but
-     * their ${...} substitutions are code and are stripped the same way.
-     */
-    private function jsWithoutComments(string $source): string
-    {
-        $i = 0;
-
-        return $this->jsStripCode($source, $i, false);
-    }
-
-    /**
-     * Copy code from $i and drop its comments. In a template substitution
-     * ($inSubstitution) it stops at the "}" that closes the substitution and
-     * leaves $i on it.
-     */
-    private function jsStripCode(string $source, int &$i, bool $inSubstitution): string
-    {
-        $out     = '';
-        $len     = strlen($source);
-        $lastSig = '';
-        $word    = '';
-        $depth   = 0;
-
-        for (; $i < $len; $i++) {
-            $c    = $source[$i];
-            $next = $source[$i + 1] ?? '';
-
-            if ($c === '/' && $next === '/') {
-                $end = strpos($source, "\n", $i);
-                $i   = ($end === false ? $len : $end) - 1;
-
-                continue;
-            }
-
-            if ($c === '/' && $next === '*') {
-                $end = strpos($source, '*/', $i + 2);
-                $i   = ($end === false ? $len : $end + 2) - 1;
-                $out .= ' ';
-
-                continue;
-            }
-
-            if ($inSubstitution && $c === '}' && $depth === 0) {
-                return $out;
-            }
-
-            if ($c === '`') {
-                $out .= $this->jsStripTemplate($source, $i);
-                $lastSig = '`';
-                $word    = '';
-
-                continue;
-            }
-
-            $isRegex = $c === '/'
-                && ($lastSig === '' || strpos('(,=:[!&|?{};+-*%<>~^', $lastSig) !== false
-                    || in_array($word, ['return', 'typeof', 'case', 'in', 'of'], true));
-
-            if ($c === '"' || $c === "'" || $isRegex) {
-                $start   = $i;
-                $inClass = false;
-
-                for ($i++; $i < $len; $i++) {
-                    if ($source[$i] === '\\') {
-                        $i++;
-                        continue;
-                    }
-
-                    if ($isRegex && $source[$i] === '[') {
-                        $inClass = true;
-                    } elseif ($isRegex && $source[$i] === ']') {
-                        $inClass = false;
-                    } elseif ($source[$i] === $c && !$inClass) {
-                        break;
-                    }
-                }
-
-                $out    .= substr($source, $start, $i - $start + 1);
-                $lastSig = $c;
-                $word    = '';
-
-                continue;
-            }
-
-            if ($c === '{') {
-                $depth++;
-            } elseif ($c === '}') {
-                $depth--;
-            }
-
-            $isIdent = ctype_alnum($c) || $c === '_' || $c === '$';
-            $prevRaw = $out === '' ? '' : substr($out, -1);
-            $out    .= $c;
-
-            if ($isIdent) {
-                // Continue the word only when it is not separated by whitespace.
-                $word = ($prevRaw !== '' && (ctype_alnum($prevRaw) || $prevRaw === '_' || $prevRaw === '$')) ? $word . $c : $c;
-            } elseif (!ctype_space($c)) {
-                $word = '';
-            }
-
-            if (!ctype_space($c)) {
-                $lastSig = $c;
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * Copy the template literal that starts at $i (a backtick) and leave $i on
-     * its closing backtick. Each ${...} substitution goes through
-     * jsStripCode(), so comments inside it are removed.
-     */
-    private function jsStripTemplate(string $source, int &$i): string
-    {
-        $out = '`';
-        $len = strlen($source);
-
-        for ($i++; $i < $len; $i++) {
-            $c = $source[$i];
-
-            if ($c === '\\') {
-                $out .= substr($source, $i, 2);
-                $i++;
-
-                continue;
-            }
-
-            if ($c === '`') {
-                return $out . '`';
-            }
-
-            if ($c === '$' && ($source[$i + 1] ?? '') === '{') {
-                $i  += 2;
-                $out .= '${' . $this->jsStripCode($source, $i, true) . '}';
-
-                continue;
-            }
-
-            $out .= $c;
-        }
-
-        return $out;
     }
 
     /**
