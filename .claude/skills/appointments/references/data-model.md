@@ -221,7 +221,9 @@ property deliberately, in the opposite direction, for `state_active`.
 
 ## `#__appointments_audit`
 
-Deletion evidence. **Contains no personal data.** A test asserts the column set.
+Deletion evidence. **Contains no data of an invitee.** A test asserts the exact column set.
+`actor_user_id` is the one operator identifier it keeps, for the `admin` path only; see
+`references/privacy-and-deletion.md`, section "What the audit table is, and what it is not".
 
 | Column | Type | Notes |
 |---|---|---|

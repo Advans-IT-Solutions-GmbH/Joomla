@@ -214,9 +214,11 @@ class StructureTest
                 && $row['start_utc'] === $slotB;
         });
 
-        $this->test('The audit table holds no personal data', function () {
+        $this->test('The audit table holds no data of an invitee', function () {
             // Deletion evidence must never become a second copy of the data it
-            // documents, so the column set is pinned here.
+            // documents, so the exact column set is pinned here: an added
+            // column fails this test. `actor_user_id` is the one operator
+            // identifier the table keeps, for the admin path only.
             $result = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_audit");
 
             if (!$result) {

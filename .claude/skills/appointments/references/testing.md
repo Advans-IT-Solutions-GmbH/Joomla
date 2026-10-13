@@ -74,7 +74,7 @@ No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape o
 com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, no signing secret stored
 ├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
-├── 03-site-page.php         # the public pages really render over HTTP, on both lanes
+├── 03-site-page.php         # the public pages really render over HTTP, empty and with seeded rows
 ├── 04-eventtypes.php        # CRUD, ACL, feed token generated and unique
 ├── 05-slots.php             # the site slot endpoint returns what the engine returns
 ├── 06-booking.php           # end-to-end booking, both concurrency cases
@@ -113,6 +113,15 @@ docker compose -f docker-compose.mariadb.yml down -v
 ```
 
 CI sets `TEST_STRICT_SKIP=1`, so a skipped test fails. Reproduce that locally before pushing.
+
+### The site page assertion
+
+`03-site-page.php` requests the public pages over HTTP, because `file_exists()` never opens a page
+and the shared `backend-views` suite covers the administrator only. It runs twice: once against the
+empty table, which is the empty-state branch, and once with four seeded event types — one visible
+and three that each have to be filtered out for a different reason, namely unpublished, an access
+level a guest does not hold, and a different content language. The visible one carries `<`, `&` and
+`"` in its title, so the layout's escaping is asserted and not only the model's filters.
 
 ### The mail assertion
 

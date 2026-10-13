@@ -56,9 +56,11 @@ is released the same way.
 - The link action is part of the signature. `SignedLink` takes `(booking id, action, modified)`;
   `action` is one of `reschedule`, `cancel`, `erase`.
 - The link stops working once used, because `modified` changes.
-- A deletion is logged in a separate audit table that holds **no personal data**: booking id,
-  timestamp, path used (`self_service`, `privacy_request`, `retention`, `admin`). The operator needs
-  this to prove the request was honoured, and it must not become a second copy of the data.
+- A deletion is logged in a separate audit table that holds **no data of an invitee**: booking id,
+  timestamp, path used (`self_service`, `privacy_request`, `retention`, `admin`), and for the
+  `admin` path the acting administrator's Joomla user id. The operator needs this to prove the
+  request was honoured, and it must not become a second copy of the data that was erased. See
+  "What the audit table is, and what it is not" below.
 - Deleting is idempotent. A second click says the data is already gone, and does not error.
 - The whole operation runs in one transaction.
 
@@ -93,6 +95,30 @@ obligations.
 The task writes to the same audit table with path `retention`. It processes in batches so a large
 site does not time out, and it is safe to run twice.
 
+## What the audit table is, and what it is not
+
+The audit table exists so an operator can prove that a deletion request was honoured. Its invariant
+is narrower than "no personal data", and saying it the loose way would be wrong:
+
+- **It holds no data of an invitee.** No name, no e-mail address, no telephone number, no answers,
+  no times, not even the event type. Only the booking id, which points at a row that is gone. This
+  is the invariant that matters, because the whole point of an erasure is that nothing of the person
+  survives it, and a test pins the column set so a later change cannot quietly widen the table.
+- **It does hold one identifier of an operator**: `actor_user_id`, the Joomla user id of the
+  administrator who triggered a deletion, and only for the `admin` path. That is accountability data
+  about a member of the operator's own staff acting in their professional capacity, which is
+  precisely what Joomla's own action log keeps in `#__action_logs.user_id`. Calling the table
+  "free of personal data" while storing it would be a false guarantee, so the component does not
+  make that claim.
+- **It is covered by its own retention setting.** Audit rows are deleted by the same Scheduler task
+  that enforces booking retention, after a separately configurable period that defaults to three
+  years, so the accountability record does not become permanent either. The system check view
+  reports the oldest audit row, so an operator can see what is still kept.
+- **It is not exported by the privacy sub-plugin** for an invitee request, because it contains
+  nothing about the invitee. A request by a member of staff about their own `actor_user_id` entries
+  is answered by the operator from this table; the README says so, because an operator who is asked
+  needs to know where to look.
+
 ## Visibility on the booking page
 
 The booking form shows, next to the consent checkbox:
@@ -123,4 +149,7 @@ component gives the operator the mechanism; the legal text is theirs.
 - The privacy sub-plugin exports and removes for an address with several bookings, and reports a
   blocked booking as blocked.
 - The retention task anonymises exactly the bookings past the period, in batches, and is idempotent.
-- The audit table never contains personal data: a test asserts the column set.
+- The audit table never contains data of an invitee: a test asserts the exact column set, so an
+  added column fails the suite. `actor_user_id` is the one operator identifier and is set for the
+  `admin` path only; see "What the audit table is, and what it is not".
+- Audit rows older than the audit retention period are deleted by the retention task.

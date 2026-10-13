@@ -273,10 +273,16 @@ CREATE TABLE IF NOT EXISTS `#__appointments_templates` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Deletion evidence. Carries no personal data by design, and a test asserts the
--- column set, so an added personal column fails the suite. `booking_id` may
--- point at a row that no longer exists. `actor_user_id` is set for the `admin`
--- path only.
+-- Deletion evidence. It carries **no data of an invitee** by design, and a test
+-- asserts the exact column set, so an added column fails the suite.
+-- `booking_id` may point at a row that no longer exists; that is the point.
+--
+-- `actor_user_id` is the Joomla user id of the administrator who triggered a
+-- deletion and is set for the `admin` path only. It is accountability data
+-- about a member of the operator's own staff, the same thing Joomla keeps in
+-- `#__action_logs.user_id`, so this table is not described as free of personal
+-- data: only free of the invitee's. Audit rows are themselves subject to a
+-- retention period, enforced by the same Scheduler task.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_audit` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
