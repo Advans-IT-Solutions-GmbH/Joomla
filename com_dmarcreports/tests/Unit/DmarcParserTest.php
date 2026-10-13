@@ -385,6 +385,42 @@ XML;
         DmarcParser::parse($xml);
     }
 
+    public function testRejectsPolicyDomainThatIsAUrl(): void
+    {
+        // A value carrying a scheme or path is not a bare domain; it must be
+        // rejected rather than auto-registered as a bogus monitored domain.
+        $xml = str_replace('<domain>example.org</domain>', '<domain>https://example.org/path</domain>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsPolicyDomainWithEmbeddedWhitespace(): void
+    {
+        $xml = str_replace('<domain>example.org</domain>', '<domain>exa mple.org</domain>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testRejectsSingleLabelPolicyDomain(): void
+    {
+        // A registrable domain always has at least two labels; a bare label is
+        // rejected so an internal hostname cannot masquerade as a domain.
+        $xml = str_replace('<domain>example.org</domain>', '<domain>localhost</domain>', $this->sample());
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($xml);
+    }
+
+    public function testCanonicalizesPolicyDomainToLowercaseAndStripsTrailingDot(): void
+    {
+        $xml    = str_replace('<domain>example.org</domain>', '<domain>  Example.ORG.  </domain>', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame('example.org', $report['policy']['domain']);
+    }
+
     public function testRejectsRecordWithUnknownDisposition(): void
     {
         $xml = str_replace('<disposition>none</disposition>', '<disposition>bogus</disposition>', $this->sample());

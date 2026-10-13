@@ -68,6 +68,16 @@ final class ImapClient
     private bool $uidplus = false;
 
     /**
+     * UIDVALIDITY of the selected folder (RFC 3501), captured during SELECT.
+     * The component tracks its own import progress by UID rather than relying on
+     * the \Seen flag; a UIDVALIDITY change between runs means the server
+     * renumbered the mailbox, so any stored high-water UID from the previous
+     * value is meaningless and the cursor is reset (deduplication by report
+     * fingerprint keeps the rescan from re-storing anything already imported).
+     */
+    private int $uidvalidity = 0;
+
+    /**
      * @param   int  $timeout  Socket timeout in seconds (minimum 5).
      * @param   (callable(string, string, int): (resource|false))|null  $socketFactory
      *          Test-only transport factory; null uses a real stream socket.
@@ -92,17 +102,21 @@ final class ImapClient
      * {@see Ingestor}'s RESULT_* constants): "new" when it stored a new report,
      * "skip" when the message was a duplicate or could not be parsed, or
      * "retry" when a transient failure (e.g. a database error) prevented
-     * storage. "new" and "skip" messages are advanced (flagged \Seen so the
-     * UNSEEN search skips them, or \Deleted and expunged when the source opts
-     * into deletion); "retry" messages are left untouched so the next run can
-     * try them again instead of losing them.
+     * storage. "new" and "skip" messages advance the component-owned import
+     * cursor (a per-source high-water UID, persisted with the folder's
+     * UIDVALIDITY); "retry" messages stop the cursor so the next run re-fetches
+     * them instead of losing an unstored report. Messages are still flagged
+     * \Seen (or \Deleted and expunged when the source opts into deletion) as
+     * mailbox housekeeping, but the import no longer depends on that flag, so a
+     * report another client, rule or operator marks read is still imported.
      *
      * @param   array<string, mixed>  $config     host, port, security (ssl|tls),
      *                                            username, password, folder, limit,
-     *                                            delete_after_import.
+     *                                            delete_after_import, uidvalidity,
+     *                                            last_uid.
      * @param   callable(array{uid: int, raw: string}): string  $onMessage
      *
-     * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int}
+     * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int, uidvalidity: int, last_uid: int}
      *
      * @throws  \RuntimeException  On any connection, authentication or protocol error.
      */
@@ -114,6 +128,13 @@ final class ImapClient
         $folder   = (string) ($config['folder'] ?? 'INBOX');
         $limit    = max(1, (int) ($config['limit'] ?? 50));
         $delete   = !empty($config['delete_after_import']);
+
+        // Component-owned import progress: the high-water UID already processed
+        // and the UIDVALIDITY it was recorded under. Both default to 0 (nothing
+        // processed yet / unknown), which makes the first run scan from the
+        // start of the folder.
+        $storedValidity = max(0, (int) ($config['uidvalidity'] ?? 0));
+        $lastUid        = max(0, (int) ($config['last_uid'] ?? 0));
 
         if ($host === '') {
             throw new \RuntimeException('No IMAP host configured.');
@@ -129,27 +150,41 @@ final class ImapClient
 
         $this->connect($host, $port, $security);
 
-        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0];
+        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => $lastUid];
 
         try {
             $this->login((string) ($config['username'] ?? ''), (string) ($config['password'] ?? ''));
             $this->uidplus = $this->supportsUidplus();
             $this->select($folder);
 
-            // Only unread messages are considered, oldest first, then the
-            // configured batch size. Processing flags each message \Seen (or
-            // deletes it), so it drops out of the next UNSEEN search: the backlog
-            // drains from the front and every run advances to newer mail. An
-            // "all mail" mode was deliberately removed because, without deletion,
-            // repeated ALL searches keep returning the same oldest batch and
-            // never reach newer reports.
-            $ids = $this->search();
+            // The mailbox was renumbered since the last run (both UIDVALIDITY
+            // values are known and differ): the stored high-water UID belongs to
+            // the previous numbering and must not be trusted, so rescan from the
+            // start. Report deduplication keeps re-importing cheap. When either
+            // value is unknown (0) the cursor is kept as-is.
+            if ($this->uidvalidity > 0 && $storedValidity > 0 && $this->uidvalidity !== $storedValidity) {
+                $lastUid = 0;
+            }
+
+            // Candidate messages are those with a UID above the component-owned
+            // high-water mark, oldest first, then the configured batch size. The
+            // import cursor (not the \Seen flag) decides what has been handled,
+            // so a message another client marked read is still imported.
+            $ids = $this->search($lastUid);
             sort($ids);
             $ids = \array_slice($ids, 0, $limit);
 
             $handled = []; // produced a new report
             $touched = []; // processed but no new report (empty, duplicate or invalid)
             $budget  = self::MAX_TOTAL_BYTES;
+
+            // Contiguous high-water mark: advanced to a UID only while every
+            // lower candidate in this run was fully handled. A deferred (retry)
+            // message or an over-budget break stops it, so the next run re-scans
+            // from the first message that was not cleanly processed; anything
+            // already stored past that point is caught by deduplication.
+            $highWater    = $lastUid;
+            $progressOpen = true;
 
             foreach ($ids as $id) {
                 $raw = $this->fetchBody($id);
@@ -165,6 +200,11 @@ final class ImapClient
                     $stats['skipped']++;
                     $stats['transport_skipped']++;
                     $touched[] = $id;
+
+                    if ($progressOpen) {
+                        $highWater = $id;
+                    }
+
                     continue;
                 }
 
@@ -177,6 +217,7 @@ final class ImapClient
                     // starts with the full budget, the next run can always make
                     // progress on it, so no message is starved.
                     unset($raw);
+                    $progressOpen = false;
                     break;
                 }
 
@@ -186,20 +227,33 @@ final class ImapClient
                 unset($raw);
 
                 if ($result === 'retry') {
-                    // A transient failure must not advance the message: leaving
-                    // it unflagged keeps it in the UNSEEN set so the next run
-                    // retries it instead of silently dropping an unstored report.
+                    // A transient failure must not advance the cursor: stopping
+                    // the high-water mark here keeps this message (and every
+                    // later one) in scope for the next run so it retries instead
+                    // of silently dropping an unstored report.
                     $stats['deferred']++;
+                    $progressOpen = false;
                 } elseif ($result === 'new') {
                     $stats['ingested']++;
                     $handled[] = $id;
+
+                    if ($progressOpen) {
+                        $highWater = $id;
+                    }
                 } else {
                     $stats['skipped']++;
                     $touched[] = $id;
+
+                    if ($progressOpen) {
+                        $highWater = $id;
+                    }
                 }
             }
 
             $this->advance($handled, $touched, $delete);
+
+            $stats['uidvalidity'] = $this->uidvalidity;
+            $stats['last_uid']    = $highWater;
 
             return $stats;
         } finally {
@@ -356,16 +410,47 @@ final class ImapClient
 
     private function select(string $folder): void
     {
-        $this->command('SELECT ' . $this->quote($folder), 'Unable to open the mailbox folder.');
+        $tag = $this->nextTag();
+        $this->write($tag . ' SELECT ' . $this->quote($folder));
+
+        // Reset before each SELECT; the UIDVALIDITY response code is an
+        // untagged OK the server sends before the tagged completion. A folder is
+        // required to announce it (RFC 3501), but a non-conforming server might
+        // not — a 0 then simply means "unknown" and disables the renumber reset.
+        $this->uidvalidity = 0;
+        $error             = 'Unable to open the mailbox folder.';
+
+        while (true) {
+            $line = $this->readLine();
+
+            if ($this->uidvalidity === 0 && preg_match('/\[UIDVALIDITY\s+(\d+)\]/i', $line, $m) === 1) {
+                $this->uidvalidity = (int) $m[1];
+            }
+
+            if (str_starts_with($line, $tag . ' ')) {
+                $this->assertOk($line, $error);
+                break;
+            }
+        }
     }
 
     /**
+     * Find candidate message UIDs above the component-owned high-water mark. The
+     * import tracks its own progress by UID instead of relying on the \Seen
+     * flag, so a message another client, sieve rule or operator marks read is
+     * still imported. A UID range of "n:*" always includes the single highest
+     * UID even when it is below n (RFC 3501), so the lower bound is re-checked
+     * in PHP to avoid re-fetching an already-processed newest message.
+     *
+     * @param  int  $sinceUid  Highest UID already processed; 0 scans from the start.
+     *
      * @return int[]
      */
-    private function search(): array
+    private function search(int $sinceUid = 0): array
     {
+        $since = max(0, $sinceUid) + 1;
         $tag   = $this->nextTag();
-        $this->write($tag . ' UID SEARCH UNSEEN');
+        $this->write($tag . ' UID SEARCH UID ' . $since . ':*');
 
         $ids   = [];
         $error = 'Unable to search the mailbox.';
@@ -375,7 +460,7 @@ final class ImapClient
 
             if (stripos($line, '* SEARCH') === 0) {
                 foreach (preg_split('/\s+/', trim(substr($line, 8))) ?: [] as $token) {
-                    if (ctype_digit($token)) {
+                    if (ctype_digit($token) && (int) $token >= $since) {
                         $ids[] = (int) $token;
                     }
                 }

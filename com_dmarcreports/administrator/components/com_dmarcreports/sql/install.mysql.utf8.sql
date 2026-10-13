@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS `#__dmarc_sources` (
     `last_run` DATETIME NULL,
     `last_status` VARCHAR(50) NOT NULL DEFAULT '',
     `last_message` VARCHAR(1024) NOT NULL DEFAULT '',
+    `uidvalidity` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    `last_uid` BIGINT UNSIGNED NOT NULL DEFAULT 0,
     `created` DATETIME NULL,
     `created_by` INT NOT NULL DEFAULT 0,
     `modified` DATETIME NULL,

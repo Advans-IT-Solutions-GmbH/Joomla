@@ -117,7 +117,7 @@ final class DmarcParser
             'date_begin' => $begin,
             'date_end'   => $end,
             'policy'     => [
-                'domain' => strtolower(self::text($policy->domain ?? null)),
+                'domain' => self::text($policy->domain ?? null),
                 'p'      => self::policyDisposition($policy->p ?? null, true),
                 'sp'     => self::policyDisposition($policy->sp ?? null, false),
                 'pct'    => self::percentage($policy->pct ?? null),
@@ -128,8 +128,15 @@ final class DmarcParser
             'message_count' => 0,
         ];
 
+        // Canonicalize the published policy domain (lowercase, IDNA/ASCII, DNS
+        // label validation and the 190-character storage limit) before it can be
+        // trusted or auto-registered as a monitored domain. An untrusted value
+        // such as a URL, embedded whitespace or control characters canonicalizes
+        // to null and is rejected here as a parse failure.
+        $report['policy']['domain'] = (string) DomainName::canonicalize((string) $report['policy']['domain']);
+
         if ($report['report_id'] === '' || $report['policy']['domain'] === '') {
-            throw new \InvalidArgumentException('The report is missing a report id or published policy domain.');
+            throw new \InvalidArgumentException('The report is missing a report id or a valid published policy domain.');
         }
 
         // Reject over-length report metadata before storage. These untrusted
@@ -142,12 +149,9 @@ final class DmarcParser
             }
         }
 
-        // Reject a policy domain that would overflow its storage column. For an
-        // auto-detected domain the insert would otherwise fail on every poll and
-        // the message would be retried forever (see MAX_DOMAIN_LENGTH).
-        if (self::length($report['policy']['domain']) > self::MAX_DOMAIN_LENGTH) {
-            throw new \InvalidArgumentException('The published policy domain exceeds the supported length.');
-        }
+        // The published policy domain is canonicalized and length-checked by
+        // DomainName::canonicalize() above, so no separate length guard is
+        // needed here.
 
         // The fingerprint is built from org name, report id and begin date; a
         // report missing either of the remaining two parts cannot be deduplicated

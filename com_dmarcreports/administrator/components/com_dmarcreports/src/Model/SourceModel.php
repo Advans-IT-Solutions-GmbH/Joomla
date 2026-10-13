@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
 
@@ -133,6 +134,12 @@ class SourceModel extends AdminModel
         $db->transactionStart();
 
         try {
+            // Lock the source rows before resetting their reports so an
+            // in-flight ingestion that is about to write a report for one of
+            // these sources must wait, then observe the source as deleted and
+            // record its report unbound instead of leaving dangling provenance.
+            SourceLock::lockMany($db, $ids);
+
             $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
                 ->update($db->quoteName('#__dmarc_reports'))
                 ->set($db->quoteName('source_id') . ' = 0')

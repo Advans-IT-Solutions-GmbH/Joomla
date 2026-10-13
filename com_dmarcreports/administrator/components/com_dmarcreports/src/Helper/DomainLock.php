@@ -42,16 +42,7 @@ final class DomainLock
      */
     public static function lock(DatabaseInterface $db, int $domainId): bool
     {
-        if ($domainId <= 0) {
-            return false;
-        }
-
-        $sql = 'SELECT ' . $db->quoteName('id')
-            . ' FROM ' . $db->quoteName('#__dmarc_domains')
-            . ' WHERE ' . $db->quoteName('id') . ' = ' . $domainId
-            . ' FOR UPDATE';
-
-        return (int) $db->setQuery($sql)->loadResult() === $domainId;
+        return RowLock::lock($db, '#__dmarc_domains', $domainId);
     }
 
     /**
@@ -63,15 +54,6 @@ final class DomainLock
      */
     public static function lockMany(DatabaseInterface $db, array $ids): void
     {
-        if ($ids === []) {
-            return;
-        }
-
-        $sql = 'SELECT ' . $db->quoteName('id')
-            . ' FROM ' . $db->quoteName('#__dmarc_domains')
-            . ' WHERE ' . $db->quoteName('id') . ' IN (' . implode(',', $ids) . ')'
-            . ' FOR UPDATE';
-
-        $db->setQuery($sql)->execute();
+        RowLock::lockMany($db, '#__dmarc_domains', $ids);
     }
 }

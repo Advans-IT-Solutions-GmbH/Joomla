@@ -235,7 +235,20 @@ final class Ingestor
                 return;
             }
 
-            $reportId = $this->insertReport($report, $hash, $domainId, $sourceId);
+            // Lock the originating source too (when the report is bound to one)
+            // so a concurrent source delete cannot complete while this report is
+            // written. If the source was already deleted during this run its
+            // reports were reset to the unbound sentinel, so storing this one
+            // with the stale id would leave dangling provenance: record it
+            // unbound instead, exactly like a manually uploaded report.
+            $effectiveSourceId = $sourceId;
+
+            if ($effectiveSourceId !== null && $effectiveSourceId > 0
+                && !SourceLock::lock($this->db, $effectiveSourceId)) {
+                $effectiveSourceId = 0;
+            }
+
+            $reportId = $this->insertReport($report, $hash, $domainId, $effectiveSourceId);
 
             // Count locally and fold into the running summary only after the
             // commit succeeds. Adding inside the loop would leave the record

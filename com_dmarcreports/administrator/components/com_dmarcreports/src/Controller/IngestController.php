@@ -70,6 +70,8 @@ class IngestController extends BaseController
                     'folder'              => $source->folder,
                     'limit'               => $limit,
                     'delete_after_import' => (int) $source->delete_after_import,
+                    'uidvalidity'         => (int) ($source->uidvalidity ?? 0),
+                    'last_uid'            => (int) ($source->last_uid ?? 0),
                 ],
                 function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): string {
                     return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
@@ -82,7 +84,17 @@ class IngestController extends BaseController
             // by the ingestor, so this cannot double-count.
             $summary['skipped'] += (int) ($stats['transport_skipped'] ?? 0);
 
-            $this->recordRun($sourceId, 'ok', $this->summaryText($summary));
+            // Persist the component-owned import cursor returned by the run so
+            // the next poll resumes above the last fully processed UID instead
+            // of depending on the mailbox \Seen state. Only a successful run
+            // advances it; the error path below leaves the stored cursor intact.
+            $this->recordRun(
+                $sourceId,
+                'ok',
+                $this->summaryText($summary),
+                (int) ($stats['uidvalidity'] ?? 0),
+                (int) ($stats['last_uid'] ?? 0)
+            );
 
             $this->setRedirect($redirect, $this->summaryText($summary), 'message');
         } catch (\Throwable $e) {
@@ -180,7 +192,7 @@ class IngestController extends BaseController
         return $db->setQuery($query)->loadObject() ?: null;
     }
 
-    private function recordRun(int $sourceId, string $status, string $message): void
+    private function recordRun(int $sourceId, string $status, string $message, ?int $uidvalidity = null, ?int $lastUid = null): void
     {
         if ($sourceId <= 0) {
             return;
@@ -193,6 +205,15 @@ class IngestController extends BaseController
             'last_status' => $status,
             'last_message' => $message,
         ];
+
+        // Advance the stored import cursor only when the run reported one (a
+        // successful poll). The error path passes null so a failed run keeps the
+        // previous cursor and the next run re-examines the same UID range.
+        if ($uidvalidity !== null && $lastUid !== null) {
+            $row->uidvalidity = $uidvalidity;
+            $row->last_uid    = $lastUid;
+        }
+
         $db->updateObject('#__dmarc_sources', $row, 'id');
     }
 

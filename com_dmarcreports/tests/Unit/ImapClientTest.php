@@ -118,7 +118,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0],
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => 2],
             $result['stats']
         );
 
@@ -127,9 +127,10 @@ class ImapClientTest extends TestCase
         $this->assertSame($body1, $result['seen'][1] ?? null);
         $this->assertSame($body2, $result['seen'][2] ?? null);
 
-        // Processed messages are flagged \Seen in a single combined UID STORE so
-        // the next UNSEEN search skips them.
-        $this->assertStringContainsString('UID SEARCH UNSEEN', $result['sent']);
+        // The import tracks its own progress by UID, so the search asks for the
+        // whole UID range above the stored high-water mark (0 here → 1:*) rather
+        // than depending on the mailbox \Seen state.
+        $this->assertStringContainsString('UID SEARCH UID 1:*', $result['sent']);
         $this->assertStringContainsString('UID FETCH 1 (BODY.PEEK[])', $result['sent']);
         $this->assertStringContainsString('UID FETCH 2 (BODY.PEEK[])', $result['sent']);
         $this->assertStringContainsString('UID STORE 1,2 +FLAGS.SILENT (\\Seen)', $result['sent']);
@@ -158,12 +159,13 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1, 'uidvalidity' => 0, 'last_uid' => 0],
             $result['stats']
         );
 
-        // A deferred (transient failure) message must not be advanced: no STORE
-        // keeps it in the UNSEEN set for the next run.
+        // A deferred (transient failure) message must not advance the import
+        // cursor: last_uid stays at 0 and no STORE is sent, so the next run
+        // re-fetches it from the same UID range instead of losing it.
         $this->assertStringNotContainsString('UID STORE', $result['sent']);
     }
 
@@ -195,7 +197,7 @@ class ImapClientTest extends TestCase
 
         $this->assertSame(0, $called);
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => 1],
             $result['stats']
         );
 
@@ -301,5 +303,68 @@ class ImapClientTest extends TestCase
 
         $this->assertSame(1, $result['stats']['seen']);
         $this->assertSame($body, $result['seen'][1] ?? null);
+    }
+
+    public function testResumesAboveStoredCursorAndReportsHighWater(): void
+    {
+        $body6 = "Subject: Report 6\r\n\r\nbody-six";
+        $body7 = "Subject: Report 7\r\n\r\nbody-seven";
+
+        // The folder reports the same UIDVALIDITY the cursor was stored under,
+        // so the client resumes above the stored high-water UID (5) and asks for
+        // the 6:* range only.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1 UIDPLUS\r\nA0002 OK CAPABILITY completed\r\n"
+            . "* OK [UIDVALIDITY 42] UIDs valid\r\nA0003 OK [READ-WRITE] SELECT completed\r\n"
+            . "* SEARCH 6 7\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(6, 6, $body6, 'A0005')
+            . $this->fetchResponse(7, 7, $body7, 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'uidvalidity' => 42, 'last_uid' => 5],
+            static fn (): string => 'new'
+        );
+
+        // Only UIDs above the stored cursor are searched, and the returned
+        // cursor advances to the highest contiguously handled UID.
+        $this->assertStringContainsString('UID SEARCH UID 6:*', $result['sent']);
+        $this->assertStringNotContainsString('UID SEARCH UID 1:*', $result['sent']);
+        $this->assertSame(42, $result['stats']['uidvalidity']);
+        $this->assertSame(7, $result['stats']['last_uid']);
+        $this->assertSame(2, $result['stats']['ingested']);
+    }
+
+    public function testResetsCursorWhenUidValidityChanges(): void
+    {
+        $body = "Subject: Report\r\n\r\nbody";
+
+        // The folder now reports a different UIDVALIDITY than the cursor was
+        // stored under: the mailbox was renumbered, so the stored high-water UID
+        // is meaningless and the client must rescan from the start (1:*).
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1 UIDPLUS\r\nA0002 OK CAPABILITY completed\r\n"
+            . "* OK [UIDVALIDITY 99] UIDs valid\r\nA0003 OK [READ-WRITE] SELECT completed\r\n"
+            . "* SEARCH 3\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(3, 3, $body, 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'uidvalidity' => 42, 'last_uid' => 100],
+            static fn (): string => 'new'
+        );
+
+        // Cursor reset: search starts from 1:* despite the stored last_uid of
+        // 100, and the returned cursor reflects the new UIDVALIDITY.
+        $this->assertStringContainsString('UID SEARCH UID 1:*', $result['sent']);
+        $this->assertSame(99, $result['stats']['uidvalidity']);
+        $this->assertSame(3, $result['stats']['last_uid']);
+        $this->assertSame(1, $result['stats']['ingested']);
     }
 }
