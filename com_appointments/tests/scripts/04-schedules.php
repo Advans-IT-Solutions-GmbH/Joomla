@@ -16,12 +16,24 @@ class ScheduleAdminTest
 {
     private const BASE_TITLE = 'suite-schedule-fixture';
 
+    /**
+     * The account used for the authorisation steps. The password only ever
+     * exists in this file and in the row the suite deletes again, so it is not
+     * a credential of the installation.
+     */
+    private const OPERATOR          = 'suite-operator';
+    private const OPERATOR_PASSWORD = 'SuiteOperator123456!';
+
     private $db;
     private $dbPrefix;
     private $baseUrl;
     private $cookieJar = '/tmp/suite-schedules-cookies.txt';
     private $adminId = 0;
     private $originalParams = '';
+    private $operatorId = 0;
+    private $operatorGroup = 0;
+    private $assetId = 0;
+    private $originalRules = '';
     private $passed = 0;
     private $failed = 0;
 
@@ -149,6 +161,48 @@ class ScheduleAdminTest
             return $this->ruleCount($scheduleId) === $before && $before === 2;
         });
 
+        // --- The edit view is behind core.edit, whatever its spelling -------
+        // Reaching view=schedule directly would show and save a stored
+        // schedule without the task controllers' permission checks, so
+        // DisplayController authorises it. Joomla's MVC factory resolves
+        // schedule and Schedule to the same view class, so the guard has to
+        // compare without regard to case or it can be stepped around by
+        // holding down shift. This is the only test of that guard, so it also
+        // covers the guard itself and not only the spelling.
+        try {
+            $operator = $this->createOperatorWithoutEditPermission();
+
+            if ($operator === null) {
+                echo "✗ Could not create an operator without the edit permission\n";
+                $this->failed++;
+            } else {
+                $this->test('An operator without core.edit may still open a blank form', function () {
+                    // The positive control: without it a 403 below could just as
+                    // well mean the login or the permission failed outright.
+                    [, $status] = $this->statusOf('/administrator/index.php?option=com_appointments&view=schedule');
+
+                    return $status === 200;
+                });
+
+                foreach (['schedule', 'Schedule', 'SCHEDULE'] as $spelling) {
+                    $this->test(
+                        'An operator without core.edit is refused view=' . $spelling . ' with an id',
+                        function () use ($spelling, $scheduleId) {
+                            [, $status] = $this->statusOf(
+                                '/administrator/index.php?option=com_appointments&view='
+                                . $spelling . '&id=' . $scheduleId
+                            );
+
+                            return $status === 403;
+                        }
+                    );
+                }
+            }
+        } finally {
+            $this->removeOperator();
+            $this->login();
+        }
+
         // --- A schedule in use must not be deleted -------------------------
         $this->createEventTypeUsing($scheduleId);
         $html = $this->post('schedules.delete', $this->tokenFromListForm() ?? $token, ['cid[]' => (string) $scheduleId]);
@@ -169,6 +223,164 @@ class ScheduleAdminTest
         $this->summary();
 
         return $this->failed === 0;
+    }
+
+    /**
+     * An administrator account that may manage the component and create a
+     * schedule, but may not edit one, logged in and ready to make requests.
+     *
+     * It is put into Joomla's own Manager group, which may log into the
+     * administrator, and the component's asset rules grant that group
+     * core.manage and core.create while denying core.edit. The row is built
+     * from the live column list rather than a fixed one, so the suite does not
+     * break on a Joomla version that adds or drops a user column.
+     *
+     * @return  string|null  The user name, or null when it could not be set up.
+     */
+    private function createOperatorWithoutEditPermission(): ?string
+    {
+        $groups    = "{$this->dbPrefix}usergroups";
+        $result    = $this->db->query("SELECT id FROM {$groups} WHERE title = 'Manager' LIMIT 1");
+        $groupRow  = $result ? $result->fetch_assoc() : null;
+
+        if (!$groupRow) {
+            return null;
+        }
+
+        $this->operatorGroup = (int) $groupRow['id'];
+
+        $columns = [];
+        $result  = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}users");
+
+        while ($result && $row = $result->fetch_assoc()) {
+            $columns[$row['Field']] = $row;
+        }
+
+        if ($columns === []) {
+            return null;
+        }
+
+        $now    = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $wanted = [
+            'name'         => 'Suite Operator',
+            'username'     => self::OPERATOR,
+            'email'        => self::OPERATOR . '@example.test',
+            'password'     => password_hash(self::OPERATOR_PASSWORD, PASSWORD_BCRYPT),
+            'block'        => '0',
+            'sendEmail'    => '0',
+            'registerDate' => $now,
+            'params'       => '{}',
+            'requireReset' => '0',
+        ];
+
+        $sets = [];
+
+        foreach ($columns as $name => $column) {
+            if (array_key_exists($name, $wanted)) {
+                $sets[] = "`{$name}` = '" . $this->db->real_escape_string((string) $wanted[$name]) . "'";
+
+                continue;
+            }
+
+            // Anything the schema insists on but does not default is filled
+            // with an empty value of its own kind, so a strict server does not
+            // refuse the insert.
+            if ($name === 'id' || $column['Null'] === 'YES' || $column['Default'] !== null) {
+                continue;
+            }
+
+            $type   = strtolower((string) $column['Type']);
+            $filler = '0';
+
+            if (str_contains($type, 'char') || str_contains($type, 'text')) {
+                $filler = '';
+            } elseif (str_contains($type, 'datetime') || str_contains($type, 'timestamp')) {
+                $filler = $now;
+            } elseif (str_contains($type, 'date')) {
+                $filler = substr($now, 0, 10);
+            }
+
+            $sets[] = "`{$name}` = '" . $this->db->real_escape_string($filler) . "'";
+        }
+
+        if (!$this->db->query("INSERT INTO {$this->dbPrefix}users SET " . implode(', ', $sets))) {
+            return null;
+        }
+
+        $this->operatorId = (int) $this->db->insert_id;
+        $this->db->query(
+            "INSERT INTO {$this->dbPrefix}user_usergroup_map (user_id, group_id) "
+            . "VALUES ({$this->operatorId}, {$this->operatorGroup})"
+        );
+
+        // The component's own asset decides what the group may do here.
+        $assets = "{$this->dbPrefix}assets";
+        $result = $this->db->query("SELECT id, rules FROM {$assets} WHERE name = 'com_appointments' LIMIT 1");
+        $asset  = $result ? $result->fetch_assoc() : null;
+
+        if (!$asset) {
+            return null;
+        }
+
+        $this->assetId       = (int) $asset['id'];
+        $this->originalRules = (string) $asset['rules'];
+        $rules               = json_decode($this->originalRules, true);
+        $rules               = \is_array($rules) ? $rules : [];
+        $key                 = (string) $this->operatorGroup;
+
+        $rules['core.manage'][$key] = 1;
+        $rules['core.create'][$key] = 1;
+        $rules['core.edit'][$key]   = 0;
+
+        $encoded = $this->db->real_escape_string((string) json_encode($rules));
+        $this->db->query("UPDATE {$assets} SET rules = '{$encoded}' WHERE id = {$this->assetId}");
+
+        return $this->loginAs(self::OPERATOR, self::OPERATOR_PASSWORD) ? self::OPERATOR : null;
+    }
+
+    private function removeOperator(): void
+    {
+        if ($this->assetId > 0) {
+            $assets = "{$this->dbPrefix}assets";
+            $rules  = $this->db->real_escape_string($this->originalRules);
+            $this->db->query("UPDATE {$assets} SET rules = '{$rules}' WHERE id = {$this->assetId}");
+            $this->assetId = 0;
+        }
+
+        if ($this->operatorId > 0) {
+            $this->db->query(
+                "DELETE FROM {$this->dbPrefix}user_usergroup_map WHERE user_id = {$this->operatorId}"
+            );
+            $this->db->query("DELETE FROM {$this->dbPrefix}users WHERE id = {$this->operatorId}");
+            $this->operatorId = 0;
+        }
+
+        @unlink($this->cookieJar);
+    }
+
+    /**
+     * The HTTP status and the body of a request, because an authorisation test
+     * is about the status and not about what the page happens to say.
+     *
+     * @return  array{0:string, 1:int}
+     */
+    private function statusOf(string $path): array
+    {
+        $handle = curl_init($this->baseUrl . $path);
+        curl_setopt_array($handle, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_COOKIEJAR      => $this->cookieJar,
+            CURLOPT_COOKIEFILE     => $this->cookieJar,
+        ]);
+
+        $body   = curl_exec($handle);
+        $status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+        curl_close($handle);
+
+        return [$body === false ? '' : $body, $status];
     }
 
     /**
@@ -321,6 +533,14 @@ class ScheduleAdminTest
 
     private function login(): bool
     {
+        return $this->loginAs(
+            getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin',
+            getenv('JOOMLA_ADMIN_PASSWORD') ?: 'Admin123456789!@#'
+        );
+    }
+
+    private function loginAs(string $username, string $password): bool
+    {
         @unlink($this->cookieJar);
         $token = null;
 
@@ -339,8 +559,8 @@ class ScheduleAdminTest
         }
 
         $body = $this->request('/administrator/index.php', [
-            'username' => getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin',
-            'passwd'   => getenv('JOOMLA_ADMIN_PASSWORD') ?: 'Admin123456789!@#',
+            'username' => $username,
+            'passwd'   => $password,
             'option'   => 'com_login',
             'task'     => 'login',
             'return'   => base64_encode('index.php'),

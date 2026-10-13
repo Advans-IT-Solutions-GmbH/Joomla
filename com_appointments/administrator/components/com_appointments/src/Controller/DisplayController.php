@@ -46,7 +46,12 @@ class DisplayController extends BaseController
             throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
 
-        $view = $this->input->getCmd('view', $this->default_view);
+        // Lower case before the comparison. Joomla's `cmd` filter keeps the
+        // case it was given, and the MVC factory builds the view class with
+        // `ucfirst()`, so view=Schedule and view=schedule reach the same view.
+        // A list that matched only the lower-case spelling would therefore be a
+        // guard that any caller can step around by holding down shift.
+        $view = strtolower($this->input->getCmd('view', $this->default_view));
 
         if (\in_array($view, self::EDIT_VIEWS, true)) {
             $id = $this->input->getInt('id', 0);
