@@ -2177,14 +2177,15 @@ PHP
     }
 
     /**
-     * A request without any cookie, redirects followed by hand without sending a cookie back
-     * (like the checker's curl). Allowed are 301/302 redirects that keep the query intact (the
-     * language filter, strict routing); a 303 (the redirect of Session::checkToken()), an
-     * escaped ampersand or a lost parameter fails, and the answer must come within three hops.
+     * A request to the endpoint, redirects followed by hand with the same method, body and
+     * headers. Without $jar no cookie is sent at all (like the checker's curl). Allowed are
+     * 301/302 redirects that keep the query intact (the language filter, strict routing); a 303
+     * (the redirect of Session::checkToken()), an escaped ampersand or a lost parameter fails, and
+     * the answer must come within three hops.
      *
      * @return  array{problems: array<int, string>, hops: array<int, string>, status: int, body: string}
      */
-    private function cookielessRequest(string $method, array $query, array $post = []): array
+    private function endpointRequest(string $method, array $query, array $post = [], array $headers = [], ?string $jar = null): array
     {
         $expected = array_intersect_key($query, array_flip(['option', 'plugin', 'group', 'format', 'task']));
         $url      = 'http://localhost/index.php?' . http_build_query($query);
@@ -2194,7 +2195,7 @@ PHP
         $body     = '';
 
         for ($i = 0; $i < 4; $i++) {
-            [$status, $location, $body] = $this->rawRequest($method, $url, $post);
+            [$status, $location, $body] = $this->rawRequest($method, $url, $post, $headers, $jar);
 
             if ($status < 300 || $status >= 400) {
                 break;
@@ -2328,7 +2329,7 @@ PHP
 
                 foreach ($cases as $name => $query) {
                     foreach (['GET', 'POST'] as $method) {
-                        $result   = $this->cookielessRequest($method, $query, $method === 'POST' ? ['email' => 'nobody@example.com', 'confirm_token' => md5('x')] : []);
+                        $result   = $this->endpointRequest($method, $query, $method === 'POST' ? ['email' => 'nobody@example.com', 'confirm_token' => md5('x')] : []);
                         $problems = $result['problems'];
 
                         if ($problems === []) {
@@ -2412,6 +2413,14 @@ PHP
             $map    = (object) ['user_id' => $userId, 'group_id' => 2];
             $this->db->insertObject('#__user_usergroup_map', $map);
 
+            // Consent of Joomla's privacy consent plugin, which otherwise sends a logged-in user
+            // without consent to the profile form (303) on every request.
+            $consent = (object) [
+                'user_id' => $userId, 'state' => 1, 'created' => gmdate('Y-m-d H:i:s'),
+                'subject' => 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT', 'body' => 'Token test consent', 'remind' => 0, 'token' => '',
+            ];
+            $this->db->insertObject('#__privacy_consents', $consent);
+
             // Log in through the site login form.
             $page  = $this->guestHttp($jar, 'GET', ['option' => 'com_users', 'view' => 'login']);
             $login = preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $page, $m) ? $m[1] : '';
@@ -2440,37 +2449,43 @@ PHP
             $exists = fn (int $id): bool => (int) $this->db->setQuery(
                 'SELECT COUNT(*) FROM ' . $this->db->quoteName($table) . ' WHERE ' . $this->db->quoteName($pk) . ' = ' . $id
             )->loadResult() === 1;
-            $url = fn (array $extra): string => 'http://localhost/index.php?' . http_build_query(
-                ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy', 'format' => 'json', 'task' => 'deleteAddress'] + $extra
-            );
+            // Answer of the address task with the session of the logged-in customer.
+            $call = function (string $method, array $extra, array $post = [], array $headers = []) use ($jar): array {
+                $result = $this->endpointRequest($method,
+                    ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy', 'format' => 'json', 'task' => 'deleteAddress'] + $extra,
+                    $post, $headers, $jar);
+
+                return [$result['problems'] === [] ? ($this->ajaxAnswer($result['body'])['success'] ?? null) : null,
+                    implode('; ', $result['problems']) . ' | hops: ' . implode(' -> ', $result['hops']) . ' | ' . mb_substr($result['body'], 0, 150)];
+            };
 
             $id = $seed();
-            [$status, $location, $body] = $this->rawRequest('POST', $url(['address_id' => $id]), [], [], $jar);
+            [$success, $detail] = $call('POST', ['address_id' => $id], [], []);
             $this->test('Logged in, no form token: refused with JSON, address kept, no redirect',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === false && $exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === false && $exists($id), $detail);
 
-            [$status, $location, $body] = $this->rawRequest('POST', $url(['address_id' => $id, md5('wrong-token') => 1]), [], [], $jar);
+            [$success, $detail] = $call('POST', ['address_id' => $id, md5('wrong-token') => 1], [], []);
             $this->test('Logged in, wrong form token: refused with JSON, address kept',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === false && $exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === false && $exists($id), $detail);
 
-            [$status, $location, $body] = $this->rawRequest('POST', $url(['address_id' => $id, $token => 1]), [], [], $jar);
+            [$success, $detail] = $call('POST', ['address_id' => $id, $token => 1], [], []);
             $this->test('Logged in, form token in the query (address script): own address deleted',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === true && !$exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === true && !$exists($id), $detail);
 
             $id = $seed();
-            [$status, $location, $body] = $this->rawRequest('POST', $url(['address_id' => $id]), [$token => '1'], [], $jar);
+            [$success, $detail] = $call('POST', ['address_id' => $id], [$token => '1'], []);
             $this->test('Logged in, form token in the POST body: own address deleted',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === true && !$exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === true && !$exists($id), $detail);
 
             $id = $seed();
-            [$status, $location, $body] = $this->rawRequest('POST', $url(['address_id' => $id]), [], ['X-CSRF-Token: ' . $token], $jar);
+            [$success, $detail] = $call('POST', ['address_id' => $id], [], ['X-CSRF-Token: ' . $token]);
             $this->test('Logged in, form token in the X-CSRF-Token header: own address deleted',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === true && !$exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === true && !$exists($id), $detail);
 
             $id = $seed();
-            [$status, $location, $body] = $this->rawRequest('GET', $url(['address_id' => $id, $token => 1]), [], [], $jar);
+            [$success, $detail] = $call('GET', ['address_id' => $id, $token => 1], [], []);
             $this->test('Logged in, GET with form token in the query: own address deleted',
-                $status === 200 && ($this->ajaxAnswer($body)['success'] ?? null) === true && !$exists($id), "HTTP $status $location " . mb_substr($body, 0, 150));
+                $success === true && !$exists($id), $detail);
         } catch (\Throwable $e) {
             $this->test('Address task tests with a session ran without error', false, get_class($e) . ': ' . $e->getMessage());
         } finally {
@@ -2480,6 +2495,7 @@ PHP
 
             if ($userId > 0) {
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__user_usergroup_map') . ' WHERE user_id = ' . $userId)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE user_id = ' . $userId)->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__session') . ' WHERE userid = ' . $userId)->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__action_logs') . ' WHERE user_id = ' . $userId)->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
