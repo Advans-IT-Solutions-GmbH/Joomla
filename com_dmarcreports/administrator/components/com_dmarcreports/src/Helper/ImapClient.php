@@ -466,14 +466,19 @@ final class ImapClient
         }
 
         $context = stream_context_create(
-            ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]
+            ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true, 'peer_name' => $host]]
         );
 
         $errno  = 0;
         $errstr = '';
 
+        // Always open a plain TCP socket first and negotiate TLS explicitly, so
+        // a TLS handshake or certificate failure is reported as a TLS error
+        // rather than being hidden inside stream_socket_client() and surfaced as
+        // a generic connection failure. Implicit TLS (ssl) upgrades before the
+        // greeting; STARTTLS (tls) upgrades after it.
         $socket = @stream_socket_client(
-            $transport . $host . ':' . $port,
+            'tcp://' . $host . ':' . $port,
             $errno,
             $errstr,
             $this->timeout,
@@ -488,6 +493,12 @@ final class ImapClient
         $this->socket = $socket;
         stream_set_timeout($this->socket, $this->timeout);
 
+        if ($security === 'ssl') {
+            if (!@stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                throw new ImapException('Unable to negotiate TLS with the mail server.', ImapException::CATEGORY_TLS);
+            }
+        }
+
         $greeting = $this->readLine();
 
         if (stripos($greeting, '* OK') !== 0) {
@@ -495,7 +506,9 @@ final class ImapClient
         }
 
         if ($security === 'tls') {
-            $this->command('STARTTLS');
+            // A server that refuses the STARTTLS command itself is a TLS failure,
+            // not a plain connection error.
+            $this->command('STARTTLS', 'Unable to start TLS with the mail server.', ImapException::CATEGORY_TLS);
 
             if (!@stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
                 throw new ImapException('Unable to start TLS with the mail server.', ImapException::CATEGORY_TLS);

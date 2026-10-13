@@ -115,9 +115,15 @@ class ReportArchiveTest extends TestCase
         $payload = file_get_contents($tmp);
         @unlink($tmp);
 
-        $documents = ReportArchive::extract($payload, 'many.zip');
+        $documents = ReportArchive::extract($payload, 'many.zip', $stats);
 
         $this->assertLessThanOrEqual(256, \count($documents));
+        $this->assertCount(256, $documents);
+        // 300 valid reports minus the 256 document cap leaves exactly 44 that the
+        // archive held but ingestion dropped; the caller surfaces this count to
+        // the operator instead of silently discarding them.
+        $this->assertSame(44, $stats['dropped']);
+        $this->assertSame('', $stats['reason']);
     }
 
     public function testZipWithTooManyEntriesIsRejected(): void

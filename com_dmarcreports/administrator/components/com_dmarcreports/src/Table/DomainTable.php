@@ -54,9 +54,9 @@ class DomainTable extends Table
             $this->title = $this->domain;
         }
 
-        // The notes column is a TEXT field (65535 bytes). Reject an over-long
-        // value here with a readable message instead of letting the database
-        // raise a raw truncation error on store.
+        // The notes column is a TEXT field (max 65535 bytes). Reject an
+        // over-long value here with a readable message instead of letting the
+        // database raise a raw truncation error on store.
         if ($this->notes !== null && strlen((string) $this->notes) > 65535) {
             $this->setError(Text::_('COM_DMARCREPORTS_DOMAIN_ERROR_NOTES_TOO_LONG'));
 
@@ -90,5 +90,60 @@ class DomainTable extends Table
         }
 
         return true;
+    }
+
+    /**
+     * Store the row, translating the unique-key violation that the pre-flight
+     * duplicate check in {@see self::check()} cannot rule out. That check and the
+     * INSERT are not atomic, so two concurrent creates for the same canonical
+     * domain can both pass it and one still hit the UNIQUE constraint. Catch that
+     * race at the authoritative store boundary and surface the same localized
+     * "already monitored" message instead of leaking the raw database error.
+     *
+     * @param   bool  $updateNulls  True to update null values as well.
+     *
+     * @return  bool  True on success.
+     */
+    public function store($updateNulls = false): bool
+    {
+        try {
+            return parent::store($updateNulls);
+        } catch (\RuntimeException $e) {
+            if ($this->isDuplicateKeyError($e)) {
+                $this->setError(Text::_('COM_DMARCREPORTS_DOMAIN_ERROR_DUPLICATE'));
+
+                return false;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Whether a store failure is a duplicate-key (UNIQUE) violation. The domain
+     * column carries the only non-primary unique key on this table, so a
+     * duplicate-entry error can only mean the domain is already monitored.
+     *
+     * @param   \Throwable  $e  The caught store exception.
+     */
+    private function isDuplicateKeyError(\Throwable $e): bool
+    {
+        foreach ([$e, $e->getPrevious()] as $throwable) {
+            if ($throwable === null) {
+                continue;
+            }
+
+            $code = (string) $throwable->getCode();
+
+            if ($code === '23000' || $code === '1062') {
+                return true;
+            }
+
+            if (stripos($throwable->getMessage(), 'Duplicate entry') !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -37,17 +37,19 @@ class SourceTable extends Table
             return false;
         }
 
-        if ((int) $this->port <= 0) {
+        // Apply the default port only when none was supplied. Any supplied
+        // value is validated strictly here — the form range rule covers the UI,
+        // this backstop covers every path that writes the table directly — so a
+        // non-numeric string, 0, a negative value or an out-of-range number is
+        // rejected instead of being silently coerced to the default.
+        if ($this->port === null || $this->port === '') {
             $this->port = 993;
-        }
-
-        // The mailbox port must stay within the valid TCP range. The form range
-        // rule rejects an out-of-range value in the UI; this backstop rejects it
-        // for any path that writes the table directly.
-        if ((int) $this->port > 65535) {
+        } elseif (!is_numeric($this->port) || (int) $this->port < 1 || (int) $this->port > 65535) {
             $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT'));
 
             return false;
+        } else {
+            $this->port = (int) $this->port;
         }
 
         // A source may be left unbound (domain_id = 0) so ingestion maps each

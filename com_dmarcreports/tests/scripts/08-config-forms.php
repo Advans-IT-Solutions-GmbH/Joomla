@@ -116,6 +116,34 @@ class ConfigFormsTest
                 && $this->domainCount($longDomain) === 0;
         });
 
+        // --- CSV export emits a UTF-8 BOM and honours the configured delimiter
+        // (K-E6b). The export writes the BOM and the header row regardless of
+        // how many records a domain has, so a freshly created domain is enough
+        // to prove both without seeding record rows.
+        $exportDomainId = $this->domainId($validDomain);
+
+        $origParams = $this->readExtensionParams();
+
+        $this->setCsvDelimiter('semicolon');
+        $csvSemicolon = $this->exportRecords($exportDomainId);
+        $this->test('CSV export starts with a UTF-8 BOM', function () use ($csvSemicolon) {
+            return strncmp($csvSemicolon['body'], "\xEF\xBB\xBF", 3) === 0;
+        });
+        $this->test('CSV export uses the configured semicolon delimiter', function () use ($csvSemicolon) {
+            $header = $this->firstLine($csvSemicolon['body']);
+            return strpos($header, 'org_name;date_begin') !== false;
+        });
+
+        $this->setCsvDelimiter('tab');
+        $csvTab = $this->exportRecords($exportDomainId);
+        $this->test('CSV export honours a reconfigured tab delimiter', function () use ($csvTab) {
+            $header = $this->firstLine($csvTab['body']);
+            return strncmp($csvTab['body'], "\xEF\xBB\xBF", 3) === 0
+                && strpos($header, "org_name\tdate_begin") !== false;
+        });
+
+        $this->restoreExtensionParams($origParams);
+
         // --- Source edit form renders + saves --------------------------------
         $sourceForm = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.add', [], true);
         $this->token = $this->extractToken($sourceForm['body']) ?: $this->token;
@@ -232,10 +260,80 @@ class ConfigFormsTest
         return $row ? (int) $row['c'] : 0;
     }
 
+    private function domainId(string $domain): int
+    {
+        $escaped = $this->db->real_escape_string($domain);
+        $result  = $this->db->query("SELECT id FROM {$this->dbPrefix}dmarc_domains WHERE domain = '{$escaped}' LIMIT 1");
+        $row     = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['id'] : 0;
+    }
+
+    /** Current params JSON of the com_dmarcreports extension row (empty string if none). */
+    private function readExtensionParams(): string
+    {
+        $result = $this->db->query("SELECT params FROM {$this->dbPrefix}extensions WHERE element = 'com_dmarcreports' AND type = 'component' LIMIT 1");
+        $row    = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (string) $row['params'] : '';
+    }
+
+    /** Set the csv_delimiter component param, preserving any other params. */
+    private function setCsvDelimiter(string $value): void
+    {
+        $params = json_decode($this->readExtensionParams() ?: '{}', true);
+
+        if (!\is_array($params)) {
+            $params = [];
+        }
+
+        $params['csv_delimiter'] = $value;
+        $json                    = $this->db->real_escape_string(json_encode($params));
+        $this->db->query("UPDATE {$this->dbPrefix}extensions SET params = '{$json}' WHERE element = 'com_dmarcreports' AND type = 'component'");
+    }
+
+    private function restoreExtensionParams(string $params): void
+    {
+        $json = $this->db->real_escape_string($params);
+        $this->db->query("UPDATE {$this->dbPrefix}extensions SET params = '{$json}' WHERE element = 'com_dmarcreports' AND type = 'component'");
+    }
+
+    /** First line of a body, dropping a leading UTF-8 BOM if present. */
+    private function firstLine(string $body): string
+    {
+        if (strncmp($body, "\xEF\xBB\xBF", 3) === 0) {
+            $body = substr($body, 3);
+        }
+
+        $end = strcspn($body, "\r\n");
+
+        return substr($body, 0, $end);
+    }
+
+    /**
+     * GET the CSV export for a domain, carrying the CSRF token in the query as
+     * export.records enforces it with checkToken('get').
+     *
+     * @return array{code:int, body:string}
+     */
+    private function exportRecords(int $domainId): array
+    {
+        $url = $this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=export.records&domain_id=' . $domainId;
+
+        if ($this->token !== null) {
+            $url .= '&' . $this->token . '=1';
+        }
+
+        return $this->request($url, [], false);
+    }
+
     /**
      * True when the page shows the given language key's English text. The key is
      * resolved against the installed en-GB file so the assertion follows the
-     * wording without hard-coding it here.
+     * wording without hard-coding it here. The resolved text is required: an
+     * untranslated raw key on the page is not accepted, so a language-load
+     * regression on the validation redirect fails the test instead of passing on
+     * the bare key.
      */
     private function containsString(string $body, string $key): bool
     {
@@ -249,7 +347,7 @@ class ConfigFormsTest
         // decoded, tag-free copy of the page.
         $plain = html_entity_decode(strip_tags($body), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-        return strpos($plain, $text) !== false || strpos($body, $key) !== false;
+        return strpos($plain, $text) !== false;
     }
 
     private function hasSqlError(string $body): bool

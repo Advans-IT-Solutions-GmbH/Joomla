@@ -23,6 +23,8 @@ defined('_JEXEC') or die;
  * writes use prepared statements and run inside a transaction per report.
  *
  * @since  1.0.0
+ *
+ * @phpstan-type DmarcIngestSummary array{imported:int, duplicates:int, failed:int, skipped:int, blocked:int, records:int, dropped:int, reason:string}
  */
 final class Ingestor
 {
@@ -74,7 +76,7 @@ final class Ingestor
      *                                     instead of resolving it from the report XML
      *                                     (an operator binding a mailbox to one domain).
      *
-     * @return  array<string, int>  imported, duplicates, failed, records
+     * @return  DmarcIngestSummary  imported, duplicates, failed, skipped, blocked, records, dropped, reason
      */
     public function ingestMessages(array $messages, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
@@ -100,7 +102,7 @@ final class Ingestor
      * operator is told to install the extension.
      *
      * @param   array{uid?: int, raw?: string}  $message
-     * @param   array<string, int>              $summary  Mutated in place.
+     * @param   DmarcIngestSummary              $summary  Mutated in place.
      *
      * @return  self::RESULT_*
      */
@@ -165,7 +167,7 @@ final class Ingestor
     /**
      * Ingest a single uploaded report file (.xml, .gz or .zip).
      *
-     * @return  array<string, int>
+     * @return  DmarcIngestSummary
      *
      * @throws  DecoderUnavailableException  When the file is a recognised
      *          compressed container but the PHP extension needed to decode it is
@@ -240,7 +242,7 @@ final class Ingestor
 
     /**
      * @param   string[]            $documents
-     * @param   array<string, int>  $summary
+     * @param   DmarcIngestSummary  $summary
      */
     private function ingestDocuments(array $documents, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
@@ -285,7 +287,7 @@ final class Ingestor
 
     /**
      * @param   array<string, mixed>  $report
-     * @param   array<string, int>    $summary
+     * @param   DmarcIngestSummary    $summary
      */
     private function store(array $report, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
@@ -607,7 +609,7 @@ final class Ingestor
      * A fresh, zeroed ingestion summary. Public so a streaming caller can seed
      * one and accumulate across per-message calls.
      *
-     * @return array<string, int>
+     * @return DmarcIngestSummary
      */
     public function newSummary(): array
     {
