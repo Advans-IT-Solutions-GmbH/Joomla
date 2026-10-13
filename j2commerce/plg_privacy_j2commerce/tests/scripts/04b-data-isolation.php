@@ -1432,6 +1432,9 @@ class DataIsolationTest
             // Non-ASCII upper case stored, lower case requested: still the same address.
             $umlautAddress            = 'ÜBER.KUNDE-' . $suffix . '@EXAMPLE.COM';
             $orders['umlaut_expired'] = $this->insertGuestTestOrder('COLL-UML-E-' . $suffix, 0, $umlautAddress, $expired, 'Ulla');
+            // A case pair newer than the database case tables (Georgian Mtavruli, Unicode 11).
+            $georgianAddress            = "\u{1C90}-georgian-" . $suffix . '@example.com';
+            $orders['georgian_expired'] = $this->insertGuestTestOrder('COLL-GEO-E-' . $suffix, 0, $georgianAddress, $expired, 'Gela');
 
             $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
             $plugin->setDatabase($this->db);
@@ -1512,6 +1515,18 @@ class DataIsolationTest
             $umlautOrder = $this->loadGuestTestOrder($orders['umlaut_expired']);
             $this->test('Stored ÜBER.KUNDE@ (non-ASCII upper case): the request for über.kunde@ anonymizes it',
                 $umlautOrder && $umlautOrder->user_email === 'anonymized@deleted.invalid', json_encode($umlautOrder, JSON_UNESCAPED_UNICODE));
+
+            if (mb_strtolower("\u{1C90}", 'UTF-8') === "\u{10D0}") {
+                $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                    'subject' => $this->guestTestRequest("\u{10D0}-georgian-" . $suffix . '@example.com'),
+                    'user'    => null,
+                ]));
+                $georgianOrder = $this->loadGuestTestOrder($orders['georgian_expired']);
+                $this->test('Stored Georgian upper case U+1C90 (Unicode 11 case pair): the lower-case request anonymizes it',
+                    $georgianOrder && $georgianOrder->user_email === 'anonymized@deleted.invalid', json_encode($georgianOrder, JSON_UNESCAPED_UNICODE));
+            } else {
+                $this->test('PHP knows the Unicode 11 case pair U+1C90/U+10D0', false, 'mbstring Unicode data too old');
+            }
 
             // Action log: language key with the request ID and counts, no English text.
             $entry = $this->db->setQuery(
