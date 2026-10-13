@@ -680,18 +680,32 @@ class AjaxEndpointTest
     }
 
     /**
-     * JavaScript source with every comment removed. String, template and
-     * regular expression literals are kept as they are, so a comment marker
-     * inside them does not start a comment.
+     * JavaScript source with every comment removed. String and regular
+     * expression literals are kept as they are, so a comment marker inside
+     * them does not start a comment. Template literals are kept as well, but
+     * their ${...} substitutions are code and are stripped the same way.
      */
     private function jsWithoutComments(string $source): string
+    {
+        $i = 0;
+
+        return $this->jsStripCode($source, $i, false);
+    }
+
+    /**
+     * Copy code from $i and drop its comments. In a template substitution
+     * ($inSubstitution) it stops at the "}" that closes the substitution and
+     * leaves $i on it.
+     */
+    private function jsStripCode(string $source, int &$i, bool $inSubstitution): string
     {
         $out     = '';
         $len     = strlen($source);
         $lastSig = '';
         $word    = '';
+        $depth   = 0;
 
-        for ($i = 0; $i < $len; $i++) {
+        for (; $i < $len; $i++) {
             $c    = $source[$i];
             $next = $source[$i + 1] ?? '';
 
@@ -710,11 +724,23 @@ class AjaxEndpointTest
                 continue;
             }
 
+            if ($inSubstitution && $c === '}' && $depth === 0) {
+                return $out;
+            }
+
+            if ($c === '`') {
+                $out .= $this->jsStripTemplate($source, $i);
+                $lastSig = '`';
+                $word    = '';
+
+                continue;
+            }
+
             $isRegex = $c === '/'
                 && ($lastSig === '' || strpos('(,=:[!&|?{};+-*%<>~^', $lastSig) !== false
                     || in_array($word, ['return', 'typeof', 'case', 'in', 'of'], true));
 
-            if ($c === '"' || $c === "'" || $c === '`' || $isRegex) {
+            if ($c === '"' || $c === "'" || $isRegex) {
                 $start   = $i;
                 $inClass = false;
 
@@ -740,6 +766,12 @@ class AjaxEndpointTest
                 continue;
             }
 
+            if ($c === '{') {
+                $depth++;
+            } elseif ($c === '}') {
+                $depth--;
+            }
+
             $isIdent = ctype_alnum($c) || $c === '_' || $c === '$';
             $prevRaw = $out === '' ? '' : substr($out, -1);
             $out    .= $c;
@@ -754,6 +786,43 @@ class AjaxEndpointTest
             if (!ctype_space($c)) {
                 $lastSig = $c;
             }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Copy the template literal that starts at $i (a backtick) and leave $i on
+     * its closing backtick. Each ${...} substitution goes through
+     * jsStripCode(), so comments inside it are removed.
+     */
+    private function jsStripTemplate(string $source, int &$i): string
+    {
+        $out = '`';
+        $len = strlen($source);
+
+        for ($i++; $i < $len; $i++) {
+            $c = $source[$i];
+
+            if ($c === '\\') {
+                $out .= substr($source, $i, 2);
+                $i++;
+
+                continue;
+            }
+
+            if ($c === '`') {
+                return $out . '`';
+            }
+
+            if ($c === '$' && ($source[$i + 1] ?? '') === '{') {
+                $i  += 2;
+                $out .= '${' . $this->jsStripCode($source, $i, true) . '}';
+
+                continue;
+            }
+
+            $out .= $c;
         }
 
         return $out;
