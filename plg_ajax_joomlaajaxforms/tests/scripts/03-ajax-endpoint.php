@@ -623,6 +623,8 @@ class AjaxEndpointTest
      *
      * Only the return values of that function are inspected, not the whole
      * script, so a commented-out URL elsewhere plays no part. The function is
+     * located outside JavaScript comments only (a commented-out copy never
+     * counts), and a self-check on variants of the script proves that. It is
      * plain ES5 (identifiers, string literals, comments, no template or regex
      * literal), where the PHP tokenizer splits strings and comments exactly as
      * JavaScript does. A template or regex literal in it fails the check, so
@@ -642,19 +644,50 @@ class AjaxEndpointTest
             return false;
         }
 
-        // Exactly one definition: a second one (for example a commented-out
-        // copy) would make it unclear which one the check reads.
-        $found = preg_match_all('/^[ \t]*baseUrl\s*:\s*\(function\s*\(\)\s*\{(.*?)\n[ \t]*\}\)\(\)/ms', $source, $blocks);
+        $urls     = [];
+        $problems = $this->baseUrlProblems($source, $urls);
 
-        if ($found !== 1) {
-            echo "FAIL (expected one config.baseUrl function, found " . (int) $found . ")\n";
-
-            return false;
+        // Self-check of the reader on variants of the shipped script: a
+        // commented-out baseUrl (block or line comment) must never count as
+        // the endpoint, and an escaped URL must fail. Otherwise the guard
+        // could pass while the real assignment is gone.
+        if ($problems === []) {
+            $problems = $this->baseUrlSelfCheck($source);
         }
 
-        $urls     = [];
+        if ($problems === []) {
+            echo "PASS (" . count($urls) . " URLs)\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * Problems of the endpoint URL that config.baseUrl returns, or [] when it
+     * is the raw com_ajax URL. $urls receives the URLs found.
+     *
+     * The function is located only outside JavaScript comments. Exactly one
+     * such definition must exist.
+     *
+     * @param  string[]  $urls
+     *
+     * @return string[]
+     */
+    private function baseUrlProblems(string $source, array &$urls): array
+    {
+        $urls   = [];
+        $blocks = $this->baseUrlDefinitions($source);
+
+        if (count($blocks) !== 1) {
+            return ['expected one config.baseUrl function outside comments, found ' . count($blocks)];
+        }
+
         $problems = [];
-        $tokens   = token_get_all('<?php ' . $blocks[1][0]);
+        $tokens   = token_get_all('<?php ' . $blocks[0][1][0]);
 
         foreach ($tokens as $i => $token) {
             $text = is_array($token) ? $token[1] : $token;
@@ -701,15 +734,101 @@ class AjaxEndpointTest
             }
         }
 
-        if ($problems === []) {
-            echo "PASS (" . count($urls) . " URLs)\n";
+        return $problems;
+    }
 
+    /**
+     * The config.baseUrl function definitions outside JavaScript comments, as
+     * preg matches with offsets: [0] the whole definition, [1] its body.
+     *
+     * @return array<int, array<int, array{0:string, 1:int}>>
+     */
+    private function baseUrlDefinitions(string $source): array
+    {
+        preg_match_all('/baseUrl\s*:\s*\(function\s*\(\)\s*\{(.*?)\}\)\(\)/s', $source, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+
+        return array_values(array_filter($all, function (array $match) use ($source): bool {
+            return !$this->jsOffsetInComment($source, $match[0][1]);
+        }));
+    }
+
+    /**
+     * Whether a position of the script lies inside a JavaScript comment.
+     *
+     * Block comment: the last "/*" before the position comes after the last
+     * closing marker. A block comment cannot contain its closing marker, so a
+     * real block comment is never missed. Line comment: the line up to the
+     * position contains "//". A comment marker inside a string can only make
+     * code look commented, never the other way round, so the error is always
+     * on the safe side: the check fails instead of passing.
+     */
+    private function jsOffsetInComment(string $source, int $offset): bool
+    {
+        $before = substr($source, 0, $offset);
+        $open   = strrpos($before, '/*');
+        $close  = strrpos($before, '*/');
+
+        if ($open !== false && ($close === false || $close < $open)) {
             return true;
         }
 
-        echo "FAIL (" . implode('; ', $problems) . ")\n";
+        $lineStart = strrpos($before, "\n");
+        $line      = $lineStart === false ? $before : substr($before, $lineStart + 1);
 
-        return false;
+        return strpos($line, '//') !== false;
+    }
+
+    /**
+     * Run baseUrlProblems() on variants of the shipped script and return what
+     * it misjudged. The real config.baseUrl is replaced by a commented-out
+     * copy (multi-line block comment, single-line block comment, line
+     * comment), which must fail; an escaped URL must fail; an additional
+     * commented-out copy next to the real function must still pass.
+     *
+     * @return string[]
+     */
+    private function baseUrlSelfCheck(string $source): array
+    {
+        $definitions = $this->baseUrlDefinitions($source);
+
+        if (count($definitions) !== 1) {
+            return ['self-check: config.baseUrl not found'];
+        }
+
+        [$real, $offset] = $definitions[0][0];
+        $url     = '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json';
+        $replace = static fn (string $with): string => substr_replace($source, $with, $offset, strlen($real));
+
+        $mustFail = [
+            'multi-line block comment' => $replace("/*\nbaseUrl: (function() { return '" . $url . "'; })()\n*/"),
+            'single-line block comment' => $replace("/* baseUrl: (function(){ return '" . $url . "'; })() */"),
+            'line comment'              => $replace("// baseUrl: (function(){ return '" . $url . "'; })(),"),
+            'escaped ampersand'         => $replace(str_replace('&plugin', '&amp;plugin', $real)),
+        ];
+        $mustPass = [
+            'extra commented-out copy' => $replace("/* baseUrl: (function(){ return '/x'; })() */\n" . $real),
+        ];
+
+        $problems = [];
+
+        foreach ($mustFail as $name => $variant) {
+            $urls = [];
+
+            if ($this->baseUrlProblems($variant, $urls) === []) {
+                $problems[] = "self-check: $name was accepted";
+            }
+        }
+
+        foreach ($mustPass as $name => $variant) {
+            $urls = [];
+            $got  = $this->baseUrlProblems($variant, $urls);
+
+            if ($got !== []) {
+                $problems[] = "self-check: $name was rejected (" . implode('; ', $got) . ')';
+            }
+        }
+
+        return $problems;
     }
 
     /**
