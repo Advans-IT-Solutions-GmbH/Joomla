@@ -75,14 +75,15 @@ com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, no signing secret stored
 ├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
 ├── 03-site-page.php         # the public pages really render over HTTP, empty and with seeded rows
-├── 04-eventtypes.php        # CRUD, ACL, feed token generated and unique
-├── 05-slots.php             # the site slot endpoint returns what the engine returns
-├── 06-booking.php           # end-to-end booking, both concurrency cases
-├── 06-mail.php              # every e-mail carries a text/calendar part
-├── 07-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
-├── 08-erasure.php           # the three deletion paths and the audit table
-├── 09-feed.php              # token, 304, rotation, 404 on a wrong token
-├── 10-conference.php        # link in mail, ICS and page; provider failure handled
+├── 04-schedules.php         # a schedule is really submitted, stored, reloaded and validated
+├── 05-eventtypes.php        # CRUD, ACL, feed token generated and unique
+├── 06-slots.php             # the site slot endpoint returns what the engine returns
+├── 07-booking.php           # end-to-end booking, both concurrency cases
+├── 08-mail.php              # every e-mail carries a text/calendar part
+├── 09-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
+├── 10-erasure.php           # the three deletion paths and the audit table
+├── 11-feed.php              # token, 304, rotation, 404 on a wrong token
+├── 12-conference.php        # link in mail, ICS and page; provider failure handled
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 
@@ -125,7 +126,7 @@ level a guest does not hold, and a different content language. The visible one c
 
 ### The mail assertion
 
-`06-mail.php` is the test that enforces a stated constraint of the project. It must not check one
+`08-mail.php` is the test that enforces a stated constraint of the project. It must not check one
 happy path; it must enumerate every e-mail-sending code path and assert a `text/calendar` part on
 each. Implement it by capturing outgoing mail in the test environment, not by inspecting the
 composer's return value, so a path that bypasses `MailComposer` is caught too.

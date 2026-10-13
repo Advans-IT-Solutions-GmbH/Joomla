@@ -115,11 +115,9 @@ final class SlotRules
             }
         }
 
-        if ($maxPerDay > 0 && $maxPerWeek > 0 && $maxPerWeek < $maxPerDay) {
-            throw new \InvalidArgumentException(
-                'The maximum per week cannot be lower than the maximum per day.'
-            );
-        }
+        // The two caps are independent on purpose. A weekly cap below the daily
+        // one is a meaningful configuration: five a day and three a week means
+        // at most three bookings in that week, whichever days they fall on.
 
         $this->durationMinutes      = $durationMinutes;
         $this->slotStepMinutes      = $slotStepMinutes;
@@ -211,5 +209,19 @@ final class SlotRules
     public function getMaxPerWeek(): int
     {
         return $this->maxPerWeek;
+    }
+
+    /**
+     * One booking of **this** event type as the period it really occupies.
+     *
+     * The slot engine does no widening of its own, because a host can serve
+     * several event types with different buffers and applying one type's
+     * buffers to another type's meeting would offer a slot that runs into its
+     * buffer. Every caller therefore widens each booking with the rules of the
+     * event type that booking belongs to, through this method.
+     */
+    public function expandBooking(AvailabilityWindow $booking): AvailabilityWindow
+    {
+        return $booking->expand($this->getBufferBeforeSeconds(), $this->getBufferAfterSeconds());
     }
 }

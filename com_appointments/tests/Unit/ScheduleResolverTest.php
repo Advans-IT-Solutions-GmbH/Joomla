@@ -277,6 +277,68 @@ final class ScheduleResolverTest extends TestCase
         $this->assertSame([], $windows);
     }
 
+    public function testAClosedDateAlsoSuppressesTheSpilloverFromThePreviousNight(): void
+    {
+        $resolver = new ScheduleResolver(
+            self::ZONE,
+            [['weekday' => 2, 'start_time' => '22:00', 'end_time' => '02:00']],
+            // Wednesday 3 June is closed, so nothing of it is bookable,
+            // including the hours the Tuesday night rule reaches into it.
+            [['specific_date' => '2026-06-03', 'start_time' => '00:00', 'end_time' => '00:00', 'is_unavailable' => 1]]
+        );
+
+        $utc     = new \DateTimeZone('UTC');
+        $windows = $resolver->resolve(
+            new \DateTimeImmutable('2026-06-02 00:00', $utc),
+            new \DateTimeImmutable('2026-06-04 00:00', $utc)
+        );
+
+        // Only the part of the night that lies on Tuesday survives: 22:00 to
+        // midnight local, that is 20:00 to 22:00 UTC.
+        $this->assertSame(['2026-06-02 20:00-2026-06-02 22:00'], $this->asStrings($windows));
+    }
+
+    public function testADateWithItsOwnTimesAlsoReplacesTheSpilloverFromThePreviousNight(): void
+    {
+        $resolver = new ScheduleResolver(
+            self::ZONE,
+            [['weekday' => 2, 'start_time' => '22:00', 'end_time' => '02:00']],
+            // Wednesday has its own times, and a date-specific entry replaces
+            // the availability of its date entirely.
+            [['specific_date' => '2026-06-03', 'start_time' => '09:00', 'end_time' => '10:00']]
+        );
+
+        $utc     = new \DateTimeZone('UTC');
+        $windows = $resolver->resolve(
+            new \DateTimeImmutable('2026-06-02 00:00', $utc),
+            new \DateTimeImmutable('2026-06-04 00:00', $utc)
+        );
+
+        $this->assertSame(
+            ['2026-06-02 20:00-2026-06-02 22:00', '2026-06-03 07:00-2026-06-03 08:00'],
+            $this->asStrings($windows)
+        );
+    }
+
+    public function testAnOverrideThatCrossesMidnightKeepsItsOwnSpillover(): void
+    {
+        $resolver = new ScheduleResolver(
+            self::ZONE,
+            [],
+            [['specific_date' => '2026-06-02', 'start_time' => '22:00', 'end_time' => '02:00']]
+        );
+
+        $utc     = new \DateTimeZone('UTC');
+        $windows = $resolver->resolve(
+            new \DateTimeImmutable('2026-06-02 00:00', $utc),
+            new \DateTimeImmutable('2026-06-04 00:00', $utc)
+        );
+
+        // The spillover belongs to the date that governs it, so it survives in
+        // full: 22:00 Tuesday to 02:00 Wednesday local.
+        $this->assertSame(['2026-06-02 20:00-2026-06-03 00:00'], $this->asStrings($windows));
+    }
+
     public function testResolveIncludesAWindowThatStartedOnThePreviousDay(): void
     {
         $resolver = new ScheduleResolver(self::ZONE, [

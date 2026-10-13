@@ -134,13 +134,16 @@ final class SlotEngineTest extends TestCase
 
     public function testABookingIsRemovedTogetherWithItsBuffers(): void
     {
-        $engine = $this->engine($this->tuesdayMorning(), new SlotRules(20, 30, 10, 10));
+        $rules  = new SlotRules(20, 30, 10, 10);
+        $engine = $this->engine($this->tuesdayMorning(), $rules);
 
+        // The caller hands the booking over already widened by the buffers of
+        // its own event type, which is what expandBooking() is for.
         $slots = $engine->findSlots(
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [$this->localWindow('2026-06-02 11:00', '2026-06-02 11:20')]
+            [$rules->expandBooking($this->localWindow('2026-06-02 11:00', '2026-06-02 11:20'))]
         );
 
         // The booking takes 10:50 to 11:30 out of the day, and the grid is
@@ -149,11 +152,11 @@ final class SlotEngineTest extends TestCase
         $this->assertSame(['2026-06-02 10:30', '2026-06-02 11:30'], $this->asLocal($slots));
     }
 
-    public function testABlockedPeriodIsRemovedWithoutBuffers(): void
+    public function testTheEngineRemovesExactlyWhatItIsGiven(): void
     {
-        // The same obstacle, once as an absence and once as a booking. An
-        // absence is already the full period, a booking is not, so the two must
-        // not produce the same result.
+        // The same obstacle, once as an absence handed over as it stands and
+        // once as a booking widened by its own buffers. The engine widens
+        // nothing itself, so the two results differ.
         $rules    = new SlotRules(30, 30, 10, 10);
         $engine   = $this->engine($this->tuesdayMorning(), $rules);
         $obstacle = $this->localWindow('2026-06-02 11:00', '2026-06-02 11:30');
@@ -162,7 +165,6 @@ final class SlotEngineTest extends TestCase
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [],
             [$obstacle]
         );
 
@@ -170,11 +172,35 @@ final class SlotEngineTest extends TestCase
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [$obstacle]
+            [$rules->expandBooking($obstacle)]
         );
 
         $this->assertSame(['2026-06-02 10:30'], $this->asLocal($withAbsence));
         $this->assertSame([], $this->asLocal($withBooking));
+    }
+
+    public function testABookingOfAnotherEventTypeKeepsItsOwnBuffer(): void
+    {
+        // The host also serves an event type with a long buffer after a
+        // meeting. That meeting's own buffer has to be respected while slots of
+        // this event type, which has no buffer at all, are computed. The engine
+        // therefore never applies its own rules to a period it is given.
+        $otherType = new SlotRules(30, 30, 0, 60);
+        $thisType  = new SlotRules(30, 30);
+        $engine    = $this->engine($this->tuesdayMorning(), $thisType);
+
+        $other = $otherType->expandBooking($this->localWindow('2026-06-02 10:00', '2026-06-02 10:30'));
+
+        $slots = $engine->findSlots(
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-03 06:00'),
+            [$other]
+        );
+
+        // The other meeting occupies 10:00 to 11:30 including its hour of
+        // buffer, so only 11:30 is left of the window.
+        $this->assertSame(['2026-06-02 11:30'], $this->asLocal($slots));
     }
 
     public function testTheSlotAtTheMinimumNoticeBoundaryIsOffered(): void
@@ -268,7 +294,6 @@ final class SlotEngineTest extends TestCase
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-11 00:00'),
             [],
-            [],
             [
                 $this->utc('2026-06-02 08:00'),
                 $this->utc('2026-06-02 08:30'),
@@ -297,7 +322,6 @@ final class SlotEngineTest extends TestCase
             $this->utc('2026-06-01 06:00'),
             $this->utc('2026-06-01 06:00'),
             $this->utc('2026-06-11 00:00'),
-            [],
             [],
             // One booking on Tuesday 2 June, ISO week 23.
             [$this->utc('2026-06-02 08:00')]

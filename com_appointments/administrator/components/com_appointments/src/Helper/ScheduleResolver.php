@@ -148,12 +148,59 @@ final class ScheduleResolver
      */
     public function resolve(\DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc): array
     {
-        $range   = new AvailabilityWindow($fromUtc, $toUtc);
+        $range = new AvailabilityWindow($fromUtc, $toUtc);
+        $dates = $this->localDatesFor($range);
+
+        // A date-specific entry replaces the availability of its date, and a
+        // closed date removes it. That has to hold for time an interval of the
+        // *previous* date spills into as well: a Monday 22:00 to 02:00 rule must
+        // not keep Tuesday 00:00 to 02:00 open when Tuesday is closed or has its
+        // own times. The days those entries govern are therefore collected
+        // first, and each window is then cut back out of every governed day it
+        // does not belong to.
+        $governed = [];
+
+        foreach ($dates as $date) {
+            if (!isset($this->closedDates[$date]) && !isset($this->overrides[$date])) {
+                continue;
+            }
+
+            $day = $this->localDayWindow($date);
+
+            if ($day !== null) {
+                $governed[$date] = $day;
+            }
+        }
+
         $windows = [];
 
-        foreach ($this->localDatesFor($range) as $date) {
+        foreach ($dates as $date) {
             foreach ($this->windowsForDate($date) as $window) {
-                $windows[] = $window;
+                $pieces = [$window];
+
+                foreach ($governed as $governedDate => $day) {
+                    if ($governedDate === $date) {
+                        continue;
+                    }
+
+                    $next = [];
+
+                    foreach ($pieces as $piece) {
+                        foreach ($piece->subtract($day) as $rest) {
+                            $next[] = $rest;
+                        }
+                    }
+
+                    $pieces = $next;
+
+                    if ($pieces === []) {
+                        break;
+                    }
+                }
+
+                foreach ($pieces as $piece) {
+                    $windows[] = $piece;
+                }
             }
         }
 
@@ -165,6 +212,25 @@ final class ScheduleResolver
                 }
             )
         );
+    }
+
+    /**
+     * One local day as a UTC window, from local midnight to the next local
+     * midnight.
+     *
+     * The length is 23, 24 or 25 hours depending on the day, which is exactly
+     * why it is built from the local dates and not by adding 86400 seconds.
+     */
+    private function localDayWindow(string $date): ?AvailabilityWindow
+    {
+        $next = (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))
+            ->modify('+1 day')
+            ->format('Y-m-d');
+
+        $start = $this->localToUtc($date, '00:00:00');
+        $end   = $this->localToUtc($next, '00:00:00');
+
+        return $start < $end ? new AvailabilityWindow($start, $end) : null;
     }
 
     /**

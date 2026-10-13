@@ -290,7 +290,16 @@ class ScheduleModel extends AdminModel
             $rule = (array) $rule;
             $date = trim((string) ($rule['specific_date'] ?? ''));
 
-            if ($date === '') {
+            // Only a row in which nothing at all was entered is skipped. A row
+            // that carries times or the closed marker but no date is a mistake,
+            // not an empty row: discarding it would throw the operator's input
+            // away and still report success.
+            if (
+                $date === ''
+                && trim((string) ($rule['start_time'] ?? '')) === ''
+                && trim((string) ($rule['end_time'] ?? '')) === ''
+                && empty($rule['is_unavailable'])
+            ) {
                 continue;
             }
 
@@ -298,7 +307,7 @@ class ScheduleModel extends AdminModel
             // part of it describes an override.
             $date = substr($date, 0, 10);
 
-            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || str_starts_with($date, '0000-')) {
+            if (!$this->isRealDate($date)) {
                 $this->setError(Text::_('COM_APPOINTMENTS_SCHEDULE_ERROR_DATE'));
 
                 return null;
@@ -405,6 +414,22 @@ class ScheduleModel extends AdminModel
                 ->bind(':unavailable', $row['is_unavailable'], ParameterType::INTEGER);
             $db->setQuery($query)->execute();
         }
+    }
+
+    /**
+     * Whether the string is a date that exists.
+     *
+     * The shape alone is not enough: 2026-02-31 has the right shape and would
+     * reach the DATE column, where the database rejects it with an error
+     * message nobody can act on instead of the translated one.
+     */
+    private function isRealDate(string $date): bool
+    {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)) {
+            return false;
+        }
+
+        return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]);
     }
 
     /**

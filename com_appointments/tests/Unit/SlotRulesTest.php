@@ -77,11 +77,29 @@ final class SlotRulesTest extends TestCase
         );
     }
 
-    public function testAWeeklyCapBelowTheDailyCapIsRejected(): void
+    public function testAWeeklyCapBelowTheDailyCapIsAccepted(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        // The two caps are independent. Five a day and three a week means at
+        // most three bookings in that week, whichever days they fall on, which
+        // is a configuration an operator may well want.
+        $rules = new SlotRules(20, 30, 0, 0, 0, 30, null, null, 5, 3);
 
-        new SlotRules(20, 30, 0, 0, 0, 30, null, null, 5, 3);
+        $this->assertSame(5, $rules->getMaxPerDay());
+        $this->assertSame(3, $rules->getMaxPerWeek());
+    }
+
+    public function testABookingIsWidenedByTheRulesOfItsOwnEventType(): void
+    {
+        $rules  = new SlotRules(20, 30, 10, 15);
+        $busy   = $rules->expandBooking(
+            \Advans\Component\Appointments\Administrator\Helper\AvailabilityWindow::fromUtcStrings(
+                '2026-06-02 10:00:00',
+                '2026-06-02 10:20:00'
+            )
+        );
+
+        $this->assertSame('2026-06-02 09:50:00', $busy->getStart()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-06-02 10:35:00', $busy->getEnd()->format('Y-m-d H:i:s'));
     }
 
     public function testUnlimitedCapsAreAccepted(): void

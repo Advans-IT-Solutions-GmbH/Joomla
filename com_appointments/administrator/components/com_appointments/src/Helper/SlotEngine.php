@@ -25,9 +25,10 @@ defined('_JEXEC') or die;
  *  1. The schedule is resolved into windows, in the schedule's own time zone and
  *     then converted to UTC. `ScheduleResolver` does that and owns the clock
  *     changes.
- *  2. Every blocked period is removed as it stands, and every active booking is
- *     removed **extended by the buffers**: a 10:00 to 10:20 booking with a
- *     ten-minute buffer on each side takes 09:50 to 10:30 out of the day.
+ *  2. Everything already taken is removed. The caller hands those periods over
+ *     as they really occupy the day: an absence as it stands, and a booking
+ *     widened by the buffers of its own event type, because a host can serve
+ *     several event types with different buffers.
  *  3. Each window is walked on the slot-step grid, anchored to the window start
  *     and not to the pieces a booking may have cut it into, so the offered times
  *     stay on the same grid all day.
@@ -71,16 +72,20 @@ final class SlotEngine
     /**
      * The bookable start times inside the requested range.
      *
-     * @param   \DateTimeImmutable    $now       The current instant, injected.
-     * @param   \DateTimeImmutable    $fromUtc   Inclusive start of the range of interest.
-     * @param   \DateTimeImmutable    $toUtc     Exclusive end of the range of interest.
-     * @param   AvailabilityWindow[]  $bookings  Active bookings of the **host**, across all of
-     *                                           their event types. Removed extended by the
-     *                                           buffers, because a meeting of another event type
-     *                                           occupies the host just as much.
-     * @param   AvailabilityWindow[]  $blocked   Blocked periods of the host. Removed as they
-     *                                           stand: an absence is already the full period.
-     * @param   \DateTimeImmutable[]  $capCounts Start times of the active bookings of **this**
+     * @param   \DateTimeImmutable    $now        The current instant, injected.
+     * @param   \DateTimeImmutable    $fromUtc    Inclusive start of the range of interest.
+     * @param   \DateTimeImmutable    $toUtc      Exclusive end of the range of interest.
+     * @param   AvailabilityWindow[]  $busy       Everything that is already taken, as the periods
+     *                                           it really occupies. A booking has to be handed
+     *                                           over already widened by the buffers of **its own**
+     *                                           event type, with {@see SlotRules::expandBooking()};
+     *                                           an absence is handed over as it stands, because it
+     *                                           is already the full period. The engine widens
+     *                                           nothing here: a host can serve several event types
+     *                                           with different buffers, and applying this event
+     *                                           type's buffers to another type's meeting would
+     *                                           offer a slot that runs into its buffer.
+     * @param   \DateTimeImmutable[]  $capCounts  Start times of the active bookings of **this**
      *                                           event type, used for the daily and weekly caps,
      *                                           which are per event type.
      *
@@ -90,8 +95,7 @@ final class SlotEngine
         \DateTimeImmutable $now,
         \DateTimeImmutable $fromUtc,
         \DateTimeImmutable $toUtc,
-        array $bookings = [],
-        array $blocked = [],
+        array $busy = [],
         array $capCounts = []
     ): array {
         $range = $this->bookableRange($now, $fromUtc, $toUtc);
@@ -100,7 +104,7 @@ final class SlotEngine
             return [];
         }
 
-        $busy = $this->busyWindows($bookings, $blocked);
+        $busy = AvailabilityWindow::merge($busy);
         $slots = [];
 
         foreach ($this->resolver->resolve($range->getStart(), $range->getEnd()) as $window) {
@@ -171,32 +175,6 @@ final class SlotEngine
         }
 
         return $start < $end ? new AvailabilityWindow($start, $end) : null;
-    }
-
-    /**
-     * Everything that takes time out of the day.
-     *
-     * @param   AvailabilityWindow[]  $bookings
-     * @param   AvailabilityWindow[]  $blocked
-     *
-     * @return  AvailabilityWindow[]
-     */
-    private function busyWindows(array $bookings, array $blocked): array
-    {
-        $busy = [];
-
-        foreach ($bookings as $booking) {
-            $busy[] = $booking->expand(
-                $this->rules->getBufferBeforeSeconds(),
-                $this->rules->getBufferAfterSeconds()
-            );
-        }
-
-        foreach ($blocked as $period) {
-            $busy[] = $period;
-        }
-
-        return AvailabilityWindow::merge($busy);
     }
 
     /**

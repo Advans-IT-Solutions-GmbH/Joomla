@@ -20,9 +20,14 @@ $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com
  * Stored UTC shown in the reader's own time zone. A blocked period is an
  * instant, so showing the raw UTC value would be wrong for everyone who is not
  * in UTC.
+ *
+ * The time-zone argument is deliberately omitted: Joomla's date helper reads
+ * the value as UTC and converts it to the reader's configured zone by default,
+ * while a string such as 'UTC' would select that zone as the target and display
+ * universal time to everybody.
  */
 $asLocal = static function (string $utc): string {
-    return HTMLHelper::_('date', $utc, Text::_('DATE_FORMAT_LC5'), 'UTC');
+    return HTMLHelper::_('date', $utc, Text::_('DATE_FORMAT_LC5'));
 };
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>" method="post"
