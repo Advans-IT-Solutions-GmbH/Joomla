@@ -151,7 +151,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $app = $this->feedbackApplication();
 
         if ($app !== null && method_exists($app, 'enqueueMessage')) {
-            $app->enqueueMessage(Text::sprintf($key, $accountEmail, $requestEmail), 'warning');
+            $app->enqueueMessage(vsprintf($this->pluginStrings(self::currentLanguage())->_($key), [$accountEmail, $requestEmail]), 'warning');
         }
     }
 
@@ -1263,7 +1263,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // neither this plugin nor Joomla's user plugin changes that account.
         if (!self::accountMatchesRequest((string) $user->email, $requestEmail)) {
             $status->canRemove = false;
-            $status->reason    = Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_ACCOUNT_MISMATCH', (string) $user->email, $requestEmail);
+            // The plugin strings are loaded explicitly: this runs in com_privacy's request.
+            $status->reason    = vsprintf($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_ACCOUNT_MISMATCH'), [(string) $user->email, $requestEmail]);
 
             return $status;
         }
