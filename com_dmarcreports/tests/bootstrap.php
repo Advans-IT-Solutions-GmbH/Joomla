@@ -17,6 +17,7 @@ require_once $helperDir . '/DomainName.php';
 require_once $helperDir . '/DmarcParser.php';
 require_once $helperDir . '/ReportArchive.php';
 require_once $helperDir . '/MimeMessage.php';
+require_once $helperDir . '/ImapException.php';
 require_once $helperDir . '/ImapClient.php';
 require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';

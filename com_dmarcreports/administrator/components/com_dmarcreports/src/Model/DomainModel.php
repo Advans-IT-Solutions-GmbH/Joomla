@@ -44,8 +44,18 @@ class DomainModel extends AdminModel
         $item = parent::getItem($pk);
 
         if ($item && empty($item->id)) {
-            $item->expected_policy = (string) ComponentHelper::getParams('com_dmarcreports')
-                ->get('default_policy_target', 'reject');
+            // Clamp the stored option the same way Ingestor::defaultPolicyTarget()
+            // does for auto-created domains: a legacy or hand-edited param such
+            // as "drop" that 1.0.0 persisted before the range rule existed must
+            // not reach the add form, where it would be dropped in favour of the
+            // first list option instead of the configured reject fallback.
+            $target = strtolower(
+                (string) ComponentHelper::getParams('com_dmarcreports')->get('default_policy_target', 'reject')
+            );
+
+            $item->expected_policy = \in_array($target, ['none', 'quarantine', 'reject'], true)
+                ? $target
+                : 'reject';
         }
 
         return $item;
