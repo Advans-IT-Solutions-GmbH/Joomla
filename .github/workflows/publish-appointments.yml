@@ -79,12 +79,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: appointments-v${{ steps.version.outputs.new }}
+          # Stage-neutral on purpose. The component is built in stages, so this
+          # text must not promise a feature set: whatever is implemented at the
+          # time of a release is listed in the component's own README, and the
+          # changelog below says what this version changed.
           NOTES: |
             ## Appointments Component v${{ steps.version.outputs.new }}
 
-            Self-hosted appointment scheduling for Joomla: bookable time slots,
-            a public booking page, iCalendar attachments on every notification
-            and calendar subscription feeds. Everything runs on your own server.
+            Self-hosted appointment scheduling for Joomla. Everything runs on
+            your own server and no third-party scheduling service is contacted.
+
+            The component is being built in stages. For the features this
+            version actually ships, see the "What is implemented so far"
+            section of its
+            [README](https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments#readme).
 
             ### Changes
             ${{ steps.changelog.outputs.changelog }}

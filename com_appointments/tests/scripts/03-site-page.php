@@ -28,6 +28,7 @@ class SitePageTest
      * be escaped, so the layout is tested and not only the query.
      */
     private const VISIBLE_TITLE = 'Visible <b>& "quoted"</b> talk';
+    private const SINGULAR_TITLE = 'One minute talk';
     private const HIDDEN_TITLES = [
         'unpublished' => 'Unpublished talk',
         'access'      => 'Restricted talk',
@@ -171,6 +172,19 @@ class SitePageTest
             return strpos($body, '25 minutes') !== false;
         });
 
+        $this->test('seeded: a one-minute event type reads in the singular', function () use ($body) {
+            // "1 minute" is a substring of "1 minutes", so the absence of the
+            // plural form is the assertion that actually proves the behaviour.
+            // No other seeded duration ends in 1, so this is unambiguous.
+            if (strpos($body, '1 minutes') !== false) {
+                echo "    found the plural form for a one-minute duration\n";
+
+                return false;
+            }
+
+            return strpos($body, '1 minute') !== false;
+        });
+
         foreach (self::HIDDEN_TITLES as $reason => $title) {
             $this->test("seeded: hides the {$reason} event type", function () use ($body, $title) {
                 return strpos($body, $title) === false
@@ -199,6 +213,8 @@ class SitePageTest
         // published, access (1 = Public), language, duration, title
         $rows = [
             ['published' => 1, 'access' => 1, 'language' => '*', 'duration' => 25, 'title' => self::VISIBLE_TITLE],
+            // A one-minute event type: the layout has to pick the singular form.
+            ['published' => 1, 'access' => 1, 'language' => '*', 'duration' => 1, 'title' => self::SINGULAR_TITLE],
             ['published' => 0, 'access' => 1, 'language' => '*', 'duration' => 30, 'title' => self::HIDDEN_TITLES['unpublished']],
             // 3 = Special, which a guest never holds.
             ['published' => 1, 'access' => 3, 'language' => '*', 'duration' => 35, 'title' => self::HIDDEN_TITLES['access']],
