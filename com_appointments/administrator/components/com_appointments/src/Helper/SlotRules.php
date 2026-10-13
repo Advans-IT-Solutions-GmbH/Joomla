@@ -138,13 +138,26 @@ final class SlotRules
      */
     public static function fromEventType(array $row): self
     {
-        $utc     = new \DateTimeZone('UTC');
-        $toStart = static function ($value) use ($utc): ?\DateTimeImmutable {
-            $value = (string) ($value ?? '');
+        // The fixed horizon decides from when until when the event type can be
+        // booked at all, so a value that cannot be read is refused rather than
+        // guessed at. `new DateTimeImmutable()` would read a corrupted or
+        // imported 2026-02-31 as the 3rd of March and quietly move the horizon.
+        $toStart = static function ($value, string $column): ?\DateTimeImmutable {
+            $value = trim((string) ($value ?? ''));
 
-            return $value === '' || str_starts_with($value, '0000-00-00')
-                ? null
-                : new \DateTimeImmutable($value, $utc);
+            if ($value === '' || str_starts_with($value, '0000-00-00')) {
+                return null;
+            }
+
+            $parsed = UtcTimestamp::parse($value);
+
+            if ($parsed === null) {
+                throw new \InvalidArgumentException(
+                    sprintf('The event type column %s holds "%s", which is not a timestamp.', $column, $value)
+                );
+            }
+
+            return $parsed;
         };
 
         return new self(
@@ -154,8 +167,8 @@ final class SlotRules
             (int) ($row['buffer_after_minutes'] ?? 0),
             (int) ($row['min_notice_minutes'] ?? 0),
             (int) ($row['horizon_days'] ?? 0),
-            $toStart($row['horizon_start_utc'] ?? null),
-            $toStart($row['horizon_end_utc'] ?? null),
+            $toStart($row['horizon_start_utc'] ?? null, 'horizon_start_utc'),
+            $toStart($row['horizon_end_utc'] ?? null, 'horizon_end_utc'),
             (int) ($row['max_per_day'] ?? 0),
             (int) ($row['max_per_week'] ?? 0)
         );

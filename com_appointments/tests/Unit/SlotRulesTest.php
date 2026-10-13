@@ -110,6 +110,60 @@ final class SlotRulesTest extends TestCase
         $this->assertSame(0, $rules->getMaxPerWeek());
     }
 
+    /**
+     * @dataProvider unusableHorizonRows
+     */
+    public function testAFixedHorizonThatCannotBeReadIsRefused(string $column, string $value): void
+    {
+        // The fixed horizon decides from when until when the event type can be
+        // booked at all. `new DateTimeImmutable()` would read 2026-02-31 as the
+        // 3rd of March and move the horizon by three days without a word, so a
+        // value that cannot be read is refused instead of guessed at.
+        $row = [
+            'duration_minutes'  => 30,
+            'slot_step_minutes' => 30,
+            'horizon_days'      => 0,
+            'horizon_start_utc' => '2026-06-01 00:00:00',
+            'horizon_end_utc'   => '2026-07-01 00:00:00',
+        ];
+
+        $row[$column] = $value;
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        SlotRules::fromEventType($row);
+    }
+
+    /**
+     * @return array<string, array{0:string, 1:string}>
+     */
+    public static function unusableHorizonRows(): array
+    {
+        return [
+            'impossible start' => ['horizon_start_utc', '2026-02-31 00:00:00'],
+            'impossible end'   => ['horizon_end_utc', '2026-02-31 00:00:00'],
+            'relative text'    => ['horizon_start_utc', 'tomorrow'],
+            'year below range' => ['horizon_start_utc', '0001-01-01 00:00:00'],
+            'other format'     => ['horizon_end_utc', '01.07.2026 00:00:00'],
+        ];
+    }
+
+    public function testAnEmptyFixedHorizonStaysEmpty(): void
+    {
+        // An empty column and a database zero date are absent, not unusable, so
+        // they keep meaning "no fixed horizon" and the rolling one applies.
+        $rules = SlotRules::fromEventType([
+            'duration_minutes'  => 30,
+            'slot_step_minutes' => 30,
+            'horizon_days'      => 30,
+            'horizon_start_utc' => '',
+            'horizon_end_utc'   => '0000-00-00 00:00:00',
+        ]);
+
+        $this->assertNull($rules->getHorizonStart());
+        $this->assertNull($rules->getHorizonEnd());
+    }
+
     public function testAnEventTypeRowBecomesRules(): void
     {
         $rules = SlotRules::fromEventType([

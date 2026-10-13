@@ -440,29 +440,35 @@ final class ScheduleResolver
     {
         $utc = new \DateTimeZone('UTC');
 
-        // Noon is used as the anchor, because midnight itself can be the moment
-        // of a transition in some zones.
-        $noon      = new \DateTimeImmutable($date . ' 12:00:00', $this->zone);
-        $dayStart  = $noon->modify('-12 hours')->getTimestamp();
-        $dayEnd    = $noon->modify('+12 hours')->getTimestamp();
-        $found     = [];
+        // A transition belongs to the local date its own clock reads after the
+        // change, and that is the whole test. The arithmetic this replaces,
+        // noon plus and minus twelve hours, is wrong exactly where it matters:
+        // America/Santiago rolls local 2026-04-05 00:00 back to 2026-04-04
+        // 23:00, so the transition instant is the 4th's computed day end, which
+        // the comparison excluded, and lies before the 5th's computed day
+        // start, which excluded it as well. The repeated hour was then reported
+        // for neither date and an ambiguous start could be offered twice.
+        // Reading the instant in the zone needs no midnight arithmetic at all
+        // and gives the 4th, which is the date the repeated wall clocks lie on.
+        $anchor = (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))->getTimestamp();
 
-        // One day of slack on each side, so the transition in effect at the
-        // start of the day is always the first entry returned.
-        $transitions = $this->zone->getTransitions($dayStart - 86400, $dayEnd + 86400);
+        // Two days of slack on each side, so the transition in effect before
+        // the date is always present and can be compared against.
+        $transitions = $this->zone->getTransitions($anchor - 172800, $anchor + 172800);
 
         if (!\is_array($transitions) || \count($transitions) < 2) {
             return [];
         }
 
+        $found    = [];
         $previous = $transitions[0];
 
         foreach (\array_slice($transitions, 1) as $transition) {
-            $timestamp = (int) $transition['ts'];
+            $at = (new \DateTimeImmutable('@' . (int) $transition['ts']))->setTimezone($utc);
 
-            if ($timestamp >= $dayStart && $timestamp < $dayEnd) {
+            if ($at->setTimezone($this->zone)->format('Y-m-d') === $date) {
                 $found[] = [
-                    'at'         => (new \DateTimeImmutable('@' . $timestamp))->setTimezone($utc),
+                    'at'         => $at,
                     'difference' => (int) $transition['offset'] - (int) $previous['offset'],
                 ];
             }

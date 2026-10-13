@@ -86,6 +86,33 @@ final class SlotEngineTest extends TestCase
         return [['weekday' => 2, 'start_time' => '10:00', 'end_time' => '12:00']];
     }
 
+    public function testAMeetingMayNotRunIntoAClosedDayJustPastTheRange(): void
+    {
+        // The range given to the engine is a range of *start* times, and a
+        // meeting occupies time after its start. A Tuesday rule from 22:00 to
+        // 02:00, a closed Wednesday, and a range that ends at Wednesday 00:00:
+        // the closed day only touches the end of that range, so asking the
+        // schedule over the range of starts alone never sees it, and a meeting
+        // from 23:30 to 00:30 was offered on a day the operator closed.
+        $engine = $this->engine(
+            [['weekday' => 2, 'start_time' => '22:00', 'end_time' => '02:00']],
+            new SlotRules(60, 30),
+            [['specific_date' => '2026-06-03', 'is_unavailable' => 1]]
+        );
+
+        $slots = $engine->findSlots(
+            $this->utc('2026-06-02 06:00'),
+            $this->localWindow('2026-06-02 22:00', '2026-06-03 00:00')->getStart(),
+            $this->localWindow('2026-06-02 22:00', '2026-06-03 00:00')->getEnd()
+        );
+
+        // 23:00 is the last start whose meeting still ends on the Tuesday.
+        $this->assertSame(
+            ['2026-06-02 22:00', '2026-06-02 22:30', '2026-06-02 23:00'],
+            $this->asLocal($slots)
+        );
+    }
+
     public function testATwentyMinuteMeetingOnAThirtyMinuteGrid(): void
     {
         $engine = $this->engine($this->tuesdayMorning(), new SlotRules(20, 30));

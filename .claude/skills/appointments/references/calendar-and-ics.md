@@ -49,7 +49,7 @@ same: neither a meeting nor a buffer may lie inside it.
 The engine never applies the searched event type's buffers to somebody else's booking, because one
 host can serve several event types with different buffers.
 
-### Two rules about the grid that are easy to break
+### Three rules about the grid that are easy to break
 
 - **The grid is anchored to the start of the schedule window, never to a cut-down window.** A window
   clipped at `now + minimum notice`, at the horizon edge, at a clock change or next to a
@@ -62,6 +62,14 @@ host can serve several event types with different buffers.
   can offer different times for the same day — and the second one is the booking guard. The price is
   that a meeting cannot span the boundary between two dates' windows; an operator who needs that
   writes one rule crossing midnight, which stays one window.
+- **The schedule is asked over the span a candidate can occupy, not over the range of start times.**
+  A candidate occupies its buffer before, its meeting and its buffer after, so the engine asks the
+  resolver over `[from − buffer before, to + duration + buffer after)`. Asking over the range of
+  starts alone misses an obstacle that begins just past its end: a Tuesday rule from 22:00 to 02:00,
+  a closed Wednesday and a range ending at Wednesday 00:00 offer a meeting from 23:30 to 00:30,
+  because the closed day only touches the range and the resolver leaves it out. The widening is a
+  function of the event type's own rules and nothing else, so the answer stays independent of the
+  range that was asked for.
 
 ### Daylight saving time
 
@@ -87,6 +95,13 @@ The two daylight-saving cases that must have tests, with `Europe/Zurich`:
 - **Autumn back**, the last Sunday in October. 02:00 to 03:00 local occurs twice. The window is
   resolved once, using the first occurrence, so no duplicate slot is offered and no booking can be
   made at an ambiguous time.
+- **A transition at local midnight.** `America/Santiago` puts the clocks back at local
+  2026-04-05 00:00, which becomes 2026-04-04 23:00. A transition therefore belongs to the local date
+  **its own clock reads after the change**, and that is how the resolver finds it: it reads the
+  instant in the zone and compares the date. Bounds computed around local noon, or any other
+  arithmetic on midnight, miss this case from both sides — the instant is the previous date's
+  computed day end and lies before the next date's computed day start — and the repeated hour is
+  then reported for neither date.
 
 Those two rules are for a **recurring availability rule**, which has to resolve to something: a
 weekly 02:00 to 10:00 rule cannot simply disappear twice a year, so the resolver states a

@@ -345,6 +345,34 @@ final class ScheduleResolverTest extends TestCase
         );
     }
 
+    public function testABackwardTransitionAtLocalMidnightIsStillFound(): void
+    {
+        // America/Santiago puts the clocks back at local 2026-04-05 00:00,
+        // which becomes 2026-04-04 23:00. The hour that happens twice is
+        // therefore the wall clock 23:00 on Saturday the 4th, and the
+        // transition instant is the moment the 5th would have begun.
+        //
+        // Bounds computed as noon plus and minus twelve hours missed it from
+        // both sides: for the 4th the instant was exactly the computed end of
+        // the day, which the comparison excluded, and for the 5th it lay before
+        // the computed start. The repeated hour was reported for neither date,
+        // so an ambiguous start could be offered twice.
+        //
+        // The expectations are arithmetic: Saturday begins at local 00:00 under
+        // -03, which is 03:00 UTC, and the next local midnight falls under -04,
+        // which is 04:00 UTC the following day, so the local Saturday is 25
+        // hours long. The second pass over the repeated hour is the hour that
+        // begins at the transition.
+        $resolver = new ScheduleResolver('America/Santiago', [
+            ['weekday' => 6, 'start_time' => '00:00', 'end_time' => '00:00'],
+        ]);
+
+        [$windows, $unavailable] = $this->resolveRange($resolver, '2026-04-03 00:00', '2026-04-06 00:00');
+
+        $this->assertSame(['2026-04-04 03:00-2026-04-05 04:00'], $windows);
+        $this->assertSame(['2026-04-05 03:00-2026-04-05 04:00'], $unavailable);
+    }
+
     public function testResolveSelectsOverlappingWindowsWithoutClippingThem(): void
     {
         $resolver = new ScheduleResolver(self::ZONE, [

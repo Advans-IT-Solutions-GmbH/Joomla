@@ -99,18 +99,33 @@ final class SlotEngine
             return [];
         }
 
+        // The range is a range of *start* times, and a candidate occupies more
+        // than its start: its meeting runs for the duration and its buffers
+        // reach further on both sides. The schedule therefore has to be asked
+        // over the whole span a candidate can occupy. Asking only over the
+        // range of starts misses an obstacle that begins just past its end: a
+        // Tuesday rule from 22:00 to 02:00, a closed Wednesday and a range
+        // ending at Wednesday 00:00 would offer a meeting from 23:30 to 00:30,
+        // because the closed day only touches the range and the resolver
+        // leaves it out. It also makes the answer independent of the range
+        // again, which is the property the resolver already holds to.
+        $occupiedFrom = $range->getStart()->modify('-' . $this->rules->getBufferBeforeSeconds() . ' seconds');
+        $occupiedTo   = $range->getEnd()->modify(
+            '+' . ($this->rules->getDurationSeconds() + $this->rules->getBufferAfterSeconds()) . ' seconds'
+        );
+
         // What the schedule itself makes unavailable is removed the same way an
         // absence is, rather than being cut out of the windows: that keeps the
         // start of a window the start of its rule, so the grid below does not
         // change phase after a clock change or next to a governed day.
-        foreach ($this->resolver->unavailablePeriods($range->getStart(), $range->getEnd()) as $period) {
+        foreach ($this->resolver->unavailablePeriods($occupiedFrom, $occupiedTo) as $period) {
             $busy[] = BusyPeriod::reserved($period);
         }
 
         $busy  = array_values($busy);
         $slots = [];
 
-        foreach ($this->resolver->resolve($range->getStart(), $range->getEnd()) as $window) {
+        foreach ($this->resolver->resolve($occupiedFrom, $occupiedTo) as $window) {
             foreach ($this->slotsInWindow($window, $busy) as $slot) {
                 $slots[$slot->getTimestamp()] = $slot;
             }
