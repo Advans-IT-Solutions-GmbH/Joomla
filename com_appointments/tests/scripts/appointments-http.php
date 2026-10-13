@@ -19,6 +19,21 @@ final class AppointmentsHttp
 
     public function request(string $path, ?array $data = null): string
     {
+        $curl = $this->handle($path, $data);
+        $body = curl_exec($curl);
+        $error = curl_error($curl);
+        $this->status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+
+        if ($body === false) {
+            throw new RuntimeException('HTTP request failed: ' . $error);
+        }
+
+        return $body;
+    }
+
+    private function handle(string $path, ?array $data): CurlHandle
+    {
         $curl = curl_init(rtrim($this->base, '/') . $path);
         curl_setopt_array($curl, [
             CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5,
@@ -30,16 +45,56 @@ final class AppointmentsHttp
             curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
         }
 
-        $body = curl_exec($curl);
-        $error = curl_error($curl);
-        $this->status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        curl_close($curl);
+        return $curl;
+    }
 
-        if ($body === false) {
-            throw new RuntimeException('HTTP request failed: ' . $error);
+    /** Run independent browser sessions simultaneously, optionally observing an external DB lock. */
+    public static function parallel(array $requests, ?callable $progress = null): array
+    {
+        $multi = curl_multi_init();
+        $handles = [];
+        $bodies = [];
+
+        try {
+            foreach ($requests as [$client, $path, $data]) {
+                $handle = $client->handle($path, $data);
+                curl_multi_add_handle($multi, $handle);
+                $handles[] = [$client, $handle];
+            }
+
+            do {
+                $result = curl_multi_exec($multi, $running);
+
+                if ($result !== CURLM_OK) {
+                    throw new RuntimeException('Concurrent HTTP execution failed.');
+                }
+
+                if ($progress !== null) {
+                    $progress($running);
+                }
+
+                if ($running && curl_multi_select($multi, .05) === -1) {
+                    usleep(10000);
+                }
+            } while ($running);
+
+            foreach ($handles as [$client, $handle]) {
+                if (curl_errno($handle)) {
+                    throw new RuntimeException('Concurrent HTTP request failed: ' . curl_error($handle));
+                }
+
+                $client->status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+                $bodies[] = curl_multi_getcontent($handle);
+            }
+        } finally {
+            foreach ($handles as [$client, $handle]) {
+                curl_multi_remove_handle($multi, $handle);
+                curl_close($handle);
+            }
+            curl_multi_close($multi);
         }
 
-        return $body;
+        return $bodies;
     }
 
     public function token(string $html): string

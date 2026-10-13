@@ -52,3 +52,15 @@
         justify-content: space-between;
     }
 }
+/* Booking is server rendered; this is a local, mobile-first enhancement. */
+.com-appointments-month-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.com-appointments-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .25rem; margin-block: 1rem; }
+.com-appointments-month > * { padding: .6rem .2rem; text-align: center; }
+.com-appointments-month a { border: 1px solid currentColor; border-radius: .25rem; }
+.com-appointments-month [aria-current] { outline: 2px solid currentColor; font-weight: bold; }
+.com-appointments-booking { display: grid; gap: .75rem; max-width: 42rem; }
+.com-appointments-booking input:not([type="radio"]):not([type="checkbox"]), .com-appointments-booking textarea,
+.com-appointments-booking select { max-width: 100%; width: 100%; padding: .5rem; }
+.com-appointments-custom-field { display: grid; gap: .4rem; }
+.com-appointments-slot { display: inline-flex; align-items: center; gap: .3rem; margin: .4rem; padding: .5rem; border: 1px solid currentColor; border-radius: .25rem; }
+.com-appointments-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }

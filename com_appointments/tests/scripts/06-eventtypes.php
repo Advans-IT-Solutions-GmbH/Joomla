@@ -86,6 +86,10 @@ try {
     $public = new AppointmentsHttp('http://localhost', 'events-public');
     $html = $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
+    if ($public->status !== 200 || !str_contains($html, $tag . '-edited')) {
+        echo 'Public response status: ' . $public->status . "\n";
+        echo substr(preg_replace('/\s+/', ' ', strip_tags($html)), 0, 3000) . "\n";
+    }
     $db->query("UPDATE {$prefix}appointments_eventtypes SET published=0 WHERE id={$eventId}");
     $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
     $check($public->status === 404, 'Unpublished single event target is inaccessible');

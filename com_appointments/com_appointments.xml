@@ -84,6 +84,8 @@
                     type="hidden"
                     default="1"
                 />
+                <field name="consent_text" type="textarea" label="COM_APPOINTMENTS_CONFIG_CONSENT" description="COM_APPOINTMENTS_CONFIG_CONSENT_DESC" filter="string" />
+                <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" filter="url" relative="true" />
             </fieldset>
 
             <fieldset

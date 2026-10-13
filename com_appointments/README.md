@@ -76,14 +76,38 @@ The component registers its own update site during installation, so later versio
   has its own Joomla permission asset and independently generated feed credential.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
   manager. Direct links enforce publication, access and content language too.
+- **Public booking.** A server-rendered month grid, available days, slot choices and an explicit
+  time-zone selector work with or without JavaScript. The form collects contact details, optional
+  guests and configured custom fields. Consent, a honeypot, a session-bound signed render time
+  and a short-lived keyed rate limit protect submission without an external CAPTCHA.
+- **Booking integrity and approval.** Pending and confirmed appointments both hold their slot.
+  Submission serialises on the host row, rechecks the exact slot against current availability,
+  and retains the database's unique active-slot constraint. The administrator can approve a
+  pending appointment or cancel an appointment.
 
-Still to come: the public booking form itself, e-mail notifications with the calendar attachment,
+Still to come: e-mail notifications with the calendar attachment,
 calendar subscription feeds, the reschedule, cancel and erasure links, and the conferencing links.
 
 ## Configuration
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Booking information
+
+In **Options**, configure the booking data information text and the URL of your site's privacy
+notice. The information text explains what you collect and why; it is not a legal privacy notice.
+The consent checkbox is mandatory. The timing check requires at least two seconds after rendering
+and expires after one hour; reload an expired form.
+Additional guests are optional, deduplicated and limited to ten valid email addresses.
+Telephone fields use an international calling-code selector and a national number.
+
+The displayed zone never changes the stored UTC appointment. Public times always come from the
+schedule, including its clock-change conventions. If someone else takes a time while the form is
+open, submission returns to the same day with a friendly message and refreshed slot choices.
+Confirmation pages require the submitting browser's session and are not public booking lookups.
+Public requests use the directly connected address for rate limiting, not untrusted forwarding
+headers. Only its keyed hash is stored; no raw address is added to a booking.
 
 ### Event types
 
@@ -161,7 +185,10 @@ normalised or converted again. Correcting and saving restores the normal calenda
 4. Create an event type, assign the schedule and host, and configure its meeting rules.
 5. Add its custom booking fields and create a Joomla menu item for the list or the individual type.
 
-The dashboard links to all configuration lists. The public booking submission is in progress.
+6. Open the public menu item, choose a displayed zone, day and time, complete the form and consent.
+7. View bookings from the dashboard. Pending requests can be approved; cancellation releases the slot.
+
+Notification, calendar and self-service lifecycle integration is still in progress.
 
 ## Signing keys
 
