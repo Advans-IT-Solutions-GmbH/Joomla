@@ -7,6 +7,7 @@
 define('_JEXEC', 1);
 
 $base = '/var/www/html/administrator/components/com_dmarcreports/src/Helper';
+require_once $base . '/DomainName.php';
 require_once $base . '/DmarcParser.php';
 require_once $base . '/ReportArchive.php';
 require_once $base . '/MimeMessage.php';
