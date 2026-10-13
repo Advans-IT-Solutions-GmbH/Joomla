@@ -1840,6 +1840,24 @@ PHP
             $this->test('Without the attempt counter the right code is refused (fail closed)',
                 $noLimit->attemptConfirmation($w, $tw, $fresh(), 'client-e', $t0 + 50) === 'failed' && $status($idW) === 0);
 
+            // Customers of one shared network who confirm correctly do not use up its IP limit.
+            $shared = 0;
+
+            for ($i = 1; $i <= $class::MAX_IP_FAILURES + 5; $i++) {
+                $address = 'shared-' . $i . '-' . $suffix . '@example.com';
+                $code    = md5('shared' . $i . $suffix);
+                $id      = $insert($address, $code);
+                $shared += $plugin->attemptConfirmation($address, $code, $fresh(), 'client-o', $t0 + 60) === 'confirmed' && $status($id) === 1 ? 1 : 0;
+            }
+
+            $ipRows = (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts')
+                . ' WHERE ' . $this->db->quoteName('subject_hash') . ' = ' . $this->db->quote((new $class($this->db, 'guest-request-test-secret'))->hash('ip', 'client-o'))
+            )->loadResult();
+            $this->test('Shared network: more correct confirmations than the IP limit from one client are all confirmed',
+                $shared === $class::MAX_IP_FAILURES + 5, (string) $shared);
+            $this->test('Shared network: successful attempts are given back, no count is left for the client', $ipRows === 0, (string) $ipRows);
+
             // Only hashes are stored.
             $rows =$this->db->setQuery('SELECT scope, subject_hash FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadObjectList();
             $raw  = array_filter($rows, static fn ($row): bool => !preg_match('/^[0-9a-f]{64}$/', (string) $row->subject_hash));
@@ -1858,20 +1876,24 @@ PHP
 
             $this->test('Sequential requests: exactly the limit of attempts is admitted', $admitted === $class::MAX_EMAIL_FAILURES, (string) $admitted);
             $this->testParallelReservations($class, $suffix, $t0 + 45);
-            // A window starts with its first counted attempt and is never reused by a later one:
-            // an attempt at the start, more at its end, the next window after it.
-            $windowed = ['email' => 'windowed-' . $suffix . '@example.com', 'ip' => 'client-w'];
+            // A given-back attempt never starts a window: after a success the next failure starts
+            // a new one, which then lasts the full window.
+            $windowed   = ['email' => 'windowed-' . $suffix . '@example.com', 'ip' => 'client-w'];
+            $rowsBefore = $rowCount();
             $limiter->reserve($windowed, $t0 + 100);
+            $limiter->release($windowed, $t0 + 100);
+            $this->test('Window: a successful attempt is given back and its row removed',
+                $limiter->exceeds($windowed, $t0 + 100) === false && $rowCount() === $rowsBefore, $rowsBefore . ' -> ' . $rowCount());
 
-            for ($i = 1; $i < $class::MAX_EMAIL_FAILURES; $i++) {
+            for ($i = 0; $i < $class::MAX_EMAIL_FAILURES; $i++) {
                 $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW - 1);
             }
 
-            $this->test('Window: the limit holds until the end of the window that started with the first attempt',
-                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW - 1) === false);
+            $this->test('Window: after a success the window starts with the next failure and holds for its full length',
+                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW + 1) === false);
             $this->test('Window: after it a new window starts with one attempt',
-                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW + 1) === true
-                && $limiter->exceeds($windowed, $t0 + 100 + $class::WINDOW + 1) === false);
+                $limiter->reserve($windowed, $t0 + 100 + 2 * $class::WINDOW) === true
+                && $limiter->exceeds($windowed, $t0 + 100 + 2 * $class::WINDOW) === false);
 
             $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
             $limiter->purgeExpired($t0 + 3 * $class::WINDOW);

@@ -62,9 +62,8 @@ final class ConfirmAttempts
      * exactly the first attempts up to the limit are admitted, never more and never fewer. The
      * client IP address is counted and checked first: once it is over
      * its limit, nothing else is written (no row for a new e-mail address, no purge), so a client
-     * can create at most MAX_IP_FAILURES address rows per window. Every admitted attempt stays
-     * counted, a successful one too (a customer confirms a request once): no count ever goes
-     * down, so a window always starts with its first counted attempt.
+     * can create at most MAX_IP_FAILURES address rows per window. An admitted attempt that
+     * succeeds is given back with release(); a failed one stays counted.
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
      */
@@ -128,24 +127,85 @@ final class ConfirmAttempts
     }
 
     /**
+     * Give back the attempt of a successful confirmation (reserve() counted it): the limits count
+     * failed attempts, so customers who confirm correctly from one shared network (an office, a
+     * mobile carrier) do not use up its IP limit. A count that reaches zero removes its row, so
+     * the next attempt starts a new window with itself and no window starts with an attempt that
+     * was given back. Each subject in one transaction (see transaction()); a window that ended in
+     * between is left alone.
+     *
+     * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
+     */
+    public function release(array $subjects, ?int $now = null): void
+    {
+        $now = $now ?? time();
+
+        foreach (['ip', 'email'] as $scope) {
+            $value = (string) ($subjects[$scope] ?? '');
+
+            if ($value === '') {
+                continue;
+            }
+
+            $this->transaction(function () use ($scope, $value, $now): int {
+                $subject = [
+                    $this->db->quoteName('scope') . ' = ' . $this->db->quote($scope),
+                    $this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)),
+                ];
+
+                $this->db->setQuery(
+                    $this->createQuery()
+                        ->update($this->db->quoteName(self::TABLE))
+                        ->set($this->db->quoteName('failures') . ' = ' . $this->db->quoteName('failures') . ' - 1')
+                        ->where($subject)
+                        ->where($this->db->quoteName('failures') . ' > 0')
+                        ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW)))
+                )->execute();
+
+                $this->db->setQuery(
+                    $this->createQuery()
+                        ->delete($this->db->quoteName(self::TABLE))
+                        ->where($subject)
+                        ->where($this->db->quoteName('failures') . ' <= 0')
+                )->execute();
+
+                return 0;
+            });
+        }
+    }
+
+    /**
      * Count one attempt of a subject and return the count of the current window, this attempt
      * included. Upsert and read run in one transaction: the upsert locks the row until the commit,
      * so a parallel attempt for the same subject waits for it, and every attempt reads exactly the
      * count it produced (the attempts of a window read 1, 2, 3 and so on, each number once).
-     * A transaction the database aborts (for example as a deadlock victim) counted nothing and is
-     * repeated, at most three times in all; then the error goes to the caller (which refuses).
      */
     private function countAttempt(string $scope, string $value, int $now): int
+    {
+        return $this->transaction(function () use ($scope, $value, $now): int {
+            $this->increment($scope, $value, $now);
+
+            return $this->count($scope, $value, $now, true);
+        });
+    }
+
+    /**
+     * Run $work in one database transaction. A transaction the database aborts (for example as a
+     * deadlock victim) changed nothing and is repeated, at most three times in all; then the
+     * error goes to the caller (which refuses the attempt).
+     *
+     * @param   callable(): int  $work
+     */
+    private function transaction(callable $work): int
     {
         for ($try = 1; ; $try++) {
             $this->db->transactionStart();
 
             try {
-                $this->increment($scope, $value, $now);
-                $count = $this->count($scope, $value, $now, true);
+                $result = $work();
                 $this->db->transactionCommit();
 
-                return $count;
+                return $result;
             } catch (\Throwable $e) {
                 try {
                     $this->db->transactionRollback();
@@ -179,7 +239,7 @@ final class ConfirmAttempts
     /**
      * Count one attempt of a subject with one atomic statement: a new window when the last one
      * ended, else one more in it. Parallel attempts cannot overwrite each other. Called only
-     * inside the transaction of countAttempt().
+     * inside a transaction (countAttempt()).
      */
     private function increment(string $scope, string $value, int $now): void
     {

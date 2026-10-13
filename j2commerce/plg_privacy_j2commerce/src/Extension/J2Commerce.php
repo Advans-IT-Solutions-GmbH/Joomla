@@ -2412,10 +2412,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $status = self::CONFIRM_FAILED;
         }
 
-        // A successful attempt stays counted for the address and the IP address (it confirms the
-        // request once); only the session counter starts again.
+        // A successful attempt is given back: the limits count failed attempts, so customers who
+        // confirm correctly from one shared network do not use up its IP limit.
         if ($status === self::CONFIRM_OK) {
             $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
+
+            if ($reserved) {
+                try {
+                    $limiter->release($subjects, $now);
+                } catch (\Throwable $e) {
+                    Log::add('Confirmation attempt not given back: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                }
+            }
 
             return $status;
         }
