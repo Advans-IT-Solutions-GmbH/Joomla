@@ -23,7 +23,7 @@ $value = fn (string $key) => $this->escape(is_scalar($values[$key] ?? '') ? (str
 ?>
 <div class="com-appointments">
     <h1><?php echo $this->escape($this->item->title); ?></h1>
-    <div class="com-appointments-description"><?php echo InputFilter::getInstance([], [], 1, 1)->clean((string) $this->item->description, 'html'); ?></div>
+    <div class="com-appointments-description"><?php echo (new InputFilter([], [], 1, 1))->clean((string) $this->item->description, 'html'); ?></div>
     <p><?php echo Text::sprintf((int) $this->item->duration_minutes === 1 ? 'COM_APPOINTMENTS_DURATION_MINUTES_1' : 'COM_APPOINTMENTS_DURATION_MINUTES_MORE', (int) $this->item->duration_minutes); ?></p>
     <p><?php echo $this->escape((string) $this->item->location_text); ?></p>
     <form method="get" action="<?php echo Route::_('index.php'); ?>">
