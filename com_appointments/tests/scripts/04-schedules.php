@@ -183,6 +183,10 @@ class ScheduleAdminTest
             'jform[id]' => (string) $scheduleId,
         ]);
 
+        $this->test('Cancelling the administrator edit releases the schedule checkout', function () use ($scheduleId) {
+            return (int) $this->column($scheduleId, 'checked_out') === 0;
+        });
+
         // --- The edit view is behind core.edit, whatever its spelling -------
         // Reaching view=schedule directly would show and save a stored
         // schedule without the task controllers' permission checks, so
@@ -700,7 +704,11 @@ class ScheduleAdminTest
         $fields['task'] = $task;
         $fields[$token] = '1';
 
-        return $this->request('/administrator/index.php?option=com_appointments', $fields);
+        // FormController reads the record id from the form action's query,
+        // not from jform[id]; without it an edit is submitted as a new record.
+        $id = isset($fields['jform[id]']) ? '&id=' . (int) $fields['jform[id]'] : '';
+
+        return $this->request('/administrator/index.php?option=com_appointments' . $id, $fields);
     }
 
     private function get(string $path): string
