@@ -116,6 +116,58 @@ class StructureTest
             return $firstConfirmed && $secondRefused && $thirdAccepted;
         });
 
+        $this->test('A host has exactly one row, and its feed token is unique', function () {
+            // The host row is the serialisation target of the booking
+            // transaction: two submissions for one host have to lock the same
+            // row. That only holds while the user id is the primary key, so a
+            // second row for the same host must be refused. The feed token on
+            // the same table is a bearer credential and must be unique too.
+            $table = "{$this->dbPrefix}appointments_hosts";
+            $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+            $userId = 990401;
+            $tokenA = str_pad('structurehostA', 64, 'a', STR_PAD_LEFT);
+            $tokenB = str_pad('structurehostB', 64, 'b', STR_PAD_LEFT);
+
+            $insert = function (int $user, string $token) use ($table, $now): bool {
+                try {
+                    return (bool) $this->db->query(
+                        "INSERT INTO {$table} (user_id, feed_token, created_utc, modified_utc)"
+                        . " VALUES ({$user}, '{$token}', '{$now}', '{$now}')"
+                    );
+                } catch (\mysqli_sql_exception $e) {
+                    return false;
+                }
+            };
+
+            $this->db->query("DELETE FROM {$table} WHERE user_id IN ({$userId}, " . ($userId + 1) . ')');
+
+            $first = $insert($userId, $tokenA);
+            // A second row for the same host must not exist.
+            $duplicateHostRefused = !$insert($userId, $tokenB);
+            // Another host must not be able to carry the same feed token.
+            $duplicateTokenRefused = !$insert($userId + 1, $tokenA);
+            // A different host with its own token is accepted.
+            $secondHostAccepted = $insert($userId + 1, $tokenB);
+
+            $primaryKey = false;
+            $result = $this->db->query("SHOW KEYS FROM {$table} WHERE Key_name = 'PRIMARY'");
+
+            if ($result) {
+                $columns = [];
+
+                while ($row = $result->fetch_assoc()) {
+                    $columns[] = $row['Column_name'];
+                }
+
+                $primaryKey = $columns === ['user_id'];
+            }
+
+            $this->db->query("DELETE FROM {$table} WHERE user_id IN ({$userId}, " . ($userId + 1) . ')');
+
+            return $first && $duplicateHostRefused && $duplicateTokenRefused
+                && $secondHostAccepted && $primaryKey;
+        });
+
         $this->test('A pending booking holds the slot as well', function () {
             // State 0 is slot-holding by design: a request that is waiting for
             // the host's approval must not be overtaken. A regression that
