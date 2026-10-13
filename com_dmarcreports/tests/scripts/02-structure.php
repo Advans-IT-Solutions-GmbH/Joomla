@@ -64,6 +64,10 @@ class StructureTest
         // screen can load them; the manifest <config> block is not read for a
         // component's global options. Assert the complete migrated field set so
         // a dropped field cannot ship an incomplete Options screen undetected.
+        // The XPath is intentionally restricted to fields directly under a
+        // <config>/<fieldset> so the check also fails if a manifest-style
+        // <fields name="params"> wrapper is reintroduced, which com_config
+        // cannot bind or persist for a standalone component.
         $this->test('config.xml defines every migrated option field', function () {
             $xml = @simplexml_load_file($this->base . '/config.xml');
 
@@ -73,7 +77,7 @@ class StructureTest
 
             $names = [];
 
-            foreach ($xml->xpath('//field[@name]') as $field) {
+            foreach ($xml->xpath('/config/fieldset/field[@name]') as $field) {
                 $names[] = (string) $field['name'];
             }
 
