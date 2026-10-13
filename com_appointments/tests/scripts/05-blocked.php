@@ -110,6 +110,17 @@ class BlockedAdminTest
                     && $row['end_utc'] === '2026-06-02 14:00:00';
             });
 
+            foreach (['id', 'b.id'] as $ordering) {
+                $this->test('The joined blocked-period list renders with ordering=' . $ordering, function () use ($ordering) {
+                    $html = $this->get(
+                        '/administrator/index.php?option=com_appointments&view=blockeds'
+                        . '&list%5Bordering%5D=' . urlencode($ordering) . '&list%5Bdirection%5D=ASC'
+                    );
+
+                    return $this->lastStatus === 200 && strpos($html, self::TITLE) !== false;
+                });
+            }
+
             foreach (['2026-06-02 16:00:00', '2026-02-31 16:00:00'] as $start) {
                 $this->test('A direct blocked save refuses an unheld record before validating ' . $start, function () use ($row, $token, $start) {
                     $before = $this->fieldValue(

@@ -23,7 +23,7 @@ class BlockedsModel extends ListModel
     public function __construct($config = [], $factory = null)
     {
         if (empty($config['filter_fields'])) {
-            $config['filter_fields'] = ['id', 'b.id', 'title', 'b.title', 'start_utc', 'b.start_utc', 'end_utc', 'b.end_utc'];
+            $config['filter_fields'] = ['b.id', 'title', 'b.title', 'start_utc', 'b.start_utc', 'end_utc', 'b.end_utc'];
         }
 
         parent::__construct($config, $factory);

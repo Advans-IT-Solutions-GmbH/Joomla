@@ -141,6 +141,8 @@ any raw blocked-period validation or form-state mutation. The edit task must not
 operator's checkout. The schedule suite also submits the fields rendered by an unchanged edit form
 containing a closed day, and verifies successful save and checkout release, not merely unchanged
 database rows after a possible validation failure.
+Both administration suites also request list ordering by the ambiguous bare `id` and by the
+qualified table alias, and require the stored fixture to render without a joined-query failure.
 
 ### The blocked-period redisplay assertions
 

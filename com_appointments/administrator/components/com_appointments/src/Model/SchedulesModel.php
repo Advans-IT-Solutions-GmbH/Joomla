@@ -23,7 +23,7 @@ class SchedulesModel extends ListModel
     public function __construct($config = [], $factory = null)
     {
         if (empty($config['filter_fields'])) {
-            $config['filter_fields'] = ['id', 's.id', 'title', 's.title', 'timezone', 's.timezone', 'published', 's.published'];
+            $config['filter_fields'] = ['s.id', 'title', 's.title', 'timezone', 's.timezone', 'published', 's.published'];
         }
 
         parent::__construct($config, $factory);

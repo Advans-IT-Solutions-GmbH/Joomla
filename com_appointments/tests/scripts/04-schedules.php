@@ -115,6 +115,17 @@ class ScheduleAdminTest
                 && (int) $row['is_unavailable'] === 1;
         });
 
+        foreach (['id', 's.id'] as $ordering) {
+            $this->test('The joined schedule list renders with ordering=' . $ordering, function () use ($ordering) {
+                $html = $this->get(
+                    '/administrator/index.php?option=com_appointments&view=schedules'
+                    . '&list%5Bordering%5D=' . urlencode($ordering) . '&list%5Bdirection%5D=ASC'
+                );
+
+                return $this->lastStatus === 200 && strpos($html, self::BASE_TITLE) !== false;
+            });
+        }
+
         $this->test('The edit form shows the stored intervals again', function () use ($scheduleId) {
             // The round trip is the point: the repeatable fields have to be
             // filled from the rule table, not only written to it.
