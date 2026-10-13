@@ -14,8 +14,8 @@ defined('_JEXEC') or die;
 use Joomla\Database\DatabaseInterface;
 
 /**
- * Failed attempts on the confirmation page for privacy requests, counted server-side per e-mail
- * address and per client IP address, so a new session does not start from zero.
+ * Attempts on the confirmation page for privacy requests, counted server-side per e-mail address
+ * and per client IP address, so a new session does not start from zero.
  *
  * Only an HMAC-SHA256 of scope and value with the site secret is stored, never the address or
  * the IP address itself. A counter belongs to a window of WINDOW seconds from its first failure;
@@ -61,8 +61,9 @@ final class ConfirmAttempts
      * check the count, its own included, so parallel requests cannot all pass a check made before
      * any of them is counted. The client IP address is counted and checked first: once it is over
      * its limit, nothing else is written (no row for a new e-mail address, no purge), so a client
-     * can create at most MAX_IP_FAILURES address rows per window. An admitted attempt that
-     * succeeds is given back with release(); a failed one stays counted.
+     * can create at most MAX_IP_FAILURES address rows per window. Every admitted attempt stays
+     * counted, a successful one too (a customer confirms a request once): no count ever goes
+     * down, so a window always starts with its first counted attempt.
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
      */
@@ -91,33 +92,6 @@ final class ConfirmAttempts
         }
 
         return true;
-    }
-
-    /**
-     * Give back the attempt of a successful confirmation (reserve() counted it).
-     *
-     * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
-     */
-    public function release(array $subjects, ?int $now = null): void
-    {
-        $now   = $now ?? time();
-        $since = $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW));
-
-        foreach ($subjects as $scope => $value) {
-            if ($value === '' || !\in_array($scope, ['email', 'ip'], true)) {
-                continue;
-            }
-
-            $this->db->setQuery(
-                $this->createQuery()
-                    ->update($this->db->quoteName(self::TABLE))
-                    ->set($this->db->quoteName('failures') . ' = ' . $this->db->quoteName('failures') . ' - 1')
-                    ->where($this->db->quoteName('scope') . ' = ' . $this->db->quote($scope))
-                    ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
-                    ->where($this->db->quoteName('failures') . ' > 0')
-                    ->where($this->db->quoteName('window_start') . ' > ' . $since)
-            )->execute();
-        }
     }
 
     /**

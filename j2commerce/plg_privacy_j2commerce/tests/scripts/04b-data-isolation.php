@@ -1780,15 +1780,20 @@ class DataIsolationTest
             }
 
             $this->test('Parallel requests: exactly the limit of attempts is admitted', $admitted === $class::MAX_EMAIL_FAILURES, (string) $admitted);
-            $released =['email' => 'released-' . $suffix . '@example.com'];
+            // A window starts with its first counted attempt and is never reused by a later one:
+            // an attempt at the start, more at its end, the next window after it.
+            $windowed = ['email' => 'windowed-' . $suffix . '@example.com', 'ip' => 'client-w'];
+            $limiter->reserve($windowed, $t0 + 100);
 
-            for ($i = 0; $i < $class::MAX_EMAIL_FAILURES; $i++) {
-                $limiter->reserve($released, $t0 + 41);
+            for ($i = 1; $i < $class::MAX_EMAIL_FAILURES; $i++) {
+                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW - 1);
             }
 
-            $limiter->release($released, $t0 + 41);
-            $this->test('A successful attempt is given back: one more attempt is admitted', $limiter->reserve($released, $t0 + 42) === true
-                && $limiter->reserve($released, $t0 + 43) === false);
+            $this->test('Window: the limit holds until the end of the window that started with the first attempt',
+                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW - 1) === false);
+            $this->test('Window: after it a new window starts with one attempt',
+                $limiter->reserve($windowed, $t0 + 100 + $class::WINDOW + 1) === true
+                && $limiter->exceeds($windowed, $t0 + 100 + $class::WINDOW + 1) === false);
 
             $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
             $limiter->purgeExpired($t0 + 3 * $class::WINDOW);
