@@ -37,8 +37,8 @@ final class ActionCenter
      */
     public static function generate(array $metrics, array $config, array $dnsFindings = []): array
     {
-        $quarantineThreshold = (float) ($config['quarantine_pass_threshold'] ?? 95);
-        $rejectThreshold     = (float) ($config['reject_pass_threshold'] ?? 99);
+        $quarantineThreshold = self::threshold($config, 'quarantine_pass_threshold', 95.0);
+        $rejectThreshold     = self::threshold($config, 'reject_pass_threshold', 99.0);
 
         // Reject enforcement demands a stricter pass rate than quarantine. If the
         // options are misconfigured so that reject sits below quarantine, raise the
@@ -182,6 +182,51 @@ final class ActionCenter
         }
 
         return self::finalise($items, $domainId, $dnsFindings);
+    }
+
+    /**
+     * Read a numeric threshold from the config array, treating an empty string,
+     * a non-numeric value or a value outside the declared [min, max] range as
+     * absent so it falls back to the sensible default. com_config persists an
+     * emptied number field as "", and legacy params may fall outside the range;
+     * a bare (float) cast would turn "" or "abc" into 0 and silently disable the
+     * bound, while an out-of-range value would skew the rollout decision.
+     *
+     * @param   array<string, mixed>  $config   Component thresholds.
+     * @param   string                $key      Threshold key.
+     * @param   float                 $default  Fallback when empty, non-integer
+     *                                          or out of the [min, max] range.
+     * @param   float                 $min      Lowest value accepted (inclusive).
+     * @param   float                 $max      Highest value accepted (inclusive).
+     *
+     * @return  float
+     */
+    private static function threshold(
+        array $config,
+        string $key,
+        float $default,
+        float $min = 50.0,
+        float $max = 100.0
+    ): float {
+        $value = $config[$key] ?? null;
+
+        // The rollout thresholds are whole numbers: the form range rule and its
+        // localized message define them that way. is_numeric() would accept
+        // "50.5" or "1e2", which the float cast would then use as-is, so apply
+        // the same plain-integer lexical check as the rule — an empty,
+        // non-scalar, non-integer or out-of-range legacy value falls back to the
+        // safe default instead of driving the rollout off a crafted threshold.
+        if ($value === null || !is_scalar($value) || !preg_match('/^-?\d+$/', (string) $value)) {
+            return $default;
+        }
+
+        $value = (float) $value;
+
+        if ($value < $min || $value > $max) {
+            return $default;
+        }
+
+        return $value;
     }
 
     /**

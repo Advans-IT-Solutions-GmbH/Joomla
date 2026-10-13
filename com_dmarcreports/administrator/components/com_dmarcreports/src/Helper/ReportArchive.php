@@ -46,7 +46,7 @@ final class ReportArchive
     /**
      * Largest number of XML documents extracted from a single archive.
      */
-    private const MAX_DOCUMENTS = 256;
+    public const MAX_DOCUMENTS = 256;
 
     /**
      * Largest number of entries examined in a single archive. A zip can stay
@@ -59,8 +59,15 @@ final class ReportArchive
     /**
      * Extract every XML document contained in a raw attachment payload.
      *
-     * @param   string  $payload   The raw bytes of the attachment.
-     * @param   string  $filename  The attachment file name (used as a hint).
+     * @param   string      $payload   The raw bytes of the attachment.
+     * @param   string      $filename  The attachment file name (used as a hint).
+     * @param   array|null  $stats     Optional out-parameter. When a variable is
+     *          passed it is filled with diagnostics for the caller that needs to
+     *          explain an empty result: 'reason' is one of '' (documents were
+     *          extracted), 'empty' (no payload), 'format' (not a recognised or
+     *          decodable report) or 'bomb' (a size/decompression limit tripped);
+     *          'dropped' is the number of valid XML reports skipped because the
+     *          archive held more than {@see self::MAX_DOCUMENTS}.
      *
      * @return  string[]  A list of XML document strings (possibly empty).
      *
@@ -72,9 +79,13 @@ final class ReportArchive
      *          to read a zip container cannot be created or fully written, a
      *          transient host failure the caller must retry rather than skip.
      */
-    public static function extract(string $payload, string $filename = ''): array
+    public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
+        $stats = ['reason' => '', 'dropped' => 0];
+
         if ($payload === '') {
+            $stats['reason'] = 'empty';
+
             return [];
         }
 
@@ -99,9 +110,80 @@ final class ReportArchive
                 );
             }
 
-            $xml = self::gunzip($payload);
+            // Decompress through a bounded read path so an oversized gzip is
+            // reported as a size-limit (bomb) while a corrupt stream is reported
+            // as the wrong format — and, crucially, without ever materialising
+            // more than MAX_BYTES + 1 uncompressed bytes. A zlib.inflate stream
+            // filter lets the output be pulled in a single bounded read: a gzip
+            // bomb is stopped at the ceiling instead of being expanded in full.
+            $stream = fopen('php://temp', 'r+b');
 
-            return $xml === null ? [] : [self::clean($xml)];
+            if ($stream === false) {
+                // No scratch stream: treat as transient so the message is retried
+                // rather than being misclassified as a bad upload.
+                throw new ArchiveExtractionException(
+                    'Unable to open a temporary stream to read a gzip-compressed DMARC report.'
+                );
+            }
+
+            $written = fwrite($stream, $payload);
+
+            if ($written === false || $written < \strlen($payload)) {
+                // A short write (e.g. php://temp spilling to a full disk) would
+                // leave a truncated gzip that the filter then misreads as the
+                // wrong format; treat it as transient so the message is retried.
+                fclose($stream);
+
+                throw new ArchiveExtractionException(
+                    'Unable to buffer a gzip-compressed DMARC report for decompression.'
+                );
+            }
+
+            rewind($stream);
+
+            if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
+                fclose($stream);
+                $stats['reason'] = 'format';
+
+                return [];
+            }
+
+            // A corrupt deflate stream raises a warning from the filter rather
+            // than returning an error code, so capture it to tell malformed input
+            // apart from a genuinely oversized (but valid) report.
+            $corrupt = false;
+            set_error_handler(
+                static function () use (&$corrupt): bool {
+                    $corrupt = true;
+
+                    return true;
+                }
+            );
+
+            try {
+                // Read at most MAX_BYTES + 1 decompressed bytes. The filter emits
+                // at most one input block of output per internal step, so peak
+                // memory stays bounded no matter how high the compression ratio.
+                $data = stream_get_contents($stream, self::MAX_BYTES + 1);
+            } finally {
+                restore_error_handler();
+                fclose($stream);
+            }
+
+            if ($data === false || $corrupt || $data === '') {
+                // Not a decodable gzip stream: corrupt or not actually gzip.
+                $stats['reason'] = 'format';
+
+                return [];
+            }
+
+            if (\strlen($data) > self::MAX_BYTES) {
+                $stats['reason'] = 'bomb';
+
+                return [];
+            }
+
+            return [self::clean($data)];
         }
 
         if ($isZip) {
@@ -111,7 +193,7 @@ final class ReportArchive
                 );
             }
 
-            return self::unzip($payload);
+            return self::unzip($payload, $stats);
         }
 
         $trimmed = ltrim($payload);
@@ -119,38 +201,29 @@ final class ReportArchive
         if (str_starts_with($trimmed, '<?xml') || stripos($trimmed, '<feedback') !== false) {
             // A raw document is its own uncompressed size, so bound it directly.
             if (\strlen($payload) > self::MAX_BYTES) {
+                $stats['reason'] = 'bomb';
+
                 return [];
             }
 
             return [self::clean($payload)];
         }
 
+        $stats['reason'] = 'format';
+
         return [];
     }
 
-    private static function gunzip(string $payload): ?string
-    {
-        if (!\function_exists('gzdecode')) {
-            return null;
-        }
-
-        // Bound decompression itself (ceiling + 1 byte) so a gzip bomb cannot
-        // expand to an unbounded size before the size check below runs.
-        $data = @gzdecode($payload, self::MAX_BYTES + 1);
-
-        if ($data === false || \strlen($data) > self::MAX_BYTES) {
-            return null;
-        }
-
-        return $data;
-    }
-
     /**
+     * @param   array  $stats  Diagnostics out-parameter shared with extract().
+     *
      * @return string[]
      */
-    private static function unzip(string $payload): array
+    private static function unzip(string $payload, array &$stats): array
     {
         if (!class_exists(\ZipArchive::class)) {
+            $stats['reason'] = 'format';
+
             return [];
         }
 
@@ -165,8 +238,9 @@ final class ReportArchive
             );
         }
 
-        $documents = [];
-        $total     = 0;
+        $documents   = [];
+        $total       = 0;
+        $sizeLimited = false;
 
         try {
             $written = file_put_contents($tmp, $payload);
@@ -183,6 +257,8 @@ final class ReportArchive
             $zip = new \ZipArchive();
 
             if ($zip->open($tmp) !== true) {
+                $stats['reason'] = 'format';
+
                 return [];
             }
 
@@ -191,18 +267,24 @@ final class ReportArchive
             // could still force hundreds of thousands of statIndex() calls.
             if ($zip->numFiles > self::MAX_ENTRIES) {
                 $zip->close();
+                $stats['reason'] = 'bomb';
 
                 return [];
             }
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 if (\count($documents) >= self::MAX_DOCUMENTS) {
+                    // The per-archive document cap is reached. Count the valid XML
+                    // reports still ahead so the caller can report how many were
+                    // dropped instead of letting them disappear silently.
+                    $stats['dropped'] += self::countRemainingXml($zip, $i);
+
                     break;
                 }
 
                 $entry = $zip->statIndex($i);
 
-                if ($entry === false || $entry['size'] > self::MAX_BYTES) {
+                if ($entry === false) {
                     continue;
                 }
 
@@ -215,12 +297,24 @@ final class ReportArchive
                     continue;
                 }
 
+                // A single XML report larger than the per-document ceiling is a
+                // size-limit skip, not a wrong-format upload. Record it so an
+                // archive whose only reports are oversized is reported to the
+                // operator as a size/bomb problem rather than "not a report".
+                if ((int) $entry['size'] > self::MAX_BYTES) {
+                    $sizeLimited = true;
+
+                    continue;
+                }
+
                 // Bound the cumulative uncompressed size across the XML reports
                 // that are actually extracted, so a zip packing many small report
                 // files cannot exhaust memory. Skip — rather than stop at — an XML
                 // entry that would overflow the budget, so a later, smaller report
                 // in the same archive can still be processed.
                 if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
+                    $sizeLimited = true;
+
                     continue;
                 }
 
@@ -238,7 +332,50 @@ final class ReportArchive
             @unlink($tmp);
         }
 
+        if ($documents === [] && $stats['reason'] === '') {
+            // No usable XML report came out. Distinguish a size/bomb skip (every
+            // candidate XML entry was over the per-document or cumulative ceiling)
+            // from a genuine wrong-format upload, so the operator gets the right
+            // guidance instead of a blanket "not a recognised report".
+            $stats['reason'] = $sizeLimited ? 'bomb' : 'format';
+        }
+
         return $documents;
+    }
+
+    /**
+     * Count the XML entries from index $from onward that would themselves be
+     * extractable, used to report how many reports were dropped once the
+     * per-archive document cap is reached. Only entries that meet the same
+     * per-entry criteria as the extraction loop (a non-empty .xml within the
+     * per-document size ceiling) are counted, so the "dropped" figure reflects
+     * real reports and does not over-count empty or oversized entries.
+     */
+    private static function countRemainingXml(\ZipArchive $zip, int $from): int
+    {
+        $dropped = 0;
+
+        for ($i = $from; $i < $zip->numFiles; $i++) {
+            $entry = $zip->statIndex($i);
+
+            if ($entry === false) {
+                continue;
+            }
+
+            if (!str_ends_with(strtolower($entry['name']), '.xml')) {
+                continue;
+            }
+
+            $size = (int) $entry['size'];
+
+            if ($size <= 0 || $size > self::MAX_BYTES) {
+                continue;
+            }
+
+            $dropped++;
+        }
+
+        return $dropped;
     }
 
     private static function clean(string $xml): string

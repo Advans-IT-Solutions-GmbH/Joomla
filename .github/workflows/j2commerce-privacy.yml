@@ -151,6 +151,69 @@ jobs:
       - name: Run consent-validator DOM tests
         run: node j2commerce/plg_privacy_j2commerce/tests/js/consent-validator.test.js
 
+  # The Joomla lanes run on MySQL only. This job runs the schema files and the attempt limiter of
+  # the confirmation page (Security\ConfirmAttempts) against PostgreSQL and MySQL with
+  # joomla/database 3 (Joomla 5) and 4 (Joomla 6), outside Joomla: install, update and uninstall
+  # SQL, counting, windows, release and genuinely parallel requests (separate processes).
+  limiter-db:
+    name: Attempt Limiter (${{ matrix.db }}, joomla/database ${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [postgresql, mysql]
+        package: ['3', '4']
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: limiter
+          POSTGRES_PASSWORD: limiter-ci
+          POSTGRES_DB: limiter
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U limiter -d limiter"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: limiter-ci
+          MYSQL_DATABASE: limiter
+          MYSQL_USER: limiter
+          MYSQL_PASSWORD: limiter-ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ulimiter -plimiter-ci"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, pgsql, mysqli, pdo_mysql
+          tools: composer
+      - name: Install joomla/database ${{ matrix.package }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/limiter"
+          cd "$RUNNER_TEMP/limiter"
+          composer require --no-interaction --no-progress "joomla/database:^${PACKAGE}.0"
+      - name: Run limiter tests
+        env:
+          LIMITER_AUTOLOAD: ${{ runner.temp }}/limiter/vendor/autoload.php
+          LIMITER_DB: ${{ matrix.db }}
+          LIMITER_PASSWORD: limiter-ci
+        run: php j2commerce/plg_privacy_j2commerce/tests/scripts/limiter-db.php
+
   test-j5:
     name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
@@ -577,6 +640,7 @@ jobs:
       - syntax-check
       - language-lint
       - js-tests
+      - limiter-db
       - test-j5
       - test-j6
       - test-production

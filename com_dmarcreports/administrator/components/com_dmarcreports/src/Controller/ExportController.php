@@ -69,13 +69,22 @@ class ExportController extends BaseController
         $app->sendHeaders();
 
         $out = fopen('php://output', 'w');
+
+        // Prepend a UTF-8 byte order mark so spreadsheet applications (notably
+        // Excel on de-CH) detect UTF-8 and render accented characters correctly
+        // instead of mojibake, and use the operator-configured field delimiter
+        // (default semicolon) so Excel opens the file into columns rather than a
+        // single column.
+        fwrite($out, "\xEF\xBB\xBF");
+        $delimiter = $this->csvDelimiter();
+
         // Pass an explicit (empty) escape argument: PHP 8.4 deprecates relying on
         // the default backslash escaping, and an empty escape keeps the output
         // RFC 4180 compatible (fields are quoted, not backslash-escaped).
         fputcsv($out, [
             'org_name', 'date_begin', 'date_end', 'source_ip', 'count', 'disposition',
             'dkim_result', 'spf_result', 'dkim_aligned', 'spf_aligned', 'header_from',
-        ], ',', '"', '');
+        ], $delimiter, '"', '');
 
         // Stream the records in bounded chunks so a domain with a very large
         // history does not have to be buffered in memory all at once. Each chunk
@@ -145,7 +154,7 @@ class ExportController extends BaseController
 
                 $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
                 $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
-                fputcsv($out, array_map([self::class, 'sanitiseCell'], $row), ',', '"', '');
+                fputcsv($out, array_map([self::class, 'sanitiseCell'], $row), $delimiter, '"', '');
             }
         } while (\count($rows) === $chunk);
 
@@ -154,6 +163,22 @@ class ExportController extends BaseController
         $app->close();
 
         return true;
+    }
+
+    /**
+     * Resolve the configured CSV field delimiter to its character. Defaults to a
+     * semicolon so Excel on a de-CH locale opens the export into columns.
+     */
+    private function csvDelimiter(): string
+    {
+        $configured = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_dmarcreports')
+            ->get('csv_delimiter', 'semicolon');
+
+        return match ($configured) {
+            'comma' => ',',
+            'tab'   => "\t",
+            default => ';',
+        };
     }
 
     /**

@@ -9,6 +9,7 @@
 namespace Advans\Component\DmarcReports\Tests\Unit;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
+use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -450,15 +451,108 @@ class ImapClientTest extends TestCase
     public function testRejectsPlaintextTransport(): void
     {
         // The client must refuse an unencrypted session before opening any
-        // socket, so credentials can never travel in the clear.
+        // socket, so credentials can never travel in the clear. The failure is
+        // a configuration problem, so the operator is pointed at the security
+        // setting rather than at an unreachable server.
         $client = new ImapClient(5, static fn () => fopen('php://memory', 'r+'));
 
-        $this->expectException(\RuntimeException::class);
+        try {
+            $client->process(
+                ['host' => 'mail.example.test', 'security' => 'none'],
+                static fn (): string => 'skip'
+            );
+            $this->fail('Expected ImapException was not thrown.');
+        } catch (ImapException $e) {
+            $this->assertSame(ImapException::CATEGORY_CONFIG, $e->getCategory());
+        }
+    }
 
-        $client->process(
-            ['host' => 'mail.example.test', 'security' => 'none'],
-            static fn (): string => 'skip'
-        );
+    /**
+     * Drive the client against a scripted server that only sends a failure
+     * response, returning the ImapException it raises so its category can be
+     * asserted. The server's write side is half-closed after the script so the
+     * client still hits a clean end-of-input, while its own commands are
+     * accepted on the read side.
+     *
+     * @param   array<string, mixed>  $config  Connection config overrides.
+     */
+    private function expectImapFailure(string $serverScript, array $config): ImapException
+    {
+        $pair = @stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+
+        if ($pair === false) {
+            $this->markTestSkipped('stream_socket_pair(AF_UNIX) is not available on this platform.');
+        }
+
+        [$clientEnd, $serverEnd] = $pair;
+
+        fwrite($serverEnd, $serverScript);
+        stream_socket_shutdown($serverEnd, STREAM_SHUT_WR);
+
+        $config += [
+            'host'     => 'mail.example.test',
+            'port'     => 993,
+            'security' => 'ssl',
+            'username' => 'mailbox@example.test',
+            'password' => 'secret',
+            'folder'   => 'INBOX',
+            'limit'    => 50,
+        ];
+
+        $client = new ImapClient(5, static function () use ($clientEnd) {
+            return $clientEnd;
+        });
+
+        try {
+            $client->process($config, static fn (): string => 'new');
+            $this->fail('Expected ImapException was not thrown.');
+        } catch (ImapException $e) {
+            return $e;
+        } finally {
+            if (\is_resource($serverEnd)) {
+                fclose($serverEnd);
+            }
+        }
+    }
+
+    public function testInvalidGreetingIsCategorisedAsConnection(): void
+    {
+        // The server never sends a valid "* OK" greeting: an unreachable or
+        // non-IMAP endpoint, surfaced as a connection problem.
+        $exception = $this->expectImapFailure("* BAD server unavailable\r\n", []);
+
+        $this->assertSame(ImapException::CATEGORY_CONNECTION, $exception->getCategory());
+    }
+
+    public function testLoginFailureIsCategorisedAsLogin(): void
+    {
+        // Authentication is rejected: a credentials problem. The same command()
+        // path carries the TLS category for a refused STARTTLS, so proving the
+        // category argument propagates here also covers that path.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 NO [AUTHENTICATIONFAILED] Invalid credentials\r\n";
+
+        $exception = $this->expectImapFailure($script, []);
+
+        $this->assertSame(ImapException::CATEGORY_LOGIN, $exception->getCategory());
+
+        // The password is never echoed back in the surfaced error.
+        $this->assertStringNotContainsString('secret', $exception->getMessage());
+    }
+
+    public function testRejectedSelectIsCategorisedAsConfig(): void
+    {
+        // TLS and login have already succeeded, so a refused SELECT means the
+        // configured folder is missing or inaccessible — a configuration
+        // problem, pointing the operator at the folder setting.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 NO [NONEXISTENT] Mailbox does not exist\r\n";
+
+        $exception = $this->expectImapFailure($script, []);
+
+        $this->assertSame(ImapException::CATEGORY_CONFIG, $exception->getCategory());
     }
 
     public function testFramesLiteralBodiesByByteCount(): void

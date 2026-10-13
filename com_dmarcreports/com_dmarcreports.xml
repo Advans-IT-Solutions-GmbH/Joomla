@@ -28,6 +28,12 @@
         </sql>
     </uninstall>
 
+    <update>
+        <schemas>
+            <schemapath type="mysql">sql/updates/mysql</schemapath>
+        </schemas>
+    </update>
+
     <administration>
         <menu link="option=com_dmarcreports">COM_DMARCREPORTS</menu>
         <files folder="administrator/components/com_dmarcreports">

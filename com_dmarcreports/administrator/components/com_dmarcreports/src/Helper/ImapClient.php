@@ -160,7 +160,7 @@ final class ImapClient
         $pending = array_values(array_unique(array_map('intval', (array) ($config['deferred_uids'] ?? []))));
 
         if ($host === '') {
-            throw new \RuntimeException('No IMAP host configured.');
+            throw new ImapException('No IMAP host configured.', ImapException::CATEGORY_CONFIG);
         }
 
         // Only encrypted transports are permitted. A plaintext (tcp://) session
@@ -168,7 +168,7 @@ final class ImapClient
         // the clear, so an unencrypted option is rejected here as well as in the
         // form, ensuring forged submissions or legacy rows cannot re-enable it.
         if (!\in_array($security, ['ssl', 'tls'], true)) {
-            throw new \RuntimeException('An encrypted IMAP connection (SSL/TLS) is required.');
+            throw new ImapException('An encrypted IMAP connection (SSL/TLS) is required.', ImapException::CATEGORY_CONFIG);
         }
 
         $this->connect($host, $port, $security);
@@ -449,7 +449,7 @@ final class ImapClient
             $socket = ($this->socketFactory)($transport, $host, $port);
 
             if ($socket === false || !\is_resource($socket)) {
-                throw new \RuntimeException('Unable to connect to the mail server.');
+                throw new ImapException('Unable to connect to the mail server.', ImapException::CATEGORY_CONNECTION);
             }
 
             $this->socket = $socket;
@@ -459,21 +459,26 @@ final class ImapClient
             $greeting = $this->readLine();
 
             if (stripos($greeting, '* OK') !== 0) {
-                throw new \RuntimeException('The mail server did not send a valid IMAP greeting.');
+                throw new ImapException('The mail server did not send a valid IMAP greeting.', ImapException::CATEGORY_CONNECTION);
             }
 
             return;
         }
 
         $context = stream_context_create(
-            ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]
+            ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true, 'peer_name' => $host]]
         );
 
         $errno  = 0;
         $errstr = '';
 
+        // Always open a plain TCP socket first and negotiate TLS explicitly, so
+        // a TLS handshake or certificate failure is reported as a TLS error
+        // rather than being hidden inside stream_socket_client() and surfaced as
+        // a generic connection failure. Implicit TLS (ssl) upgrades before the
+        // greeting; STARTTLS (tls) upgrades after it.
         $socket = @stream_socket_client(
-            $transport . $host . ':' . $port,
+            'tcp://' . $host . ':' . $port,
             $errno,
             $errstr,
             $this->timeout,
@@ -482,23 +487,31 @@ final class ImapClient
         );
 
         if ($socket === false) {
-            throw new \RuntimeException('Unable to connect to the mail server.');
+            throw new ImapException('Unable to connect to the mail server.', ImapException::CATEGORY_CONNECTION);
         }
 
         $this->socket = $socket;
         stream_set_timeout($this->socket, $this->timeout);
 
+        if ($security === 'ssl') {
+            if (!@stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                throw new ImapException('Unable to negotiate TLS with the mail server.', ImapException::CATEGORY_TLS);
+            }
+        }
+
         $greeting = $this->readLine();
 
         if (stripos($greeting, '* OK') !== 0) {
-            throw new \RuntimeException('The mail server did not send a valid IMAP greeting.');
+            throw new ImapException('The mail server did not send a valid IMAP greeting.', ImapException::CATEGORY_CONNECTION);
         }
 
         if ($security === 'tls') {
-            $this->command('STARTTLS');
+            // A server that refuses the STARTTLS command itself is a TLS failure,
+            // not a plain connection error.
+            $this->command('STARTTLS', 'Unable to start TLS with the mail server.', ImapException::CATEGORY_TLS);
 
             if (!@stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                throw new \RuntimeException('Unable to start TLS with the mail server.');
+                throw new ImapException('Unable to start TLS with the mail server.', ImapException::CATEGORY_TLS);
             }
         }
     }
@@ -506,11 +519,11 @@ final class ImapClient
     private function login(string $username, string $password): void
     {
         if ($username === '') {
-            throw new \RuntimeException('No IMAP username configured.');
+            throw new ImapException('No IMAP username configured.', ImapException::CATEGORY_CONFIG);
         }
 
         // Credentials are quoted; a protocol error here is reported without them.
-        $this->command('LOGIN ' . $this->quote($username) . ' ' . $this->quote($password), 'Authentication failed.');
+        $this->command('LOGIN ' . $this->quote($username) . ' ' . $this->quote($password), 'Authentication failed.', ImapException::CATEGORY_LOGIN);
     }
 
     private function select(string $folder): void
@@ -533,7 +546,12 @@ final class ImapClient
             }
 
             if (str_starts_with($line, $tag . ' ')) {
-                $this->assertOk($line, $error);
+                // TLS and login have already succeeded by this point, so a
+                // rejected SELECT means the configured folder is missing or not
+                // accessible — a configuration problem, not an unreachable
+                // server. Classify it as such so the operator is pointed at the
+                // folder setting instead of the connection details.
+                $this->assertOk($line, $error, ImapException::CATEGORY_CONFIG);
                 break;
             }
         }
@@ -663,7 +681,7 @@ final class ImapClient
         }
     }
 
-    private function command(string $command, string $error = 'IMAP command failed.'): void
+    private function command(string $command, string $error = 'IMAP command failed.', string $category = ImapException::CATEGORY_CONNECTION): void
     {
         $tag = $this->nextTag();
         $this->write($tag . ' ' . $command);
@@ -672,17 +690,17 @@ final class ImapClient
             $line = $this->readLine();
 
             if (str_starts_with($line, $tag . ' ')) {
-                $this->assertOk($line, $error);
+                $this->assertOk($line, $error, $category);
 
                 return;
             }
         }
     }
 
-    private function assertOk(string $line, string $error): void
+    private function assertOk(string $line, string $error, string $category = ImapException::CATEGORY_CONNECTION): void
     {
         if (!preg_match('/^\S+\s+OK/i', $line)) {
-            throw new \RuntimeException($error);
+            throw new ImapException($error, $category);
         }
     }
 
@@ -694,25 +712,25 @@ final class ImapClient
     private function write(string $command): void
     {
         if (!\is_resource($this->socket) || @fwrite($this->socket, $command . "\r\n") === false) {
-            throw new \RuntimeException('Lost connection to the mail server.');
+            throw new ImapException('Lost connection to the mail server.', ImapException::CATEGORY_CONNECTION);
         }
     }
 
     private function readLine(): string
     {
         if (!\is_resource($this->socket)) {
-            throw new \RuntimeException('Lost connection to the mail server.');
+            throw new ImapException('Lost connection to the mail server.', ImapException::CATEGORY_CONNECTION);
         }
 
         $line = fgets($this->socket);
         $meta = stream_get_meta_data($this->socket);
 
         if ($meta['timed_out'] ?? false) {
-            throw new \RuntimeException('The mail server timed out.');
+            throw new ImapException('The mail server timed out.', ImapException::CATEGORY_CONNECTION);
         }
 
         if ($line === false) {
-            throw new \RuntimeException('Lost connection to the mail server.');
+            throw new ImapException('Lost connection to the mail server.', ImapException::CATEGORY_CONNECTION);
         }
 
         return rtrim($line, "\r\n");
@@ -740,7 +758,7 @@ final class ImapClient
         // report after a transient interruption. Fail instead so the import
         // aborts with the cursor unchanged and the message is retried next run.
         if (\strlen($buffer) !== $length) {
-            throw new \RuntimeException('The mail server closed the connection before the message was fully received.');
+            throw new ImapException('The mail server closed the connection before the message was fully received.', ImapException::CATEGORY_CONNECTION);
         }
 
         return $buffer;
@@ -771,7 +789,7 @@ final class ImapClient
         // filter="raw", so reject any CR or LF before it can terminate the
         // LOGIN (or SELECT) command and smuggle in further IMAP commands.
         if (strpbrk($value, "\r\n") !== false) {
-            throw new \RuntimeException('IMAP credentials or folder names must not contain line breaks.');
+            throw new ImapException('IMAP credentials or folder names must not contain line breaks.', ImapException::CATEGORY_CONFIG);
         }
 
         return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"';
