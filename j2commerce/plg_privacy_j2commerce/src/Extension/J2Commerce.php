@@ -2389,9 +2389,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             if ($limiter === null) {
                 $blocked = true;
             } else {
+                // Passed to reserve(): what it counted stays counted, also when it fails part way
+                // (for example after the IP address), and is never counted a second time below.
+                $reserved = true;
+
                 try {
-                    $blocked  = !$limiter->reserve($subjects, $now);
-                    $reserved = true;
+                    $blocked = !$limiter->reserve($subjects, $now);
                 } catch (\Throwable $e) {
                     Log::add('Confirmation attempt limit not available, nothing confirmed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
                     $blocked = true;
@@ -2430,7 +2433,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         self::registerConfirmFailure($session, $now);
 
-        // An attempt refused by the session limit was not reserved: it is counted here.
+        // An attempt refused by the session limit never reached reserve(): it is counted here.
         if (!$reserved && $limiter !== null) {
             try {
                 $limiter->registerFailure($subjects, $now);
