@@ -50,7 +50,7 @@ class SitePageTest
 
             $this->test("{$label}: answers HTTP 200", function () use ($response) {
                 if ($response['code'] !== 200) {
-                    echo "    HTTP {$response['code']}\n";
+                    echo "    HTTP {$response['code']} at {$response['url']}\n";
                 }
 
                 return $response['code'] === 200;
@@ -137,7 +137,13 @@ class SitePageTest
     }
 
     /**
-     * @return array{code:int, body:string}
+     * Redirects are followed: Joomla answers a bare `option=` request with a
+     * permanent redirect to the canonical URL of the view, which is correct
+     * behaviour and not something this suite should fail on. Where the redirect
+     * ends is still checked, because the two content assertions only pass on the
+     * component's own page.
+     *
+     * @return array{code:int, body:string, url:string}
      */
     private function request(string $path): array
     {
@@ -145,15 +151,17 @@ class SitePageTest
         curl_setopt_array($handle, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADER         => false,
-            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 3,
             CURLOPT_TIMEOUT        => 30,
         ]);
 
         $body = curl_exec($handle);
         $code = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+        $url  = (string) curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
         curl_close($handle);
 
-        return ['code' => $code, 'body' => $body === false ? '' : $body];
+        return ['code' => $code, 'body' => $body === false ? '' : $body, 'url' => $url];
     }
 
     private function test(string $name, callable $fn): void
