@@ -30,11 +30,16 @@ final class Ingestor
      * Per-message ingestion outcomes returned by {@see ingestMessage()}. They
      * tell a streaming caller (the IMAP client) whether the source message may
      * be advanced: a transient failure returns RESULT_RETRY so the message is
-     * left in place for the next run instead of being marked processed and lost.
+     * left in place for the next run instead of being marked processed and lost,
+     * while RESULT_BLOCKED reports a host that cannot decode the container at all
+     * (a missing PHP extension) — a permanent condition the caller advances past
+     * so one undecodable report cannot starve every newer message, and surfaces
+     * to the operator as a concrete requirement instead of a silent retry loop.
      */
-    public const RESULT_NEW   = 'new';
-    public const RESULT_SKIP  = 'skip';
-    public const RESULT_RETRY = 'retry';
+    public const RESULT_NEW     = 'new';
+    public const RESULT_SKIP    = 'skip';
+    public const RESULT_RETRY   = 'retry';
+    public const RESULT_BLOCKED = 'blocked';
 
     /**
      * Upper bound on a manually uploaded report file before decompression. The
@@ -86,8 +91,13 @@ final class Ingestor
      * Ingest a single raw message, accumulating into a shared summary. Returns
      * a RESULT_* outcome so a streaming caller can decide whether the source
      * message may be advanced: RESULT_NEW (stored a report) and RESULT_SKIP
-     * (duplicate or unparseable) are safe to mark processed, while RESULT_RETRY
-     * (a transient storage failure) means the message must be left untouched.
+     * (duplicate or unparseable) are safe to mark processed; RESULT_RETRY (a
+     * transient storage or scratch-file failure) means the message must be left
+     * untouched so the next run retries it; and RESULT_BLOCKED (the host lacks
+     * the PHP extension needed to decode the container) is a permanent condition
+     * the caller advances past — retrying it forever would pin the cursor and
+     * starve every newer message — while recording it in the summary so the
+     * operator is told to install the extension.
      *
      * @param   array{uid?: int, raw?: string}  $message
      * @param   array<string, int>              $summary  Mutated in place.
@@ -96,18 +106,23 @@ final class Ingestor
      */
     public function ingestMessage(array $message, ?int $sourceId, int $forcedDomainId, array &$summary): string
     {
-        $before = (int) ($summary['imported'] ?? 0);
-        $retry  = false;
+        $before  = (int) ($summary['imported'] ?? 0);
+        $retry   = false;
+        $blocked = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
             try {
                 $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
             } catch (DecoderUnavailableException) {
-                // The host cannot decompress this container (missing PHP zlib or
-                // zip extension). The report is valid, so leave the message in
-                // place: once the extension is installed a later run imports it,
-                // instead of marking a still-unread report processed and lost.
-                $retry = true;
+                // The host cannot decompress this container because the PHP zlib
+                // or zip extension is absent. This is a permanent configuration
+                // problem, not a transient one: leaving the message in place to
+                // retry would pin the import cursor and starve every newer
+                // message behind it. Record it as blocked so the operator is
+                // told to install the extension, and let the caller advance past
+                // it. The report stays in the mailbox and ongoing reports keep
+                // importing once the extension is present.
+                $blocked = true;
                 continue;
             } catch (ArchiveExtractionException) {
                 // A transient scratch-file failure prevented extraction. The
@@ -120,11 +135,21 @@ final class Ingestor
             $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
         }
 
+        if ($blocked) {
+            $summary['blocked'] = (int) ($summary['blocked'] ?? 0) + 1;
+        }
+
         if ($retry) {
             // A transient storage failure: leave the message in place so the
             // next run retries it. Any report already stored from this message
-            // is recognised as a duplicate and skipped on that retry.
+            // is recognised as a duplicate and skipped on that retry. A transient
+            // failure takes precedence over a blocked attachment so a retriable
+            // report on the same message is never advanced past and lost.
             return self::RESULT_RETRY;
+        }
+
+        if ($blocked) {
+            return self::RESULT_BLOCKED;
         }
 
         return (int) ($summary['imported'] ?? 0) > $before ? self::RESULT_NEW : self::RESULT_SKIP;
@@ -473,6 +498,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'records' => 0];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0];
     }
 }

@@ -17,10 +17,13 @@ request attach arbitrary or nonexistent provenance to a report.
 container that cannot be decoded because the host lacks the PHP extension (`gzdecode` / `ZipArchive`)
 throws `DecoderUnavailableException`, whereas genuinely corrupt data returns `[]`. The two paths are
 handled differently: on IMAP ingest `Ingestor::ingestMessage()` catches the exception and returns
-`RESULT_RETRY`, so the message is left unread and re-imported once the extension is installed instead
-of being marked `\Seen` and lost; on upload `ingestFile()` lets it propagate so `IngestController`
-shows the concrete requirement (`COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE`) rather than a generic
-failure.
+`RESULT_BLOCKED` — a *permanent* condition (unlike a transient `RESULT_RETRY`) so the client advances
+past it instead of pinning the cursor, which would let one undecodable container starve every newer
+message behind it forever. The run is counted (`stats['blocked']`) and recorded with a `blocked`
+status plus a `warning` flash (`COM_DMARCREPORTS_INGEST_BLOCKED`) naming the missing extension, so the
+operator installs it and re-runs; on upload `ingestFile()` lets the exception propagate so
+`IngestController` shows the concrete requirement (`COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE`)
+rather than a generic failure.
 
 ## IMAP client (`ImapClient`)
 
@@ -62,8 +65,10 @@ Streaming design (do not revert to loading all messages into an array):
   `Ingestor::ingestMessage()` returns a **`RESULT_*` string**, not a boolean: `RESULT_NEW`
   (stored a report) and `RESULT_SKIP` (duplicate or unparseable) are both advanced, while
   `RESULT_RETRY` (a transient failure, e.g. the DB transaction could not commit) leaves the
-  message untouched so the next run retries it. The callback advances on anything except
-  `RESULT_RETRY`.
+  message untouched so the next run retries it. `RESULT_BLOCKED` (a permanent failure, e.g. a
+  compressed container the host cannot decode) is **also advanced** — counted as `stats['blocked']`
+  and surfaced to the operator — so it cannot pin the cursor and starve newer messages. The callback
+  advances on everything except `RESULT_RETRY`.
 - The cursor is scoped to one mailbox. `SourceModel::save()` resets it (via `SourceIdentity`) when
   any identity field (`protocol`, `host`, `port`, `security`, `username`, `folder`) changes, and
   `IngestController::recordRun()` re-checks the identity under a `SourceLock` row lock before

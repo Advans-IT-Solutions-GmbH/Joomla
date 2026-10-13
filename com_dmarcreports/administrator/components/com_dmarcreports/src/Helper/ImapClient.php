@@ -150,7 +150,7 @@ final class ImapClient
 
         $this->connect($host, $port, $security);
 
-        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => $lastUid];
+        $stats = ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => $lastUid];
 
         try {
             $this->login((string) ($config['username'] ?? ''), (string) ($config['password'] ?? ''));
@@ -233,6 +233,20 @@ final class ImapClient
                     // of silently dropping an unstored report.
                     $stats['deferred']++;
                     $progressOpen = false;
+                } elseif ($result === 'blocked') {
+                    // The host cannot decode this container at all (a missing PHP
+                    // extension) — a permanent condition. Unlike a transient
+                    // retry it must NOT pin the cursor: doing so would let one
+                    // undecodable report starve every newer message behind it
+                    // forever. Advance past it (marking it processed for
+                    // housekeeping) and count it so the caller can surface the
+                    // missing requirement to the operator.
+                    $stats['blocked']++;
+                    $touched[] = $id;
+
+                    if ($progressOpen) {
+                        $highWater = $id;
+                    }
                 } elseif ($result === 'new') {
                     $stats['ingested']++;
                     $handled[] = $id;

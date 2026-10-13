@@ -118,7 +118,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => 2],
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 2],
             $result['stats']
         );
 
@@ -159,7 +159,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1, 'uidvalidity' => 0, 'last_uid' => 0],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 0],
             $result['stats']
         );
 
@@ -167,6 +167,39 @@ class ImapClientTest extends TestCase
         // cursor: last_uid stays at 0 and no STORE is sent, so the next run
         // re-fetches it from the same UID range instead of losing it.
         $this->assertStringNotContainsString('UID STORE', $result['sent']);
+    }
+
+    public function testAdvancesPastBlockedMessages(): void
+    {
+        $body1 = "Subject: Report 1\r\n\r\nbody-one";
+        $body2 = "Subject: Report 2\r\n\r\nbody-two";
+
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1 2\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, $body1, 'A0005')
+            . $this->fetchResponse(2, 2, $body2, 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+
+        // UID 1 is blocked (the host cannot decode its container); UID 2 imports.
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0],
+            static fn (array $m): string => $m['uid'] === 1 ? 'blocked' : 'new'
+        );
+
+        // Unlike a transient retry, a blocked message does not pin the cursor: it
+        // is counted, flagged \Seen and the high-water mark advances past it to
+        // UID 2, so a single undecodable report cannot starve the newer one.
+        $this->assertSame(
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 1, 'uidvalidity' => 0, 'last_uid' => 2],
+            $result['stats']
+        );
+
+        $this->assertStringContainsString('UID STORE 1,2 +FLAGS.SILENT (\\Seen)', $result['sent']);
     }
 
     public function testRejectsTruncatedLiteralBody(): void
@@ -252,7 +285,7 @@ class ImapClientTest extends TestCase
 
         $this->assertSame(0, $called);
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0, 'uidvalidity' => 0, 'last_uid' => 1],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 1],
             $result['stats']
         );
 

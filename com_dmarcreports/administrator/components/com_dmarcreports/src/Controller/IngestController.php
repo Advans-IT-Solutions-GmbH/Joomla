@@ -92,20 +92,37 @@ class IngestController extends BaseController
             // by the ingestor, so this cannot double-count.
             $summary['skipped'] += (int) ($stats['transport_skipped'] ?? 0);
 
+            // A blocked report (a compressed container the host cannot decode
+            // because a PHP extension is missing) is a permanent, actionable
+            // condition. The client advanced past it so it did not starve newer
+            // messages; record the run as blocked rather than a clean success and
+            // surface a concrete requirement so the operator installs the
+            // extension instead of seeing an "ok" run that imported nothing.
+            $blocked   = (int) ($summary['blocked'] ?? 0);
+            $message   = $this->summaryText($summary);
+            $status    = 'ok';
+            $flashType = 'message';
+
+            if ($blocked > 0) {
+                $status    = 'blocked';
+                $flashType = 'warning';
+                $message  .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_BLOCKED', $blocked);
+            }
+
             // Persist the component-owned import cursor returned by the run so
             // the next poll resumes above the last fully processed UID instead
             // of depending on the mailbox \Seen state. Only a successful run
             // advances it; the error path below leaves the stored cursor intact.
             $this->recordRun(
                 $sourceId,
-                'ok',
-                $this->summaryText($summary),
+                $status,
+                $message,
                 (int) ($stats['uidvalidity'] ?? 0),
                 (int) ($stats['last_uid'] ?? 0),
                 $polledIdentity
             );
 
-            $this->setRedirect($redirect, $this->summaryText($summary), 'message');
+            $this->setRedirect($redirect, $message, $flashType);
         } catch (\Throwable $e) {
             $this->recordRun($sourceId, 'error', Text::_('COM_DMARCREPORTS_INGEST_FAILED'));
             $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_INGEST_FAILED'), 'error');
