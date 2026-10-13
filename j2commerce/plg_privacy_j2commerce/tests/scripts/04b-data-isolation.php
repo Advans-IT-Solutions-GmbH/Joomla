@@ -1435,6 +1435,8 @@ class DataIsolationTest
             // A case pair newer than the database case tables (Georgian Mtavruli, Unicode 11).
             $georgianAddress            = "\u{1C90}-georgian-" . $suffix . '@example.com';
             $orders['georgian_expired'] = $this->insertGuestTestOrder('COLL-GEO-E-' . $suffix, 0, $georgianAddress, $expired, 'Gela');
+            // Imported with tabs around it: PHP trim() removes them, SQL TRIM() does not.
+            $orders['tab_expired'] = $this->insertGuestTestOrder('COLL-TAB-E-' . $suffix, 0, "\tTab.Kunde-" . $suffix . "@example.com\t", $expired, 'Tina');
 
             $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
             $plugin->setDatabase($this->db);
@@ -1515,6 +1517,14 @@ class DataIsolationTest
             $umlautOrder = $this->loadGuestTestOrder($orders['umlaut_expired']);
             $this->test('Stored ÜBER.KUNDE@ (non-ASCII upper case): the request for über.kunde@ anonymizes it',
                 $umlautOrder && $umlautOrder->user_email === 'anonymized@deleted.invalid', json_encode($umlautOrder, JSON_UNESCAPED_UNICODE));
+
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest('tab.kunde-' . $suffix . '@example.com'),
+                'user'    => null,
+            ]));
+            $tabOrder = $this->loadGuestTestOrder($orders['tab_expired']);
+            $this->test('Stored address with tabs around it: the request without them anonymizes it',
+                $tabOrder && $tabOrder->user_email === 'anonymized@deleted.invalid', json_encode($tabOrder));
 
             if (mb_strtolower("\u{1C90}", 'UTF-8') === "\u{10D0}") {
                 $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [

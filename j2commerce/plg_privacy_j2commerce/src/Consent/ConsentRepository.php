@@ -155,13 +155,16 @@ final class ConsentRepository
     }
 
     /**
-     * SQL condition: $expression contains a non-ASCII character (more bytes than characters).
+     * SQL condition: $expression contains a character whose comparison the database cannot be
+     * trusted with, so the value is always a candidate: a non-ASCII character (more bytes than
+     * characters) or a control character (tab, line break, NUL: PHP's trim() removes them, SQL
+     * TRIM() only removes spaces).
      */
     private static function nonAsciiCondition(DatabaseInterface $db, string $expression): string
     {
         return self::isPostgres($db)
-            ? 'OCTET_LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ')'
-            : 'LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ')';
+            ? '(OCTET_LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ') OR ' . $expression . " ~ '[[:cntrl:]]')"
+            : '(LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ') OR ' . $expression . " REGEXP '[[:cntrl:]]')";
     }
 
     /**
