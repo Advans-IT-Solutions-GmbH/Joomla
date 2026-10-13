@@ -2282,7 +2282,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function handleAccountTask($app, string $task): array
     {
-        if (!Session::checkToken('get') && !Session::checkToken()) {
+        if (!$this->hasValidToken($app)) {
             return ['success' => false, 'message' => Text::_('JINVALID_TOKEN')];
         }
 
@@ -2298,6 +2298,25 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             default:
                 return ['success' => false, 'message' => 'Invalid task'];
         }
+    }
+
+    /**
+     * Whether the request carries the form token of the current session: X-CSRF-Token header,
+     * POST field or query parameter (the address script sends it in the query).
+     *
+     * Session::checkToken() is not used: for a new session (a request without a session cookie)
+     * it redirects with 303 to Route::_('index.php'). The site router merges the com_ajax query
+     * into that URL and Route::_() escapes & as &amp;, so the parameters break on every hop and
+     * the client runs into a redirect loop instead of getting the JSON error.
+     */
+    protected function hasValidToken($app): bool
+    {
+        $input = $app->getInput();
+        $token = Session::getFormToken();
+
+        return hash_equals($token, (string) $input->server->get('HTTP_X_CSRF_TOKEN', '', 'alnum'))
+            || $input->post->get($token, '', 'alnum') !== ''
+            || $input->get->get($token, '', 'alnum') !== '';
     }
 
     // =========================================================================

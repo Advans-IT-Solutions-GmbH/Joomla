@@ -61,7 +61,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `onPrivacyExportRequest` | Collect J2Commerce data for export |
 | `onPrivacyCanRemoveData` | Does not block for retention reasons (orders within the retention period are kept and reported; lifetime-license orders keep only their e-mail, provisional); only exception: Joomla found an account of a different address (`muller@` for `müller@`), see the e-mail comparison decision |
 | `onPrivacyRemoveData` | Anonymize/delete data |
-| `onAjaxJ2commercePrivacy` | Address deletion (`task=deleteAddress`, logged-in, JSON) and the confirmation page for privacy requests without login (`task=confirmRequest`, HTML); results go through `$event->addResult()` |
+| `onAjaxJ2commercePrivacy` | Address deletion (`task=deleteAddress`, logged-in, JSON) and the confirmation page for privacy requests without login (`task=confirmRequest`, HTML); results go through `$event->addResult()`. The form token is checked by the plugin itself (`hasValidToken()`: X-CSRF-Token header, POST field or query parameter, as AJAX Forms), **never** with `Session::checkToken()`: for a request without session cookie that redirects with 303 to `Route::_('index.php')`, the router merges the com_ajax query into it with `&amp;`, and every hop loops (dev check 13.10.2026). Plugin classes call `Route::_()` with `xhtml=false`; 04b checks both statically |
 
 See `references/architecture.md` for full details.
 
