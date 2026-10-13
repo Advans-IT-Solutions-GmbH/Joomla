@@ -1,0 +1,180 @@
+name: Release - DMARC Reports MTA-STS Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force version bump (leave empty for auto-detect from commits)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    name: Prepare Release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version bump
+        id: version
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: |
+          TAG_PREFIX="system-dmarcmtasts-v"
+          XML_FILE="plg_system_dmarcmtasts/dmarcmtasts.xml"
+          EXT_PATH="plg_system_dmarcmtasts/"
+
+          CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          BUMP="$VERSION_BUMP"
+
+          if [ -z "$BUMP" ]; then
+            LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
+
+            if [ -n "$LAST_TAG" ]; then
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
+            else
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
+            fi
+
+            if [ -z "$SUBJECTS" ]; then
+              echo "No commits for this extension since last tag — skipping"
+              echo "bump=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            if echo "$SUBJECTS" | grep -qiE '^[a-z]+(\(.+\))?!:' || echo "$BODIES" | grep -qiE '^BREAKING[ -]CHANGE:'; then
+              BUMP="major"
+            elif echo "$SUBJECTS" | grep -qiE '^feat(\(.+\))?:'; then
+              BUMP="minor"
+            elif echo "$SUBJECTS" | grep -qiE '^fix(\(.+\))?:'; then
+              BUMP="patch"
+            else
+              echo "No conventional commit found — skipping"
+              echo "bump=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW="$MAJOR.$MINOR.$PATCH"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Version: $CURRENT → $NEW ($BUMP)"
+
+      - name: Update version in files
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          DATE=$(date +%Y-%m)
+          cd plg_system_dmarcmtasts
+          echo "$VERSION" > VERSION
+          sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" build.env
+          sed -i \
+            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+            dmarcmtasts.xml
+
+      - name: Build extension
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          cd plg_system_dmarcmtasts
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Find package file
+        if: steps.version.outputs.bump != 'none'
+        id: package
+        run: |
+          cd plg_system_dmarcmtasts
+          PACKAGE=$(ls -1 plg_system_dmarcmtasts_*.zip | head -1)
+          echo "file=$PACKAGE" >> $GITHUB_OUTPUT
+
+      - name: Update update.xml
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          PACKAGE="${{ steps.package.outputs.file }}"
+          cat > plg_system_dmarcmtasts/updates/update.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <updates>
+              <update>
+                  <name>DMARC Reports MTA-STS Policy</name>
+                  <description>System plugin that serves the MTA-STS policy for DMARC Reports</description>
+                  <element>dmarcmtasts</element>
+                  <type>plugin</type>
+                  <folder>system</folder>
+                  <client>site</client>
+                  <version>$VERSION</version>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_system_dmarcmtasts</infourl>
+                  <downloads>
+                      <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-dmarcmtasts-v$VERSION/$PACKAGE</downloadurl>
+                  </downloads>
+                  <tags>
+                      <tag>stable</tag>
+                  </tags>
+                  <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+                  <php_minimum>8.1</php_minimum>
+              </update>
+          </updates>
+          EOF
+
+      - name: Create release PR
+        if: steps.version.outputs.bump != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          BRANCH="release/system-dmarcmtasts-v${VERSION}"
+          TITLE="release: system-dmarcmtasts v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main 2>/dev/null || true
+          git switch -C "$BRANCH" origin/main
+          git add plg_system_dmarcmtasts/
+          if git diff --staged --quiet; then
+            echo "::notice::No version file changes detected; no release PR was opened."
+            exit 0
+          fi
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+          PR_BODY=$'Automated release version bump for `system-dmarcmtasts`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
+          gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING_PR" ]; then
+            gh pr edit "$EXISTING_PR" --title "$TITLE" --body "$PR_BODY" --add-label release || true
+            echo "::notice::Updated existing release PR #$EXISTING_PR"
+          else
+            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")
+            gh pr edit "$PR_URL" --add-label release || true
+            echo "::notice::Opened release PR: $PR_URL"
+          fi
+
+      - name: No release needed
+        if: steps.version.outputs.bump == 'none'
+        run: echo "::notice::No version bump warranted; no release PR was opened."

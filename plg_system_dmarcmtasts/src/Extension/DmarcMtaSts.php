@@ -12,6 +12,7 @@ namespace Advans\Plugin\System\DmarcMtaSts\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
+use Advans\Plugin\System\DmarcMtaSts\Support\PolicyRequest;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\CMSPlugin;
@@ -31,14 +32,6 @@ use Joomla\Event\SubscriberInterface;
  */
 final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
 {
-    /**
-     * The well-known path an MTA-STS policy is served from (RFC 8461 §3.3).
-     *
-     * @var string
-     * @since 1.0.0
-     */
-    private const WELL_KNOWN_PATH = '/.well-known/mta-sts.txt';
-
     /**
      * @return string[]
      *
@@ -70,19 +63,13 @@ final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
         }
 
         $uri  = Uri::getInstance();
-        $path = $uri->getPath();
 
-        if (substr($path, -\strlen(self::WELL_KNOWN_PATH)) !== self::WELL_KNOWN_PATH) {
+        $domain = PolicyRequest::domainFor($uri->getHost(), $uri->getPath());
+
+        if ($domain === null) {
             return;
         }
 
-        $host = strtolower($uri->getHost());
-
-        if (strncmp($host, 'mta-sts.', 8) !== 0) {
-            return;
-        }
-
-        $domain = substr($host, 8);
         $params = ComponentHelper::getParams('com_dmarcreports');
 
         if ((int) $params->get('mtasts_enable', 0) !== 1) {
