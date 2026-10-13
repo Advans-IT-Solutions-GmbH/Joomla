@@ -546,7 +546,12 @@ final class ImapClient
             }
 
             if (str_starts_with($line, $tag . ' ')) {
-                $this->assertOk($line, $error);
+                // TLS and login have already succeeded by this point, so a
+                // rejected SELECT means the configured folder is missing or not
+                // accessible — a configuration problem, not an unreachable
+                // server. Classify it as such so the operator is pointed at the
+                // folder setting instead of the connection details.
+                $this->assertOk($line, $error, ImapException::CATEGORY_CONFIG);
                 break;
             }
         }

@@ -90,10 +90,50 @@ class ReportArchiveTest extends TestCase
         }
 
         // Decompresses to just over the ceiling; decompression itself is
-        // bounded, so the payload must be refused rather than fully expanded.
+        // bounded, so the payload must be refused rather than fully expanded and
+        // reported as a size/bomb problem, not mislabelled as the wrong format.
         $payload = gzencode('<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
 
-        $this->assertSame([], ReportArchive::extract($payload, 'bomb.xml.gz'));
+        $this->assertSame([], ReportArchive::extract($payload, 'bomb.xml.gz', $stats));
+        $this->assertSame('bomb', $stats['reason']);
+    }
+
+    public function testCorruptGzipIsReportedAsFormat(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // A gzip magic header followed by garbage is not a decodable stream: it
+        // must be reported as the wrong format, distinct from an oversized bomb.
+        $payload = "\x1f\x8b" . str_repeat("\x00", 64);
+
+        $this->assertSame([], ReportArchive::extract($payload, 'broken.xml.gz', $stats));
+        $this->assertSame('format', $stats['reason']);
+    }
+
+    public function testZipWithOnlyOversizedXmlIsReportedAsBomb(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+
+        // A single XML entry larger than the per-document ceiling (8 MiB): every
+        // candidate report is skipped on size, so the archive must be reported
+        // as a size/bomb problem rather than "not a recognised report".
+        $zip->addFromString('report.xml', '<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $documents = ReportArchive::extract($payload, 'oversized.zip', $stats);
+
+        $this->assertSame([], $documents);
+        $this->assertSame('bomb', $stats['reason']);
     }
 
     public function testZipDocumentCountIsCapped(): void

@@ -110,19 +110,48 @@ final class ReportArchive
                 );
             }
 
-            // Bound decompression itself (ceiling + 1 byte) so a gzip bomb cannot
-            // expand to an unbounded size before the size check below runs.
-            $data = @gzdecode($payload, self::MAX_BYTES + 1);
+            // Decompress as a bounded stream so an oversized gzip is reported as
+            // a size-limit (bomb) rather than being indistinguishable from a
+            // corrupt stream. gzdecode()'s length cap returns false once the
+            // ceiling is crossed, which cannot tell "too big" from "malformed";
+            // feeding the input through an inflate context in chunks lets the
+            // accumulated output size be checked explicitly while still bounding
+            // memory, so the two failure modes stay distinct.
+            $context = inflate_init(ZLIB_ENCODING_GZIP);
 
-            if ($data === false) {
-                // Not a decodable gzip stream: corrupt or not actually gzip.
+            if ($context === false) {
                 $stats['reason'] = 'format';
 
                 return [];
             }
 
-            if (\strlen($data) > self::MAX_BYTES) {
-                $stats['reason'] = 'bomb';
+            $data   = '';
+            $length = \strlen($payload);
+
+            for ($offset = 0; $offset < $length; $offset += 65536) {
+                $isLast = ($offset + 65536) >= $length;
+                $out    = @inflate_add($context, substr($payload, $offset, 65536), $isLast ? ZLIB_FINISH : ZLIB_SYNC_FLUSH);
+
+                if ($out === false) {
+                    // Corrupt or not actually a gzip stream.
+                    $stats['reason'] = 'format';
+
+                    return [];
+                }
+
+                $data .= $out;
+
+                if (\strlen($data) > self::MAX_BYTES) {
+                    $stats['reason'] = 'bomb';
+
+                    return [];
+                }
+            }
+
+            if (inflate_get_status($context) !== ZLIB_STREAM_END) {
+                // The input ended before the gzip stream completed: truncated or
+                // malformed rather than oversized.
+                $stats['reason'] = 'format';
 
                 return [];
             }
@@ -182,8 +211,9 @@ final class ReportArchive
             );
         }
 
-        $documents = [];
-        $total     = 0;
+        $documents   = [];
+        $total       = 0;
+        $sizeLimited = false;
 
         try {
             $written = file_put_contents($tmp, $payload);
@@ -227,7 +257,7 @@ final class ReportArchive
 
                 $entry = $zip->statIndex($i);
 
-                if ($entry === false || $entry['size'] > self::MAX_BYTES) {
+                if ($entry === false) {
                     continue;
                 }
 
@@ -240,12 +270,24 @@ final class ReportArchive
                     continue;
                 }
 
+                // A single XML report larger than the per-document ceiling is a
+                // size-limit skip, not a wrong-format upload. Record it so an
+                // archive whose only reports are oversized is reported to the
+                // operator as a size/bomb problem rather than "not a report".
+                if ((int) $entry['size'] > self::MAX_BYTES) {
+                    $sizeLimited = true;
+
+                    continue;
+                }
+
                 // Bound the cumulative uncompressed size across the XML reports
                 // that are actually extracted, so a zip packing many small report
                 // files cannot exhaust memory. Skip — rather than stop at — an XML
                 // entry that would overflow the budget, so a later, smaller report
                 // in the same archive can still be processed.
                 if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
+                    $sizeLimited = true;
+
                     continue;
                 }
 
@@ -264,9 +306,11 @@ final class ReportArchive
         }
 
         if ($documents === [] && $stats['reason'] === '') {
-            // A readable archive that held no usable XML report is a wrong-format
-            // upload from the operator's point of view.
-            $stats['reason'] = 'format';
+            // No usable XML report came out. Distinguish a size/bomb skip (every
+            // candidate XML entry was over the per-document or cumulative ceiling)
+            // from a genuine wrong-format upload, so the operator gets the right
+            // guidance instead of a blanket "not a recognised report".
+            $stats['reason'] = $sizeLimited ? 'bomb' : 'format';
         }
 
         return $documents;

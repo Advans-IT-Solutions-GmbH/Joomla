@@ -107,7 +107,7 @@ class DomainTable extends Table
     public function store($updateNulls = false): bool
     {
         try {
-            return parent::store($updateNulls);
+            $result = parent::store($updateNulls);
         } catch (\RuntimeException $e) {
             if ($this->isDuplicateKeyError($e)) {
                 $this->setError(Text::_('COM_DMARCREPORTS_DOMAIN_ERROR_DUPLICATE'));
@@ -117,6 +117,18 @@ class DomainTable extends Table
 
             throw $e;
         }
+
+        // On the supported Joomla 5.4/6 range Table::store() uses the legacy
+        // error mode by default: it catches the database exception, records the
+        // raw message with setError() and returns false instead of throwing. So
+        // the duplicate-key race normally lands here, not in the catch above —
+        // inspect the stored error and translate it to the same localized
+        // "already monitored" message rather than leaking the raw SQL error.
+        if ($result === false && $this->messageLooksLikeDuplicate((string) $this->getError())) {
+            $this->setError(Text::_('COM_DMARCREPORTS_DOMAIN_ERROR_DUPLICATE'));
+        }
+
+        return $result;
     }
 
     /**
@@ -139,11 +151,23 @@ class DomainTable extends Table
                 return true;
             }
 
-            if (stripos($throwable->getMessage(), 'Duplicate entry') !== false) {
+            if ($this->messageLooksLikeDuplicate($throwable->getMessage())) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Whether an error message is a MySQL duplicate-entry (UNIQUE) violation,
+     * used to translate both the thrown exception and the legacy false-return
+     * error string Table::store() records.
+     */
+    private function messageLooksLikeDuplicate(string $message): bool
+    {
+        return stripos($message, 'Duplicate entry') !== false
+            || stripos($message, '1062') !== false
+            || stripos($message, '23000') !== false;
     }
 }
