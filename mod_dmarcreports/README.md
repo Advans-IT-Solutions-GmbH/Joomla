@@ -12,7 +12,7 @@ Administrator control-panel module that surfaces the DMARC Reports summary and t
 
 The [DMARC Reports Component](../com_dmarcreports) collects and analyses DMARC aggregate reports inside your [Joomla](https://github.com/joomla/joomla-cms) installation. This module brings the headline result of that analysis to the administrator control panel (the `cpanel` dashboard), so the state of your mail authentication is visible without opening the component.
 
-It is a thin presenter: every figure and every recommendation is produced by the component's own `Dashboard` model and `ActionPresenter`, so the numbers and wording match the component exactly and no query logic is duplicated. The module runs entirely on your own server and transmits no data; the only outbound traffic it causes is Joomla's own periodic extension-update check against the registered update server on GitHub, which carries version metadata only.
+It is a thin presenter: every figure and every recommendation comes from the component's own `Dashboard` model and `ActionPresenter`, so the data and wording stay consistent with the component and no query logic is duplicated. The volume, pass-rate and action figures are the component's own values; the would-be-rejected share is a percentage this module derives from the same counts (the component shows it as an absolute message count). The module runs entirely on your own server and transmits no data; the only outbound traffic it causes is Joomla's own periodic extension-update check against the registered update server on GitHub, which carries version metadata only.
 
 When the component is not installed, disabled, or the current user is not allowed to manage it, the module shows a short notice instead of failing — it never produces a fatal error on the dashboard.
 
@@ -22,7 +22,7 @@ When the component is not installed, disabled, or the current user is not allowe
 - Multi-domain summary: monitored domains, total messages, SPF/DKIM pass rate and would-be-rejected share
 - Top Action Center items, each with a severity label and the owning domain, capped by a configurable limit
 - A "more actions" count and an **Open dashboard** button that links straight into the component
-- Reuses the component's `Dashboard` model and `ActionPresenter` — identical figures and wording, no duplicated queries
+- Reuses the component's `Dashboard` model and `ActionPresenter` — data and wording from the same source, no duplicated queries (the would-be-rejected share is shown as a derived percentage)
 - ACL-aware: respects the `com_dmarcreports` `core.manage` permission
 - Graceful degradation: a translated notice when the component is absent, disabled or not authorised
 - Administrator-only; no site part is shipped
