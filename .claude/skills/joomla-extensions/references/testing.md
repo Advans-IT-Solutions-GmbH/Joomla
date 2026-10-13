@@ -169,6 +169,7 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | Product Compare | `J2COMMERCE_STACK=j6 CONTAINER_NAME=plg_j2commerce_productcompare_j6_test ./run-tests.sh all` |
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
 | DMARC Reports | `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all` |
+| DMARC Reports Dashboard Module | `CONTAINER_NAME=mod_dmarcreports_j6_test ./run-tests.sh all` |
 | Appointments | `CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all` |
 | Appointments MariaDB (`docker-compose.mariadb.yml`, schema-sensitive suites only) | `CONTAINER_NAME=com_appointments_mariadb_test ./run-tests.sh structure` |
 | AJAX Forms | `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all` |
@@ -252,7 +253,7 @@ Notable test details:
   `.github/scripts/check-sql-alignment.php`), and manually (`workflow_dispatch`).
 - **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
-  `shared-install-messages.php` are used by all eight extensions and start all eight.
+  `shared-install-messages.php` are used by all nine extensions and start all nine.
   `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
   are used only by AJAX Forms, OSMap and Privacy (update lane and production-like lane) and start
   only those three. `shared/tests/Dockerfile.template`, `shared/tests/scripts/docker-entrypoint.sh`

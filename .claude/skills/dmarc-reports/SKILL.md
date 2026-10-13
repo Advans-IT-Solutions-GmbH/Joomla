@@ -1,9 +1,12 @@
 ---
 name: dmarc-reports
-description: Deep knowledge of the com_dmarcreports administrator component. Use when working on DMARC aggregate-report ingestion (IMAP or file upload), the RFC 7489 XML parser, the data model, the dashboard metrics, or the Action Center recommendation logic.
+description: Deep knowledge of the com_dmarcreports administrator component and its companion mod_dmarcreports dashboard module. Use when working on DMARC aggregate-report ingestion (IMAP or file upload), the RFC 7489 XML parser, the data model, the dashboard metrics, the Action Center recommendation logic, or the backend cpanel dashboard module.
 triggers:
   - dmarc
   - com_dmarcreports
+  - mod_dmarcreports
+  - dashboard module
+  - cpanel module
   - aggregate report
   - RFC 7489
   - SPF
@@ -22,6 +25,7 @@ references:
   - references/ingestion.md
   - references/action-center.md
   - references/testing.md
+  - references/module.md
 ---
 
 # DMARC Reports — Domain Knowledge
@@ -73,6 +77,16 @@ Five `#__dmarc_*` tables (install/uninstall SQL in `administrator/components/com
 
 Controllers (`src/Controller/`): `Display`, `Ingest`, `Export`, `Actions`, `Domain(s)`, `Source(s)`.
 
+## Companion Module (`mod_dmarcreports`)
+
+A separate top-level administrator module (`mod_dmarcreports/`, tag prefix `moddmarcreports-v*`)
+renders the DMARC summary and top Action Center items on the Joomla backend `cpanel` dashboard.
+It is a thin presenter over this component: its helper boots the `DashboardModel`
+(`getTotals()` / `getActions()`) and reuses `ActionPresenter`, so no query logic is duplicated.
+It respects `com_dmarcreports` ACL and degrades gracefully (states `ok` / `unavailable` /
+`unauthorised` / `error`) when the component is absent, disabled or unreadable. Full detail:
+`references/module.md`.
+
 ## Conventions
 
 Follows the repo-wide rules — see the `joomla-extensions` skill (build/test/release, manifest,
@@ -85,5 +99,6 @@ Follows the repo-wide rules — see the `joomla-extensions` skill (build/test/re
 
 See `references/architecture.md` for the MVC wiring and data model, `references/dmarc-domain.md`
 for the RFC 7489 / policy-rollout background, `references/ingestion.md` for the IMAP client and
-parser, `references/action-center.md` for the recommendation logic, and `references/testing.md`
-for the test suites and validation gates.
+parser, `references/action-center.md` for the recommendation logic, `references/testing.md`
+for the test suites and validation gates, and `references/module.md` for the companion backend
+dashboard module `mod_dmarcreports`.

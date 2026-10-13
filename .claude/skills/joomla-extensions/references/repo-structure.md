@@ -11,6 +11,7 @@
 | Cleanup | `j2commerce/com_j2store_cleanup/` | component | Remove legacy J2Store extensions |
 | AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
 | DMARC Reports | `com_dmarcreports/` | component | DMARC aggregate-report analysis (multi-domain, IMAP/file ingestion, action dashboard) |
+| DMARC Reports Dashboard Module | `mod_dmarcreports/` | module (administrator) | Backend cpanel module showing the DMARC multi-domain summary and top Action Center items; reads `com_dmarcreports` |
 | Appointments | `com_appointments/` | component | Self-hosted appointment scheduling (administrator and site part, booking pages, iCalendar, calendar feeds) |
 
 ## Shared Infrastructure
@@ -103,6 +104,9 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `dmarc-reports.yml` | push/PR to `main` (`com_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `moddmarcreports.yml` | push/PR to `main` (`mod_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
+| `release-moddmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-moddmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `appointments.yml` | push/PR to `main` (`com_appointments/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-appointments.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-appointments.yml` | release PR merged | Stage 2: package, tag, GitHub Release |

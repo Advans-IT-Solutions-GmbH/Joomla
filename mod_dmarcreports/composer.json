@@ -1,0 +1,22 @@
+{
+    "name": "advans/mod-dmarcreports",
+    "description": "DMARC Reports dashboard administrator module for Joomla",
+    "type": "joomla-module",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": "^8.1"
+    },
+    "require-dev": {
+        "joomla/registry": "^3.0",
+        "phpunit/phpunit": "^10.5"
+    },
+    "scripts": {
+        "build": "./build.sh",
+        "test": "phpunit",
+        "test:unit": "phpunit --testsuite=Unit"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
