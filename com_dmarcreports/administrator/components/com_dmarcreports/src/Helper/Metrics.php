@@ -97,7 +97,7 @@ final class Metrics
     {
         $domain = $this->domainRow($domainId);
 
-        $latestPolicy = $this->latestPolicy($domainId);
+        $latestPolicy = $this->latestPolicy($domainId, (string) ($domain['domain'] ?? ''));
 
         $metrics = [
             'domain_id'          => $domainId,
@@ -552,17 +552,27 @@ final class Metrics
     }
 
     /**
-     * The policy disposition and percentage from the most recent stored report,
-     * ordered by end date then id. The percentage matters for the rollout
-     * guidance: p=reject with pct<100 only subjects that share of mail to the
-     * policy, so it must not be presented as full enforcement.
+     * The effective current policy disposition and percentage from the most
+     * recent stored report, ordered by end date then id. RFC 7489 resolves the
+     * disposition from the subdomain policy (sp) when the DMARC record was found
+     * at an organisational parent rather than the monitored subdomain itself,
+     * falling back to the domain policy (p) otherwise. The percentage matters
+     * for the rollout guidance: p=reject with pct<100 only subjects that share
+     * of mail to the policy, so it must not be presented as full enforcement.
      *
      * @return  array{p: string, pct: int}
      */
-    private function latestPolicy(int $domainId): array
+    private function latestPolicy(int $domainId, string $monitoredDomain): array
     {
         $query = $this->query()
-            ->select([$this->db->quoteName('policy_p'), $this->db->quoteName('policy_pct')])
+            ->select(
+                [
+                    $this->db->quoteName('policy_p'),
+                    $this->db->quoteName('policy_pct'),
+                    $this->db->quoteName('policy_sp'),
+                    $this->db->quoteName('policy_domain'),
+                ]
+            )
             ->from($this->db->quoteName('#__dmarc_reports'))
             ->where($this->db->quoteName('domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
@@ -576,7 +586,46 @@ final class Metrics
             return ['p' => '', 'pct' => 100];
         }
 
-        return ['p' => (string) $row['policy_p'], 'pct' => (int) $row['policy_pct']];
+        return [
+            'p'   => self::effectivePolicy(
+                $monitoredDomain,
+                (string) $row['policy_domain'],
+                (string) $row['policy_p'],
+                (string) $row['policy_sp']
+            ),
+            'pct' => (int) $row['policy_pct'],
+        ];
+    }
+
+    /**
+     * The policy disposition that actually governs the monitored domain. When a
+     * report's published policy domain is an organisational parent of the
+     * monitored subdomain, RFC 7489 applies the subdomain policy (sp) to that
+     * subdomain, falling back to the domain policy (p) when sp is absent. A
+     * report published at the monitored domain itself (or any domain that is not
+     * a parent of it) is governed by p.
+     */
+    private static function effectivePolicy(
+        string $monitoredDomain,
+        string $policyDomain,
+        string $p,
+        string $sp
+    ): string {
+        $monitored = strtolower(trim($monitoredDomain));
+        $published = strtolower(trim($policyDomain));
+        $sp        = trim($sp);
+
+        if (
+            $sp !== ''
+            && $published !== ''
+            && $monitored !== ''
+            && $published !== $monitored
+            && str_ends_with($monitored, '.' . $published)
+        ) {
+            return $sp;
+        }
+
+        return $p;
     }
 
     /**
@@ -629,11 +678,13 @@ final class Metrics
     }
 
     /**
-     * The latest published policy disposition and percentage for every supplied
+     * The latest effective policy disposition and percentage for every supplied
      * domain, keyed by domain id, resolved in a single groupwise-maximum query
      * (newest by date_end, ties broken by the highest id). Portable across MySQL
      * and PostgreSQL: it joins each report to the per-domain maximum date_end and
-     * resolves id ties in PHP rather than using a window function.
+     * resolves id ties in PHP rather than using a window function. The monitored
+     * domain name is joined in so the subdomain policy (sp) can be resolved the
+     * same way as the single-domain latestPolicy() path.
      *
      * @param   array<int, int>  $domainIds
      *
@@ -665,6 +716,9 @@ final class Metrics
                     $this->db->quoteName('r.id'),
                     $this->db->quoteName('r.policy_p'),
                     $this->db->quoteName('r.policy_pct'),
+                    $this->db->quoteName('r.policy_sp'),
+                    $this->db->quoteName('r.policy_domain'),
+                    $this->db->quoteName('d.domain', 'monitored_domain'),
                 ]
             )
             ->from($this->db->quoteName('#__dmarc_reports', 'r'))
@@ -673,6 +727,11 @@ final class Metrics
                 '(' . $inner . ') AS ' . $this->db->quoteName('m'),
                 $this->db->quoteName('m.domain_id') . ' = ' . $this->db->quoteName('r.domain_id')
                     . ' AND ' . $this->db->quoteName('r.date_end') . ' = ' . $this->db->quoteName('m.max_end')
+            )
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_domains', 'd'),
+                $this->db->quoteName('d.id') . ' = ' . $this->db->quoteName('r.domain_id')
             )
             ->where($this->db->quoteName('r.domain_id') . ' IN (' . $in . ')')
             ->order($this->db->quoteName('r.domain_id') . ' ASC, ' . $this->db->quoteName('r.id') . ' ASC');
@@ -684,7 +743,12 @@ final class Metrics
         // date, mirroring the per-domain "date_end DESC, id DESC" tiebreak.
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $map[(int) $row['domain_id']] = [
-                'p'   => (string) $row['policy_p'],
+                'p'   => self::effectivePolicy(
+                    (string) $row['monitored_domain'],
+                    (string) $row['policy_domain'],
+                    (string) $row['policy_p'],
+                    (string) $row['policy_sp']
+                ),
                 'pct' => (int) $row['policy_pct'],
             ];
         }

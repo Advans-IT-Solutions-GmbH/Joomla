@@ -44,6 +44,14 @@ Center uses them, otherwise it falls back to the lifetime `total` / pass rate / 
 This prevents a single historical failure — which keeps the lifetime `reject_under_p` above zero
 forever — from permanently blocking the next policy step once the current window is clean.
 
+The **current enforcement level** that the rollout decision reads is the *effective* policy, not
+simply the report's `p`. `Metrics::effectivePolicy()` resolves it from the monitored domain and the
+report's `policy_domain`: when a report for a monitored subdomain was published at its
+organizational parent (`policy_domain` is a parent of the monitored name), the subdomain policy
+`sp` applies per RFC 7489 and is used in preference to `p` (falling back to `p` when `sp` is empty).
+Both the single-domain (`latestPolicy()`) and bulk dashboard (`latestPolicyAll()`) paths apply this
+so a subdomain already covered by `sp=reject` is not told to start its rollout from `none`.
+
 `align_source` is driven by `Metrics::unalignedSources()`, which queries failing senders
 independently of the display-oriented `topSources()` top-N list (`GROUP BY source_ip HAVING
 SUM(fail) > 0 ORDER BY fail DESC`). A heavy failing sender ranked below the top 20 by total volume

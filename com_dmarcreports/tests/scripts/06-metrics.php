@@ -177,6 +177,32 @@ class MetricsTest
                 && !in_array('10.0.0.2', $ips, true);
         });
 
+        $this->test('Subdomain inherits the organizational parent sp policy', function () {
+            // A monitored subdomain whose only report was published at the
+            // organizational parent (policy_domain = parent) with p=none but
+            // sp=reject must report reject as the effective current policy, both
+            // in the detail view and the bulk dashboard path.
+            $subId = $this->seedSubdomain('sub.' . self::DOMAIN, self::DOMAIN, 'none', 'reject');
+
+            try {
+                $metrics = new Metrics($this->db);
+                $detail  = $metrics->domainMetrics($subId);
+
+                $bulk = [];
+                foreach ($metrics->domainSummaries() as $row) {
+                    if ((int) ($row['id'] ?? 0) === $subId) {
+                        $bulk = $row;
+                        break;
+                    }
+                }
+
+                return ($detail['current_policy'] ?? '') === 'reject'
+                    && ($bulk['current_policy'] ?? '') === 'reject';
+            } finally {
+                $this->deleteDomain($subId);
+            }
+        });
+
         $this->cleanup();
 
         echo "\n=== Metrics Test Summary ===\n";
@@ -258,6 +284,68 @@ class MetricsTest
             'header_from'  => self::DOMAIN,
         ];
         $this->db->insertObject('#__dmarc_records', $record);
+    }
+
+    private function seedSubdomain(string $domain, string $parent, string $p, string $sp): int
+    {
+        $row = (object) [
+            'domain'          => $domain,
+            'title'           => 'Subdomain',
+            'expected_policy' => 'reject',
+            'published'       => 1,
+            'created'         => gmdate('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__dmarc_domains', $row, 'id');
+        $domainId = (int) $row->id;
+
+        $report = (object) [
+            'domain_id'     => $domainId,
+            'source_id'     => 0,
+            'org_name'      => 'orgSP',
+            'org_email'     => 'reports@orgsp.test',
+            'report_id'     => 'sp-' . $domainId,
+            'report_hash'   => hash('sha256', $domain . '|sp|' . $domainId),
+            'date_begin'    => self::ANCHOR - self::DAY,
+            'date_end'      => self::ANCHOR,
+            'policy_domain' => $parent,
+            'policy_p'      => $p,
+            'policy_sp'     => $sp,
+            'policy_pct'    => 100,
+            'message_count' => 0,
+            'created'       => gmdate('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__dmarc_reports', $report, 'id');
+
+        $record = (object) [
+            'report_id'    => (int) $report->id,
+            'domain_id'    => $domainId,
+            'source_ip'    => '10.0.1.1',
+            'count'        => 10,
+            'disposition'  => 'none',
+            'dkim_result'  => 'pass',
+            'spf_result'   => 'fail',
+            'dkim_aligned' => 1,
+            'spf_aligned'  => 0,
+            'header_from'  => $domain,
+        ];
+        $this->db->insertObject('#__dmarc_records', $record);
+
+        return $domainId;
+    }
+
+    private function deleteDomain(int $id): void
+    {
+        if ($id <= 0) {
+            return;
+        }
+
+        foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
+            $column = $table === '#__dmarc_domains' ? 'id' : 'domain_id';
+            $query  = $this->query()
+                ->delete($this->db->quoteName($table))
+                ->where($this->db->quoteName($column) . ' = ' . (int) $id);
+            $this->db->setQuery($query)->execute();
+        }
     }
 
     private function cleanup(): void
