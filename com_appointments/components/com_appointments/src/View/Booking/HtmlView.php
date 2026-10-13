@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Site\View\Booking;
 
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
+use Joomla\CMS\Factory;
 
 defined('_JEXEC') or die;
 
@@ -18,6 +19,7 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
+        Factory::getApplication()->setHeader('Cache-Control', 'private, no-store', true);
         $this->item = $this->getModel()->getItem();
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
 

@@ -36,7 +36,7 @@ final class BookingInput
         $name = $this->text($input['name'] ?? '', 255);
         $email = $this->text($input['email'] ?? '', 255);
 
-        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if ($name === '' || preg_match('/[\x00-\x1f\x7f]/', $name) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_CONTACT');
         }
 
@@ -126,7 +126,8 @@ final class BookingInput
 
                 if ($value !== '') {
                     $valid = match ($type) {
-                        'text', 'textarea' => true,
+                        'text' => preg_match('/[\x00-\x1f\x7f]/', $value) === 0,
+                        'textarea' => true,
                         'number' => is_numeric($value) && is_finite((float) $value),
                         'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
                         'url' => filter_var($value, FILTER_VALIDATE_URL) !== false

@@ -75,6 +75,64 @@ class BookingController extends BaseController
         return true;
     }
 
+    public function manage(): bool
+    {
+        $token = Session::getFormToken();
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get($token, '', 'alnum') !== '1') {
+            throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
+        }
+        $model = $this->getModel('Manage');
+        $model->getItem();
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $keys = new KeyProvider((string) $this->app->get('secret'));
+        $url = 'index.php?option=com_appointments&view=manage&id=' . $this->input->getInt('id')
+            . '&action=' . $model->action() . '&signature=' . urlencode($model->signature());
+        $month = $this->input->getString('month');
+        $zone = $this->input->getString('timezone');
+        if ($month !== '') {
+            $url .= '&month=' . urlencode($month) . '&timezone=' . urlencode($zone);
+        }
+        $this->setRedirect(Route::_($url, false));
+
+        if (!(new RateLimiter($db, $keys))->allow('manage', $this->input->server->getString('REMOTE_ADDR'), $now, 60, 900)) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 'error');
+            return false;
+        }
+        if ($this->input->post->getInt('confirm') !== 1) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_CONFIRM'), 'error');
+            return false;
+        }
+        $reason = $this->input->post->get('reason', '', 'raw');
+        if (!is_string($reason) || preg_match('//u', $reason) !== 1 || mb_strlen($reason) > 2000 || str_contains($reason, "\0")) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_REASON'), 'error');
+            return false;
+        }
+        $this->app->setUserState('com_appointments.cancel_reason', $reason);
+        $start = UtcTimestamp::parse($this->input->post->getString('start'));
+        if ($model->action() === 'reschedule' && !in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 'error');
+            return false;
+        }
+        if ($model->action() === 'reschedule' && $start === null) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_SLOT'), 'error');
+            return false;
+        }
+
+        try {
+            $model->apply($now, $start, $reason);
+        } catch (SlotTakenException $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_TAKEN'), 'error');
+            return false;
+        } catch (\DomainException $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_STATE'), 'error');
+            return false;
+        }
+        $this->app->setUserState('com_appointments.cancel_reason', null);
+
+        return true;
+    }
+
     private function refuse(int $eventId, string $key): bool
     {
         $this->app->enqueueMessage(Text::_($key), 'error');

@@ -38,6 +38,7 @@ class HtmlView extends BaseHtmlView
         $this->item = $this->getModel()->getItem();
         $this->fields = $this->getModel()->getFields((int) $this->item->id);
         $app = Factory::getApplication();
+        $app->setHeader('Cache-Control', 'private, no-store', true);
         $this->params = ComponentHelper::getParams('com_appointments');
         $this->inputData = (array) $app->getUserState('com_appointments.booking.' . (int) $this->item->id, []);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));

@@ -63,7 +63,9 @@ final class Anonymiser
 
         $booking['anonymised_utc'] = $utcNow->format('Y-m-d H:i:s');
         // A second-granularity row version must change even in the same second.
-        $version = $modified >= $utcNow ? $modified->modify('+1 second') : $utcNow;
+        $version = $modified->getTimestamp() >= $utcNow->getTimestamp()
+            ? $modified->modify('+1 second')
+            : $utcNow;
 
         if (UtcTimestamp::parse($version->format('Y-m-d H:i:s')) === null) {
             throw new \InvalidArgumentException('Booking row version exceeds the timestamp range.');

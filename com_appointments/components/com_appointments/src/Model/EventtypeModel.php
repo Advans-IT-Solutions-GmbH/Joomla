@@ -9,6 +9,8 @@
 namespace Advans\Component\Appointments\Site\Model;
 
 use Advans\Component\Appointments\Administrator\Service\AvailabilityService;
+use Advans\Component\Appointments\Administrator\Service\RateLimiter;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
@@ -54,6 +56,12 @@ class EventtypeModel extends BaseDatabaseModel
 
     public function getSlots(\DateTimeImmutable $now, \DateTimeImmutable $from, \DateTimeImmutable $to): array
     {
+        $app = Factory::getApplication();
+        $keys = new KeyProvider((string) $app->get('secret'));
+        if (!(new RateLimiter($this->getDatabase(), $keys))->allow('slots', $app->getInput()->server->getString('REMOTE_ADDR'), $now, 60, 60)) {
+            throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 429);
+        }
+
         return (new AvailabilityService($this->getDatabase()))->slots((array) $this->getItem(), $now, $from, $to);
     }
 

@@ -25,6 +25,12 @@ final class BookingInputTest extends TestCase
         self::assertArrayNotHasKey('rendered_at', $row);
     }
 
+    public function testMultilineInviteeNameIsRejectedBeforeSaving(): void
+    {
+        $this->expectException(BookingValidationException::class);
+        (new BookingInput())->validate(array_replace($this->input(), ['name' => "Fixture\r\nName"]), [], 'en-GB');
+    }
+
     #[DataProvider('validFields')]
     public function testEveryShippedFieldType(string $type, $value, string $options, $expected): void
     {
@@ -60,6 +66,7 @@ final class BookingInputTest extends TestCase
         yield ['text', [], '[]'];
         yield ['text', '', '[]'];
         yield ['text', str_repeat('a', 256), '[]'];
+        yield ['text', "Two\r\nlines", '[]'];
         yield ['number', 'NaN', '[]'];
         yield ['number', '1e999', '[]'];
         yield ['email', "person@example.test\r\nBcc: other@example.test", '[]'];

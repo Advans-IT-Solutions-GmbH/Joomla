@@ -93,7 +93,7 @@ final class NotificationService
                 if (!$mailer->send()) {
                     throw new NotificationException('Mail delivery was rejected.');
                 }
-            } catch (NotificationException | \PHPMailer\PHPMailer\Exception $e) {
+            } catch (NotificationException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException $e) {
                 // Transport exceptions can contain recipients, URLs or SMTP credentials.
                 // Keep diagnostics deliberately limited to an internal booking id and purpose.
                 Log::add('Appointment notification failed: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');

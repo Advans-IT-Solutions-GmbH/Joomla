@@ -86,6 +86,10 @@
                 />
                 <field name="consent_text" type="textarea" label="COM_APPOINTMENTS_CONFIG_CONSENT" description="COM_APPOINTMENTS_CONFIG_CONSENT_DESC" filter="string" />
                 <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" filter="url" relative="true" />
+                <field name="erase_mode" type="list" label="COM_APPOINTMENTS_CONFIG_ERASE_MODE" description="COM_APPOINTMENTS_CONFIG_ERASE_MODE_DESC" default="anonymise" filter="cmd">
+                    <option value="anonymise">COM_APPOINTMENTS_CONFIG_ERASE_ANONYMISE</option>
+                    <option value="delete">COM_APPOINTMENTS_CONFIG_ERASE_DELETE</option>
+                </field>
             </fieldset>
 
             <fieldset

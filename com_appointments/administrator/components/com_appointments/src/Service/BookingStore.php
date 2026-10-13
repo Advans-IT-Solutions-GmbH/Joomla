@@ -13,6 +13,8 @@ use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\SlotRules;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
+use Advans\Component\Appointments\Administrator\Helper\SignedLink;
+use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -92,10 +94,18 @@ final class BookingStore
 
     }
 
-    public function changeState(int $bookingId, int $state, \DateTimeImmutable $now): array
+    public function changeState(int $bookingId, int $state, \DateTimeImmutable $now, ?SignedLink $links = null, string $signature = '', string $reason = ''): array
     {
         if (!in_array($state, [1, 2], true)) {
             throw new \InvalidArgumentException('Unsupported booking state change.');
+        }
+
+        if ($links !== null && $state !== 2) {
+            throw new \InvalidArgumentException('A public state change can only cancel a booking.');
+        }
+
+        if (preg_match('//u', $reason) !== 1 || mb_strlen($reason) > 2000 || str_contains($reason, "\0")) {
+            throw new \InvalidArgumentException('Invalid cancellation reason.');
         }
 
         $db = $this->db;
@@ -116,6 +126,10 @@ final class BookingStore
             $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
             $booking = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc();
 
+            if ($links !== null && (!$booking || !$links->verify($bookingId, 'cancel', $booking['modified_utc'], $signature))) {
+                throw new InvalidBookingLinkException();
+            }
+
             if (!$booking || $booking['anonymised_utc'] !== null
                 || ($state === 1 && (int) $booking['state'] !== 0)) {
                 throw new \DomainException('The booking cannot make this state transition.');
@@ -124,22 +138,149 @@ final class BookingStore
             if ((int) $booking['state'] === $state) {
                 $db->transactionCommit();
 
-                return $booking;
+                return $booking + ['_changed' => false];
             }
 
             $booking['state'] = $state;
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
-            $row = (object) ['id' => $bookingId, 'state' => $state, 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc']];
+            $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
+            $row = (object) ['id' => $bookingId, 'state' => $state, 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'],
+                'cancel_reason' => $booking['cancel_reason']];
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
 
-            return $booking;
+            return $booking + ['_changed' => true];
         } catch (\Throwable $e) {
             $db->transactionRollback();
 
             throw $e;
         }
+    }
+
+    public function reschedule(int $bookingId, \DateTimeImmutable $start, \DateTimeImmutable $now, ?SignedLink $links = null, string $signature = '', ?string $timezone = null): array
+    {
+        if ($timezone !== null && !in_array($timezone, \DateTimeZone::listIdentifiers(), true)) {
+            throw new \InvalidArgumentException('Invalid rescheduled appointment time zone.');
+        }
+        $db = $this->db;
+        $host = $this->bookingHost($bookingId);
+        $db->transactionStart();
+
+        try {
+            $this->lockHost($host);
+            $booking = $this->lockedBooking($bookingId);
+            if ($links !== null && (!$booking || !$links->verify($bookingId, 'reschedule', $booking['modified_utc'], $signature))) {
+                throw new InvalidBookingLinkException();
+            }
+            if (!$booking || $booking['anonymised_utc'] !== null || !in_array((int) $booking['state'], [0, 1], true)
+                || UtcTimestamp::parse($booking['start_utc']) <= $now) {
+                throw new \DomainException('The appointment cannot be rescheduled.');
+            }
+            $event = $this->lockedEvent((int) $booking['eventtype_id']);
+            if (!$event || (int) $event['host_user_id'] !== $host || (int) $event['published'] !== 1) {
+                throw new SlotTakenException();
+            }
+            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId);
+            if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
+                throw new SlotTakenException();
+            }
+            $end = $start->modify('+' . SlotRules::fromEventType($event)->getDurationSeconds() . ' seconds');
+            if (UtcTimestamp::parse($end->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) === null) {
+                throw new SlotTakenException();
+            }
+            $booking['start_utc'] = $start->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+            $booking['end_utc'] = $end->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+            $booking['sequence'] = (int) $booking['sequence'] + 1;
+            $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
+            $booking['reminder_sent_utc'] = null;
+            $booking['invitee_timezone'] = $timezone ?? $booking['invitee_timezone'];
+            $row = (object) ['id' => $bookingId, 'start_utc' => $booking['start_utc'], 'end_utc' => $booking['end_utc'],
+                'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'reminder_sent_utc' => null,
+                'invitee_timezone' => $booking['invitee_timezone']];
+            $db->updateObject('#__appointments_bookings', $row, 'id', true);
+            $db->transactionCommit();
+
+            return $booking;
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+            if ($this->isSlotDuplicate($e)) {
+                throw new SlotTakenException('', 0, $e);
+            }
+            throw $e;
+        }
+    }
+
+    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = ''): array
+    {
+        if (!in_array($path, ['self_service', 'privacy_request', 'retention', 'admin'], true)
+            || ($path === 'admin' ? $actor === null || $actor < 1 : $actor !== null)
+            || ($path === 'self_service' && $links === null)) {
+            throw new \InvalidArgumentException('Invalid erasure provenance.');
+        }
+        $db = $this->db;
+        $host = $this->bookingHost($bookingId, $links === null);
+        if ($host === 0) {
+            return ['changed' => false, 'notification' => null];
+        }
+        $db->transactionStart();
+
+        try {
+            $this->lockHost($host);
+            $booking = $this->lockedBooking($bookingId);
+            if ($links !== null && (!$booking || !$links->verify($bookingId, 'erase', $booking['modified_utc'], $signature))) {
+                throw new InvalidBookingLinkException();
+            }
+            if (!$booking || $booking['anonymised_utc'] !== null) {
+                $db->transactionCommit();
+
+                return ['changed' => false, 'notification' => null];
+            }
+            $anonymiser = new Anonymiser();
+            $erased = $anonymiser->anonymise($booking, $now);
+            $notification = (int) $booking['state'] !== 2 && (int) $erased['state'] === 2
+                ? $anonymiser->cancellationPayload($erased) : null;
+            if ($delete) {
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $db->setQuery($query->delete($db->quoteName('#__appointments_bookings'))
+                    ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
+            } else {
+                unset($erased['state_active']);
+                $db->updateObject('#__appointments_bookings', (object) $erased, 'id', true);
+            }
+            $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
+                'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
+            $db->insertObject('#__appointments_audit', $audit);
+            $db->transactionCommit();
+
+            return ['changed' => true, 'notification' => $notification];
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+            throw $e;
+        }
+    }
+
+    private function bookingHost(int $bookingId, bool $missingAllowed = false): int
+    {
+        $db = $this->db;
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('host_user_id'))->from($db->quoteName('#__appointments_bookings'))
+            ->where($db->quoteName('id') . ' = ' . $bookingId);
+        $host = (int) $db->setQuery($query)->loadResult();
+        if ($host < 1 && !$missingAllowed) {
+            throw new InvalidBookingLinkException();
+        }
+
+        return $host;
+    }
+
+    private function lockedBooking(int $bookingId): ?array
+    {
+        $db = $this->db;
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
+
+        return $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
     }
 
     public function lockedEvent(int $eventId): ?array

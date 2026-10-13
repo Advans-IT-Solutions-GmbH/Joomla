@@ -22,7 +22,7 @@ final class ModifiedTime
 
         // DATETIME has second precision. Two changes in the same second must
         // still invalidate the links in the previous email.
-        $next = $now > $before ? $now : $before->modify('+1 second');
+        $next = $now->getTimestamp() > $before->getTimestamp() ? $now : $before->modify('+1 second');
         $value = $next->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
         if (UtcTimestamp::parse($value) === null) {

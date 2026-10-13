@@ -91,8 +91,15 @@ The component registers its own update site during installation, so later versio
   attachments. UTC calendar entries retain their UID and increase their sequence on changes.
   Notification failure never discards a saved booking: the page explicitly reports the mail problem.
 
-Still to come: calendar subscription feeds, the signed reschedule, cancel and erasure pages,
-reminders, automatic retention and conferencing integration.
+- **Signed appointment management and erasure.** The email links open a no-login confirmation
+  page. Rescheduling updates the existing booking and UID under the host lock; it cannot take an
+  overlapping slot from another event type. Cancellation releases the slot. Erasure clears all
+  contact data, guests, answers, free text and conference metadata in one transaction, optionally
+  deleting the row entirely. A future appointment triggers only a host cancellation with no former
+  invitee data. The administrator can erase selected bookings with event-specific permission.
+
+Still to come: calendar subscription feeds, reminders, automatic retention, conferencing
+integration and the Joomla privacy-request plugin.
 
 ## Configuration
 
@@ -131,8 +138,31 @@ in the recipient's zone, with the invitee's stored locale or the host's Joomla p
 Use only single-line values in subjects.
 
 The invitee and guest messages always append the action-specific reschedule, cancellation and
-erasure links, even if a customized template omits their placeholders. The linked management pages
-are still being implemented. Feed credentials are never included in mail.
+erasure links, even if a customized template omits their placeholders. Feed credentials are never included in mail.
+
+### Managing an appointment and deleting data
+
+Every invitee message contains separate, action-specific signed reschedule, cancellation and
+erasure links. A link is invalidated when the booking changes. The confirmation requires the
+browser's normal Joomla CSRF token and one explicit confirmation, never a login or another email
+round trip. A completed action has a generic same-browser receipt; repeating it does not repeat
+notifications or audit entries.
+
+Rescheduling keeps the booking ID and calendar UID, advances `SEQUENCE`, checks the new slot under
+the same host lock as creation, excludes the current booking from its availability/cap checks and
+resets reminder delivery markers. Pending bookings remain pending. A cancellation may include an
+optional reason of at most 2,000 characters.
+
+**Options → On erasure** selects an anonymised statistical slot (the default) or complete deletion
+of the booking row. Both remove the name, email, phone, invitee zone/language, guest addresses,
+custom answers, cancellation text and conference metadata. A future appointment is cancelled
+first. Its host-only cancellation contains just the slot and calendar identifiers, not the former
+invitee details or the erasure reason. Conference teardown is being wired in the conferencing
+stage.
+
+The deletion audit stores only booking ID, action, path, timestamp and, for administrator actions,
+the acting operator's Joomla user ID. It contains no invitee data. Automatic audit retention and
+formal privacy requests are still being implemented.
 
 ### Event types
 
