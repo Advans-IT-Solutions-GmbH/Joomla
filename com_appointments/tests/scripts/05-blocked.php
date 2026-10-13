@@ -258,6 +258,14 @@ class BlockedAdminTest
                 echo '    response said: ' . $this->firstMessage($html) . "\n";
                 echo '    response length: ' . \strlen($html) . "\n";
 
+                if (preg_match('#<title>(.*?)</title>#s', $html, $m)) {
+                    echo '    response title: ' . trim($m[1]) . "\n";
+                }
+
+                foreach (['security token', 'JINVALID', 'expired', 'Log in', 'com_cpanel', 'joomla-alert', 'alert-message'] as $marker) {
+                    echo '    contains "' . $marker . '": ' . (stripos($html, $marker) === false ? 'no' : 'yes') . "\n";
+                }
+
                 return false;
             });
         } finally {
