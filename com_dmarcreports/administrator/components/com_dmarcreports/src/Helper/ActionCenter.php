@@ -194,7 +194,8 @@ final class ActionCenter
      *
      * @param   array<string, mixed>  $config   Component thresholds.
      * @param   string                $key      Threshold key.
-     * @param   float                 $default  Fallback when empty or non-numeric.
+     * @param   float                 $default  Fallback when empty, non-integer
+     *                                          or out of the [min, max] range.
      * @param   float                 $min      Lowest value accepted (inclusive).
      * @param   float                 $max      Highest value accepted (inclusive).
      *
@@ -209,7 +210,13 @@ final class ActionCenter
     ): float {
         $value = $config[$key] ?? null;
 
-        if ($value === null || $value === '' || !is_numeric($value)) {
+        // The rollout thresholds are whole numbers: the form range rule and its
+        // localized message define them that way. is_numeric() would accept
+        // "50.5" or "1e2", which the float cast would then use as-is, so apply
+        // the same plain-integer lexical check as the rule — an empty,
+        // non-scalar, non-integer or out-of-range legacy value falls back to the
+        // safe default instead of driving the rollout off a crafted threshold.
+        if ($value === null || !is_scalar($value) || !preg_match('/^-?\d+$/', (string) $value)) {
             return $default;
         }
 

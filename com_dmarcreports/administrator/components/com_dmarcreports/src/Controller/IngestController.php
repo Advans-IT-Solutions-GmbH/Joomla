@@ -452,7 +452,13 @@ class IngestController extends BaseController
     {
         $value = $this->getConfig($key, $default);
 
-        if (!is_numeric($value)) {
+        // is_numeric() would accept "50.5" or "1e2", and the int cast would then
+        // silently coerce them to 50/100. The form range rule rejects those as
+        // whole numbers, so apply the same plain-integer lexical check here
+        // before casting: a legacy or crafted non-integer value that 1.0.0 could
+        // have persisted falls back to the default instead of driving an
+        // out-of-rule timeout or fetch cap after an upgrade.
+        if (!is_scalar($value) || !preg_match('/^-?\d+$/', (string) $value)) {
             return $default;
         }
 

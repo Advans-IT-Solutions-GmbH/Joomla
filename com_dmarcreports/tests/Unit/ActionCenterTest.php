@@ -235,6 +235,35 @@ class ActionCenterTest extends TestCase
         $this->assertSame(95.0, $item['params'][2]);
     }
 
+    public function testDecimalOrExponentThresholdFallsBackToSafeDefault(): void
+    {
+        // The rollout thresholds are whole numbers (the form range rule rejects
+        // "50.5" / "1e2"). A legacy or crafted save could still have persisted a
+        // decimal or exponent string; is_numeric() would accept it, so a 50.5
+        // quarantine threshold would wrongly advance an 80 % domain. The engine
+        // applies the same plain-integer check and falls back to the 95 default.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 11,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'none',
+                'dmarc_pass'     => 800,
+            ],
+            [
+                'quarantine_pass_threshold' => '50.5',
+                'reject_pass_threshold'     => '1e2',
+            ]
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('stay_at_none', $codes);
+        $this->assertNotContains('move_to_quarantine', $codes);
+
+        $item = $this->find($items, 'stay_at_none');
+        $this->assertSame(95.0, $item['params'][2]);
+    }
+
     public function testRejectWithFullPercentageIsEnforced(): void
     {
         $items = ActionCenter::generate(

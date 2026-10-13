@@ -41,6 +41,14 @@ class RangeRule extends FormRule
      */
     public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null): bool
     {
+        // A crafted submission can deliver a non-scalar value (for example an
+        // array). Casting that to string would emit an "Array to string
+        // conversion" warning that Joomla may surface instead of this field's
+        // localized validation message, so reject any non-scalar value outright.
+        if (is_array($value) || is_object($value)) {
+            return false;
+        }
+
         $value = (string) $value;
 
         // An empty value is accepted here: this rule only bounds values that are
