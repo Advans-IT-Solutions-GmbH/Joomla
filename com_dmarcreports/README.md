@@ -37,6 +37,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
+- A MySQL or MariaDB database (the schema is shipped for the MySQL/MariaDB driver only; installation is refused on other database servers)
 - Administrator access
 - A mailbox that receives DMARC aggregate reports (for IMAP ingestion); manual upload works without one
 - Outbound IMAP connectivity from the web server for on-demand ingestion

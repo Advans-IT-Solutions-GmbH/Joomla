@@ -54,6 +54,25 @@ class Com_dmarcreportsInstallerScript extends InstallerScript
             return false;
         }
 
+        // The component ships its schema for the MySQL/MariaDB driver only. On a
+        // fresh install against any other database server the tables cannot be
+        // created and every backend query would fail, so refuse the install with
+        // a clear message instead of leaving a half-installed component. An
+        // update keeps whatever driver the existing tables were created on.
+        if ($type === 'install' || $type === 'discover_install') {
+            $db         = Factory::getContainer()->get(DatabaseInterface::class);
+            $serverType = method_exists($db, 'getServerType') ? $db->getServerType() : 'mysql';
+
+            if ($serverType !== 'mysql') {
+                Factory::getApplication()->enqueueMessage(
+                    Text::sprintf('COM_DMARCREPORTS_INSTALL_UNSUPPORTED_DB', $serverType),
+                    'error'
+                );
+
+                return false;
+            }
+        }
+
         return true;
     }
 

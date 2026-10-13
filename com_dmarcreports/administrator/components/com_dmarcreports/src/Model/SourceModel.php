@@ -117,7 +117,9 @@ class SourceModel extends AdminModel
             // mailbox identity changes. An in-flight poll of the old mailbox
             // cannot revive the cursor afterwards, because it re-checks the
             // identity under a row lock before advancing it (see
-            // IngestController::recordRun()).
+            // IngestController::recordRun()). The parent-domain lock that guards
+            // this write against a concurrent domain delete is taken one layer
+            // down, in SourceTable::store().
             $existing = $this->getExistingIdentity($pk);
 
             if ($existing !== null && SourceIdentity::changed($existing, $data)) {
