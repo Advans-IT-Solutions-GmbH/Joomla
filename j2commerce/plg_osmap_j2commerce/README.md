@@ -250,7 +250,7 @@ Installed path: `plugins/osmap/j2commerce/`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6, Joomla 5 SEF and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the Joomla 6 SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor and then the two previous minors of the same major with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6, Joomla 5 SEF and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the Joomla 6 SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor and then the two previous minors of the same major with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -285,8 +285,8 @@ Order as in `tests/test.env`:
 ### Running Tests Locally
 
 Prerequisites: the package as `tests/extension.zip`; for the Joomla 6 stacks also
-`tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow
-(`7edb6e11ae9148bf996b06c47a0d8266865af7b2`, all lanes). Full commands:
+`tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves
+(listed in the summary of the job `Resolve Shop Releases`). Full commands:
 [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash

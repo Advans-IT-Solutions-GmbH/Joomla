@@ -1,0 +1,122 @@
+name: Resolve latest shop releases
+description: >-
+  Resolves the latest J2Commerce 6 state and the latest J2Store 4 release that the
+  Build & Test lanes install. The CI always tests against the latest shop releases,
+  never a pin. Run it once per workflow run (in the `resolve-shops` job) and hand its
+  outputs to the lane jobs through `needs`, so every job of one run tests the same
+  versions. Requires a checkout of the repository (for
+  .github/scripts/check-sql-alignment.php), git, php, curl and jq on the runner.
+
+inputs:
+  j2c6-min-version:
+    description: >-
+      Lowest J2Commerce 6 manifest version accepted. A resolved state below it means
+      upstream went backwards, and the run fails instead of testing an older version.
+    required: false
+    default: '6.6.1'
+
+outputs:
+  j2c6_ref:
+    description: Full 40-character SHA of the newest aligned first-parent commit of j2commerce/j2commerce main.
+    value: ${{ steps.resolve.outputs.j2c6_ref }}
+  j2store_url:
+    description: Download URL of the com_j2store*.zip asset of the latest 4.x release of j2commerce/j2cart.
+    value: ${{ steps.resolve.outputs.j2store_url }}
+  j2store_sha256:
+    description: sha256 digest (64 hex characters) of that asset, as reported by the GitHub release API.
+    value: ${{ steps.resolve.outputs.j2store_sha256 }}
+
+runs:
+  using: composite
+  steps:
+    # - J2Commerce 6 publishes no tags or releases. The newest *aligned* commit of upstream `main`
+    #   is the latest version: aligned means upstream's own build_package.php accepts it (highest
+    #   SQL update base not above the manifest <version>, .github/scripts/check-sql-alignment.php).
+    #   Only first-parent commits count (states that `main` itself had), within the last 50.
+    # - J2Store 4: the latest release of j2commerce/j2cart, major 4 only, the com_j2store asset,
+    #   with the sha256 digest the release API reports. The test images verify the download
+    #   against it with `sha256sum -c`.
+    - name: Resolve latest shop releases
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        MIN_VER: ${{ inputs.j2c6-min-version }}
+      run: |
+        set -euo pipefail
+        command -v php >/dev/null || { echo "ERROR: php is required to check the SQL alignment." >&2; exit 1; }
+        align="$GITHUB_ACTION_PATH/../../scripts/check-sql-alignment.php"
+        [ -f "$align" ] || { echo "ERROR: $align not found; check out the repository first." >&2; exit 1; }
+
+        work="$RUNNER_TEMP/j2c6-resolve"
+        rm -rf "$work"
+        git init -q "$work"
+        git -C "$work" remote add origin https://github.com/j2commerce/j2commerce.git
+        # Recent history gives room when the tip is momentarily misaligned (a new SQL update
+        # landed before the manifest bump).
+        git -C "$work" fetch -q --depth=50 origin main
+        git -C "$work" checkout -q FETCH_HEAD
+        manifest="administrator/components/com_j2commerce/j2commerce.xml"
+        sqldir="administrator/components/com_j2commerce/sql/updates/mysql"
+        resolved=""
+        resolved_ver=""
+        # --first-parent: only states that main itself had, never a commit inside a merged branch.
+        for sha in $(git -C "$work" rev-list --first-parent --max-count=50 HEAD); do
+          git -C "$work" show "$sha:$manifest" > "$RUNNER_TEMP/j2c6-manifest.xml" 2>/dev/null || continue
+          ver=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' "$RUNNER_TEMP/j2c6-manifest.xml" | head -1)
+          ver=$(printf '%s' "$ver" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+          [ -n "$ver" ] || continue
+          # The J6 lanes test J2Commerce 6. A newer major on main is not "the latest 6".
+          case "$ver" in
+            6.*) ;;
+            *) echo "Skipping $sha: manifest $ver is not J2Commerce 6"; continue ;;
+          esac
+          sqlfiles=$(git -C "$work" ls-tree -r --name-only "$sha" "$sqldir" 2>/dev/null | grep -E '\.sql$' || true)
+          if [ "$(php "$align" "$sqlfiles" "$ver")" != "ALIGNED" ]; then
+            echo "Skipping $sha: highest SQL base exceeds manifest $ver (not aligned)"
+            continue
+          fi
+          if ! php -r 'exit(version_compare($argv[1], $argv[2], ">=") ? 0 : 1);' "$ver" "$MIN_VER"; then
+            echo "Skipping $sha: manifest $ver is below the $MIN_VER floor"
+            continue
+          fi
+          resolved="$sha"
+          resolved_ver="$ver"
+          echo "J2Commerce 6: $sha (manifest $ver, floor $MIN_VER)"
+          break
+        done
+        if ! printf '%s' "$resolved" | grep -qE '^[0-9a-f]{40}$'; then
+          echo "ERROR: no commit in the last 50 of j2commerce/j2commerce main is 6.x, aligned and >= $MIN_VER." >&2
+          exit 1
+        fi
+        echo "j2c6_ref=$resolved" >> "$GITHUB_OUTPUT"
+
+        # The newest published 4.x release, not `releases/latest`: that is the newest release of any
+        # major, and a 5.x release would hide a newer 4.x one. Drafts and pre-releases never count.
+        RELEASES=$(curl --fail --silent --show-error --proto '=https' --proto-redir '=https' -L \
+          --retry 3 --retry-all-errors \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/j2commerce/j2cart/releases?per_page=100")
+        RELEASE=$(printf '%s' "$RELEASES" | jq -c '[.[] | select((.draft | not) and (.prerelease | not) and (.tag_name | test("^v?4\\.[0-9]+\\.[0-9]+$")))]
+          | sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber)) | last // empty')
+        [ -n "$RELEASE" ] || { echo "ERROR: j2commerce/j2cart has no published 4.x release. The J5 lanes test J2Store 4." >&2; exit 1; }
+        TAG=$(printf '%s' "$RELEASE" | jq -r '.tag_name')
+        ASSET=$(printf '%s' "$RELEASE" | jq -c '[.assets[] | select(.name | test("^com_j2store.*\\.zip$"))] | first // empty')
+        [ -n "$ASSET" ] || { echo "ERROR: release $TAG has no com_j2store*.zip asset." >&2; exit 1; }
+        URL=$(printf '%s' "$ASSET" | jq -r '.browser_download_url // empty')
+        DIGEST=$(printf '%s' "$ASSET" | jq -r '.digest // empty')
+        case "$URL" in
+          https://github.com/j2commerce/j2cart/releases/download/*) ;;
+          *) echo "ERROR: unexpected asset URL '$URL'." >&2; exit 1 ;;
+        esac
+        SHA256="${DIGEST#sha256:}"
+        printf '%s' "$SHA256" | grep -qE '^[0-9a-f]{64}$' || { echo "ERROR: asset of $TAG reports no sha256 digest ('$DIGEST')." >&2; exit 1; }
+        echo "J2Store 4: $TAG ($URL, sha256:$SHA256)"
+        echo "j2store_url=$URL" >> "$GITHUB_OUTPUT"
+        echo "j2store_sha256=$SHA256" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Shop releases under test"
+          echo "- J2Commerce 6: \`$resolved\` (manifest $resolved_ver, newest aligned commit of \`main\`)"
+          echo "- J2Store 4: $TAG (\`$(basename "$URL")\`, sha256 \`$SHA256\`)"
+        } >> "$GITHUB_STEP_SUMMARY"

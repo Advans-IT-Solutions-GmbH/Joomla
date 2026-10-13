@@ -17,6 +17,8 @@ on:
       - 'shared/tests/scripts/shared-deprecations.php'
       - 'shared/tests/scripts/shared-deprecation-tracer.php'
       - '.github/workflows/j2commerce-privacy.yml'
+      - '.github/actions/resolve-shops/**'
+      - '.github/scripts/check-sql-alignment.php'
   pull_request:
     branches: [main]
     paths:
@@ -32,6 +34,8 @@ on:
       - 'shared/tests/scripts/shared-deprecations.php'
       - 'shared/tests/scripts/shared-deprecation-tracer.php'
       - '.github/workflows/j2commerce-privacy.yml'
+      - '.github/actions/resolve-shops/**'
+      - '.github/scripts/check-sql-alignment.php'
 
 permissions: {}
 
@@ -47,13 +51,31 @@ concurrency:
   group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
   cancel-in-progress: true
 
-env:
-  # J2Commerce 6 publishes no release tags. The source is pinned to the commit
-  # used in production (default branch as of 2026-08-28) so every run tests the
-  # same J2Commerce 6 code instead of the moving default branch.
-  J2C6_REF: '7edb6e11ae9148bf996b06c47a0d8266865af7b2'
-
 jobs:
+  # The lanes always test against the LATEST shop releases, never a pin: the newest aligned
+  # J2Commerce 6 commit of upstream `main` and the latest J2Store 4 release (sha256-verified).
+  # Resolved once per run here and handed to the lane jobs through `needs`, so all jobs of one
+  # run test the same versions (listed in this job's summary). Logic:
+  # .github/actions/resolve-shops/action.yml.
+  resolve-shops:
+    name: Resolve Shop Releases
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      j2c6_ref: ${{ steps.shops.outputs.j2c6_ref }}
+      j2store_url: ${{ steps.shops.outputs.j2store_url }}
+      j2store_sha256: ${{ steps.shops.outputs.j2store_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+      - name: Resolve latest shop releases
+        id: shops
+        uses: ./.github/actions/resolve-shops
+
   build:
     name: Build Package
     runs-on: ubuntu-latest
@@ -132,9 +154,13 @@ jobs:
   test-j5:
     name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, resolve-shops]
     permissions:
       contents: read
+    env:
+      # Build args of tests/Dockerfile (docker-compose.yml passes them through).
+      J2C4_URL: ${{ needs.resolve-shops.outputs.j2store_url }}
+      J2C4_SHA256: ${{ needs.resolve-shops.outputs.j2store_sha256 }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -224,9 +250,11 @@ jobs:
   test-j6:
     name: ${{ matrix.name }} (J6)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, resolve-shops]
     permissions:
       contents: read
+    env:
+      J2C6_REF: ${{ needs.resolve-shops.outputs.j2c6_ref }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -275,14 +303,14 @@ jobs:
         with:
           php-version: '8.3'
           extensions: zip
-      - name: Build J2Commerce 6 from source (pinned)
+      - name: Build J2Commerce 6 from source (latest aligned)
         run: |
           git init /tmp/j2commerce6-src
           git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-          echo "J2Commerce 6 source commit (pinned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
-          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          echo "J2Commerce 6 source commit (latest aligned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          # The J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
           # the tests only need the PHP package, so the unminified build is used.
           cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
@@ -333,11 +361,13 @@ jobs:
           docker compose -f docker-compose.joomla6.yml down -v
 
   test-production:
-    name: Production-like (newest J6, PHP 8.4, MariaDB 10.6, J2C6 production pin)
+    name: Production-like (newest J6, PHP 8.4, MariaDB 10.6, latest J2C6)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, resolve-shops]
     permissions:
       contents: read
+    env:
+      J2C6_REF: ${{ needs.resolve-shops.outputs.j2c6_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -351,13 +381,14 @@ jobs:
         with:
           php-version: '8.3'
           extensions: zip
-      - name: Build J2Commerce 6 from the production pin
+      - name: Build J2Commerce 6 from source (latest aligned)
         run: |
           git init /tmp/j2commerce6-src
           git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          echo "J2Commerce 6 source commit (latest aligned $J2C6_REF): $(git -C /tmp/j2commerce6-src rev-parse HEAD)"
+          # The J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
           # the tests only need the PHP package, so the unminified build is used.
           cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
@@ -420,9 +451,11 @@ jobs:
   test-update:
     name: Update from previous release (J6)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, resolve-shops]
     permissions:
       contents: read
+    env:
+      J2C6_REF: ${{ needs.resolve-shops.outputs.j2c6_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -451,13 +484,13 @@ jobs:
         with:
           php-version: '8.3'
           extensions: zip
-      - name: Build J2Commerce 6 from source (pinned)
+      - name: Build J2Commerce 6 from source (latest aligned)
         run: |
           git init /tmp/j2commerce6-src
           git -C /tmp/j2commerce6-src remote add origin https://github.com/j2commerce/j2commerce.git
           git -C /tmp/j2commerce6-src fetch --depth 1 origin "$J2C6_REF"
           git -C /tmp/j2commerce6-src checkout --detach FETCH_HEAD
-          # The pinned J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
+          # The J2Commerce 6 build minifies assets with esbuild (npm) unless --no-minify is passed;
           # the tests only need the PHP package, so the unminified build is used.
           cd /tmp/j2commerce6-src && php build/build_package.php --no-minify
           ZIP=$(ls docs/packages/pkg_j2commerce_*.zip docs/packages/com_j2commerce_*.zip 2>/dev/null | head -1)
@@ -539,6 +572,7 @@ jobs:
     name: Privacy / all jobs
     runs-on: ubuntu-latest
     needs:
+      - resolve-shops
       - build
       - syntax-check
       - language-lint
