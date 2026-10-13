@@ -157,6 +157,10 @@ Indexes:
 - Index `(host_user_id, start_utc)`, index `(invitee_email)`, index `(state, start_utc)`. The first
   one is what the overlap check inside the locked transaction reads.
 
+There is deliberately **no `asset_id`** on this table. A booking inherits the permissions of its
+event type; see `references/scope.md`, "Administration". Adding one later would mean an `#__assets`
+row per booking, an extra insert in the hot path and an orphan asset after every erasure.
+
 ### Rescheduling updates the row
 
 **A reschedule changes this row; it never inserts a successor.** The times change, `sequence` is

@@ -100,7 +100,12 @@ have to exist, not a configuration anyone has to use:
 - Booking list with filters by event type, state, date range and free-text search; detail view.
 - Blocked periods, independent of event types.
 - CSV export of bookings.
-- Joomla ACL on the component, on event types and on bookings.
+- Joomla ACL on the component and per event type, the latter through the event type's `asset_id`.
+  **A booking has no asset of its own and inherits the permissions of its event type.** That is a
+  deliberate narrowing, not an omission: a per-booking asset would add one `#__assets` row to every
+  booking insert, grow that table without bound on a busy site, and leave an orphan row behind every
+  erasure — while expressing nothing that a rule on the event type cannot. Who may read, edit or
+  delete bookings is decided per event type and at component level.
 - A system check view that reports: PHP version, Joomla version, time zone, mail configuration,
   whether the Scheduler task is registered and when it last ran, and whether the feed token is set.
 

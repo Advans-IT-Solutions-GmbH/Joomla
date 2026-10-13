@@ -27,7 +27,7 @@ Joomla/
 |-----------|-------------|--------|
 | [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 | [DMARC Reports](com_dmarcreports/) | Administrator component that ingests and analyses RFC 7489 DMARC aggregate reports (IMAP and file upload) across multiple domains, with an actionable rollout dashboard and CSV export | 5.4 – 6.x |
-| [Appointments](com_appointments/) | Self-hosted appointment scheduling: bookable time slots, a public booking page, iCalendar attachments on every notification and calendar subscription feeds, with no third-party service involved | 5.4 – 6.x |
+| [Appointments](com_appointments/) | **In development.** Self-hosted appointment scheduling, built in stages. Available today: the component with its administrator and site part, the full database schema, a dashboard and a public list of bookable event types. Not yet implemented: the booking flow itself, iCalendar attachments, e-mail notifications, calendar subscription feeds and the conferencing links. See the component README for the current state | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
