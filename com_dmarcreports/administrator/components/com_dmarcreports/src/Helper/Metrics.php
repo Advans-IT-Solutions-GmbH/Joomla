@@ -749,10 +749,10 @@ final class Metrics
 
     /**
      * Newly observed sending sources for every supplied domain, keyed by domain
-     * id, resolved in a single grouped query and sliced to the top $limit per
-     * domain in PHP. Mirrors newSources() for a single domain, but anchors each
-     * domain's current window on its own newest report through a derived
-     * per-domain anchor table so one query serves all domains at once.
+     * id, resolved in a single grouped query and ranked so the database returns
+     * only the top $limit per domain. Mirrors newSources() for a single domain,
+     * but anchors each domain's current window on its own newest report through a
+     * derived per-domain anchor table so one query serves all domains at once.
      *
      * @param   array<int, int>  $domainIds
      *
@@ -790,11 +790,12 @@ final class Metrics
             ->where($this->db->quoteName('prec.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
             ->where($this->db->quoteName('prep.date_begin') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')');
 
-        $query = $this->query()
+        // Collapse the window to one new-source total per (domain, source_ip).
+        $grouped = (string) $this->query()
             ->select(
                 [
-                    $this->db->quoteName('rep.domain_id'),
-                    $this->db->quoteName('cur.source_ip'),
+                    $this->db->quoteName('rep.domain_id', 'domain_id'),
+                    $this->db->quoteName('cur.source_ip', 'source_ip'),
                     'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
                 ]
             )
@@ -813,17 +814,42 @@ final class Metrics
             ->where($this->db->quoteName('rep.date_begin') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')')
             ->where($this->db->quoteName('rep.date_begin') . ' <= ' . $this->db->quoteName('a.anchor'))
             ->where('NOT EXISTS (' . $prior . ')')
-            ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
-            ->order($this->db->quoteName('rep.domain_id') . ' ASC, total DESC');
+            ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'));
+
+        // Rank each domain's new sources by volume so the outer query keeps only
+        // the top $limit per domain. Ranking and slicing in the database bounds
+        // both the result transfer and PHP memory to $limit rows per domain,
+        // instead of materialising every distinct source seen in the window; the
+        // source_ip tiebreak makes the ranking deterministic for equal volumes.
+        $ranked = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    $this->db->quoteName('source_ip'),
+                    $this->db->quoteName('total'),
+                    'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
+                        . ' ORDER BY ' . $this->db->quoteName('total') . ' DESC, '
+                        . $this->db->quoteName('source_ip') . ' ASC) AS rn',
+                ]
+            )
+            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    $this->db->quoteName('source_ip'),
+                    $this->db->quoteName('total'),
+                ]
+            )
+            ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
+            ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
+            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('total') . ' DESC');
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $domainId = (int) $row['domain_id'];
-
-            if (\count($map[$domainId] ?? []) >= $limit) {
-                continue;
-            }
 
             $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['total']];
         }
