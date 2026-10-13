@@ -10,6 +10,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
+use Joomla\CMS\Language\Text;
 
 class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
 {
@@ -18,11 +19,29 @@ class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
 
     public function postflight(string $type, object $parent): void
     {
-        if ($type !== 'install') {
+        if ($type === 'install') {
+            $this->enablePlugin();
+
             return;
         }
 
-        $this->enablePlugin();
+        if ($type !== 'update') {
+            return;
+        }
+
+        // An update preserves the published state, so the only step that can
+        // still be open is enabling the plugin. Point the admin at it while it
+        // is disabled; stay silent when it is already enabled.
+        if ($this->isPluginEnabled()) {
+            return;
+        }
+
+        $app  = Factory::getApplication();
+        $lang = $app->getLanguage();
+        $lang->load('plg_system_dmarcmtasts', JPATH_ADMINISTRATOR);
+        $lang->load('plg_system_dmarcmtasts', $parent->getParent()->getPath('source'));
+
+        $app->enqueueMessage(Text::_('PLG_SYSTEM_DMARCMTASTS_ENABLE_HINT'), 'message');
     }
 
     /**
@@ -43,6 +62,27 @@ class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
             $db->setQuery($query)->execute();
         } catch (\Throwable $e) {
             // A failed auto-enable is not fatal; the admin can enable it manually.
+        }
+    }
+
+    /**
+     * Whether this plugin is currently enabled in #__extensions. On any error
+     * it reports enabled so the update stays quiet instead of nagging.
+     */
+    private function isPluginEnabled(): bool
+    {
+        try {
+            $db    = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('enabled'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('dmarcmtasts'));
+
+            return (int) $db->setQuery($query)->loadResult() === 1;
+        } catch (\Throwable $e) {
+            return true;
         }
     }
 }

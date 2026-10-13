@@ -76,10 +76,15 @@ $check('IngestSummary aggregates per-source results', static function () {
 });
 
 // Load the plugin extension class file directly, mirroring how the shipped
-// support class is loaded above. Compiling it only needs the core CMSPlugin
-// parent and the core Scheduler traits; the component's SourcePoller is merely
-// a `use` import resolved at execution time, so the file must compile cleanly
-// even though the component is absent.
+// support class is loaded above. The class composes the core Scheduler
+// TaskPluginTrait, so its namespace is registered first exactly as the live
+// scheduler does; the component's SourcePoller is merely a `use` import
+// resolved at execution time, so the file must still compile cleanly even
+// though the component is absent.
+\JLoader::registerNamespace(
+    'Joomla\\Component\\Scheduler\\Administrator',
+    JPATH_ADMINISTRATOR . '/components/com_scheduler/src'
+);
 require_once $base . '/src/Extension/DmarcReports.php';
 
 $check('Plugin extension class loads without fatally requiring the component', static function () {

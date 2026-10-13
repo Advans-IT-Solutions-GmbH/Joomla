@@ -32,8 +32,11 @@
 
     <languages folder="language">
         <language tag="en-GB">en-GB/pkg_dmarcreports.sys.ini</language>
+        <language tag="en-GB">en-GB/pkg_dmarcreports.ini</language>
         <language tag="de-DE">de-DE/pkg_dmarcreports.sys.ini</language>
+        <language tag="de-DE">de-DE/pkg_dmarcreports.ini</language>
         <language tag="fr-FR">fr-FR/pkg_dmarcreports.sys.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_dmarcreports.ini</language>
     </languages>
 
     <updateservers>
