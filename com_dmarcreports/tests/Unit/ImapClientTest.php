@@ -169,6 +169,61 @@ class ImapClientTest extends TestCase
         $this->assertStringNotContainsString('UID STORE', $result['sent']);
     }
 
+    public function testRejectsTruncatedLiteralBody(): void
+    {
+        // The server announces a 100-byte literal but delivers only five bytes
+        // and then closes its write side mid-literal, modelling a peer close or
+        // reset during the fetch. The client must not treat the partial read as
+        // a complete (empty/skip) message and advance the cursor; it must raise
+        // so the import aborts with the cursor unchanged and retries next run.
+        $pair = @stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+
+        if ($pair === false) {
+            $this->markTestSkipped('stream_socket_pair(AF_UNIX) is not available on this platform.');
+        }
+
+        [$clientEnd, $serverEnd] = $pair;
+
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1\r\nA0004 OK SEARCH completed\r\n"
+            . "* 1 FETCH (UID 1 BODY[] {100}\r\n"
+            . 'short';
+
+        fwrite($serverEnd, $script);
+
+        // Half-close the server's write side: the buffered script is still
+        // delivered, then the client's literal read hits EOF after five bytes
+        // while the server can still receive the client's own commands.
+        stream_socket_shutdown($serverEnd, STREAM_SHUT_WR);
+
+        $config = [
+            'host'                => 'mail.example.test',
+            'port'                => 993,
+            'security'            => 'ssl',
+            'username'            => 'mailbox@example.test',
+            'password'            => 'secret',
+            'folder'              => 'INBOX',
+            'limit'               => 50,
+            'delete_after_import' => 0,
+        ];
+
+        $client = new ImapClient(5, static function () use ($clientEnd) {
+            return $clientEnd;
+        });
+
+        try {
+            $this->expectException(\RuntimeException::class);
+            $client->process($config, static fn (): string => 'new');
+        } finally {
+            if (\is_resource($serverEnd)) {
+                fclose($serverEnd);
+            }
+        }
+    }
+
     public function testCountsEmptyBodyAsTransportSkipWithoutCallback(): void
     {
         // A zero-length literal models an empty body (or one dropped by the

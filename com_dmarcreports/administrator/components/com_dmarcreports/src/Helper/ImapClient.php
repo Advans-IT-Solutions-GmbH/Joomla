@@ -627,6 +627,17 @@ final class ImapClient
             $buffer .= $chunk;
         }
 
+        // A short read (peer close, timeout or reset mid-literal) leaves fewer
+        // than the server-announced bytes. Returning that truncated body would
+        // let the caller treat a half-received message as a complete one: the
+        // parser would classify it as an ordinary skip and process() would
+        // advance the UID and mark the report seen, permanently losing a valid
+        // report after a transient interruption. Fail instead so the import
+        // aborts with the cursor unchanged and the message is retried next run.
+        if (\strlen($buffer) !== $length) {
+            throw new \RuntimeException('The mail server closed the connection before the message was fully received.');
+        }
+
         return $buffer;
     }
 

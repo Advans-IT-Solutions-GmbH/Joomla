@@ -687,7 +687,10 @@ final class Metrics
         $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
             . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
 
-        $query = $this->query()
+        // Collapse the full history to one failing-volume total per
+        // (domain, source_ip), keeping only groups that actually failed
+        // alignment.
+        $grouped = (string) $this->query()
             ->select(
                 [
                     $this->db->quoteName('domain_id'),
@@ -698,17 +701,42 @@ final class Metrics
             ->from($this->db->quoteName('#__dmarc_records'))
             ->where($this->db->quoteName('domain_id') . ' IN (' . $this->intList($domainIds) . ')')
             ->group($this->db->quoteName('domain_id') . ', ' . $this->db->quoteName('source_ip'))
-            ->having($fail . ' > 0')
-            ->order($this->db->quoteName('domain_id') . ' ASC, fail DESC');
+            ->having($fail . ' > 0');
+
+        // Rank each domain's failing sources by volume so the outer query keeps
+        // only the top $limit per domain. Ranking and slicing in the database
+        // bounds both the result transfer and PHP memory to $limit rows per
+        // domain, instead of materialising every distinct source ever seen; the
+        // source_ip tiebreak makes the ranking deterministic for equal volumes.
+        $ranked = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    $this->db->quoteName('source_ip'),
+                    $this->db->quoteName('fail'),
+                    'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
+                        . ' ORDER BY ' . $this->db->quoteName('fail') . ' DESC, '
+                        . $this->db->quoteName('source_ip') . ' ASC) AS rn',
+                ]
+            )
+            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
+
+        $query = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('domain_id'),
+                    $this->db->quoteName('source_ip'),
+                    $this->db->quoteName('fail'),
+                ]
+            )
+            ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
+            ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
+            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('fail') . ' DESC');
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $domainId = (int) $row['domain_id'];
-
-            if (\count($map[$domainId] ?? []) >= $limit) {
-                continue;
-            }
 
             $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['fail']];
         }
