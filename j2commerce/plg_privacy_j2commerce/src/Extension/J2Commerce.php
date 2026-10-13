@@ -2380,12 +2380,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $subjects = ['email' => ConsentRepository::normaliseAddress($email), 'ip' => trim($clientIp)];
         $limiter  = $this->confirmAttempts();
         $blocked  = self::confirmAttemptsExceeded($session, $now);
+        $reserved = false;
 
+        // Admission is atomic: the attempt is counted before it is checked (ConfirmAttempts::reserve()),
+        // so parallel requests cannot pass the limit together.
         if (!$blocked && $limiter !== null) {
             try {
-                $blocked = $limiter->isBlocked($subjects, $now);
+                $reserved = true;
+                $blocked  = !$limiter->reserve($subjects, $now);
             } catch (\Throwable $e) {
-                Log::add('Confirmation attempt limit not readable: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                Log::add('Confirmation attempt limit not available: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
             }
         }
 
@@ -2405,12 +2409,21 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         if ($status === self::CONFIRM_OK) {
             $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
 
+            if ($reserved) {
+                try {
+                    $limiter->release($subjects, $now);
+                } catch (\Throwable $e) {
+                    Log::add('Confirmation attempt not given back: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                }
+            }
+
             return $status;
         }
 
         self::registerConfirmFailure($session, $now);
 
-        if ($limiter !== null) {
+        // An attempt refused by the session limit was not reserved: it is counted here.
+        if (!$reserved && $limiter !== null) {
             try {
                 $limiter->registerFailure($subjects, $now);
             } catch (\Throwable $e) {

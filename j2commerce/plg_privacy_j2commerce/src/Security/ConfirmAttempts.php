@@ -57,11 +57,56 @@ final class ConfirmAttempts
     }
 
     /**
-     * Whether one of the subjects has used up its failures in the current window.
+     * Admit an attempt: count it first for every subject (one atomic statement each, see
+     * registerFailure()), then check the counts. An attempt is admitted only while every count,
+     * its own included, is within the limit, so parallel requests cannot all pass a check made
+     * before any of them is counted. An admitted attempt that succeeds is given back with
+     * release(); a failed one stays counted.
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
      */
-    public function isBlocked(array $subjects, ?int $now = null): bool
+    public function reserve(array $subjects, ?int $now = null): bool
+    {
+        $now = $now ?? time();
+        $this->registerFailure($subjects, $now);
+
+        return !$this->exceeds($subjects, $now);
+    }
+
+    /**
+     * Give back the attempt of a successful confirmation (reserve() counted it).
+     *
+     * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
+     */
+    public function release(array $subjects, ?int $now = null): void
+    {
+        $now   = $now ?? time();
+        $since = $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW));
+
+        foreach ($subjects as $scope => $value) {
+            if ($value === '' || !\in_array($scope, ['email', 'ip'], true)) {
+                continue;
+            }
+
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName(self::TABLE))
+                    ->set($this->db->quoteName('failures') . ' = ' . $this->db->quoteName('failures') . ' - 1')
+                    ->where($this->db->quoteName('scope') . ' = ' . $this->db->quote($scope))
+                    ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
+                    ->where($this->db->quoteName('failures') . ' > 0')
+                    ->where($this->db->quoteName('window_start') . ' > ' . $since)
+            )->execute();
+        }
+    }
+
+    /**
+     * Whether one of the subjects has more counted attempts in the current window than its limit
+     * allows.
+     *
+     * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
+     */
+    public function exceeds(array $subjects, ?int $now = null): bool
     {
         $now     = $now ?? time();
         $limits  = ['email' => self::MAX_EMAIL_FAILURES, 'ip' => self::MAX_IP_FAILURES];
@@ -79,7 +124,7 @@ final class ConfirmAttempts
                 ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
                 ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote($since));
 
-            if ((int) $this->db->setQuery($query)->loadResult() >= $limits[$scope]) {
+            if ((int) $this->db->setQuery($query)->loadResult() > $limits[$scope]) {
                 return true;
             }
         }

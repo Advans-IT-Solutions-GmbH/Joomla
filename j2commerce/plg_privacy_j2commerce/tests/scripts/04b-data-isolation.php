@@ -1747,6 +1747,26 @@ class DataIsolationTest
                 $rows !== [] && $raw === [] && !in_array('client-a', array_column($rows, 'subject_hash'), true), json_encode($rows));
 
             $limiter = new $class($this->db, 'guest-request-test-secret');
+
+            // Parallel requests: all of them reserve before any has finished its code check.
+            $parallel = ['email' => 'parallel-' . $suffix . '@example.com', 'ip' => 'client-p'];
+            $admitted = 0;
+
+            for ($i = 0; $i < $class::MAX_EMAIL_FAILURES + 3; $i++) {
+                $admitted += $limiter->reserve($parallel, $t0 + 40) ? 1 : 0;
+            }
+
+            $this->test('Parallel requests: exactly the limit of attempts is admitted', $admitted === $class::MAX_EMAIL_FAILURES, (string) $admitted);
+            $released =['email' => 'released-' . $suffix . '@example.com'];
+
+            for ($i = 0; $i < $class::MAX_EMAIL_FAILURES; $i++) {
+                $limiter->reserve($released, $t0 + 41);
+            }
+
+            $limiter->release($released, $t0 + 41);
+            $this->test('A successful attempt is given back: one more attempt is admitted', $limiter->reserve($released, $t0 + 42) === true
+                && $limiter->reserve($released, $t0 + 43) === false);
+
             $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
             $limiter->purgeExpired($t0 + 3 * $class::WINDOW);
             $left = (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadResult();
