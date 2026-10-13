@@ -197,7 +197,14 @@ class SourceModel extends AdminModel
                 ->whereIn($db->quoteName('source_id'), $ids);
             $db->setQuery($query)->execute();
 
-            $result = parent::delete($pks);
+            // TLS-RPT reports carry the same source provenance, so unbind them
+            // in the same transaction; otherwise a deleted source would leave
+            // dangling source_id references in the TLS-RPT table.
+            $tlsQuery = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->update($db->quoteName('#__dmarc_tlsrpt_reports'))
+                ->set($db->quoteName('source_id') . ' = 0')
+                ->whereIn($db->quoteName('source_id'), $ids);
+            $db->setQuery($tlsQuery)->execute();
 
             if ($result === false) {
                 $db->transactionRollback();

@@ -100,10 +100,28 @@ final class TlsRptParser
         $begin = self::timestamp($range['start-datetime'] ?? null);
         $end   = self::timestamp($range['end-datetime'] ?? null);
 
+        // Reject over-length identity metadata before it is stored. These
+        // untrusted values feed the deduplication fingerprint (org name and
+        // report id); clipping them would alias two distinct reports that only
+        // differ past the column width, dropping the second as a duplicate.
+        // Mirror {@see DmarcParser}, which rejects rather than truncates.
+        $orgName     = trim((string) ($data['organization-name'] ?? ''));
+        $contactInfo = trim((string) ($data['contact-info'] ?? ''));
+        $reportId    = trim((string) ($data['report-id'] ?? ''));
+
+        foreach (['organization-name' => $orgName, 'contact-info' => $contactInfo, 'report-id' => $reportId] as $label => $value) {
+            if (self::length($value) > self::MAX_METADATA_LENGTH) {
+                throw new \InvalidArgumentException(
+                    'The TLS-RPT report ' . $label . ' exceeds the supported length.',
+                    self::ERROR_NOT_REPORT
+                );
+            }
+        }
+
         $report = [
-            'org_name'     => self::clip((string) ($data['organization-name'] ?? ''), self::MAX_METADATA_LENGTH),
-            'contact_info' => self::clip((string) ($data['contact-info'] ?? ''), self::MAX_METADATA_LENGTH),
-            'report_id'    => self::clip((string) ($data['report-id'] ?? ''), self::MAX_METADATA_LENGTH),
+            'org_name'     => $orgName,
+            'contact_info' => $contactInfo,
+            'report_id'    => $reportId,
             'date_begin'   => $begin,
             'date_end'     => $end,
             'policies'     => [],
@@ -111,6 +129,23 @@ final class TlsRptParser
 
         if ($report['report_id'] === '') {
             throw new \InvalidArgumentException('The TLS-RPT report is missing a report id.', self::ERROR_NOT_REPORT);
+        }
+
+        // Reject an implausible date range before storage, matching the DMARC
+        // parser's integrity checks: a missing or unparseable begin collapses to
+        // 0, an inverted range would misplace the report on the timeline, and an
+        // end beyond a small clock-skew allowance could anchor the rolling
+        // windows on a crafted far-future report.
+        if ($report['date_begin'] <= 0) {
+            throw new \InvalidArgumentException('The TLS-RPT report has a missing or invalid begin date.', self::ERROR_NOT_REPORT);
+        }
+
+        if ($report['date_end'] < $report['date_begin']) {
+            throw new \InvalidArgumentException('The TLS-RPT report has an inverted date range.', self::ERROR_NOT_REPORT);
+        }
+
+        if ($report['date_end'] > time() + self::MAX_CLOCK_SKEW) {
+            throw new \InvalidArgumentException('The TLS-RPT report end date is implausibly far in the future.', self::ERROR_NOT_REPORT);
         }
 
         $policies = $data['policies'] ?? null;
@@ -230,15 +265,21 @@ final class TlsRptParser
 
         $ts = strtotime($value);
 
-        if ($ts === false || $ts < 0 || $ts > self::MAX_TIMESTAMP + self::MAX_CLOCK_SKEW) {
+        if ($ts === false) {
             return 0;
         }
 
-        return $ts;
+        return ($ts >= 0 && $ts <= self::MAX_TIMESTAMP) ? $ts : 0;
     }
 
     /**
-     * Coerce an untrusted session-count value to a non-negative integer.
+     * Coerce an untrusted session-count value to a non-negative integer. A digit
+     * string larger than the signed integer PHP binds (and the database stores)
+     * is rejected rather than saturated, so a crafted count cannot overflow the
+     * running totals and keep an IMAP UID retrying forever. Mirrors the DMARC
+     * parser's out-of-range rejection.
+     *
+     * @throws  \InvalidArgumentException  When a numeric string is out of range.
      */
     private static function count($value): int
     {
@@ -247,10 +288,44 @@ final class TlsRptParser
         }
 
         if (\is_string($value) && preg_match('/^\d+$/', $value)) {
+            if (self::exceedsIntegerRange($value)) {
+                throw new \InvalidArgumentException('A TLS-RPT session count is out of range.', self::ERROR_NOT_REPORT);
+            }
+
             return (int) $value;
         }
 
         return 0;
+    }
+
+    /**
+     * Whether a non-negative digit string is larger than the signed integer PHP
+     * binds and the database stores, compared as text to avoid float rounding.
+     * Copied from {@see DmarcParser::exceedsIntegerRange()} so both ingestion
+     * paths reject out-of-range counts identically.
+     */
+    private static function exceedsIntegerRange(string $digits): bool
+    {
+        $digits = ltrim($digits, '0');
+
+        if ($digits === '') {
+            return false;
+        }
+
+        $max = (string) PHP_INT_MAX;
+        $len = \strlen($digits);
+        $cap = \strlen($max);
+
+        return $len > $cap || ($len === $cap && strcmp($digits, $max) > 0);
+    }
+
+    /**
+     * Length of a string in characters, preferring the multibyte count so an
+     * internationalised value is measured by characters rather than bytes.
+     */
+    private static function length(string $value): int
+    {
+        return \function_exists('mb_strlen') ? mb_strlen($value) : \strlen($value);
     }
 
     /**

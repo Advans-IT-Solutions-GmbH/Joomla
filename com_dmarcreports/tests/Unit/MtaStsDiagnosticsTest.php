@@ -33,7 +33,9 @@ class MtaStsDiagnosticsTest extends TestCase
 
             public function txt(string $host): ?array
             {
-                return $this->records[strtolower($host)] ?? [];
+                $key = strtolower($host);
+
+                return array_key_exists($key, $this->records) ? $this->records[$key] : [];
             }
         };
     }

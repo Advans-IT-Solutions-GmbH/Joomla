@@ -75,10 +75,14 @@ $check('IngestSummary aggregates per-source results', static function () {
         && $totals['errors'] === 1;
 });
 
+// Load the plugin extension class file directly, mirroring how the shipped
+// support class is loaded above. Compiling it only needs the core CMSPlugin
+// parent and the core Scheduler traits; the component's SourcePoller is merely
+// a `use` import resolved at execution time, so the file must compile cleanly
+// even though the component is absent.
+require_once $base . '/src/Extension/DmarcReports.php';
+
 $check('Plugin extension class loads without fatally requiring the component', static function () {
-    // A `use` import does not trigger autoloading, so the class file can be
-    // loaded even though SourcePoller (from the absent component) is only
-    // resolved when a task actually executes.
     return class_exists(\Advans\Plugin\Task\DmarcReports\Extension\DmarcReports::class);
 });
 

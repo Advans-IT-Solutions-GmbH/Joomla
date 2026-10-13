@@ -283,7 +283,9 @@ final class Metrics
             ->order('sessions DESC')
             ->bind(':domainId', $domainId, ParameterType::INTEGER);
 
-        $failures = $this->db->setQuery($failQuery, 0, 20)->loadAssocList() ?: [];
+        $failQuery->setLimit(20);
+
+        $failures = $this->db->setQuery($failQuery)->loadAssocList() ?: [];
 
         return [
             'reports'  => (int) ($row['reports'] ?? 0),

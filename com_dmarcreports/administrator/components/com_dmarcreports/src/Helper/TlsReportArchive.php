@@ -49,6 +49,13 @@ final class TlsReportArchive
     private const MAX_ENTRIES = 4096;
 
     /**
+     * Bytes inflated from a gzip member purely to classify its payload. Only a
+     * short prefix is needed to reach the first non-whitespace byte, so the
+     * probe never materialises a hostile gzip bomb in full.
+     */
+    private const PROBE_BYTES = 512;
+
+    /**
      * Whether an attachment looks like a TLS-RPT report rather than a DMARC
      * aggregate report, decided by name first and a cheap content sniff second.
      * A TLS-RPT container is named "<org>!<domain>!<start>!<end>[!unique].json"
@@ -58,31 +65,168 @@ final class TlsReportArchive
     {
         $name = strtolower($filename);
 
+        // Decisive filename hints first: a ".json" container is TLS-RPT, an XML
+        // container is DMARC.
         if (str_contains($name, '.json')) {
             return true;
         }
 
-        if (str_ends_with($name, '.xml') || str_ends_with($name, '.xml.gz') || str_ends_with($name, '.zip')) {
+        if (str_ends_with($name, '.xml') || str_ends_with($name, '.xml.gz')) {
             return false;
         }
 
-        // No decisive name: sniff the (possibly compressed) body. A gzip member
-        // is decoded with a short bounded read purely to inspect its first
-        // non-space byte; a raw body is inspected directly. A leading '{' marks
-        // JSON, '<' marks XML.
-        $probe = $payload;
-
-        if (str_starts_with($payload, "\x1f\x8b") && \function_exists('gzdecode')) {
-            $decoded = @gzdecode($payload);
-
-            if (\is_string($decoded)) {
-                $probe = $decoded;
-            }
+        // A zip is classified by the document type of its entries, never by its
+        // outer name: a TLS-RPT archive is normally named "report.zip" with no
+        // ".json" hint, so a name-only rule would misroute it to the DMARC path
+        // and leave the JSON extractor unreachable. Inspect the entries and let a
+        // DMARC (.xml) member win when an archive carries both, keeping the
+        // hardened XML path the default for ambiguous or unreadable content.
+        if (str_starts_with($payload, "PK\x03\x04") || str_ends_with($name, '.zip')) {
+            return self::zipLooksLikeTlsRpt($payload) ?? false;
         }
 
-        $probe = ltrim($probe);
+        // No decisive name: sniff the (possibly gzip-compressed) body. A gzip
+        // member is inflated through a bounded read of only its first bytes, so a
+        // gzip bomb is never materialised just to inspect it; a raw body is read
+        // directly. A leading '{' marks JSON, '<' marks XML.
+        $probe = $payload;
+
+        if (str_starts_with($payload, "\x1f\x8b")) {
+            $decoded = self::inflatePrefix($payload, self::PROBE_BYTES);
+
+            if ($decoded === null) {
+                return false;
+            }
+
+            $probe = $decoded;
+        }
+
+        $probe = ltrim(ltrim($probe, "\xEF\xBB\xBF"));
 
         return $probe !== '' && $probe[0] === '{';
+    }
+
+    /**
+     * Inflate at most $limit bytes from a gzip member so its first non-whitespace
+     * byte can be inspected without decompressing an untrusted payload in full.
+     * Returns null when zlib is unavailable or the stream is not decodable.
+     */
+    private static function inflatePrefix(string $payload, int $limit): ?string
+    {
+        if (!\function_exists('gzdecode')) {
+            return null;
+        }
+
+        $stream = fopen('php://temp', 'r+b');
+
+        if ($stream === false) {
+            return null;
+        }
+
+        $written = fwrite($stream, $payload);
+
+        if ($written === false || $written < \strlen($payload)) {
+            fclose($stream);
+
+            return null;
+        }
+
+        rewind($stream);
+
+        if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
+            fclose($stream);
+
+            return null;
+        }
+
+        $corrupt = false;
+        set_error_handler(
+            static function () use (&$corrupt): bool {
+                $corrupt = true;
+
+                return true;
+            }
+        );
+
+        try {
+            $data = stream_get_contents($stream, $limit);
+        } finally {
+            restore_error_handler();
+            fclose($stream);
+        }
+
+        if ($corrupt || !\is_string($data) || $data === '') {
+            return null;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Classify a zip container by its entries: true when it carries a JSON
+     * (TLS-RPT) document and no XML, false when it carries an XML (DMARC)
+     * document, null when neither is present or the archive cannot be read. A
+     * DMARC member wins when both are present so the hardened XML path stays the
+     * default for a mixed archive.
+     */
+    private static function zipLooksLikeTlsRpt(string $payload): ?bool
+    {
+        if (!str_starts_with($payload, "PK\x03\x04") || !class_exists(\ZipArchive::class)) {
+            return null;
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_tlsrpt_probe_');
+
+        if ($tmp === false) {
+            return null;
+        }
+
+        $hasJson = false;
+        $hasXml  = false;
+
+        try {
+            if (file_put_contents($tmp, $payload) === false) {
+                return null;
+            }
+
+            $zip = new \ZipArchive();
+
+            if ($zip->open($tmp) !== true) {
+                return null;
+            }
+
+            $limit = min($zip->numFiles, self::MAX_ENTRIES);
+
+            for ($i = 0; $i < $limit; $i++) {
+                $entry = $zip->statIndex($i);
+
+                if ($entry === false) {
+                    continue;
+                }
+
+                $entryName = strtolower((string) $entry['name']);
+
+                if (str_contains($entryName, '.xml')) {
+                    $hasXml = true;
+
+                    break;
+                }
+
+                if (str_contains($entryName, '.json')) {
+                    $hasJson = true;
+                }
+            }
+
+            $zip->close();
+        } finally {
+            @unlink($tmp);
+        }
+
+        if ($hasXml) {
+            return false;
+        }
+
+        return $hasJson ? true : null;
     }
 
     /**

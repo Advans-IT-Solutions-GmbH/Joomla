@@ -77,6 +77,13 @@ $check('PolicyRequest ignores unrelated hosts and paths', static function () {
         && PolicyRequest::domainFor('mta-sts.example.com', '/index.php') === null;
 });
 
+// Load the plugin extension class file directly, mirroring how PolicyRequest
+// is loaded above. Compiling it only needs the core CMSPlugin parent; the
+// component's MtaStsPolicy is merely referenced through a guarded
+// class_exists() at execution time, so the file must compile cleanly even
+// though the component is absent.
+require_once $base . '/src/Extension/DmarcMtaSts.php';
+
 $check('Plugin extension class loads without fatally requiring the component', static function () {
     return class_exists(\Advans\Plugin\System\DmarcMtaSts\Extension\DmarcMtaSts::class);
 });

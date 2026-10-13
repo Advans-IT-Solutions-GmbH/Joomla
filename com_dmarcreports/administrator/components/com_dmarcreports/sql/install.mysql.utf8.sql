@@ -137,9 +137,23 @@ CREATE TABLE IF NOT EXISTS `#__dmarc_tlsrpt_reports` (
     KEY `idx_dmarc_tlsrpt_range` (`date_begin`, `date_end`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `#__dmarc_tlsrpt_policies` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `report_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `domain_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `policy_type` VARCHAR(20) NOT NULL DEFAULT '',
+    `policy_domain` VARCHAR(190) NOT NULL DEFAULT '',
+    `success_count` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    `failure_count` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    KEY `idx_dmarc_tlsrpt_policy_report` (`report_id`),
+    KEY `idx_dmarc_tlsrpt_policy_domain` (`domain_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `#__dmarc_tlsrpt_failures` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `report_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `policy_id` INT UNSIGNED NOT NULL DEFAULT 0,
     `domain_id` INT UNSIGNED NOT NULL DEFAULT 0,
     `policy_domain` VARCHAR(190) NOT NULL DEFAULT '',
     `result_type` VARCHAR(60) NOT NULL DEFAULT '',
@@ -151,6 +165,7 @@ CREATE TABLE IF NOT EXISTS `#__dmarc_tlsrpt_failures` (
     `failure_reason_code` VARCHAR(190) NOT NULL DEFAULT '',
     PRIMARY KEY (`id`),
     KEY `idx_dmarc_tlsrpt_fail_report` (`report_id`),
+    KEY `idx_dmarc_tlsrpt_fail_policy` (`policy_id`),
     KEY `idx_dmarc_tlsrpt_fail_domain` (`domain_id`),
     KEY `idx_dmarc_tlsrpt_fail_result` (`result_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

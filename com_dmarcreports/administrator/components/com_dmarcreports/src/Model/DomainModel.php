@@ -125,7 +125,7 @@ class DomainModel extends AdminModel
             // {@see DomainLock} for the shared protocol.
             DomainLock::lockMany($db, $ids);
 
-            foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
+            foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_tlsrpt_failures', '#__dmarc_tlsrpt_policies', '#__dmarc_tlsrpt_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
                 $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
                     ->delete($db->quoteName($table))
                     ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);

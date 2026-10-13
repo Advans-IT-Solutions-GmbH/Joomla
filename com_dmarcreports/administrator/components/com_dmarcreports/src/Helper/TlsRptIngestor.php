@@ -87,9 +87,24 @@ final class TlsRptIngestor
         }
 
         $policyDomain = $this->firstPolicyDomain($report);
-        $domainId     = $forcedDomainId > 0
-            ? $forcedDomainId
-            : DomainRegistry::resolve($this->db, $policyDomain, $this->allowAutoCreate);
+
+        if ($forcedDomainId > 0) {
+            // A mailbox bound to one monitored domain still delivers untrusted
+            // content: a TLS-RPT report whose policy domain belongs to an
+            // unrelated tenant would otherwise be attributed to this source and
+            // skew its TLS metrics. Only honour the binding when every policy
+            // domain shares an organizational domain with the bound one, exactly
+            // as the DMARC path validates at Ingestor::boundDomainMatchesPolicy().
+            if (!$this->boundDomainMatchesReport($forcedDomainId, $report)) {
+                $summary['skipped']++;
+
+                return;
+            }
+
+            $domainId = $forcedDomainId;
+        } else {
+            $domainId = DomainRegistry::resolve($this->db, $policyDomain, $this->allowAutoCreate);
+        }
 
         if ($domainId <= 0) {
             // No usable policy domain, or an operator without core.create may not
@@ -120,9 +135,16 @@ final class TlsRptIngestor
 
             $reportId = $this->insertReport($report, $hash, $domainId, $effectiveSourceId, $policyDomain, $successCount, $failureCount);
 
+            // Persist one row per policy block so a report bundling several
+            // policies (for example an STS and a TLSA/no-policy result) keeps
+            // each policy's type and its own success/failure counts, and link
+            // every failure detail to the policy it was reported under rather
+            // than only to the aggregate report row.
             foreach ($report['policies'] as $policy) {
+                $policyId = $this->insertPolicy($policy, $reportId, $domainId);
+
                 foreach ($policy['failures'] as $failure) {
-                    $this->insertFailure($failure, $reportId, $domainId, (string) $policy['policy_domain']);
+                    $this->insertFailure($failure, $reportId, $policyId, $domainId, (string) $policy['policy_domain']);
                 }
             }
 
@@ -168,7 +190,81 @@ final class TlsRptIngestor
     }
 
     /**
-     * Sum the success and failure session counts across every policy block.
+     * Whether a mailbox's forced domain binding may accept this report. Returns
+     * true only when the report carries at least one policy domain and every
+     * non-empty policy domain shares an organizational domain with the bound
+     * one (identical, or either a subdomain of the other). Empty policy domains
+     * carry no cross-tenant claim and are ignored. Mirrors the DMARC path's
+     * {@see Ingestor::boundDomainMatchesPolicy()}.
+     *
+     * @param   array<string, mixed>  $report
+     */
+    private function boundDomainMatchesReport(int $domainId, array $report): bool
+    {
+        $bound = $this->boundDomainName($domainId);
+
+        if ($bound === '') {
+            // The bound domain row was deleted between configuration and this
+            // run; treat it as no match so the report is skipped rather than
+            // stored under a tenant that no longer exists.
+            return false;
+        }
+
+        $matched = false;
+
+        foreach ($report['policies'] as $policy) {
+            $policyDomain = strtolower(trim((string) ($policy['policy_domain'] ?? '')));
+
+            if ($policyDomain === '') {
+                continue;
+            }
+
+            if (!self::domainsShareOrg($bound, $policyDomain)) {
+                return false;
+            }
+
+            $matched = true;
+        }
+
+        return $matched;
+    }
+
+    /**
+     * The canonical name of a monitored domain, lower-cased, or '' when the row
+     * no longer exists.
+     */
+    private function boundDomainName(int $domainId): string
+    {
+        $query = $this->query()
+            ->select($this->db->quoteName('domain'))
+            ->from($this->db->quoteName('#__dmarc_domains'))
+            ->where($this->db->quoteName('id') . ' = :id')
+            ->bind(':id', $domainId, ParameterType::INTEGER);
+
+        return strtolower(trim((string) $this->db->setQuery($query)->loadResult()));
+    }
+
+    /**
+     * Whether two lower-cased domains share an organizational domain: identical,
+     * or either one a subdomain of the other. The leading dot in the suffix test
+     * prevents a sibling such as evil-example.com from matching example.com.
+     */
+    private static function domainsShareOrg(string $bound, string $policyDomain): bool
+    {
+        if ($bound === $policyDomain) {
+            return true;
+        }
+
+        return str_ends_with($policyDomain, '.' . $bound)
+            || str_ends_with($bound, '.' . $policyDomain);
+    }
+
+    /**
+     * Sum the success and failure session counts across every policy block with
+     * overflow-safe accumulation. Individual counts are already bounded to the
+     * storable integer range by {@see TlsRptParser}, but their sum could still
+     * pass PHP_INT_MAX; saturating there keeps the stored BIGINT UNSIGNED total
+     * non-negative instead of wrapping to a float or a negative value.
      *
      * @param   array<string, mixed>  $report
      *
@@ -180,11 +276,24 @@ final class TlsRptIngestor
         $failure = 0;
 
         foreach ($report['policies'] as $policy) {
-            $success += (int) ($policy['success_count'] ?? 0);
-            $failure += (int) ($policy['failure_count'] ?? 0);
+            $success = self::addClamped($success, (int) ($policy['success_count'] ?? 0));
+            $failure = self::addClamped($failure, (int) ($policy['failure_count'] ?? 0));
         }
 
         return [$success, $failure];
+    }
+
+    /**
+     * Add a non-negative increment to a running total, saturating at PHP_INT_MAX
+     * rather than overflowing.
+     */
+    private static function addClamped(int $running, int $add): int
+    {
+        if ($add <= 0) {
+            return $running;
+        }
+
+        return $add > PHP_INT_MAX - $running ? PHP_INT_MAX : $running + $add;
     }
 
     /**
@@ -213,12 +322,35 @@ final class TlsRptIngestor
     }
 
     /**
+     * Persist one policy block and return its new row id so the failures it
+     * contains can reference it.
+     *
+     * @param   array<string, mixed>  $policy
+     */
+    private function insertPolicy(array $policy, int $reportId, int $domainId): int
+    {
+        $row = (object) [
+            'report_id'     => $reportId,
+            'domain_id'     => $domainId,
+            'policy_type'   => (string) ($policy['policy_type'] ?? ''),
+            'policy_domain' => (string) ($policy['policy_domain'] ?? ''),
+            'success_count' => (int) ($policy['success_count'] ?? 0),
+            'failure_count' => (int) ($policy['failure_count'] ?? 0),
+        ];
+
+        $this->db->insertObject('#__dmarc_tlsrpt_policies', $row, 'id');
+
+        return (int) $row->id;
+    }
+
+    /**
      * @param   array<string, mixed>  $failure
      */
-    private function insertFailure(array $failure, int $reportId, int $domainId, string $policyDomain): void
+    private function insertFailure(array $failure, int $reportId, int $policyId, int $domainId, string $policyDomain): void
     {
         $row = (object) [
             'report_id'            => $reportId,
+            'policy_id'            => $policyId,
             'domain_id'            => $domainId,
             'policy_domain'        => $policyDomain,
             'result_type'          => (string) $failure['result_type'],
