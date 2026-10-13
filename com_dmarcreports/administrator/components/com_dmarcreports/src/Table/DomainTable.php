@@ -66,8 +66,8 @@ class DomainTable extends Table
         // The domain column carries a UNIQUE key. Detect a duplicate before the
         // store so the operator sees a localized "already monitored" message
         // rather than the database unique-key violation.
-        $db    = $this->getDbo();
-        $query = $db->getQuery(true)
+        $db    = $this->getDatabase();
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__dmarc_domains'))
             ->where($db->quoteName('domain') . ' = :domain')
