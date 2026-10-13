@@ -1,0 +1,15 @@
+{
+    "$schema": "https://developer.joomla.org/schemas/json-schema/web_assets.json",
+    "name": "com_appointments",
+    "version": "1.0.0",
+    "description": "Appointments component assets. Every file is served from this installation; nothing is loaded from a third party. The version is a cache buster and is written by the release workflow together with the other version files; never edit it by hand.",
+    "license": "GPL-3.0-or-later",
+    "assets": [
+        {
+            "name": "com_appointments.site",
+            "type": "style",
+            "uri": "com_appointments/appointments.css",
+            "version": "1.0.0"
+        }
+    ]
+}
