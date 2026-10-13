@@ -25,6 +25,7 @@
             type="list"
             label="COM_DMARCREPORTS_FIELD_EXPECTED_POLICY_LABEL"
             description="COM_DMARCREPORTS_FIELD_EXPECTED_POLICY_DESC"
+            validate="options"
             default="reject">
             <option value="none">COM_DMARCREPORTS_POLICY_NONE</option>
             <option value="quarantine">COM_DMARCREPORTS_POLICY_QUARANTINE</option>

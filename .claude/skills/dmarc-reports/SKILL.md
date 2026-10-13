@@ -39,7 +39,7 @@ report data leaves the host.
 
 - Multi-domain / multi-tenant: several monitored domains, each with its own report source
 - Ingests reports on demand over IMAP, or by manual upload of `.xml`, `.gz` or `.zip`
-- Native PHP RFC 7489 parser; idempotent storage de-duplicated by reporter org + report id
+- Native PHP RFC 7489 parser; idempotent storage de-duplicated by policy domain + reporter org + report id + report-window start
 - Dashboard: per-domain volume, SPF/DKIM pass rates, would-be-rejected share, top IPs, timeline
 - **Action Center**: prioritised, data-driven next steps along `none → quarantine → reject`
 - DNS diagnostics for SPF/DMARC records; CSV export; system check for the IMAP transport

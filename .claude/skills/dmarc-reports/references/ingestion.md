@@ -140,9 +140,10 @@ recomputing it.
 
 ## Idempotent storage (`Ingestor`)
 
-`report_hash` (reporter org + report id + report-window start) is a UNIQUE key on
-`#__dmarc_reports`. Including the window start keeps a reporter that reuses a report id for a later
-window as two distinct reports. Re-ingesting the
+`report_hash` (policy domain + reporter org + report id + report-window start) is a UNIQUE key on
+`#__dmarc_reports`. Including the policy domain keeps a reporter that reuses one report id across
+different policy domains as distinct reports in a multi-domain install, and including the window
+start keeps a reporter that reuses a report id for a later window as two distinct reports. Re-ingesting the
 same report is a no-op: the insert is skipped and no duplicate records are written. `ingestMessages()`
 loops `ingestMessage()` over the streamed messages; `newSummary()` builds the per-run result
 (counts of new / duplicate / failed / skipped) shown back to the admin and written to `last_run` /

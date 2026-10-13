@@ -71,7 +71,8 @@ class HtmlView extends BaseHtmlView
             ->icon('icon-health')
             ->text(Text::_('COM_DMARCREPORTS_TOOLBAR_SYSTEMCHECK'));
 
-        if ($user->authorise('core.admin', 'com_dmarcreports')) {
+        if ($user->authorise('core.admin', 'com_dmarcreports')
+            || $user->authorise('core.options', 'com_dmarcreports')) {
             $toolbar->preferences('com_dmarcreports');
         }
     }

@@ -32,7 +32,9 @@ by the uninstall SQL — `administrator/components/com_dmarcreports/sql/{install
 Both are declared in the manifest `<install>`/`<uninstall>` `<sql>` blocks. Tables use the
 `#__` prefix placeholder and `utf8mb4`.
 
-- `report_hash` on `#__dmarc_reports` is the unique dedupe key (reporter org + report id).
+- `report_hash` on `#__dmarc_reports` is the unique dedupe key (policy domain + reporter org +
+  report id + report-window start). The policy domain keeps reports that a reporter sends for
+  different domains under one reused report id distinct across a multi-domain install.
 - `#__dmarc_records.count` is the message count for that row; metrics weight by it. Message counts
   are `BIGINT UNSIGNED` and the report date range (`date_begin`/`date_end`, Unix timestamps) is
   `BIGINT`, so high-volume rows do not overflow and the timeline is not capped at the 2038 limit of

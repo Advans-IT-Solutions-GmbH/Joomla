@@ -60,6 +60,7 @@
             type="list"
             label="COM_DMARCREPORTS_FIELD_SECURITY_LABEL"
             description="COM_DMARCREPORTS_FIELD_SECURITY_DESC"
+            validate="options"
             default="ssl">
             <option value="ssl">COM_DMARCREPORTS_SECURITY_SSL</option>
             <option value="tls">COM_DMARCREPORTS_SECURITY_TLS</option>

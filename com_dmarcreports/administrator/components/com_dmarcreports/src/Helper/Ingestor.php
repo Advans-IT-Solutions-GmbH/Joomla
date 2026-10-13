@@ -266,6 +266,18 @@ final class Ingestor
             $summary['imported']++;
         } catch (\Throwable) {
             $this->db->transactionRollback();
+
+            // A concurrent import can store this exact report between the
+            // preflight reportExists() check and the insert above; the unique
+            // report_hash then rejects the duplicate here. That is a successful
+            // de-duplication, not a transient failure, so recognise it, count it
+            // as a duplicate and do not defer the IMAP UID for a retry.
+            if ($this->reportExists($hash)) {
+                $summary['duplicates']++;
+
+                return;
+            }
+
             $summary['failed']++;
             // Values are clamped to their column widths before storage, so a
             // deterministic length overflow cannot recur here; a failure that
