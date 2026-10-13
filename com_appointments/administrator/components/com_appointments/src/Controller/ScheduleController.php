@@ -8,8 +8,6 @@
  */
 namespace Advans\Component\Appointments\Administrator\Controller;
 
-use Joomla\CMS\MVC\Controller\FormController;
-
 defined('_JEXEC') or die;
 
 /**
@@ -17,7 +15,7 @@ defined('_JEXEC') or die;
  *
  * @since  1.0.0
  */
-class ScheduleController extends FormController
+class ScheduleController extends EditController
 {
     protected $view_list = 'schedules';
 }

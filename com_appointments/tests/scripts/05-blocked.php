@@ -110,6 +110,34 @@ class BlockedAdminTest
                     && $row['end_utc'] === '2026-06-02 14:00:00';
             });
 
+            foreach (['2026-06-02 16:00:00', '2026-02-31 16:00:00'] as $start) {
+                $this->test('A direct blocked save refuses an unheld record before validating ' . $start, function () use ($row, $token, $start) {
+                    $before = $this->fieldValue(
+                        $this->get('/administrator/index.php?option=com_appointments&view=blocked'),
+                        'start_utc'
+                    );
+                    $this->post('blocked.save', $token, [
+                        'jform[id]'        => (string) $row['id'],
+                        'jform[user_id]'   => (string) $this->adminId,
+                        'jform[title]'     => self::TITLE,
+                        'jform[start_utc]' => $start,
+                        'jform[end_utc]'   => '2026-06-02 18:00:00',
+                    ]);
+                    $status = $this->lastStatus;
+                    $stored = $this->fixture();
+                    $after  = $this->fieldValue(
+                        $this->get('/administrator/index.php?option=com_appointments&view=blocked'),
+                        'start_utc'
+                    );
+
+                    return $status === 403 && $stored !== null && $before !== null && $after === $before
+                        && (int) $stored['id'] === (int) $row['id']
+                        && $stored['start_utc'] === '2026-06-02 12:00:00'
+                        && $stored['end_utc'] === '2026-06-02 14:00:00'
+                        && (int) $stored['checked_out'] === (int) $row['checked_out'];
+                });
+            }
+
             $this->test('The form shows the period in the local zone again', function () use ($row) {
                 $html = $this->get(
                     '/administrator/index.php?option=com_appointments&task=blocked.edit&id=' . (int) $row['id']

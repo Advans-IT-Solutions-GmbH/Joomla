@@ -202,6 +202,46 @@ final class ScheduleResolverTest extends TestCase
         new ScheduleResolver(self::ZONE, [['weekday' => 2, 'start_time' => '25:00', 'end_time' => '26:00']]);
     }
 
+    public function testAWhollySkippedDateOffersNeitherDaytimeNorOvernightOverrides(): void
+    {
+        foreach ([['10:00', '12:00'], ['22:00', '02:00']] as [$start, $end]) {
+            $resolver = new ScheduleResolver('Pacific/Apia', [], [
+                ['specific_date' => '2011-12-30', 'start_time' => $start, 'end_time' => $end],
+            ]);
+
+            $this->assertSame([], $resolver->windowsForDate('2011-12-30'));
+            [$windows, $unavailable] = $this->resolveRange($resolver, '2011-12-29 00:00', '2012-01-01 00:00');
+            $this->assertSame([], $windows);
+            $this->assertSame([], $unavailable);
+        }
+    }
+
+    public function testAWeeklyRuleOnASkippedDateDoesNotMoveToTheNextDate(): void
+    {
+        $resolver = new ScheduleResolver('Pacific/Apia', [
+            ['weekday' => 5, 'start_time' => '10:00', 'end_time' => '12:00'],
+            ['weekday' => 6, 'start_time' => '14:00', 'end_time' => '16:00'],
+        ]);
+
+        $this->assertSame([], $resolver->windowsForDate('2011-12-30'));
+        $this->assertSame(
+            ['2011-12-31 00:00-2011-12-31 02:00'],
+            $this->asStrings($resolver->windowsForDate('2011-12-31'))
+        );
+    }
+
+    public function testAnOvernightRuleEndsAtTheTransitionIntoASkippedDate(): void
+    {
+        $resolver = new ScheduleResolver('Pacific/Apia', [
+            ['weekday' => 4, 'start_time' => '22:00', 'end_time' => '02:00'],
+        ]);
+
+        $this->assertSame(
+            ['2011-12-30 08:00-2011-12-30 10:00'],
+            $this->asStrings($resolver->windowsForDate('2011-12-29'))
+        );
+    }
+
     public function testAWeekdayRuleBecomesAUtcWindow(): void
     {
         // Tuesday 2 June 2026, summer time, so local 10:00 is 08:00 UTC.

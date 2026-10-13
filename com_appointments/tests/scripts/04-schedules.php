@@ -28,6 +28,7 @@ class ScheduleAdminTest
     private $dbPrefix;
     private $baseUrl;
     private $cookieJar = '/tmp/suite-schedules-cookies.txt';
+    private $lastStatus = 0;
     private $adminId = 0;
     private $originalParams = '';
     private $operatorId = 0;
@@ -120,6 +121,28 @@ class ScheduleAdminTest
             $html = $this->get('/administrator/index.php?option=com_appointments&task=schedule.edit&id=' . $scheduleId);
 
             return strpos($html, '10:00') !== false && strpos($html, '2026-12-24') !== false;
+        });
+
+        $this->test('A schedule containing a closed day saves unchanged from the edit form', function () use ($scheduleId) {
+            $html = $this->get(
+                '/administrator/index.php?option=com_appointments&task=schedule.edit&id=' . $scheduleId
+            );
+            $token = $this->tokenIn($html);
+
+            if ($token === null) {
+                return false;
+            }
+
+            $fields = $this->fieldsFromEditForm($html);
+            $this->post('schedule.save', $token, $fields);
+            $closed = $this->rule($scheduleId, 'specific_date IS NOT NULL');
+
+            return $this->lastStatus === 200
+                && (int) $this->column($scheduleId, 'checked_out') === 0
+                && $this->fixtureId() === $scheduleId && $this->ruleCount($scheduleId) === 2
+                && $closed !== null && (int) $closed['is_unavailable'] === 1
+                && $closed['specific_date'] === '2026-12-24'
+                && $closed['start_time'] === '00:00:00' && $closed['end_time'] === '00:00:00';
         });
 
         // --- The override date must survive a reader west of UTC -----------
@@ -266,6 +289,24 @@ class ScheduleAdminTest
                 echo "✗ Could not create an operator without the state permission\n";
                 $this->failed++;
             } else {
+                $this->test('A direct schedule save cannot bypass another editor checkout', function () use ($scheduleId) {
+                    $token = $this->tokenFromListForm();
+                    $lock  = (int) $this->column($scheduleId, 'checked_out');
+
+                    if ($token === null || $lock === 0) {
+                        return false;
+                    }
+
+                    $fields = $this->validFields();
+                    $fields['jform[id]']       = (string) $scheduleId;
+                    $fields['jform[timezone]'] = 'UTC';
+                    $this->post('schedule.save', $token, $fields);
+
+                    return $this->lastStatus === 403
+                        && $this->column($scheduleId, 'timezone') === 'Europe/Zurich'
+                        && (int) $this->column($scheduleId, 'checked_out') === $lock;
+                });
+
                 foreach (['schedule', 'Schedule', 'SCHEDULE'] as $spelling) {
                     $this->test('An editor cannot bypass checkout through view=' . $spelling, function () use ($spelling, $scheduleId) {
                         [, $status] = $this->statusOf(
@@ -580,6 +621,42 @@ class ScheduleAdminTest
         return $row ? (int) $row['id'] : 0;
     }
 
+    private function fieldsFromEditForm(string $html): array
+    {
+        $document = new \DOMDocument();
+        $previous = libxml_use_internal_errors(true);
+
+        try {
+            $document->loadHTML($html);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+
+        $xpath  = new \DOMXPath($document);
+        $fields = [];
+
+        foreach ($xpath->query('//form[@id="schedule-form"]//*[self::input or self::select][not(ancestor::template)]') as $field) {
+            $name = $field->getAttribute('name');
+
+            if (!str_starts_with($name, 'jform[') || $field->hasAttribute('disabled')) {
+                continue;
+            }
+
+            if ($field->tagName === 'select') {
+                $options  = $xpath->query('.//option[@selected]', $field);
+                $selected = $options->item(0) ?? $xpath->query('.//option', $field)->item(0);
+                $fields[$name] = $selected === null ? '' : $selected->getAttribute('value');
+            } elseif (!\in_array($field->getAttribute('type'), ['radio', 'checkbox'], true)
+                || $field->hasAttribute('checked')
+            ) {
+                $fields[$name] = $field->getAttribute('value');
+            }
+        }
+
+        return $fields;
+    }
+
     /**
      * @return string|null
      */
@@ -763,6 +840,7 @@ class ScheduleAdminTest
         }
 
         $body = curl_exec($handle);
+        $this->lastStatus = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
         curl_close($handle);
 
         return $body === false ? '' : $body;

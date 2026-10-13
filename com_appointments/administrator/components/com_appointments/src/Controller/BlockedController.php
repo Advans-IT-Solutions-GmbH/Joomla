@@ -11,7 +11,6 @@ namespace Advans\Component\Appointments\Administrator\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\MVC\Controller\FormController;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
@@ -21,7 +20,7 @@ defined('_JEXEC') or die;
  *
  * @since  1.0.0
  */
-class BlockedController extends FormController
+class BlockedController extends EditController
 {
     protected $view_list = 'blockeds';
 
@@ -56,13 +55,9 @@ class BlockedController extends FormController
      */
     public function save($key = null, $urlVar = null)
     {
-        // Before anything is read out of the request, let alone written to the
-        // session: a refusal below returns without reaching the base
-        // controller, so its own check would never run on a forged submission.
-        // Checking here costs nothing, because `Session::checkToken()` compares
-        // the token and does not consume it, so the base controller's check
-        // still succeeds on a genuine submission.
-        if (!$this->checkToken()) {
+        // Early timestamp refusals must not bypass the token or held-edit
+        // checks, or write an unheld record's payload into form state.
+        if (!$this->checkSaveRequest($key, $urlVar)) {
             return false;
         }
 

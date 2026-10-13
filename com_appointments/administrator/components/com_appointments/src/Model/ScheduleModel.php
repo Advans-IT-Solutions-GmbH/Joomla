@@ -67,10 +67,11 @@ class ScheduleModel extends AdminModel
 
         foreach ($this->loadRules((int) $item->id) as $rule) {
             if ($rule->specific_date !== null) {
+                $closed = (int) $rule->is_unavailable === 1;
                 $item->date_overrides[] = [
                     'specific_date'  => $rule->specific_date,
-                    'start_time'     => substr((string) $rule->start_time, 0, 5),
-                    'end_time'       => substr((string) $rule->end_time, 0, 5),
+                    'start_time'     => $closed ? '' : substr((string) $rule->start_time, 0, 5),
+                    'end_time'       => $closed ? '' : substr((string) $rule->end_time, 0, 5),
                     'is_unavailable' => (string) (int) $rule->is_unavailable,
                 ];
 

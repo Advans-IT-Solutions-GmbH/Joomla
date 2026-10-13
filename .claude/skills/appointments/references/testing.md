@@ -136,7 +136,11 @@ An editor without that permission must still be able to change the schedule's co
 existing publication state stays unchanged. An administrator with the permission is the positive
 control and can create a published schedule.
 Direct edit views, including mixed-case names, must also refuse an existing record until the edit
-task has checked it out for that session. The edit task must not acquire another operator's checkout.
+task has checked it out for that session. Direct save POSTs require the same held edit ID, before
+any raw blocked-period validation or form-state mutation. The edit task must not acquire another
+operator's checkout. The schedule suite also submits the fields rendered by an unchanged edit form
+containing a closed day, and verifies successful save and checkout release, not merely unchanged
+database rows after a possible validation failure.
 
 ### The blocked-period redisplay assertions
 

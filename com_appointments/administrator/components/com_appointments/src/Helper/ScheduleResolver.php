@@ -269,7 +269,7 @@ final class ScheduleResolver
      */
     private function localDayWindow(string $date): ?AvailabilityWindow
     {
-        $next = (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))
+        $next = (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))
             ->modify('+1 day')
             ->format('Y-m-d');
 
@@ -288,6 +288,14 @@ final class ScheduleResolver
      */
     public function windowsForDate(string $date): array
     {
+        if (!UtcTimestamp::isDate($date)) {
+            throw new \InvalidArgumentException('A schedule date must be a valid calendar date.');
+        }
+
+        if ($this->localDayWindow($date) === null) {
+            return [];
+        }
+
         if (isset($this->closedDates[$date])) {
             return [];
         }
@@ -297,7 +305,7 @@ final class ScheduleResolver
         if (isset($this->overrides[$date])) {
             $rules = $this->overrides[$date];
         } else {
-            $weekday = (int) (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))->format('N');
+            $weekday = (int) (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))->format('N');
             $rules   = $this->weekly[$weekday] ?? [];
         }
 
@@ -337,7 +345,7 @@ final class ScheduleResolver
         // stays one window: a night shift is one period of availability.
         $endDate = $end > $start
             ? $date
-            : (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))->modify('+1 day')->format('Y-m-d');
+            : (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
 
         $startUtc = $this->localToUtc($date, $start);
         $endUtc   = $this->localToUtc($endDate, $end);
@@ -376,39 +384,39 @@ final class ScheduleResolver
      */
     private function localToUtc(string $date, string $time): \DateTimeImmutable
     {
-        $local = new \DateTimeImmutable($date . ' ' . $time, $this->zone);
-        $utc   = $local->setTimezone(new \DateTimeZone('UTC'));
+        $value    = $date . ' ' . $time;
+        $instants = UtcTimestamp::localInstants($value, $this->zone);
 
-        if ($local->format('H:i:s') !== $time) {
-            $gapEnd = $this->forwardTransition($date);
-
-            // No forward transition found for the date, so the mismatch cannot
-            // be explained. Rather than guess, use what PHP resolved.
-            return $gapEnd ?? $utc;
+        if ($instants !== []) {
+            return $instants[0];
         }
 
-        $repeated = $this->repeatedHour($date);
+        $nominal = UtcTimestamp::parse($value);
 
-        if ($repeated !== null && $repeated->contains($utc)) {
-            return $utc->modify('-' . $repeated->getDurationSeconds() . ' seconds');
+        if ($nominal === null) {
+            throw new \InvalidArgumentException('A schedule bound must be a valid local date and time.');
         }
 
-        return $utc;
-    }
+        // Test the full wall-clock interval skipped by each forward change,
+        // including date-line changes that skip an entire calendar date.
+        $wall        = $nominal->getTimestamp();
+        $transitions = $this->zone->getTransitions($wall - 172800, $wall + 172800);
+        $previous    = null;
 
-    /**
-     * The instant at which the clocks move forward on the given local date, or
-     * null when they do not.
-     */
-    private function forwardTransition(string $date): ?\DateTimeImmutable
-    {
-        foreach ($this->transitionsOn($date) as $transition) {
-            if ($transition['difference'] > 0) {
-                return $transition['at'];
+        foreach ($transitions ?: [] as $transition) {
+            $offset = (int) $transition['offset'];
+            $at     = (int) $transition['ts'];
+
+            if ($previous !== null && $offset > $previous
+                && $wall >= $at + $previous && $wall < $at + $offset
+            ) {
+                return (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone('UTC'));
             }
+
+            $previous = $offset;
         }
 
-        return null;
+        throw new \InvalidArgumentException('A schedule bound cannot be resolved in its time zone.');
     }
 
     /**
@@ -489,12 +497,13 @@ final class ScheduleResolver
      */
     private function localDatesFor(AvailabilityWindow $range): array
     {
-        $first = $range->getStart()->setTimezone($this->zone)->modify('-1 day')->format('Y-m-d');
+        $first = $range->getStart()->setTimezone($this->zone)->format('Y-m-d');
         $last  = $range->getEnd()->setTimezone($this->zone)->format('Y-m-d');
         $dates = [];
 
-        $cursor = new \DateTimeImmutable($first . ' 12:00:00', $this->zone);
-        $end    = new \DateTimeImmutable($last . ' 12:00:00', $this->zone);
+        $utc    = new \DateTimeZone('UTC');
+        $cursor = (new \DateTimeImmutable($first . ' 12:00:00', $utc))->modify('-1 day');
+        $end    = new \DateTimeImmutable($last . ' 12:00:00', $utc);
 
         while ($cursor <= $end) {
             $dates[] = $cursor->format('Y-m-d');

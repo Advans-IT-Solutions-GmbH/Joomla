@@ -87,12 +87,12 @@ A date or a timestamp is also refused outside the years 1000 to 9999, which is t
 that validates one uses them, so a value that reaches a column has already been through the same
 check.
 
-The two daylight-saving cases that must have tests, with `Europe/Zurich`:
+The clock-change cases that must have tests:
 
-- **Spring forward**, the last Sunday in March. 02:00 to 03:00 local does not exist. A window that
+- **Spring forward in `Europe/Zurich`**, the last Sunday in March. 02:00 to 03:00 local does not exist. A window that
   lies inside the skipped hour yields no slot, and a window spanning it is one hour shorter in real
   time. The engine must not produce a slot at a non-existent local time.
-- **Autumn back**, the last Sunday in October. 02:00 to 03:00 local occurs twice. The window is
+- **Autumn back in `Europe/Zurich`**, the last Sunday in October. 02:00 to 03:00 local occurs twice. The window is
   resolved once, using the first occurrence, so no duplicate slot is offered and no booking can be
   made at an ambiguous time.
 - **A transition at local midnight.** `America/Santiago` puts the clocks back at local
@@ -102,8 +102,13 @@ The two daylight-saving cases that must have tests, with `Europe/Zurich`:
   arithmetic on midnight, miss this case from both sides — the instant is the previous date's
   computed day end and lies before the next date's computed day start — and the repeated hour is
   then reported for neither date.
+- **An entire skipped date.** `Pacific/Apia` skips 2011-12-30. No weekly rule or date override
+  anchored to that date produces availability, including overnight rules. Calendar-date iteration
+  and next-date arithmetic use Gregorian dates without the schedule's zone, so the missing date
+  is not silently replaced by its neighbour. Bounds falling in the missing date resolve to the
+  transition instant, just like bounds in a missing hour.
 
-Those two rules are for a **recurring availability rule**, which has to resolve to something: a
+These conventions are for a **recurring availability rule**, which has to resolve to something: a
 weekly 02:00 to 10:00 rule cannot simply disappear twice a year, so the resolver states a
 convention and holds to it.
 
@@ -119,8 +124,9 @@ stands for in a zone: none for the skipped hour, one ordinarily, two for the rep
 value as UTC: the first silently shifts the skipped hour and picks one of the repeated ones, and the
 second cannot see a zone at all, so it accepts both. The check belongs in the **controller**,
 before Joomla's `user_utc` filter runs, because the filter is the thing that converts and after it
-the operator's own input no longer exists. The controller checks the request token first, so a
-refusal cannot become a way to write a forged submission into the operator's session state.
+the operator's own input no longer exists. The controller checks the request token and, for an
+existing record, the session's held edit ID first, so a refusal cannot become a way to write a
+forged or unheld submission into the operator's session state.
 
 An early refusal keeps the original local strings in the form state, not UTC timestamps. Its
 redisplay therefore uses plain text fields for both bounds: Joomla's calendar field would otherwise
