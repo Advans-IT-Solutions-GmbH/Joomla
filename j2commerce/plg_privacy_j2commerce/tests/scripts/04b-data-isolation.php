@@ -2062,7 +2062,8 @@ PHP
      * every Route::_() in the plugin classes passes xhtml=false (their URLs go to a redirect, a
      * JSON answer, a mail or an attribute that is escaped once by the caller). The overrides
      * and layouts write their links straight into HTML, where the escaped default is right; the
-     * request URL of the privacy tab goes into a layout that escapes it, so it must be raw too.
+     * request URL of the privacy tab goes into a layout that escapes it, so it must be raw too
+     * (the layout also decodes &amp; for copies of earlier versions, see 12-consent-logging).
      */
     private function testNoRedirectingTokenCheck(): void
     {

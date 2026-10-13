@@ -33,7 +33,10 @@ $isGuest        = !empty($displayData['isGuest']);
 $showExport     = (bool) ($displayData['showExport'] ?? true);
 $showDelete     = (bool) ($displayData['showDelete'] ?? true);
 $showRequest    = !empty($displayData['showRequest']) && ($showExport || $showDelete);
-$requestUrl     = (string) ($displayData['requestUrl'] ?? '');
+// Copies of the privacy tab override deployed by earlier versions (never overwritten on update)
+// pass the URL already escaped by Route::_(): the ampersand is decoded first, so the link is
+// escaped exactly once below, whichever copy renders the tab.
+$requestUrl     = str_replace('&amp;', '&', (string) ($displayData['requestUrl'] ?? ''));
 $contactEmail   = (string) ($displayData['contactEmail'] ?? '');
 $retentionYears = (int) ($displayData['retentionYears'] ?? 10);
 
