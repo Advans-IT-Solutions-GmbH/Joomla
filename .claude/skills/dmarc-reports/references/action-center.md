@@ -55,7 +55,11 @@ therefore still reaches the Action Center and earns an alignment recommendation.
 (`SystemDnsResolver` wraps `dns_get_record`). `txt()` returns `?array`: **null = lookup error**,
 **`[]` = no records**. A null result emits a `dns_lookup_error` finding and suppresses the
 "publish this record" suggestion (we cannot know what is missing when the lookup itself failed) —
-distinct from a genuinely missing record. Keep that distinction when editing.
+distinct from a genuinely missing record. Keep that distinction when editing. Because
+`dns_get_record()` returns `false` for both NXDOMAIN and a transport failure without exposing the
+response code, `SystemDnsResolver` only concludes `[]` (absent) when the root zone answers **and**
+the host's parent zone still resolves; a failure that also takes out the parent is kept as `null`
+(ambiguous) so a domain-wide outage is not reported as a missing record.
 
 A present record is validated before it is read as healthy: more than one DMARC (or SPF) record is
 reported as a duplicate, and a malformed required tag — an unknown `p` value or a `pct` that is not

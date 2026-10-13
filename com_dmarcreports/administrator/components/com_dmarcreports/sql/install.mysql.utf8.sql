@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS `#__dmarc_reports` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_dmarc_report_hash` (`report_hash`),
     KEY `idx_dmarc_report_domain` (`domain_id`),
+    KEY `idx_dmarc_report_source` (`source_id`),
     KEY `idx_dmarc_report_range` (`date_begin`, `date_end`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

@@ -40,15 +40,67 @@ final class SystemDnsResolver implements DnsResolverInterface
         }
 
         // dns_get_record() returns false both for a non-existent host (NXDOMAIN)
-        // and for a genuine resolver/transport failure, without exposing the
-        // response code. Because _dmarc.<domain> very commonly does not exist
-        // when DMARC is simply absent, mapping every false to a resolver error
-        // would hide the normal "no DMARC record" case. Probe the resolver with
-        // a neutral query that discloses nothing about the monitored domain: if
-        // the resolver can answer it, the earlier false was NXDOMAIN/no-data (a
-        // successful empty answer); if even this fails, it is a real resolver
-        // failure (null).
-        return $this->resolverIsHealthy() ? [] : null;
+        // and for a genuine resolver/transport failure (SERVFAIL, a timeout, a
+        // DNSSEC validation failure), without exposing the response code.
+        // Because _dmarc.<domain> very commonly does not exist when DMARC is
+        // simply absent, mapping every false to a resolver error would hide the
+        // normal "no DMARC record" case; but mapping every false to an empty
+        // answer would report a record as missing during an outage. Separate the
+        // two conservatively: only conclude the record is genuinely absent when
+        // the resolver works AND the host's parent zone still answers. A missing
+        // record under a healthy parent is NXDOMAIN (a NODATA host returns an
+        // empty array above, not false), whereas a failure that also takes out
+        // the parent spans the whole domain and is treated as an ambiguous
+        // resolver error (null) rather than a missing record. A failure scoped
+        // to this exact name while its parent answers cannot be told apart from
+        // NXDOMAIN without the response code and is the residual limitation here.
+        if (!$this->resolverIsHealthy()) {
+            return null;
+        }
+
+        $parent = $this->parentZone($host);
+
+        if ($parent !== null && $this->zoneAnswers($parent)) {
+            return [];
+        }
+
+        return null;
+    }
+
+    /**
+     * Return the immediate parent zone of a host (the name with its left-most
+     * label removed), or null when the host has no parent that is still a
+     * registrable domain rather than a bare public suffix. "_dmarc.example.org"
+     * yields "example.org"; "example.org" yields null.
+     */
+    private function parentZone(string $host): ?string
+    {
+        $host = trim($host, '.');
+        $dot  = strpos($host, '.');
+
+        if ($dot === false) {
+            return null;
+        }
+
+        $parent = substr($host, $dot + 1);
+
+        // Require the parent to still contain a dot so a bare public suffix such
+        // as "org" is not probed (it always answers and would mask a failing
+        // domain). This keeps the NXDOMAIN conclusion scoped to real domains.
+        return strpos($parent, '.') === false ? null : $parent;
+    }
+
+    /**
+     * Confirm a zone answers at all by querying the record types an existing
+     * domain is expected to carry. A non-empty result proves the zone exists, so
+     * a failure on a child name below it can be read as NXDOMAIN rather than a
+     * domain-wide outage.
+     */
+    private function zoneAnswers(string $host): bool
+    {
+        $records = @dns_get_record($host, DNS_SOA + DNS_NS + DNS_A + DNS_AAAA + DNS_MX);
+
+        return \is_array($records) && $records !== [];
     }
 
     /**

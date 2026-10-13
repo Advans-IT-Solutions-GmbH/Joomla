@@ -73,6 +73,20 @@ class ActionsController extends BaseController
             return false;
         }
 
+        // The Action Center embeds the owning domain id as the second
+        // ':'-separated segment of every key (code:domainId[:suffix]). Reject a
+        // submission whose key does not belong to the posted domain so a forged
+        // or mismatched request cannot write an override that suppresses a
+        // different domain's recommendation: overrides are keyed by action_key,
+        // and the key is globally unique only because it carries its domain id.
+        $keyParts = explode(':', $actionKey);
+
+        if (!isset($keyParts[1]) || (int) $keyParts[1] !== $domainId) {
+            $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_ACTION_INVALID'), 'error');
+
+            return false;
+        }
+
         $db          = Factory::getContainer()->get(DatabaseInterface::class);
         $now         = Factory::getDate()->toSql();
         $snoozeUntil = $snoozeDays > 0 ? Factory::getDate('+' . $snoozeDays . ' days')->toSql() : null;
