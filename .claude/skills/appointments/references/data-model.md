@@ -101,7 +101,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `eventtype_id` | `INT UNSIGNED NOT NULL` | |
 | `host_user_id` | `INT UNSIGNED NOT NULL` | copied at booking time |
 | `start_utc`, `end_utc` | `DATETIME NOT NULL` | the meeting itself, buffers excluded |
-| `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled, 3 rescheduled-away |
+| `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled |
 | `invitee_name` | `VARCHAR(255)` | nullable after anonymisation |
 | `invitee_email` | `VARCHAR(255)` | |
 | `invitee_phone` | `VARCHAR(64)` | |
@@ -115,7 +115,6 @@ Index `(user_id, start_utc, end_utc)`.
 | `conference_state` | `VARCHAR(16) NULL` | null = no conference, `ok`, `failed` |
 | `conference_error` | `VARCHAR(255) NULL` | the short diagnostic shown next to the retry action; never a credential, a token or a URL |
 | `cancel_reason` | `TEXT NULL` | |
-| `rescheduled_from_id` | `INT UNSIGNED NULL` | chain to the previous booking |
 | `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
 | `anonymised_utc` | `DATETIME NULL` | set when the personal fields are erased |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
@@ -133,6 +132,29 @@ Indexes:
   `references/architecture.md`, section "Concurrency".
 - Index `(host_user_id, start_utc)`, index `(invitee_email)`, index `(state, start_utc)`. The first
   one is what the overlap check inside the locked transaction reads.
+
+### Rescheduling updates the row
+
+**A reschedule changes this row; it never inserts a successor.** The times change, `sequence` is
+raised, `modified_utc` is touched, `uid` and `id` stay. There is no "rescheduled away" state and no
+chain to a previous booking, because both would contradict the calendar contract:
+
+- `references/calendar-and-ics.md` requires one `UID` for the whole life of a booking, so that a
+  mail client replaces the entry instead of creating a second one. A successor row would need the
+  same `uid`, which the unique index on `uid` refuses, and a new `uid` would produce exactly the
+  duplicate entry the contract exists to prevent.
+- The subscription feed serves one `VEVENT` per active booking. Two rows with one `UID` in one
+  `VCALENDAR` are not valid iCalendar.
+
+The unique slot index does the rest without extra code: moving a booking onto a slot that another
+active booking already holds makes the `UPDATE` fail with a duplicate key, which the reschedule page
+presents as "this time was just taken", exactly like a new booking. Touching `modified_utc` also
+invalidates every signed link that was issued before the change, which is the behaviour
+`references/architecture.md` asks for.
+
+The previous time of a booking is not kept. Keeping it would mean keeping a second copy of a
+personal appointment for no shipped feature, and the retention and erasure paths would have to erase
+it too.
 
 ## `#__appointments_fields`
 

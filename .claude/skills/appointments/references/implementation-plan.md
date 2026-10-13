@@ -80,11 +80,16 @@ receives the friendly message and a reloaded slot list.
 
 - `SignedLink` with the action in the signature.
 - Reschedule page, cancel page, erase page, each reachable only from a valid link.
+- The reschedule **updates the booking in place**, raises `sequence` and keeps `uid`, per
+  `references/data-model.md`, section "Rescheduling updates the row". A reschedule onto a slot that
+  was taken in the meantime fails on the unique index and gets the same friendly response as a lost
+  new booking.
 - The anonymisation routine with the exact field set from `references/privacy-and-deletion.md`.
 - The audit table.
 
 **Done when:** all deletion tests in `references/privacy-and-deletion.md` pass, including that a
-`cancel` link is rejected for `erase` and that a used link stops working.
+`cancel` link is rejected for `erase` and that a used link stops working, and a reschedule keeps the
+`uid`, raises the `sequence` and leaves exactly one row for the booking.
 
 ## Stage 8 — feeds and the scheduler task
 

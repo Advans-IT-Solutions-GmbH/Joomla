@@ -126,8 +126,10 @@ different mechanisms. Stating only the first one would be a false guarantee.
 
 - A unique index on `(eventtype_id, start_utc, state_active)`, where `state_active` is a generated
   column that is `1` for `state IN (0,1)` and `NULL` otherwise. Both servers ignore `NULL` in a
-  unique index, so a cancelled or rescheduled-away booking frees the slot again while a pending or
-  confirmed one blocks it. The second insert fails in the database, with no help from PHP.
+  unique index, so a cancelled booking frees the slot again while a pending or confirmed one blocks
+  it. The second insert fails in the database, with no help from PHP. The same index also catches a
+  reschedule onto a slot that was taken in the meantime, because a reschedule updates the booking
+  in place (see `references/data-model.md`, section "Rescheduling updates the row").
 - A failed unique insert is caught and presented as "this time was just taken", with the slot list
   reloaded. It is never presented as a server error.
 

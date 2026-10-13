@@ -61,6 +61,12 @@ makes a mail client replace the existing entry instead of creating a second one.
 increments on every change; a client that receives a lower sequence than it holds ignores the
 update, so an off-by-one here silently breaks reschedules.
 
+This is why a reschedule updates the booking row instead of inserting a successor: see
+`references/data-model.md`, section "Rescheduling updates the row". A second row would either reuse
+the `uid`, which the unique index refuses, or introduce a new one, which is the duplicate entry this
+rule exists to prevent — and the feed below would then serve two `VEVENT`s with one `UID`, which is
+not valid iCalendar.
+
 Required properties: `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`, `DESCRIPTION`, `ORGANIZER`,
 `ATTENDEE` for the invitee and each guest, `LOCATION`, `SEQUENCE`, `STATUS`, `UID`. `DTSTART` and
 `DTEND` are written in UTC with the `Z` suffix, which removes any need to ship a `VTIMEZONE`.
@@ -121,7 +127,8 @@ Say this in the README, because it is the single most likely support question:
 - A generated `VEVENT` validates against RFC 5545 line folding at 75 octets, with correct
   continuation, including for a UTF-8 character that straddles the fold.
 - Escaping: `;`, `,`, `\` and newlines in `SUMMARY` and `DESCRIPTION`.
-- A reschedule keeps the `UID` and raises the `SEQUENCE`.
+- A reschedule keeps the `UID`, raises the `SEQUENCE` and leaves exactly one booking row, so the
+  feed cannot serve two `VEVENT`s with the same `UID`.
 - A cancellation carries `METHOD:CANCEL` and `STATUS:CANCELLED` with the same `UID`.
 - The feed returns `304` for an unchanged `If-None-Match`.
 - A wrong feed token returns `404` and no body that distinguishes it from an unknown URL.

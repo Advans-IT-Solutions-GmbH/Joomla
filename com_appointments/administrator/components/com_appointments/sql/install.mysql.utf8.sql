@@ -122,7 +122,15 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- `uid` is the iCalendar UID and stays stable for the whole life of a booking;
 -- `sequence` is the iCalendar SEQUENCE and is raised on every change.
 -- `start_utc`/`end_utc` are the meeting itself, buffers are not part of it.
--- `state`: 0 pending, 1 confirmed, 2 cancelled, 3 rescheduled away.
+-- `state`: 0 pending, 1 confirmed, 2 cancelled.
+--
+-- A reschedule updates this row in place: the times change, `sequence` is
+-- raised and `modified_utc` is touched. It does not insert a successor row,
+-- because the calendar contract keeps one UID for the life of a booking, and a
+-- second row with the same UID would break the unique index on `uid` as well as
+-- the subscription feed, where two VEVENTs with one UID are not valid. The
+-- unique slot index below also does the work for free: moving a booking onto a
+-- slot another active booking already holds fails the UPDATE.
 -- `created_ip` exists for the anti-bot timing check only and is erased together
 -- with the rest of the personal data.
 --
@@ -134,7 +142,8 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 --
 -- `state_active` is a generated column that is 1 while the booking holds its
 -- slot and NULL otherwise. MySQL and MariaDB ignore NULL in a unique index, so
--- a cancelled booking frees the slot again while an active one blocks it. Of
+-- a cancelled booking frees the slot again while a pending or confirmed one
+-- blocks it. Of
 -- two simultaneous submissions for the identical slot of one event type, the
 -- second therefore fails in the database and not in PHP. Do not replace it with
 -- a check in PHP.
@@ -173,7 +182,6 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `conference_state` VARCHAR(16) DEFAULT NULL,
     `conference_error` VARCHAR(255) DEFAULT NULL,
     `cancel_reason` TEXT,
-    `rescheduled_from_id` INT UNSIGNED DEFAULT NULL,
     `reminder_sent_utc` JSON DEFAULT NULL,
     `anonymised_utc` DATETIME DEFAULT NULL,
     `created_utc` DATETIME NOT NULL,

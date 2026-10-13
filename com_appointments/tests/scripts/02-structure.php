@@ -115,6 +115,68 @@ class StructureTest
             return $firstConfirmed && $secondRefused && $thirdAccepted;
         });
 
+        $this->test('A reschedule moves the booking and keeps its calendar identity', function () {
+            // A reschedule updates the row: one UID, one row, a raised sequence.
+            // Moving onto a slot another active booking holds has to fail on the
+            // same unique index that protects a new booking.
+            $utc = new \DateTimeZone('UTC');
+            $reference = new \DateTimeImmutable('now', $utc);
+            $now = $reference->format('Y-m-d H:i:s');
+            $slotA = $reference->add(new \DateInterval('P20D'))->format('Y-m-d H:i:s');
+            $slotB = $reference->add(new \DateInterval('P21D'))->format('Y-m-d H:i:s');
+            $endB = $reference->add(new \DateInterval('P21DT20M'))->format('Y-m-d H:i:s');
+            $table = "{$this->dbPrefix}appointments_bookings";
+
+            $this->db->query("DELETE FROM {$table} WHERE eventtype_id = 9902");
+
+            $insert = function (string $uid, string $start) use ($table, $now): bool {
+                $end = (new \DateTimeImmutable($start, new \DateTimeZone('UTC')))
+                    ->add(new \DateInterval('PT20M'))->format('Y-m-d H:i:s');
+
+                try {
+                    return (bool) $this->db->query(
+                        "INSERT INTO {$table} (uid, eventtype_id, host_user_id, start_utc, end_utc, state, created_utc, modified_utc)"
+                        . " VALUES ('{$uid}', 9902, 0, '{$start}', '{$end}', 1, '{$now}', '{$now}')"
+                    );
+                } catch (\mysqli_sql_exception $e) {
+                    return false;
+                }
+            };
+
+            $move = function (string $uid, string $start, string $end) use ($table): bool {
+                try {
+                    return (bool) $this->db->query(
+                        "UPDATE {$table} SET start_utc = '{$start}', end_utc = '{$end}',"
+                        . " sequence = sequence + 1 WHERE uid = '{$uid}'"
+                    );
+                } catch (\mysqli_sql_exception $e) {
+                    return false;
+                }
+            };
+
+            $first = $insert('structure-move-1', $slotA);
+            $blocker = $insert('structure-move-2', $slotB);
+            // Slot B is taken, so the move has to be refused.
+            $refused = !$move('structure-move-1', $slotB, $endB);
+
+            // Free slot B again, then the same move has to succeed.
+            $this->db->query("UPDATE {$table} SET state = 2 WHERE uid = 'structure-move-2'");
+            $moved = $move('structure-move-1', $slotB, $endB);
+
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS rows_for_uid, MAX(sequence) AS seq, MAX(start_utc) AS start_utc"
+                . " FROM {$table} WHERE uid = 'structure-move-1'"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            $this->db->query("DELETE FROM {$table} WHERE eventtype_id = 9902");
+
+            return $first && $blocker && $refused && $moved && $row
+                && (int) $row['rows_for_uid'] === 1
+                && (int) $row['seq'] === 1
+                && $row['start_utc'] === $slotB;
+        });
+
         $this->test('The audit table holds no personal data', function () {
             // Deletion evidence must never become a second copy of the data it
             // documents, so the column set is pinned here.
