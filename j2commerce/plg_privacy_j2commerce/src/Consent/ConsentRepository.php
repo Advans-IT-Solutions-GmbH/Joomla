@@ -115,14 +115,6 @@ final class ConsentRepository
     }
 
     /**
-     * ASCII-only lower case, independent of the PHP locale (strtolower() depends on it before PHP 8.2).
-     */
-    private static function asciiLower(string $value): string
-    {
-        return strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
-    }
-
-    /**
      * SQL condition that preselects rows whose column may hold one of $emails: a superset under any
      * column collation and server locale, never the decision. The decision is
      * normaliseAddress($value) === $email in PHP (addressValues()), because SQL lower-casing and
@@ -131,8 +123,11 @@ final class ConsentRepository
      * locale (Turkish: "I" becomes a dotless i).
      *
      * MySQL/MariaDB: comparison with utf8mb4_unicode_ci (case- and accent-insensitive), converted
-     * to utf8mb4 so that utf8mb3 tables (J2Store) work too. PostgreSQL: ASCII lower case through
-     * the "C" collation, or lower case by the server locale.
+     * to utf8mb4 so that utf8mb3 tables (J2Store) work too; its case folding is no locale.
+     * PostgreSQL: no casing at all, because LOWER() follows the server locale and no database
+     * casing equals PHP's for every letter (U+0130 "İ" becomes "i" plus U+0307 in PHP but a plain
+     * "i" or nothing in the database): every non-empty value is a candidate, the caller's other
+     * conditions (guest orders, pending requests) keep the set small.
      *
      * @param   string    $quotedColumn  Column, already quoted
      * @param   string[]  $emails        Normalised addresses
@@ -145,14 +140,11 @@ final class ConsentRepository
             return '1 = 0';
         }
 
-        $list = static fn (array $values): string => implode(',', array_map([$db, 'quote'], $values));
-
         if (self::isPostgres($db)) {
-            return '(LOWER(TRIM(' . $quotedColumn . ') COLLATE "C") IN (' . $list(array_map([self::class, 'asciiLower'], $emails)) . ')'
-                . ' OR LOWER(TRIM(' . $quotedColumn . ')) IN (' . $list($emails) . '))';
+            return 'TRIM(' . $quotedColumn . ') <> ' . $db->quote('');
         }
 
-        return 'CONVERT(TRIM(' . $quotedColumn . ') USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (' . $list($emails) . ')';
+        return 'CONVERT(TRIM(' . $quotedColumn . ') USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (' . implode(',', array_map([$db, 'quote'], $emails)) . ')';
     }
 
     /**
@@ -997,8 +989,9 @@ final class ConsentRepository
     /**
      * SQL preselection of bodies that may contain $email: only the domain is compared ("@" or its
      * entity "&#64;" plus the domain), case- and accent-insensitive, so a superset under any
-     * collation and server locale. The local part may be stored raw or with HTML entities in
-     * several forms. The decision is bodyHasAddress() in PHP.
+     * collation. The local part may be stored raw or with HTML entities in several forms. On
+     * PostgreSQL every body with an "@" in any form is a candidate (no database casing, see
+     * addressPrefilter()). The decision is bodyHasAddress() in PHP.
      */
     private function bodyPrefilter(string $email): string
     {
@@ -1007,16 +1000,14 @@ final class ConsentRepository
         $body   = $this->db->quoteName('body');
         $likes  = [];
 
+        if (self::isPostgres($this->db)) {
+            return '(' . $body . ' LIKE ' . $this->db->quote('%@%') . ' OR ' . $body . ' LIKE ' . $this->db->quote('%&#64;%') . ')';
+        }
+
         foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
             foreach (['@', '&#64;'] as $at) {
                 $pattern = '%' . $this->db->escape($at . $form, true) . '%';
-
-                if (self::isPostgres($this->db)) {
-                    $likes[] = 'LOWER(' . $body . ' COLLATE "C") LIKE ' . $this->db->quote(self::asciiLower($pattern), false);
-                    $likes[] = 'LOWER(' . $body . ') LIKE ' . $this->db->quote($pattern, false);
-                } else {
-                    $likes[] = 'CONVERT(' . $body . ' USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ' . $this->db->quote($pattern, false);
-                }
+                $likes[] = 'CONVERT(' . $body . ' USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ' . $this->db->quote($pattern, false);
             }
         }
 

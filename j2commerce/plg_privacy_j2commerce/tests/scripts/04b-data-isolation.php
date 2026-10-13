@@ -1415,7 +1415,7 @@ class DataIsolationTest
                 $orders[$name . '_a_recent']  = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-AR-' . $suffix, 0, $a, $recent, 'Anna');
                 $orders[$name . '_b_recent']  = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-BR-' . $suffix, 0, $b, $recent, 'Berta');
                 $orders[$name . '_b_expired'] = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-BE-' . $suffix, 0, $b, $expired, 'Berta');
-                $consents[$name]              = $this->insertGuestTestConsent($orders[$name . '_b_recent'], '203.0.113.80');
+                $consents[$name]              = $this->insertGuestTestConsent($orders[$name . '_b_recent'], 'evidence-sentinel-b');
                 $legacy[$name]                = $this->insertGuestTestLegacyConsent($b);
 
                 $address = (object) [
@@ -1472,7 +1472,7 @@ class DataIsolationTest
                 $legacySubject = (string) $this->db->setQuery('SELECT subject FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $legacy[$name])->loadResult();
                 $this->test("[$name] removal of A: B's legacy consent record untouched", $legacySubject === 'PLG_PRIVACY_J2COMMERCE');
                 $consentBody = (string) $this->db->setQuery('SELECT body FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $consents[$name])->loadResult();
-                $this->test("[$name] removal of A: B's checkout consent keeps its evidence", str_contains($consentBody, '203.0.113.80'));
+                $this->test("[$name] removal of A: B's checkout consent keeps its evidence", str_contains($consentBody, 'evidence-sentinel-b'));
 
                 // Confirmation: B's code with A's address is refused.
                 $token = md5('collation-' . $name . random_int(1, PHP_INT_MAX));
