@@ -147,7 +147,10 @@ class DomainTable extends Table
 
             $code = (string) $throwable->getCode();
 
-            if ($code === '23000' || $code === '1062') {
+            // Match the MySQL driver duplicate-entry code specifically. The
+            // SQLSTATE 23000 class also covers NOT NULL and other integrity
+            // violations, so it must not be treated as a duplicate on its own.
+            if ($code === '1062') {
                 return true;
             }
 
@@ -162,12 +165,13 @@ class DomainTable extends Table
     /**
      * Whether an error message is a MySQL duplicate-entry (UNIQUE) violation,
      * used to translate both the thrown exception and the legacy false-return
-     * error string Table::store() records.
+     * error string Table::store() records. Matches the driver error number 1062
+     * or the duplicate-entry text only — the generic SQLSTATE 23000 class also
+     * covers NOT NULL and other integrity errors and must not be matched here.
      */
     private function messageLooksLikeDuplicate(string $message): bool
     {
         return stripos($message, 'Duplicate entry') !== false
-            || stripos($message, '1062') !== false
-            || stripos($message, '23000') !== false;
+            || preg_match('/\b1062\b/', $message) === 1;
     }
 }

@@ -44,7 +44,10 @@ class SourceTable extends Table
         // rejected instead of being silently coerced to the default.
         if ($this->port === null || $this->port === '') {
             $this->port = 993;
-        } elseif (!is_numeric($this->port) || (int) $this->port < 1 || (int) $this->port > 65535) {
+        } elseif (preg_match('/^\d+$/', (string) $this->port) !== 1 || (int) $this->port < 1 || (int) $this->port > 65535) {
+            // Require a plain decimal integer: is_numeric() would also accept
+            // decimal ("1.5") and exponent ("1e2") notation and silently coerce
+            // them to a different port than the operator submitted.
             $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT'));
 
             return false;

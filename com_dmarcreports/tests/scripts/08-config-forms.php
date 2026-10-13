@@ -81,6 +81,49 @@ class ConfigFormsTest
                 && strpos($options['body'], 'csv_delimiter') !== false;
         });
 
+        // --- com_config Options screen actually saves + validates (K-E1c) -----
+        // GET-only coverage would stay green even if Save were dead or the
+        // server-side bounds never ran, so submit the Options form: a valid
+        // change must persist and representative out-of-range / invalid-option
+        // values must be rejected without altering the stored params.
+        $this->token    = $this->extractToken($options['body']) ?: $this->token;
+        $configTask     = $this->extractApplyTask($options['body']) ?: 'component.apply';
+        $extensionId    = $this->extensionId();
+        $paramsSnapshot = $this->readExtensionParams();
+
+        $validConfig = [
+            'default_policy_target'     => 'reject',
+            'quarantine_pass_threshold' => '95',
+            'reject_pass_threshold'     => '99',
+            'imap_timeout'              => '20',
+            'max_messages_per_run'      => '200',
+            'csv_delimiter'             => 'semicolon',
+            'dns_diagnostics'           => '0',
+        ];
+
+        foreach ([
+            'quarantine_pass_threshold below the minimum (0)'   => ['quarantine_pass_threshold' => '0'],
+            'quarantine_pass_threshold above the maximum (101)' => ['quarantine_pass_threshold' => '101'],
+            'quarantine_pass_threshold non-numeric ("abc")'     => ['quarantine_pass_threshold' => 'abc'],
+            'default_policy_target with an invalid option'      => ['default_policy_target' => 'bogus'],
+        ] as $label => $override) {
+            $res = $this->saveConfig($configTask, $extensionId, array_merge($validConfig, $override));
+            $this->test("Options save rejects {$label} and preserves the stored params", function () use ($res, $paramsSnapshot) {
+                return !$this->hasSqlError($res['body'])
+                    && $this->readExtensionParams() === $paramsSnapshot;
+            });
+        }
+
+        // A valid change must actually persist through the Save path.
+        $this->saveConfig($configTask, $extensionId, array_merge($validConfig, ['quarantine_pass_threshold' => '77']));
+        $this->test('Options save persists a valid quarantine_pass_threshold change', function () {
+            $params = json_decode($this->readExtensionParams() ?: '{}', true);
+
+            return \is_array($params) && (string) ($params['quarantine_pass_threshold'] ?? '') === '77';
+        });
+
+        $this->restoreExtensionParams($paramsSnapshot);
+
         // --- Domain edit form renders + saves --------------------------------
         $domainForm = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=domain.add', [], true);
         $this->token = $this->extractToken($domainForm['body']) ?: $this->token;
@@ -276,6 +319,57 @@ class ConfigFormsTest
         $row    = $result ? $result->fetch_assoc() : null;
 
         return $row ? (string) $row['params'] : '';
+    }
+
+    /** Numeric extension_id of the com_dmarcreports component row. */
+    private function extensionId(): int
+    {
+        $result = $this->db->query("SELECT extension_id FROM {$this->dbPrefix}extensions WHERE element = 'com_dmarcreports' AND type = 'component' LIMIT 1");
+        $row    = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['extension_id'] : 0;
+    }
+
+    /**
+     * Extract the com_config "apply" toolbar task from the Options page so the
+     * save POST uses the exact task the shipped UI wires up, rather than a task
+     * name hard-coded to one Joomla version.
+     */
+    private function extractApplyTask(string $html): ?string
+    {
+        if (preg_match("/Joomla\\.submitbutton\\('([^']+\\.apply)'\\)/", $html, $m)) {
+            return $m[1];
+        }
+
+        return null;
+    }
+
+    /**
+     * Submit the component's com_config Options form and follow the redirect so
+     * any validation message is visible in the returned body.
+     *
+     * @param   array<string, string>  $params  jform[params] overrides to post.
+     *
+     * @return array{code:int, body:string}
+     */
+    private function saveConfig(string $task, int $extensionId, array $params): array
+    {
+        $post = [
+            'option'    => 'com_config',
+            'task'      => $task,
+            'id'        => (string) $extensionId,
+            'component' => 'com_dmarcreports',
+        ];
+
+        foreach ($params as $key => $value) {
+            $post["jform[params][{$key}]"] = $value;
+        }
+
+        if ($this->token !== null) {
+            $post[$this->token] = '1';
+        }
+
+        return $this->request($this->baseUrl . '/administrator/index.php', $post, true);
     }
 
     /** Set the csv_delimiter component param, preserving any other params. */
