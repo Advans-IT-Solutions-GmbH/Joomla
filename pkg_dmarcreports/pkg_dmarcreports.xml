@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="package" method="upgrade">
+    <name>PKG_DMARCREPORTS</name>
+    <packagename>dmarcreports</packagename>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-08</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <authorEmail>info@advans.ch</authorEmail>
+    <authorUrl>https://advans.ch</authorUrl>
+    <version>1.0.0</version>
+    <description>PKG_DMARCREPORTS_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+
+    <scriptfile>script.php</scriptfile>
+
+    <packager>Advans IT Solutions GmbH</packager>
+    <packagerurl>https://advans.ch</packagerurl>
+
+    <files folder="packages">
+        <file type="component" id="com_dmarcreports">com_dmarcreports.zip</file>
+        <file type="module" id="mod_dmarcreports" client="administrator">mod_dmarcreports.zip</file>
+        <file type="plugin" id="dmarcreports" group="task">plg_task_dmarcreports.zip</file>
+        <file type="plugin" id="dmarcmtasts" group="system">plg_system_dmarcmtasts.zip</file>
+    </files>
+
+    <files>
+        <filename>LICENSE.txt</filename>
+    </files>
+
+    <languages folder="language">
+        <language tag="en-GB">en-GB/pkg_dmarcreports.sys.ini</language>
+        <language tag="de-DE">de-DE/pkg_dmarcreports.sys.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_dmarcreports.sys.ini</language>
+    </languages>
+
+    <updateservers>
+        <server type="extension" name="DMARC Reports Package Updates">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/pkg_dmarcreports/updates/update.xml</server>
+    </updateservers>
+</extension>
