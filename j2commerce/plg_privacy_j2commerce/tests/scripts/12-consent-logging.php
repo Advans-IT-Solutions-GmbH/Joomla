@@ -1408,6 +1408,22 @@ class ConsentLoggingTest
         ]);
         $this->test('Logged-in: link to com_privacy request form', str_contains($userHtml, 'data-privacy-request="form"') && str_contains($userHtml, 'option=com_privacy&amp;view=request'));
         $this->test('Logged-in: no consent state rendered as none', str_contains($userHtml, 'data-consent-status="none"'));
+
+        // An override copy of an earlier version passes the URL escaped (Route::_() with xhtml):
+        // the link is still escaped once, never twice.
+        $oldCopyHtml = $render([
+            'consented'      => false,
+            'records'        => [],
+            'isGuest'        => false,
+            'showRequest'    => true,
+            'requestUrl'     => '/index.php?option=com_privacy&amp;view=request',
+            'contactEmail'   => 'privacy@example.invalid',
+            'retentionYears' => 10,
+        ]);
+        $this->test('Logged-in, escaped URL of an older override copy: link escaped once, not twice',
+            str_contains($oldCopyHtml, 'href="/index.php?option=com_privacy&amp;view=request"') && !str_contains($oldCopyHtml, '&amp;amp;'));
+        $this->test('Logged-in, raw URL of the current override: link escaped once',
+            str_contains($userHtml, 'href="/index.php?option=com_privacy&amp;view=request"') && !str_contains($userHtml, '&amp;amp;'));
         $this->test('Language strings resolved', !str_contains($userHtml . $guestHtml, 'PLG_PRIVACY_J2COMMERCE_'));
 
         $hiddenHtml = $render(['consented' => false, 'records' => [], 'isGuest' => false, 'showRequest' => false, 'requestUrl' => '/x']);

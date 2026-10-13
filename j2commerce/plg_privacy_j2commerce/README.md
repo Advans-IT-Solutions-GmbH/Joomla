@@ -236,7 +236,7 @@ Consent is stored in Joomla's core table `#__privacy_consents`. No table of its 
 
 ### Profile Privacy Tab
 
-The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy request link. Its content is the override `myprofile/default_privacy.php`, which renders the layout `privacy_tab`: a copy in `templates/{template}/html/layouts/plg_privacy_j2commerce/privacy_tab.php` takes precedence over the plugin's `layouts/privacy_tab.php`.
+The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy request link. Its content is the override `myprofile/default_privacy.php`, which renders the layout `privacy_tab`: a copy in `templates/{template}/html/layouts/plg_privacy_j2commerce/privacy_tab.php` takes precedence over the plugin's `layouts/privacy_tab.php`. The override passes the request URL raw (`Route::_()` with `xhtml=false`) and the layout escapes it once; the layout also decodes `&amp;` first, so an override copy of an earlier version, which passed the URL already escaped and is never overwritten, still gives a link escaped once.
 
 > **Template override required.** The privacy tab is only rendered when the MyProfile template overrides (`default.php`, `default_privacy.php`) are in place. See [Template Integration](#template-integration) for details.
 
