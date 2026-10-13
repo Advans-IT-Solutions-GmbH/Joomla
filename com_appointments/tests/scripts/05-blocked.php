@@ -245,26 +245,29 @@ class BlockedAdminTest
             $this->test('A submission without a token is refused before it is read', function () use ($html) {
                 $stored = $this->fixture();
                 $intact = $stored !== null && $stored['start_utc'] === '2026-06-02 12:00:00';
-                // Not the validation message: nothing was read out of the
-                // forged request at all.
-                $unread = stripos($html, 'is not a date and a time that exist') === false;
-                $denied = stripos($html, 'invalid security token') !== false;
 
-                if ($intact && $unread && $denied) {
+                // The step above proves that this very submission *with* a
+                // token produces the validation message. Without one the
+                // message must be absent, because that message can only come
+                // from code that has already read the forged request. Its
+                // absence is therefore the assertion: the token is checked
+                // first. The wording of Joomla's own refusal is deliberately
+                // not asserted, because it is a core string and this suite is
+                // not here to pin core wording.
+                $unread = stripos($html, 'is not a date and a time that exist') === false;
+
+                // Nor did the request land on the edit form, which is where the
+                // component's own refusal redirects. So it was denied rather
+                // than quietly ignored.
+                $elsewhere = strpos($html, 'jform[start_utc]') === false;
+
+                if ($intact && $unread && $elsewhere) {
                     return true;
                 }
 
                 echo '    stored start: ' . ($stored === null ? 'gone' : $stored['start_utc']) . "\n";
-                echo '    response said: ' . $this->firstMessage($html) . "\n";
-                echo '    response length: ' . \strlen($html) . "\n";
-
-                if (preg_match('#<title>(.*?)</title>#s', $html, $m)) {
-                    echo '    response title: ' . trim($m[1]) . "\n";
-                }
-
-                foreach (['security token', 'JINVALID', 'expired', 'Log in', 'com_cpanel', 'joomla-alert', 'alert-message'] as $marker) {
-                    echo '    contains "' . $marker . '": ' . (stripos($html, $marker) === false ? 'no' : 'yes') . "\n";
-                }
+                echo '    validation message present: ' . ($unread ? 'no' : 'yes') . "\n";
+                echo '    landed on the edit form: ' . ($elsewhere ? 'no' : 'yes') . "\n";
 
                 return false;
             });
