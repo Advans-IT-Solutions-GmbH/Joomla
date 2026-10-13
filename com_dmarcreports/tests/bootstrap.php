@@ -21,3 +21,4 @@ require_once $helperDir . '/ImapClient.php';
 require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';
+require_once $helperDir . '/SourceIdentity.php';

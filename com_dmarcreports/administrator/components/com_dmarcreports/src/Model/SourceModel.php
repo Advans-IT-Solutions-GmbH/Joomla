@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -107,7 +108,45 @@ class SourceModel extends AdminModel
 
         unset($data['password']);
 
+        if ($pk > 0) {
+            // Moving a source to a different mailbox invalidates its stored UID
+            // cursor: the new mailbox's UIDs are unrelated, so resuming above
+            // the old high-water UID would permanently skip every lower-UID
+            // report there (a coincidentally matching UIDVALIDITY would not
+            // trigger the client's own reset). Reset the cursor whenever the
+            // mailbox identity changes. An in-flight poll of the old mailbox
+            // cannot revive the cursor afterwards, because it re-checks the
+            // identity under a row lock before advancing it (see
+            // IngestController::recordRun()).
+            $existing = $this->getExistingIdentity($pk);
+
+            if ($existing !== null && SourceIdentity::changed($existing, $data)) {
+                $data['uidvalidity'] = 0;
+                $data['last_uid']    = 0;
+            }
+        }
+
         return parent::save($data);
+    }
+
+    /**
+     * Load the mailbox identity columns of an existing source so a save can
+     * detect a change of mailbox and reset the UID cursor.
+     *
+     * @return  array<string, mixed>|null
+     */
+    private function getExistingIdentity(int $pk): ?array
+    {
+        $db    = $this->getDatabase();
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName(SourceIdentity::FIELDS))
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $pk, \Joomla\Database\ParameterType::INTEGER);
+
+        $row = $db->setQuery($query)->loadAssoc();
+
+        return \is_array($row) ? $row : null;
     }
 
     /**

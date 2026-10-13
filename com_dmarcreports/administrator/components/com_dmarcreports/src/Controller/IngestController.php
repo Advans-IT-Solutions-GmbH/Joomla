@@ -13,6 +13,8 @@ use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\DecoderUnavailableException;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -58,6 +60,12 @@ class IngestController extends BaseController
             $summary  = $ingestor->newSummary();
             $domainId = (int) $source->domain_id;
 
+            // Capture the mailbox identity this poll reads from, so the cursor
+            // write below can detect a source edit that re-pointed the source at
+            // a different mailbox mid-poll and refuse to persist a cursor that
+            // belongs to the old one.
+            $polledIdentity = SourceIdentity::fingerprint($source);
+
             // Bodies are streamed one at a time into the ingestor and released
             // immediately, so a large mailbox cannot be buffered into memory.
             $stats = $client->process(
@@ -93,7 +101,8 @@ class IngestController extends BaseController
                 'ok',
                 $this->summaryText($summary),
                 (int) ($stats['uidvalidity'] ?? 0),
-                (int) ($stats['last_uid'] ?? 0)
+                (int) ($stats['last_uid'] ?? 0),
+                $polledIdentity
             );
 
             $this->setRedirect($redirect, $this->summaryText($summary), 'message');
@@ -192,7 +201,7 @@ class IngestController extends BaseController
         return $db->setQuery($query)->loadObject() ?: null;
     }
 
-    private function recordRun(int $sourceId, string $status, string $message, ?int $uidvalidity = null, ?int $lastUid = null): void
+    private function recordRun(int $sourceId, string $status, string $message, ?int $uidvalidity = null, ?int $lastUid = null, ?array $polledIdentity = null): void
     {
         if ($sourceId <= 0) {
             return;
@@ -206,15 +215,62 @@ class IngestController extends BaseController
             'last_message' => $message,
         ];
 
-        // Advance the stored import cursor only when the run reported one (a
-        // successful poll). The error path passes null so a failed run keeps the
-        // previous cursor and the next run re-examines the same UID range.
-        if ($uidvalidity !== null && $lastUid !== null) {
-            $row->uidvalidity = $uidvalidity;
-            $row->last_uid    = $lastUid;
+        // The error path passes a null cursor so a failed run keeps the previous
+        // one and the next run re-examines the same UID range; it needs no lock.
+        if ($uidvalidity === null || $lastUid === null) {
+            $db->updateObject('#__dmarc_sources', $row, 'id');
+
+            return;
         }
 
-        $db->updateObject('#__dmarc_sources', $row, 'id');
+        // Advancing the cursor must coordinate with a concurrent source edit.
+        // That edit resets the cursor to 0 when the mailbox identity changes; if
+        // it committed while this poll was reading the old mailbox, writing the
+        // cursor computed from it would resurrect a stale high-water UID for the
+        // new mailbox and skip its lower-UID reports. Re-read the identity under
+        // a row lock and only advance the cursor when it still matches the
+        // mailbox this poll read; otherwise leave the reset in place.
+        $db->transactionStart();
+
+        try {
+            if (!SourceLock::lock($db, $sourceId)) {
+                // The source was deleted mid-poll; there is nothing to record.
+                $db->transactionRollback();
+
+                return;
+            }
+
+            if ($polledIdentity === null || !$this->identityChanged($db, $sourceId, $polledIdentity)) {
+                $row->uidvalidity = $uidvalidity;
+                $row->last_uid    = $lastUid;
+            }
+
+            $db->updateObject('#__dmarc_sources', $row, 'id');
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Whether the source's mailbox identity differs from the one a poll read,
+     * evaluated against the row currently locked in the caller's transaction.
+     *
+     * @param   array<string, mixed>  $polledIdentity
+     */
+    private function identityChanged(DatabaseInterface $db, int $sourceId, array $polledIdentity): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName(SourceIdentity::FIELDS))
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $sourceId, ParameterType::INTEGER);
+
+        $current = $db->setQuery($query)->loadAssoc();
+
+        return $current === null || SourceIdentity::changed($current, $polledIdentity);
     }
 
     /**

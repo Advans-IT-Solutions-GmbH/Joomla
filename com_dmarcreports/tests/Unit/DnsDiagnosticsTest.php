@@ -53,6 +53,53 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertStringContainsString('example.org', $result['suggested']);
     }
 
+    public function testSubdomainInheritsParentDmarcPolicy(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; rua=mailto:dmarc@example.org'],
+            'mail.example.org'   => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('mail.example.org');
+
+        $codes = $this->codes($result);
+        $this->assertContains('dns_dmarc_inherited', $codes);
+        $this->assertNotContains('dns_dmarc_missing', $codes);
+        $this->assertTrue($result['dmarc']['present']);
+        $this->assertTrue($result['dmarc']['inherited']);
+        $this->assertSame('example.org', $result['dmarc']['inheritedFrom']);
+        // An inherited policy is already published, so no record is suggested.
+        $this->assertSame('', $result['suggested']);
+    }
+
+    public function testSubdomainWithoutParentDmarcIsStillMissing(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            'mail.example.org' => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('mail.example.org');
+
+        $codes = $this->codes($result);
+        $this->assertContains('dns_dmarc_missing', $codes);
+        $this->assertNotContains('dns_dmarc_inherited', $codes);
+        $this->assertFalse($result['dmarc']['inherited']);
+    }
+
+    public function testOwnDmarcRecordTakesPrecedenceOverParent(): void
+    {
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.mail.example.org' => ['v=DMARC1; p=none'],
+            '_dmarc.example.org'      => ['v=DMARC1; p=reject'],
+            'mail.example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('mail.example.org');
+
+        $codes = $this->codes($result);
+        $this->assertNotContains('dns_dmarc_inherited', $codes);
+        $this->assertFalse($result['dmarc']['inherited']);
+        // Its own p=none record is evaluated on its own merits.
+        $this->assertContains('dns_dmarc_policy_none', $codes);
+    }
+
     public function testPolicyNoneAndMissingRuaAreFlagged(): void
     {
         $diagnostics = new DnsDiagnostics($this->resolver([

@@ -36,9 +36,14 @@ cleartext session that would leak the mailbox credentials and report contents.
 
 Streaming design (do not revert to loading all messages into an array):
 
-- `process(array $config, callable $onMessage): array` — searches `UNSEEN` oldest-first,
+- `process(array $config, callable $onMessage): array` — resumes from the persisted per-source
+  cursor (`uidvalidity`, `last_uid`) rather than mailbox `\Seen` state: it validates the stored
+  `UIDVALIDITY` (and resets the cursor when the mailbox reports a new one), issues
+  `UID SEARCH UID <last_uid+1>:*` to collect only messages above the high-water UID oldest-first,
   `array_slice(0, $limit)` by `max_messages_per_run`, then fetches **one** body at a time and
-  passes `['uid' => seq, 'raw' => $raw]` to the callback, `unset($raw)` between messages.
+  passes `['uid' => <real IMAP UID>, 'raw' => $raw]` to the callback, `unset($raw)` between
+  messages. The returned stats carry the advanced `uidvalidity`/`last_uid` the controller persists;
+  a failed run leaves the stored cursor intact so the next run re-examines the same range.
 - A `MAX_TOTAL_BYTES` (128 MiB) run budget caps memory for a single run.
 - `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When
   `delete_after_import` is set it removes it instead: with the UIDPLUS capability (RFC 4315) it
@@ -59,6 +64,10 @@ Streaming design (do not revert to loading all messages into an array):
   `RESULT_RETRY` (a transient failure, e.g. the DB transaction could not commit) leaves the
   message untouched so the next run retries it. The callback advances on anything except
   `RESULT_RETRY`.
+- The cursor is scoped to one mailbox. `SourceModel::save()` resets it (via `SourceIdentity`) when
+  any identity field (`protocol`, `host`, `port`, `security`, `username`, `folder`) changes, and
+  `IngestController::recordRun()` re-checks the identity under a `SourceLock` row lock before
+  advancing it, so a poll of the old mailbox cannot revive a stale high-water UID after an edit.
 
 IMAP is **not** integration-tested in CI (no IMAP server); correctness rests on review. Keep the
 streaming contract intact.
