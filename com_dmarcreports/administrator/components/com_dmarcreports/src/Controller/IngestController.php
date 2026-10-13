@@ -402,7 +402,9 @@ class IngestController extends BaseController
     }
 
     /**
-     * @param   array<string, int>  $summary
+     * @param   array<string, int|string>  $summary  Ingest counters plus an
+     *                                                optional string `reason`
+     *                                                token when nothing imported.
      */
     private function summaryText(array $summary): string
     {

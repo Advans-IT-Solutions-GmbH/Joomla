@@ -185,27 +185,41 @@ final class ActionCenter
     }
 
     /**
-     * Read a numeric threshold from the config array, treating an empty string
-     * or a non-numeric value as absent so it falls back to the declared default.
-     * com_config persists an emptied number field as "", which a bare (float)
-     * cast would turn into 0 and silently disable the bound; the default keeps
-     * the rollout thresholds inside their valid range.
+     * Read a numeric threshold from the config array, treating an empty string,
+     * a non-numeric value or a value outside the declared [min, max] range as
+     * absent so it falls back to the sensible default. com_config persists an
+     * emptied number field as "", and legacy params may fall outside the range;
+     * a bare (float) cast would turn "" or "abc" into 0 and silently disable the
+     * bound, while an out-of-range value would skew the rollout decision.
      *
      * @param   array<string, mixed>  $config   Component thresholds.
      * @param   string                $key      Threshold key.
      * @param   float                 $default  Fallback when empty or non-numeric.
+     * @param   float                 $min      Lowest value accepted (inclusive).
+     * @param   float                 $max      Highest value accepted (inclusive).
      *
      * @return  float
      */
-    private static function threshold(array $config, string $key, float $default): float
-    {
+    private static function threshold(
+        array $config,
+        string $key,
+        float $default,
+        float $min = 50.0,
+        float $max = 100.0
+    ): float {
         $value = $config[$key] ?? null;
 
         if ($value === null || $value === '' || !is_numeric($value)) {
             return $default;
         }
 
-        return (float) $value;
+        $value = (float) $value;
+
+        if ($value < $min || $value > $max) {
+            return $default;
+        }
+
+        return $value;
     }
 
     /**

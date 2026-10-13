@@ -207,6 +207,34 @@ class ActionCenterTest extends TestCase
         $this->assertSame(95.0, $item['params'][2]);
     }
 
+    public function testOutOfRangeThresholdFallsBackToSafeDefault(): void
+    {
+        // A legacy or hand-edited param outside the declared 50-100 range must
+        // not skew the rollout: a threshold of 0 (e.g. the value a pre-fix
+        // caller produced by casting "" / "abc" to float) would wrongly advance
+        // an 80 % domain. The engine clamps back to the 95 default and stays.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 10,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'none',
+                'dmarc_pass'     => 800,
+            ],
+            [
+                'quarantine_pass_threshold' => 0.0,
+                'reject_pass_threshold'     => 150,
+            ]
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('stay_at_none', $codes);
+        $this->assertNotContains('move_to_quarantine', $codes);
+
+        $item = $this->find($items, 'stay_at_none');
+        $this->assertSame(95.0, $item['params'][2]);
+    }
+
     public function testRejectWithFullPercentageIsEnforced(): void
     {
         $items = ActionCenter::generate(

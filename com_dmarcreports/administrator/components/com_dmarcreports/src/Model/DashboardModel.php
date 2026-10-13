@@ -148,8 +148,8 @@ class DashboardModel extends BaseDatabaseModel
         $params = ComponentHelper::getParams('com_dmarcreports');
 
         return [
-            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 95),
-            'reject_pass_threshold'     => (float) $params->get('reject_pass_threshold', 99),
+            'quarantine_pass_threshold' => $params->get('quarantine_pass_threshold', 95),
+            'reject_pass_threshold'     => $params->get('reject_pass_threshold', 99),
         ];
     }
 

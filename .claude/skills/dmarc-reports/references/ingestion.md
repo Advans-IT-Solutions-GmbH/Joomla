@@ -61,10 +61,13 @@ degrades gracefully where that extension is absent (the system check / `Environm
 the transport state). Credentials come from `#__dmarc_sources` with the password decrypted via
 `CryptoHelper`.
 
-Only encrypted transports are allowed. `security` accepts `ssl` (implicit TLS, `ssl://`) or `tls`
-(STARTTLS over `tcp://`); the plaintext option was removed from `source.xml` and `process()` rejects
-any value other than `ssl`/`tls` server-side, so a forged submission or a legacy row cannot reopen a
-cleartext session that would leak the mailbox credentials and report contents.
+Only encrypted transports are allowed. `security` accepts `ssl` (implicit TLS) or `tls` (STARTTLS);
+both open a plain `tcp://` socket and negotiate TLS explicitly via `stream_socket_enable_crypto()`
+so a handshake or certificate failure is reported as a distinct TLS error instead of a generic
+connection failure — implicit TLS upgrades before the greeting, STARTTLS after it. The plaintext
+option was removed from `source.xml` and `process()` rejects any value other than `ssl`/`tls`
+server-side, so a forged submission or a legacy row cannot reopen a cleartext session that would
+leak the mailbox credentials and report contents.
 
 Streaming design (do not revert to loading all messages into an array):
 
