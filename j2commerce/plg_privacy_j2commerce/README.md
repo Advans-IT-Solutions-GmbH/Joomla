@@ -404,7 +404,7 @@ if ($_privacyEnabled) {
 }
 ```
 
-If the plugin is not installed or disabled, or the option is off, `$_privacyEnabled` is `false` and the tab is not rendered — no errors. `default_addresses.php` uses `PrivacyOptions::showDeleteAddress()` the same way.
+If the plugin is not installed or disabled, or the option is off, `$_privacyEnabled` is `false` and the tab is not rendered — no errors. `default_addresses.php` uses `PrivacyOptions::showDeleteAddress()` the same way. Its delete button calls `index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=json&task=deleteAddress` with the form token of the session in the query. The plugin checks the token itself (query parameter, POST field or `X-CSRF-Token` header), not with `Session::checkToken()`: a request without the token, also one without a session cookie, gets a JSON error and never a redirect.
 
 ### Language file
 
