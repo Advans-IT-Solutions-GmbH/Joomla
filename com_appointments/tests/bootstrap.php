@@ -18,4 +18,5 @@ require_once $helperDir . '/UtcTimestamp.php';
 require_once $helperDir . '/AvailabilityWindow.php';
 require_once $helperDir . '/ScheduleResolver.php';
 require_once $helperDir . '/SlotRules.php';
+require_once $helperDir . '/BusyPeriod.php';
 require_once $helperDir . '/SlotEngine.php';

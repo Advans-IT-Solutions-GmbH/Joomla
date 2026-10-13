@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Tests\Unit;
 
 use Advans\Component\Appointments\Administrator\Helper\AvailabilityWindow;
+use Advans\Component\Appointments\Administrator\Helper\BusyPeriod;
 use Advans\Component\Appointments\Administrator\Helper\ScheduleResolver;
 use Advans\Component\Appointments\Administrator\Helper\SlotEngine;
 use Advans\Component\Appointments\Administrator\Helper\SlotRules;
@@ -143,7 +144,7 @@ final class SlotEngineTest extends TestCase
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [$rules->expandBooking($this->localWindow('2026-06-02 11:00', '2026-06-02 11:20'))]
+            [BusyPeriod::forBooking($this->localWindow('2026-06-02 11:00', '2026-06-02 11:20'), $rules)]
         );
 
         // The booking takes 10:50 to 11:30 out of the day, and the grid is
@@ -152,31 +153,79 @@ final class SlotEngineTest extends TestCase
         $this->assertSame(['2026-06-02 10:30', '2026-06-02 11:30'], $this->asLocal($slots));
     }
 
-    public function testTheEngineRemovesExactlyWhatItIsGiven(): void
+    public function testAnAbsenceAndABookingWithBuffersDifferInWhatTheyBlock(): void
     {
         // The same obstacle, once as an absence handed over as it stands and
-        // once as a booking widened by its own buffers. The engine widens
-        // nothing itself, so the two results differ.
-        $rules    = new SlotRules(30, 30, 10, 10);
-        $engine   = $this->engine($this->tuesdayMorning(), $rules);
-        $obstacle = $this->localWindow('2026-06-02 11:00', '2026-06-02 11:30');
+        // once as a booking of an event type with ten minutes of buffer on each
+        // side. The engine widens nothing itself, so the booking blocks more.
+        $thisType   = new SlotRules(30, 30);
+        $bufferType = new SlotRules(30, 30, 10, 10);
+        $engine     = $this->engine($this->tuesdayMorning(), $thisType);
+        $obstacle   = $this->localWindow('2026-06-02 11:00', '2026-06-02 11:30');
 
         $withAbsence = $engine->findSlots(
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [$obstacle]
+            [BusyPeriod::reserved($obstacle)]
         );
 
         $withBooking = $engine->findSlots(
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-02 06:00'),
             $this->utc('2026-06-03 06:00'),
-            [$rules->expandBooking($obstacle)]
+            [BusyPeriod::forBooking($obstacle, $bufferType)]
         );
 
-        $this->assertSame(['2026-06-02 10:30'], $this->asLocal($withAbsence));
-        $this->assertSame([], $this->asLocal($withBooking));
+        // The absence takes exactly its half hour.
+        $this->assertSame(
+            ['2026-06-02 10:00', '2026-06-02 10:30', '2026-06-02 11:30'],
+            $this->asLocal($withAbsence)
+        );
+        // The booking takes 10:50 to 11:40, which also removes the 10:30 and
+        // the 11:30 start.
+        $this->assertSame(['2026-06-02 10:00'], $this->asLocal($withBooking));
+    }
+
+    public function testACandidatesBufferMayNotFallIntoAnAbsence(): void
+    {
+        // An absence is time the host is not there, so neither a meeting nor
+        // the preparation around one can lie inside it.
+        $engine   = $this->engine($this->tuesdayMorning(), new SlotRules(30, 30, 0, 20));
+        $obstacle = $this->localWindow('2026-06-02 11:00', '2026-06-02 11:30');
+
+        $slots = $engine->findSlots(
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-03 06:00'),
+            [BusyPeriod::reserved($obstacle)]
+        );
+
+        // 10:30 would end at 11:00 and then reach to 11:20 with its buffer,
+        // which is inside the absence.
+        $this->assertSame(['2026-06-02 10:00'], $this->asLocal($slots));
+    }
+
+    public function testALongBufferMayNotReachOverSomebodyElsesMeeting(): void
+    {
+        // The case a free-piece check alone cannot see: the other booking has
+        // no buffer of its own, so the free pieces end exactly at its meeting,
+        // and this event type's hour of buffer after a meeting would be placed
+        // on top of it.
+        $thisType  = new SlotRules(30, 30, 0, 60);
+        $otherType = new SlotRules(30, 30);
+        $engine    = $this->engine($this->tuesdayMorning(), $thisType);
+
+        $slots = $engine->findSlots(
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-02 06:00'),
+            $this->utc('2026-06-03 06:00'),
+            [BusyPeriod::forBooking($this->localWindow('2026-06-02 11:00', '2026-06-02 11:30'), $otherType)]
+        );
+
+        // 10:00 would run to 11:30 with its buffer and 10:30 to 12:00, both
+        // over the other meeting. Nothing is left.
+        $this->assertSame([], $this->asLocal($slots));
     }
 
     public function testABookingOfAnotherEventTypeKeepsItsOwnBuffer(): void
@@ -189,7 +238,7 @@ final class SlotEngineTest extends TestCase
         $thisType  = new SlotRules(30, 30);
         $engine    = $this->engine($this->tuesdayMorning(), $thisType);
 
-        $other = $otherType->expandBooking($this->localWindow('2026-06-02 10:00', '2026-06-02 10:30'));
+        $other = BusyPeriod::forBooking($this->localWindow('2026-06-02 10:00', '2026-06-02 10:30'), $otherType);
 
         $slots = $engine->findSlots(
             $this->utc('2026-06-02 06:00'),
@@ -512,6 +561,54 @@ final class SlotEngineTest extends TestCase
         );
 
         $this->assertSame([], $slots);
+    }
+
+    public function testTheOfferedTimesOfADayDoNotDependOnTheQueriedRange(): void
+    {
+        // A schedule that is open around the clock, and a step that does not
+        // divide a day. The booking page asks for a month, the booking guard
+        // re-checks a single day, and both have to see the same times for that
+        // day: a slot the visitor was offered must still exist when the
+        // submission is validated.
+        $roundTheClock = [];
+
+        for ($weekday = 1; $weekday <= 7; $weekday++) {
+            $roundTheClock[] = ['weekday' => $weekday, 'start_time' => '00:00', 'end_time' => '00:00'];
+        }
+
+        $engine = $this->engine($roundTheClock, new SlotRules(50, 50));
+
+        $now        = $this->utc('2026-06-01 00:00');
+        $narrowFrom = $this->utc('2026-06-10 00:00');
+        $narrowTo   = $this->utc('2026-06-11 00:00');
+
+        $asUtc = static function (array $slots): array {
+            return array_map(
+                static function (\DateTimeImmutable $slot): string {
+                    return $slot->format('Y-m-d H:i');
+                },
+                $slots
+            );
+        };
+
+        $broad  = $engine->findSlots($now, $this->utc('2026-06-02 00:00'), $this->utc('2026-06-20 00:00'));
+        $narrow = $engine->findSlots($now, $narrowFrom, $narrowTo);
+
+        // The narrow answer has to be exactly the broad answer restricted to the
+        // narrow range. Anything else means a start the visitor was offered no
+        // longer exists when the submission is re-checked, or the other way
+        // round.
+        $restricted = array_values(
+            array_filter(
+                $broad,
+                static function (\DateTimeImmutable $slot) use ($narrowFrom, $narrowTo): bool {
+                    return $slot >= $narrowFrom && $slot < $narrowTo;
+                }
+            )
+        );
+
+        $this->assertNotSame([], $restricted);
+        $this->assertSame($asUtc($restricted), $asUtc($narrow));
     }
 
     public function testSlotsAreOrderedAndFreeOfDuplicates(): void

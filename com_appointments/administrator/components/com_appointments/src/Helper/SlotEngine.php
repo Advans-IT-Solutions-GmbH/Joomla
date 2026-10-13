@@ -35,22 +35,18 @@ defined('_JEXEC') or die;
  *  3. Each window is walked on the slot-step grid, anchored to the window start
  *     and not to the pieces a booking may have cut it into, so the offered times
  *     stay on the same grid all day.
- *  4. A start is bookable when the meeting fits into a free piece and the
- *     meeting plus its own buffers fits inside the schedule window. The second
- *     condition is what makes the first and last slot of a window move inward
- *     when buffers are configured.
+ *  4. A start is bookable when its meeting fits into a free piece, its meeting
+ *     plus its own buffers fits inside the schedule window, and that occupied
+ *     period reaches over nobody else's meeting. See {@see self::fits()} for why
+ *     it takes those three and not fewer.
  *  5. Starts before "now plus the minimum notice" are dropped, and so are starts
  *     outside the booking horizon, which counts calendar days in the schedule's
  *     zone.
  *  6. A day that has reached the daily cap disappears completely, and so does
  *     the rest of a week that has reached the weekly cap.
  *
- * Why a candidate's buffers are checked against the window and not against the
- * free piece: the piece edges already include the buffers of the bookings that
- * cut them, so requiring the candidate's buffer there as well would demand
- * twice the configured gap between two meetings. Two candidates next to each
- * other cannot violate each other, because only one of them can be booked and
- * the next computation sees it.
+ * Two candidates next to each other cannot violate each other, because only one
+ * of them can be booked and the next computation sees it.
  *
  * @since  1.0.0
  */
@@ -78,16 +74,12 @@ final class SlotEngine
      * @param   \DateTimeImmutable    $now        The current instant, injected.
      * @param   \DateTimeImmutable    $fromUtc    Inclusive start of the range of interest.
      * @param   \DateTimeImmutable    $toUtc      Exclusive end of the range of interest.
-     * @param   AvailabilityWindow[]  $busy       Everything that is already taken, as the periods
-     *                                           it really occupies. A booking has to be handed
-     *                                           over already widened by the buffers of **its own**
-     *                                           event type, with {@see SlotRules::expandBooking()};
-     *                                           an absence is handed over as it stands, because it
-     *                                           is already the full period. The engine widens
-     *                                           nothing here: a host can serve several event types
-     *                                           with different buffers, and applying this event
-     *                                           type's buffers to another type's meeting would
-     *                                           offer a slot that runs into its buffer.
+     * @param   BusyPeriod[]          $busy       Everything that is already taken. A booking is
+     *                                           built with {@see BusyPeriod::forBooking()} and the
+     *                                           rules of **its own** event type, an absence with
+     *                                           {@see BusyPeriod::reserved()}. The engine applies
+     *                                           no buffers of its own to them: a host can serve
+     *                                           several event types with different buffers.
      * @param   \DateTimeImmutable[]  $capCounts  Start times of the active bookings of **this**
      *                                           event type, used for the daily and weekly caps,
      *                                           which are per event type.
@@ -107,13 +99,15 @@ final class SlotEngine
             return [];
         }
 
-        // What the schedule itself makes unavailable is removed the same way a
-        // booking is, rather than being cut out of the windows: that keeps the
+        // What the schedule itself makes unavailable is removed the same way an
+        // absence is, rather than being cut out of the windows: that keeps the
         // start of a window the start of its rule, so the grid below does not
         // change phase after a clock change or next to a governed day.
-        $busy = AvailabilityWindow::merge(
-            array_merge($busy, $this->resolver->unavailablePeriods($range->getStart(), $range->getEnd()))
-        );
+        foreach ($this->resolver->unavailablePeriods($range->getStart(), $range->getEnd()) as $period) {
+            $busy[] = BusyPeriod::reserved($period);
+        }
+
+        $busy  = array_values($busy);
         $slots = [];
 
         foreach ($this->resolver->resolve($range->getStart(), $range->getEnd()) as $window) {
@@ -189,13 +183,13 @@ final class SlotEngine
     /**
      * The bookable starts of one window.
      *
-     * @param   AvailabilityWindow[]  $busy
+     * @param   BusyPeriod[]  $busy
      *
      * @return  \DateTimeImmutable[]
      */
     private function slotsInWindow(AvailabilityWindow $window, array $busy): array
     {
-        $free = $window->subtractAll($busy);
+        $free = $window->subtractAll(BusyPeriod::occupiedWindows($busy));
 
         if ($free === []) {
             return [];
@@ -222,18 +216,66 @@ final class SlotEngine
                 continue;
             }
 
-            $meeting = new AvailabilityWindow($start, $meetingEnd);
+            $meeting  = new AvailabilityWindow($start, $meetingEnd);
+            $occupied = $meeting->expand($before, $after);
 
-            foreach ($free as $piece) {
-                if ($piece->containsWindow($meeting)) {
-                    $slots[] = $start;
-
-                    break;
-                }
+            if ($this->fits($meeting, $occupied, $free, $busy)) {
+                $slots[] = $start;
             }
         }
 
         return $slots;
+    }
+
+    /**
+     * Whether a candidate can be offered.
+     *
+     * Both directions are checked, and each one for a reason:
+     *
+     * - The **meeting** has to fit into a free piece of the window. The pieces
+     *   are what is left after the occupied periods are removed, so this is
+     *   what respects the buffers of what is already booked.
+     * - The candidate's **occupied** period must not reach over another
+     *   **meeting**. This is what respects this event type's own buffers, and
+     *   it is the direction a free-piece check alone cannot see: an event type
+     *   with an hour of buffer after a meeting would otherwise place that hour
+     *   on top of somebody else's appointment.
+     *
+     * The occupied periods are deliberately not checked against each other. A
+     * buffer is a minimum gap, not a second reservation, so two neighbouring
+     * meetings with ten minutes of buffer each need ten minutes between them
+     * and not twenty.
+     *
+     * @param   AvailabilityWindow[]  $free
+     * @param   BusyPeriod[]          $busy
+     */
+    private function fits(
+        AvailabilityWindow $meeting,
+        AvailabilityWindow $occupied,
+        array $free,
+        array $busy
+    ): bool {
+        $inFreePiece = false;
+
+        foreach ($free as $piece) {
+            if ($piece->containsWindow($meeting)) {
+                $inFreePiece = true;
+
+                break;
+            }
+        }
+
+        if (!$inFreePiece) {
+            return false;
+        }
+
+        foreach ($busy as $period) {
+            if ($occupied->overlaps($period->getMeeting())) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

@@ -131,18 +131,30 @@ final class ScheduleResolver
     /**
      * Resolve the schedule into the UTC windows that overlap the given range.
      *
-     * The windows are returned **whole, not clipped to the range**, and that is
-     * deliberate. The slot engine anchors its grid to the start of a window, so
-     * a window cut off at "now plus the minimum notice" or at the edge of the
-     * booking horizon would move the grid and offer a visitor times like 10:31
-     * that the schedule never contained. Selecting which of the resolved starts
-     * are allowed is the engine's job; saying where availability begins and ends
-     * is this class's job.
+     * The windows are returned **whole, not clipped to the range**, and the
+     * windows of two different local dates are **never merged**. Both are
+     * deliberate, and both exist because the slot engine anchors its grid to the
+     * start of a window:
+     *
+     * - A window cut off at "now plus the minimum notice" or at the edge of the
+     *   booking horizon would move the grid and offer a visitor times like 10:31
+     *   that the schedule never contained.
+     * - Merging across dates would make the grid depend on the requested range.
+     *   A schedule that is open around the clock would produce one window
+     *   starting on whichever date the resolution happened to begin with, so a
+     *   month-long availability query and a one-day re-check could offer
+     *   different times for the same day. Every date's window now depends on
+     *   that date's own rules alone, which is what makes the result
+     *   range-independent.
+     *
+     * The price is that a meeting cannot span the boundary between two dates'
+     * windows even when the availability is continuous there. An operator who
+     * wants that writes one rule that crosses midnight, which stays one window.
      *
      * @param   \DateTimeImmutable  $fromUtc  Inclusive start of the range, in UTC.
      * @param   \DateTimeImmutable  $toUtc    Exclusive end of the range, in UTC.
      *
-     * @return  AvailabilityWindow[]  Merged and ordered.
+     * @return  AvailabilityWindow[]  Ordered by start; merged within a date only.
      *
      * @throws  \InvalidArgumentException  When the range is empty or reversed.
      */
@@ -153,18 +165,13 @@ final class ScheduleResolver
 
         foreach ($this->localDatesFor($range) as $date) {
             foreach ($this->windowsForDate($date) as $window) {
-                $windows[] = $window;
+                if ($window->overlaps($range)) {
+                    $windows[] = $window;
+                }
             }
         }
 
-        return array_values(
-            array_filter(
-                AvailabilityWindow::merge($windows),
-                static function (AvailabilityWindow $window) use ($range): bool {
-                    return $window->overlaps($range);
-                }
-            )
-        );
+        return AvailabilityWindow::sort($windows);
     }
 
     /**

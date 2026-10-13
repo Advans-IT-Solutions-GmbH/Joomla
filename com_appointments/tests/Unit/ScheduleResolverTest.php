@@ -270,6 +270,29 @@ final class ScheduleResolverTest extends TestCase
         );
     }
 
+    public function testWindowsOfTwoDatesAreNotMerged(): void
+    {
+        $resolver = new ScheduleResolver(self::ZONE, [
+            ['weekday' => 2, 'start_time' => '00:00', 'end_time' => '00:00'],
+            ['weekday' => 3, 'start_time' => '00:00', 'end_time' => '00:00'],
+        ]);
+
+        $utc     = new \DateTimeZone('UTC');
+        $windows = $resolver->resolve(
+            new \DateTimeImmutable('2026-06-02 00:00', $utc),
+            new \DateTimeImmutable('2026-06-04 00:00', $utc)
+        );
+
+        // Two days of round-the-clock availability stay two windows, each
+        // starting at its own local midnight. Merged into one, the start of
+        // that window would depend on which date the resolution began with,
+        // and the slot grid would move with the queried range.
+        $this->assertSame(
+            ['2026-06-01 22:00-2026-06-02 22:00', '2026-06-02 22:00-2026-06-03 22:00'],
+            $this->asStrings($windows)
+        );
+    }
+
     public function testResolveLeavesOutWindowsThatDoNotOverlapTheRange(): void
     {
         $resolver = new ScheduleResolver(self::ZONE, [
