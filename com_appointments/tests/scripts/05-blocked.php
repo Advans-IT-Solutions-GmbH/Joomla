@@ -244,13 +244,21 @@ class BlockedAdminTest
 
             $this->test('A submission without a token is refused before it is read', function () use ($html) {
                 $stored = $this->fixture();
+                $intact = $stored !== null && $stored['start_utc'] === '2026-06-02 12:00:00';
+                // Not the validation message: nothing was read out of the
+                // forged request at all.
+                $unread = stripos($html, 'is not a date and a time that exist') === false;
+                $denied = stripos($html, 'invalid security token') !== false;
 
-                return $stored !== null
-                    && $stored['start_utc'] === '2026-06-02 12:00:00'
-                    && stripos($html, 'invalid security token') !== false
-                    // Not the validation message: nothing was read out of the
-                    // forged request at all.
-                    && stripos($html, 'is not a date and a time that exist') === false;
+                if ($intact && $unread && $denied) {
+                    return true;
+                }
+
+                echo '    stored start: ' . ($stored === null ? 'gone' : $stored['start_utc']) . "\n";
+                echo '    response said: ' . $this->firstMessage($html) . "\n";
+                echo '    response length: ' . \strlen($html) . "\n";
+
+                return false;
             });
         } finally {
             $this->restoreAdminZone();
