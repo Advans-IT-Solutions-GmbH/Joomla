@@ -18,6 +18,7 @@
     <scriptfile>script.php</scriptfile>
 
     <files module="mod_dmarcreports">
+        <folder>language</folder>
         <folder>services</folder>
         <folder>src</folder>
         <folder>tmpl</folder>

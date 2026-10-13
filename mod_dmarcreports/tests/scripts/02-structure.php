@@ -14,9 +14,10 @@ class StructureTest
     {
         echo "=== Structure Tests ===\n\n";
 
-        // Administrator modules install their <languages> into the shared
-        // administrator language folder, not into the module directory.
-        $lang = '/var/www/html/administrator/language';
+        // The module ships its own language folder inside the module directory
+        // (declared via <folder>language</folder>), so all shipped translations
+        // are present regardless of which site language packs are installed.
+        $lang = $this->base . '/language';
 
         $files = [
             'Module manifest'      => $this->base . '/mod_dmarcreports.xml',
@@ -29,7 +30,9 @@ class StructureTest
             'Language en-GB (.ini)'     => $lang . '/en-GB/mod_dmarcreports.ini',
             'Language en-GB (.sys.ini)' => $lang . '/en-GB/mod_dmarcreports.sys.ini',
             'Language de-DE (.ini)'     => $lang . '/de-DE/mod_dmarcreports.ini',
+            'Language de-DE (.sys.ini)' => $lang . '/de-DE/mod_dmarcreports.sys.ini',
             'Language fr-FR (.ini)'     => $lang . '/fr-FR/mod_dmarcreports.ini',
+            'Language fr-FR (.sys.ini)' => $lang . '/fr-FR/mod_dmarcreports.sys.ini',
         ];
 
         foreach ($files as $label => $path) {

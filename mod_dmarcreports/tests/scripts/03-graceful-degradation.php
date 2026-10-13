@@ -19,7 +19,6 @@ require_once JPATH_BASE . '/includes/defines.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Advans\Module\DmarcReports\Administrator\Helper\DmarcReportsHelper;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -51,7 +50,14 @@ echo "=== Graceful Degradation Tests ===\n\n";
 // the console application is a genuine CMSApplicationInterface with a live
 // database, so ComponentHelper reports the real (absent) state of the
 // component and the helper runs against real Joomla services.
-$app = Factory::getContainer()->get(ConsoleApplication::class);
+$container = Factory::getContainer();
+$container->alias('session', 'session.cli')
+    ->alias('JSession', 'session.cli')
+    ->alias(\Joomla\CMS\Session\Session::class, 'session.cli')
+    ->alias(\Joomla\Session\Session::class, 'session.cli')
+    ->alias(\Joomla\Session\SessionInterface::class, 'session.cli');
+
+$app = $container->get(\Joomla\Console\Application::class);
 Factory::$application = $app;
 
 $app->getLanguage()->load('mod_dmarcreports', JPATH_ADMINISTRATOR);
