@@ -71,17 +71,50 @@ class InstallationTest
             return $result && $result->num_rows > 0;
         });
 
-        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-            $this->test("Administrator language file {$tag} exists", function () use ($tag) {
-                return file_exists("/var/www/html/administrator/language/{$tag}/com_appointments.ini")
-                    || file_exists("/var/www/html/administrator/components/com_appointments/language/{$tag}/com_appointments.ini");
-            });
+        $this->test('Administrator language file en-GB is installed', function () {
+            return file_exists('/var/www/html/administrator/language/en-GB/com_appointments.ini')
+                && file_exists('/var/www/html/administrator/language/en-GB/com_appointments.sys.ini');
+        });
 
-            $this->test("Site language file {$tag} exists", function () use ($tag) {
-                return file_exists("/var/www/html/language/{$tag}/com_appointments.ini")
-                    || file_exists("/var/www/html/components/com_appointments/language/{$tag}/com_appointments.ini");
-            });
-        }
+        $this->test('Site language file en-GB is installed', function () {
+            return file_exists('/var/www/html/language/en-GB/com_appointments.ini');
+        });
+
+        $this->test('Package ships de-DE and fr-FR for both parts', function () {
+            // Joomla copies a <language> entry only when that language exists on
+            // the target site: Installer::parseLanguages() skips an entry whose
+            // destination folder is missing. The test site has en-GB only, so
+            // de-DE and fr-FR are asserted in the package, which is where they
+            // have to be for a site that does have those language packs. The
+            // installer-messages suite then proves they are really used, because
+            // it reinstalls the package once per language.
+            $zip = new \ZipArchive();
+
+            if ($zip->open('/tmp/extension.zip') !== true) {
+                return false;
+            }
+
+            $expected = [
+                'administrator/language/de-DE/com_appointments.ini',
+                'administrator/language/de-DE/com_appointments.sys.ini',
+                'administrator/language/fr-FR/com_appointments.ini',
+                'administrator/language/fr-FR/com_appointments.sys.ini',
+                'language/de-DE/com_appointments.ini',
+                'language/fr-FR/com_appointments.ini',
+            ];
+
+            foreach ($expected as $entry) {
+                if ($zip->locateName($entry) === false) {
+                    $zip->close();
+
+                    return false;
+                }
+            }
+
+            $zip->close();
+
+            return true;
+        });
 
         $this->test('No signing secret is stored in the component parameters', function () {
             // The component derives every key from the Joomla site secret, so

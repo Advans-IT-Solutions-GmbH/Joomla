@@ -79,9 +79,13 @@ class StructureTest
         });
 
         $this->test('A cancelled booking frees the slot again', function () {
-            $now = gmdate('Y-m-d H:i:s');
-            $start = gmdate('Y-m-d H:i:s', strtotime('+10 days'));
-            $end = gmdate('Y-m-d H:i:s', strtotime('+10 days 20 minutes'));
+            // Explicit UTC, never the server's default zone: the whole schema
+            // stores UTC and a test must not be the one place that guesses.
+            $utc = new \DateTimeZone('UTC');
+            $reference = new \DateTimeImmutable('now', $utc);
+            $now = $reference->format('Y-m-d H:i:s');
+            $start = $reference->add(new \DateInterval('P10D'))->format('Y-m-d H:i:s');
+            $end = $reference->add(new \DateInterval('P10DT20M'))->format('Y-m-d H:i:s');
             $table = "{$this->dbPrefix}appointments_bookings";
 
             // mysqli reports a duplicate key as an exception by default, so the

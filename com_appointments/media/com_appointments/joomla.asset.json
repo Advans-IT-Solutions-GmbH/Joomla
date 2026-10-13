@@ -1,8 +1,7 @@
 {
     "$schema": "https://developer.joomla.org/schemas/json-schema/web_assets.json",
     "name": "com_appointments",
-    "version": "1.0.0",
-    "description": "Appointments component assets. Every file is served from this installation; nothing is loaded from a third party.",
+    "description": "Appointments component assets. Every file is served from this installation; nothing is loaded from a third party. No version is declared here, because the release workflow owns the version of this extension and would not update a copy in this file.",
     "license": "GPL-3.0-or-later",
     "assets": [
         {
