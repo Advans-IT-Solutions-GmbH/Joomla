@@ -12,7 +12,9 @@ namespace Advans\Component\DmarcReports\Administrator\Controller;
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\DecoderUnavailableException;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
+use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
+use Advans\Component\DmarcReports\Administrator\Helper\ReportArchive;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
@@ -54,8 +56,8 @@ class IngestController extends BaseController
         }
 
         try {
-            $client   = new ImapClient((int) $this->getConfig('imap_timeout', 20));
-            $limit    = (int) $this->getConfig('max_messages_per_run', 200);
+            $client   = new ImapClient($this->boundedConfig('imap_timeout', 20, 5, 120));
+            $limit    = $this->boundedConfig('max_messages_per_run', 200, 10, 2000);
             $ingestor = new Ingestor(null, $this->canAutoCreateDomains());
             $summary  = $ingestor->newSummary();
             $domainId = (int) $source->domain_id;
@@ -126,6 +128,18 @@ class IngestController extends BaseController
             );
 
             $this->setRedirect($redirect, $message, $flashType);
+        } catch (ImapException $e) {
+            // Give the operator the category of failure — a connection problem, a
+            // TLS failure, a login rejection or a misconfiguration — so they know
+            // what to fix. Only the fixed, localized category text is shown; the
+            // exception message is never surfaced, so a mailbox credential can
+            // never leak into a flash message, the stored run status or a log.
+            $message = Text::_('COM_DMARCREPORTS_INGEST_FAILED') . ' '
+                . Text::_($this->imapReasonKey($e->getCategory()));
+            $this->recordRun($sourceId, 'error', $message);
+            $this->setRedirect($redirect, $message, 'error');
+
+            return false;
         } catch (\Throwable $e) {
             $this->recordRun($sourceId, 'error', Text::_('COM_DMARCREPORTS_INGEST_FAILED'));
             $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_INGEST_FAILED'), 'error');
@@ -134,6 +148,21 @@ class IngestController extends BaseController
         }
 
         return true;
+    }
+
+    /**
+     * Map an {@see ImapException} category to its localized reason key. The
+     * category is a fixed enumeration, so the message never contains any
+     * server-supplied or credential-derived text.
+     */
+    private function imapReasonKey(string $category): string
+    {
+        return match ($category) {
+            ImapException::CATEGORY_TLS   => 'COM_DMARCREPORTS_INGEST_REASON_TLS',
+            ImapException::CATEGORY_LOGIN => 'COM_DMARCREPORTS_INGEST_REASON_LOGIN',
+            ImapException::CATEGORY_CONFIG => 'COM_DMARCREPORTS_INGEST_REASON_CONFIG',
+            default                       => 'COM_DMARCREPORTS_INGEST_REASON_CONNECTION',
+        };
     }
 
     /**
@@ -169,7 +198,20 @@ class IngestController extends BaseController
             );
 
             $type = $summary['imported'] > 0 ? 'message' : 'warning';
-            $this->setRedirect($redirect, $this->summaryText($summary), $type);
+            $message = $this->summaryText($summary);
+
+            // When nothing was imported, append the specific reason (empty file,
+            // wrong format, malformed/XXE, or a decompression-bomb guard) so the
+            // operator knows why rather than seeing only an empty-result summary.
+            if ((int) $summary['imported'] === 0 && !empty($summary['reason'])) {
+                $key = $this->uploadReasonKey((string) $summary['reason']);
+
+                if ($key !== '') {
+                    $message .= ' ' . Text::_($key);
+                }
+            }
+
+            $this->setRedirect($redirect, $message, $type);
         } catch (DecoderUnavailableException $e) {
             // The uploaded report is a compressed container the host cannot
             // decode because the required PHP extension is missing. Surface a
@@ -343,22 +385,90 @@ class IngestController extends BaseController
     }
 
     /**
-     * @param   array<string, int>  $summary
+     * Map an ingest reason token from {@see Ingestor} to its localized upload
+     * message key. An unknown token yields an empty string so only the summary
+     * is shown.
+     */
+    private function uploadReasonKey(string $reason): string
+    {
+        return match ($reason) {
+            'empty'      => 'COM_DMARCREPORTS_UPLOAD_REASON_EMPTY',
+            'unreadable' => 'COM_DMARCREPORTS_UPLOAD_REASON_UNREADABLE',
+            'format'     => 'COM_DMARCREPORTS_UPLOAD_REASON_FORMAT',
+            'malformed'  => 'COM_DMARCREPORTS_UPLOAD_REASON_MALFORMED',
+            'bomb'       => 'COM_DMARCREPORTS_UPLOAD_REASON_BOMB',
+            default      => '',
+        };
+    }
+
+    /**
+     * @param   array<string, int|string>  $summary  Ingest counters plus an
+     *                                                optional string `reason`
+     *                                                token when nothing imported.
      */
     private function summaryText(array $summary): string
     {
-        return Text::sprintf(
+        $text = Text::sprintf(
             'COM_DMARCREPORTS_INGEST_SUMMARY',
             (int) ($summary['imported'] ?? 0),
             (int) ($summary['duplicates'] ?? 0),
             (int) ($summary['failed'] ?? 0),
             (int) ($summary['skipped'] ?? 0)
         );
+
+        // An archive that held more reports than the per-run cap had the surplus
+        // dropped; tell the operator how many so a silently truncated import is
+        // never mistaken for a complete one.
+        $dropped = (int) ($summary['dropped'] ?? 0);
+
+        if ($dropped > 0) {
+            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_DROPPED', $dropped, ReportArchive::MAX_DOCUMENTS);
+        }
+
+        return $text;
     }
 
     private function getConfig(string $key, $default)
     {
         return \Joomla\CMS\Component\ComponentHelper::getParams('com_dmarcreports')->get($key, $default);
+    }
+
+    /**
+     * Read an integer option and clamp it to the declared [min, max] range,
+     * falling back to the default when the stored value is empty, non-numeric or
+     * out of range. The form range rule only guards future submissions; a value
+     * such as a 999-second timeout that version 1.0.0 persisted before the rule
+     * existed must still be normalized at read time so it cannot drive an
+     * out-of-range socket timeout or fetch cap after an upgrade.
+     *
+     * @param   string  $key      Option name.
+     * @param   int     $default  Fallback when empty, non-numeric or out of range.
+     * @param   int     $min      Lowest value accepted (inclusive).
+     * @param   int     $max      Highest value accepted (inclusive).
+     *
+     * @return  int
+     */
+    private function boundedConfig(string $key, int $default, int $min, int $max): int
+    {
+        $value = $this->getConfig($key, $default);
+
+        // is_numeric() would accept "50.5" or "1e2", and the int cast would then
+        // silently coerce them to 50/100. The form range rule rejects those as
+        // whole numbers, so apply the same plain-integer lexical check here
+        // before casting: a legacy or crafted non-integer value that 1.0.0 could
+        // have persisted falls back to the default instead of driving an
+        // out-of-rule timeout or fetch cap after an upgrade.
+        if (!is_scalar($value) || !preg_match('/^-?\d+$/', (string) $value)) {
+            return $default;
+        }
+
+        $value = (int) $value;
+
+        if ($value < $min || $value > $max) {
+            return $default;
+        }
+
+        return $value;
     }
 
     private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface

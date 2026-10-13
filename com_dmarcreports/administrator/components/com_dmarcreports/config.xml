@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<config>
+<config addruleprefix="Advans\Component\DmarcReports\Administrator\Rule">
     <fieldset name="basic">
         <field
             name="default_policy_target"
@@ -7,6 +7,7 @@
             label="COM_DMARCREPORTS_CONFIG_POLICY_TARGET_LABEL"
             description="COM_DMARCREPORTS_CONFIG_POLICY_TARGET_DESC"
             default="reject"
+            validate="options"
         >
             <option value="none">COM_DMARCREPORTS_POLICY_NONE</option>
             <option value="quarantine">COM_DMARCREPORTS_POLICY_QUARANTINE</option>
@@ -22,6 +23,10 @@
             min="50"
             max="100"
             step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_QUARANTINE_THRESHOLD_ERROR"
         />
 
         <field
@@ -33,6 +38,10 @@
             min="50"
             max="100"
             step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_REJECT_THRESHOLD_ERROR"
         />
 
         <field
@@ -44,6 +53,10 @@
             min="5"
             max="120"
             step="5"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_IMAP_TIMEOUT_ERROR"
         />
 
         <field
@@ -55,7 +68,24 @@
             min="10"
             max="2000"
             step="10"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_MESSAGES_ERROR"
         />
+
+        <field
+            name="csv_delimiter"
+            type="list"
+            label="COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_DESC"
+            default="semicolon"
+            validate="options"
+        >
+            <option value="semicolon">COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_SEMICOLON</option>
+            <option value="comma">COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_COMMA</option>
+            <option value="tab">COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_TAB</option>
+        </field>
 
         <field
             name="dns_diagnostics"
@@ -64,6 +94,7 @@
             label="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_LABEL"
             description="COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_DESC"
             default="0"
+            validate="options"
         >
             <option value="0">JNO</option>
             <option value="1">JYES</option>

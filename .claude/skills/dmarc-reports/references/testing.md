@@ -19,6 +19,7 @@ Driven by `shared/tests/run-tests.sh` via `tests/test.env` (`CONTAINER_NAME=com_
 | action-center | `05-action-center.php` | Recommendations derived correctly from the data |
 | metrics | `06-metrics.php` | `Metrics` aggregator over a seeded DB: lifetime totals, rolling-window rates, new sources (including a source first seen in a second, contemporaneous report from another reporter), timeline |
 | export | `07-export.php` | CSV keyset pagination returns every record once in order with no duplication/skips across a growing set; id ceiling excludes rows ingested mid-export; controller keeps its token + `core.manage` guards |
+| config-forms | `08-config-forms.php` | Authenticated HTTP: the component's com_config Options screen renders its fields; the domain and source edit forms render and Save writes a row; server-side validation rejects a duplicate domain, an over-long note and an out-of-range port (`0`/`70000`/`abc`) with the component's localized message and no raw SQL error |
 | backend-views | `shared-backend-views.php` | Renders each admin page: 200, no PHP/Joomla error, no untranslated key |
 | install-messages | `shared-install-messages.php` | Install/reinstall/update in en-GB/de-DE/fr-FR, no `[ERROR]`/`[WARNING]` |
 | uninstall | `10-uninstall.php` | Removal, table drop, verification |

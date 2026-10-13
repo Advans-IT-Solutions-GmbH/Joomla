@@ -38,6 +38,19 @@ class InstallationTest
             return $result && $result->num_rows > 0;
         });
 
+        // E1-B: installing the component must seed a #__schemas baseline so
+        // future sql/updates have a version to diff against. Join the extension
+        // row to its schema version and assert the 1.0.0 baseline is recorded.
+        $this->test('Schema baseline recorded in #__schemas', function () {
+            $result = $this->db->query(
+                "SELECT s.version_id FROM {$this->dbPrefix}schemas AS s"
+                . " INNER JOIN {$this->dbPrefix}extensions AS e ON e.extension_id = s.extension_id"
+                . " WHERE e.element = 'com_dmarcreports' AND e.type = 'component'"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+            return $row && $row['version_id'] === '1.0.0';
+        });
+
         $this->test('Component directory exists', function () {
             return is_dir('/var/www/html/administrator/components/com_dmarcreports');
         });
