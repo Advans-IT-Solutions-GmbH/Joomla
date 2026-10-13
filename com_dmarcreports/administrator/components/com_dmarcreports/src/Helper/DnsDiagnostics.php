@@ -49,13 +49,20 @@ final class DnsDiagnostics
             // A resolver failure is reported as its own finding so a transient
             // outage is not mistaken for a domain that never published DMARC.
             $findings[] = ['code' => 'dns_lookup_error', 'severity' => 2, 'params' => [$domain]];
-        } elseif ($dmarc['inherited']) {
-            // The subdomain has no record of its own but inherits a valid policy
-            // from an ancestor, so it is covered; surface it as an informational
-            // note rather than a missing-record problem.
-            $findings[] = ['code' => 'dns_dmarc_inherited', 'severity' => 1, 'params' => [$domain, $dmarc['inheritedFrom']]];
         } elseif (!$dmarc['present']) {
-            $findings[] = ['code' => 'dns_dmarc_missing', 'severity' => 3, 'params' => [$domain]];
+            if ($this->isSubdomain($domain)) {
+                // A subdomain with no record of its own may still be covered by
+                // the organizational domain's policy (RFC 7489 falls back to the
+                // Organizational Domain, selected via the Public Suffix List).
+                // This in-host check does not bundle a PSL, so it cannot resolve
+                // that domain or confirm coverage; rather than claim the policy
+                // is missing (it may not be) or claim it is covered (it may not
+                // be), it prompts the admin to verify the organizational
+                // domain's DMARC record.
+                $findings[] = ['code' => 'dns_dmarc_subdomain_check', 'severity' => 1, 'params' => [$domain]];
+            } else {
+                $findings[] = ['code' => 'dns_dmarc_missing', 'severity' => 3, 'params' => [$domain]];
+            }
         } elseif ($dmarc['duplicate']) {
             // More than one DMARC record is invalid per RFC 7489; receivers apply
             // error handling, so this must not be read as a healthy policy.
@@ -103,9 +110,15 @@ final class DnsDiagnostics
             'dmarc'     => $dmarc,
             'spf'       => $spf,
             'findings'  => $findings,
-            // Only suggest a record when the lookup succeeded and found none; a
-            // failed lookup must not imply the domain lacks a DMARC record.
-            'suggested' => (!$dmarc['error'] && !$dmarc['present'])
+            // Whether the monitored name is a subdomain that may inherit the
+            // organizational domain's DMARC policy. Governs how the absence of a
+            // record is presented, never a claim that a policy is in effect.
+            'subdomain' => $this->isSubdomain($domain),
+            // Only suggest a record when the lookup succeeded and found none at
+            // an organizational (registrable) domain. A failed lookup must not
+            // imply the domain lacks a record, and a subdomain may inherit the
+            // organizational domain's policy, so neither case suggests one.
+            'suggested' => (!$dmarc['error'] && !$dmarc['present'] && !$this->isSubdomain($domain))
                 ? 'v=DMARC1; p=none; rua=mailto:dmarc@' . $domain . '; fo=1'
                 : '',
         ];
@@ -118,7 +131,7 @@ final class DnsDiagnostics
     {
         $records = $this->resolver->txt('_dmarc.' . $domain);
 
-        $result = ['present' => false, 'error' => false, 'duplicate' => false, 'valid' => true, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false, 'inherited' => false, 'inheritedFrom' => ''];
+        $result = ['present' => false, 'error' => false, 'duplicate' => false, 'valid' => true, 'record' => '', 'policy' => '', 'pct' => 100, 'rua' => false];
 
         if ($records === null) {
             $result['error'] = true;
@@ -129,24 +142,6 @@ final class DnsDiagnostics
         $matching = $this->allMatching($records, 'v=dmarc1');
 
         if ($matching === []) {
-            // RFC 7489 lets a subdomain inherit the organizational domain's
-            // policy, so the absence of a record at _dmarc.<domain> does not
-            // mean the subdomain is unprotected. Look for the nearest ancestor
-            // that publishes a valid DMARC record and report inheritance rather
-            // than a false "missing" finding. True organizational-domain
-            // selection needs the Public Suffix List, which this in-host check
-            // deliberately does not bundle; the nearest-ancestor heuristic
-            // covers the common sub.example.org -> example.org case and stops at
-            // the two-label registrable minimum so it never walks into a public
-            // suffix such as co.uk.
-            $inheritedFrom = $this->findInheritedDmarc($domain);
-
-            if ($inheritedFrom !== null) {
-                $result['present']       = true;
-                $result['inherited']     = true;
-                $result['inheritedFrom'] = $inheritedFrom;
-            }
-
             return $result;
         }
 
@@ -183,48 +178,21 @@ final class DnsDiagnostics
     }
 
     /**
-     * Find the nearest ancestor domain that publishes a valid DMARC record, so
-     * a subdomain inheriting a parent policy is not reported as missing one.
-     * Walks from the immediate parent down to the two-label registrable minimum
-     * and returns the first ancestor whose _dmarc record names a valid policy,
-     * or null when none is found (or a resolver error makes the walk
-     * inconclusive). A receiver performs organizational-domain selection via the
-     * Public Suffix List rather than this nearest-ancestor walk, so an
-     * intermediate subdomain that happens to publish its own record is reported
-     * here even though a receiver would consult the organizational domain; the
-     * finding is advisory and only replaces a false "missing" verdict.
+     * Whether the monitored domain is a subdomain rather than an organizational
+     * (registrable) domain. Without the Public Suffix List the exact
+     * organizational boundary cannot be determined, so this uses the label
+     * count as a conservative signal: a name with more than two labels is
+     * treated as a subdomain that may inherit a parent policy. This only governs
+     * how the absence of a DMARC record is reported (an informational
+     * verify-the-organizational-domain prompt versus a missing-record finding);
+     * it never asserts that a policy is or is not in effect, so a multi-label
+     * registrable name under a compound public suffix (for example
+     * example.co.uk) is at worst reported more softly, never incorrectly marked
+     * as covered.
      */
-    private function findInheritedDmarc(string $domain): ?string
+    private function isSubdomain(string $domain): bool
     {
-        $parts = explode('.', $domain);
-        $count = \count($parts);
-
-        // Only a name with at least three labels can inherit from an ancestor
-        // that is still a registrable (two-label) domain or deeper.
-        for ($i = 1; $i <= $count - 2; $i++) {
-            $ancestor = implode('.', \array_slice($parts, $i));
-            $records  = $this->resolver->txt('_dmarc.' . $ancestor);
-
-            if ($records === null) {
-                // A resolver error higher up makes the inheritance check
-                // inconclusive; stop rather than guess the subdomain is covered.
-                return null;
-            }
-
-            $matching = $this->allMatching($records, 'v=dmarc1');
-
-            if ($matching === []) {
-                continue;
-            }
-
-            $policy = strtolower($this->tags($matching[0])['p'] ?? '');
-
-            if (\in_array($policy, ['none', 'quarantine', 'reject'], true)) {
-                return $ancestor;
-            }
-        }
-
-        return null;
+        return substr_count($domain, '.') > 1;
     }
 
     /**

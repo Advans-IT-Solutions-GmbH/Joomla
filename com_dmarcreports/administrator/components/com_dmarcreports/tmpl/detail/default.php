@@ -101,10 +101,14 @@ defined('_JEXEC') or die;
                         <?php elseif (!empty($this->dns['dmarc']['present'])) : ?>
                             <code><?php echo htmlspecialchars((string) $this->dns['dmarc']['record']); ?></code>
                         <?php else : ?>
-                            <span class="text-danger"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_MISSING'); ?></span>
-                            <?php if (!empty($this->dns['suggested'])) : ?>
-                                <div class="mt-1"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_SUGGESTED'); ?>
-                                    <code><?php echo htmlspecialchars((string) $this->dns['suggested']); ?></code></div>
+                            <?php if (!empty($this->dns['subdomain'])) : ?>
+                                <span class="text-info"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_SUBDOMAIN'); ?></span>
+                            <?php else : ?>
+                                <span class="text-danger"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_MISSING'); ?></span>
+                                <?php if (!empty($this->dns['suggested'])) : ?>
+                                    <div class="mt-1"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_DNS_SUGGESTED'); ?>
+                                        <code><?php echo htmlspecialchars((string) $this->dns['suggested']); ?></code></div>
+                                <?php endif; ?>
                             <?php endif; ?>
                         <?php endif; ?>
                     </dd>
