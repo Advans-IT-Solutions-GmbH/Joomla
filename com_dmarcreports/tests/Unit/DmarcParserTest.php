@@ -338,6 +338,17 @@ XML;
         $this->assertSame('2001:db8::1', $report['records'][0]['source_ip']);
     }
 
+    public function testCanonicalizesEquivalentIpv6SourceAddress(): void
+    {
+        // An expanded, upper-case spelling of the same address must be stored in
+        // the one canonical form so it groups with 2001:db8::1 rather than
+        // creating a separate sender and a distinct Action Center key.
+        $xml    = str_replace('<source_ip>192.0.2.10</source_ip>', '<source_ip>2001:0DB8:0:0:0:0:0:1</source_ip>', $this->sample());
+        $report = DmarcParser::parse($xml);
+
+        $this->assertSame('2001:db8::1', $report['records'][0]['source_ip']);
+    }
+
     public function testRejectsInvertedDateRange(): void
     {
         $xml = str_replace('<end>1700086400</end>', '<end>1699000000</end>', $this->sample());

@@ -205,6 +205,25 @@ final class DmarcParser
                 throw new \InvalidArgumentException('A report record has a missing or malformed source IP.');
             }
 
+            // Canonicalise the validated address so equivalent spellings are
+            // stored as one sender. IPv6 in particular has many textual forms
+            // for the same address (for example 2001:0DB8:0:0:0:0:0:1 and
+            // 2001:db8::1); without normalisation they would group into
+            // separate top/new/unaligned sources and produce distinct Action
+            // Center keys. inet_pton() reduces the value to its packed bytes and
+            // inet_ntop() renders the single canonical text form. Any address
+            // FILTER_VALIDATE_IP accepts round-trips, so the guarded fallback
+            // only preserves the original on an unexpected failure.
+            $packed = @inet_pton($sourceIp);
+
+            if ($packed !== false) {
+                $canonical = @inet_ntop($packed);
+
+                if ($canonical !== false) {
+                    $sourceIp = $canonical;
+                }
+            }
+
             $countText = self::text($row->count ?? null);
 
             // The value must be a positive integer that also fits the signed
