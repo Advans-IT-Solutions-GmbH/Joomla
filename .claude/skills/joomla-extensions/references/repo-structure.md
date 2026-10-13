@@ -12,6 +12,9 @@
 | AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
 | DMARC Reports | `com_dmarcreports/` | component | DMARC aggregate-report analysis (multi-domain, IMAP/file ingestion, action dashboard) |
 | DMARC Reports Dashboard Module | `mod_dmarcreports/` | module (administrator) | Backend cpanel module showing the DMARC multi-domain summary and top Action Center items; reads `com_dmarcreports` |
+| DMARC Reports Task | `plg_task_dmarcreports/` | plugin (task) | Scheduler task for automatic, continuous IMAP/TLS-RPT ingestion; reuses the component's Ingestor and locks |
+| DMARC Reports MTA-STS | `plg_system_dmarcmtasts/` | plugin (system) | Serves the generated MTA-STS policy at `/.well-known/mta-sts.txt` from the component options |
+| DMARC Reports Package | `pkg_dmarcreports/` | package | Bundles the component, dashboard module, task plugin and system plugin into one install/update/uninstall |
 | Appointments | `com_appointments/` | component | Self-hosted appointment scheduling (administrator and site part, booking pages, iCalendar, calendar feeds) |
 
 ## Shared Infrastructure
@@ -107,6 +110,15 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `moddmarcreports.yml` | push/PR to `main` (`mod_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-moddmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-moddmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `task-dmarcreports.yml` | push/PR to `main` (`plg_task_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
+| `release-task-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-task-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `system-dmarcmtasts.yml` | push/PR to `main` (`plg_system_dmarcmtasts/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
+| `release-system-dmarcmtasts.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-system-dmarcmtasts.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `pkg-dmarcreports.yml` | push/PR to `main` (`pkg_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
+| `release-pkg-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-pkg-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `appointments.yml` | push/PR to `main` (`com_appointments/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-appointments.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-appointments.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
