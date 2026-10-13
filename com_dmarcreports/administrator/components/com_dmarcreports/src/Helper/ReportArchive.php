@@ -126,7 +126,19 @@ final class ReportArchive
                 );
             }
 
-            fwrite($stream, $payload);
+            $written = fwrite($stream, $payload);
+
+            if ($written === false || $written < \strlen($payload)) {
+                // A short write (e.g. php://temp spilling to a full disk) would
+                // leave a truncated gzip that the filter then misreads as the
+                // wrong format; treat it as transient so the message is retried.
+                fclose($stream);
+
+                throw new ArchiveExtractionException(
+                    'Unable to buffer a gzip-compressed DMARC report for decompression.'
+                );
+            }
+
             rewind($stream);
 
             if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
