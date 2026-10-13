@@ -157,7 +157,7 @@ JoomlaAjaxForms.logout(returnUrl);
 
 ### Request handling
 
-Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task except the read-only `texts` task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. This is a workaround for Joomla 5 SEF redirect loops (`&` encoded as `&amp;` in the redirect `Location` header). `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
+Requests with `option=com_ajax`, `plugin=joomlaajaxforms` and `format=json` are handled by `onAjaxJoomlaajaxforms`; every task except the read-only `texts` task requires a valid CSRF token. In addition, the plugin subscribes to `onAfterRoute`: when that event reaches the plugin for one of its own `com_ajax` JSON requests, the plugin runs the handler, sends the JSON response and closes the application directly. The token check never uses `Session::checkToken()`: for a request without a session that method redirects (303) to `Route::_('index.php')`, which carries the current `com_ajax` query HTML-escaped (`&amp;` instead of `&`) and caused a redirect loop on multilingual sites up to version 1.5.24. A request without a token or session always gets a JSON answer instead. `onAfterRoute` is only delivered to plugins that are already loaded at that point (see *Troubleshooting*).
 
 ### JSON Response Format
 
@@ -249,7 +249,7 @@ That misleading step has been removed; see issue #98.)
 
 1. **Installation** — plugin registration in DB, file deployment
 2. **Configuration** — plugin params, language files, XML manifest
-3. **AJAX Endpoint** — unauthenticated access rejection
+3. **AJAX Endpoint** — unauthenticated access rejection; a cookie-less `GET` on the multilingual setup (language filter on) takes at most the one language redirect with the query intact (no `&amp;`, no 303) and then answers with JSON; the plugin never calls `Session::checkToken()`, every `Route::_()` call passes `xhtml=false`, and the script's endpoint URL uses a raw `&`
 4. **Login** — AJAX login, MFA redirect flow
 5. **Registration** — AJAX user registration
 6. **Password Reset** — reset email request

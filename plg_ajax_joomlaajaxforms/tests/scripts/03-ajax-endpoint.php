@@ -28,6 +28,21 @@ class AjaxEndpointTest
         $allPassed = $this->testResponseFormat() && $allPassed;
         $allPassed = $this->testTextsTask() && $allPassed;
         $allPassed = $this->testErrorPayloadKeepsEnvelope() && $allPassed;
+        $allPassed = $this->testNoSessionRedirectingTokenCheck() && $allPassed;
+        $allPassed = $this->testRoutedUrlsAreRaw() && $allPassed;
+        $allPassed = $this->testScriptEndpointUrlIsRaw() && $allPassed;
+
+        // Multilingual case of the dev finding (13.10.2026): a GET without any
+        // cookie (no language cookie, no session) ran into a 303 loop whose
+        // Location carried &amp; instead of &.
+        $restore = $this->ensureMultilingual();
+        try {
+            foreach (['texts', 'reset'] as $task) {
+                $allPassed = $this->testCookielessGetDoesNotLoop($task) && $allPassed;
+            }
+        } finally {
+            $restore();
+        }
 
         $this->printSummary();
         return $allPassed;
@@ -68,24 +83,22 @@ class AjaxEndpointTest
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        
+
         echo "(HTTP $httpCode) ";
-        
-        // HTTP 200 is success, 303 means endpoint exists but redirects (CSRF token missing in test)
-        if ($httpCode === 200 && !empty($response)) {
+
+        // A request without a token or session must end in a JSON answer. A
+        // redirect at the end (or a loop that runs out of hops) is a failure:
+        // it was the 303 of Session::checkToken() that looped up to 1.5.24.
+        if ($httpCode === 200 && json_decode((string) $response, true) !== null) {
             echo "PASS\n";
             echo "  Response preview: " . substr($response, 0, 100) . "\n";
             return true;
         }
-        
-        if ($httpCode === 303 || $httpCode === 302) {
-            echo "PASS (redirect - endpoint exists, CSRF token required)\n";
-            return true;
-        }
-        
+
         echo "FAIL\n";
         echo "  Response: $response\n";
         return false;
@@ -106,9 +119,11 @@ class AjaxEndpointTest
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        // Redirect means endpoint exists but requires CSRF token or SEF redirect
-        if (in_array($httpCode, [301, 302, 303])) {
-            echo "PASS (redirect response - CSRF token required in test env)\n";
+        // Only the language filter may redirect here (301/302 to the language
+        // URL, see testCookielessGetDoesNotLoop()). A 303 is the redirect of
+        // Session::checkToken() that looped up to 1.5.24.
+        if (in_array($httpCode, [301, 302])) {
+            echo "PASS (language redirect)\n";
             return true;
         }
         
@@ -269,6 +284,406 @@ class AjaxEndpointTest
         echo "FAIL (" . implode('; ', $problems) . ")\n";
 
         return false;
+    }
+
+    /**
+     * Make sure the site is multilingual for the redirect test: the language
+     * filter is enabled and at least one content language is published whose
+     * site language is installed. The entrypoint of every lane enables all
+     * plugins, so normally nothing changes here. Whatever this method changes
+     * is undone by the returned callback.
+     *
+     * @return callable  Restores the previous state.
+     */
+    private function ensureMultilingual(): callable
+    {
+        $db = Factory::getDbo();
+
+        $query = $db->getQuery(true)
+            ->select($db->quoteName(['extension_id', 'enabled']))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote('languagefilter'));
+        $filter = $db->setQuery($query)->loadObject();
+
+        $query = $db->getQuery(true)
+            ->select($db->quoteName(['lang_id', 'published']))
+            ->from($db->quoteName('#__languages'))
+            ->where($db->quoteName('lang_code') . ' = ' . $db->quote('en-GB'));
+        $language = $db->setQuery($query)->loadObject();
+
+        $filterWasEnabled   = $filter && (int) $filter->enabled === 1;
+        $languageWasPublic  = $language && (int) $language->published === 1;
+
+        if ($filter && !$filterWasEnabled) {
+            $db->setQuery(
+                $db->getQuery(true)
+                    ->update($db->quoteName('#__extensions'))
+                    ->set($db->quoteName('enabled') . ' = 1')
+                    ->where($db->quoteName('extension_id') . ' = ' . (int) $filter->extension_id)
+            )->execute();
+        }
+
+        if ($language && !$languageWasPublic) {
+            $db->setQuery(
+                $db->getQuery(true)
+                    ->update($db->quoteName('#__languages'))
+                    ->set($db->quoteName('published') . ' = 1')
+                    ->where($db->quoteName('lang_id') . ' = ' . (int) $language->lang_id)
+            )->execute();
+        }
+
+        echo "Multilingual setup: language filter "
+            . ($filter ? ($filterWasEnabled ? 'enabled' : 'enabled for this test') : 'NOT INSTALLED')
+            . ", content language en-GB "
+            . ($language ? ($languageWasPublic ? 'published' : 'published for this test') : 'MISSING')
+            . "\n";
+
+        return function () use ($db, $filter, $filterWasEnabled, $language, $languageWasPublic): void {
+            if ($filter && !$filterWasEnabled) {
+                $db->setQuery(
+                    $db->getQuery(true)
+                        ->update($db->quoteName('#__extensions'))
+                        ->set($db->quoteName('enabled') . ' = 0')
+                        ->where($db->quoteName('extension_id') . ' = ' . (int) $filter->extension_id)
+                )->execute();
+            }
+
+            if ($language && !$languageWasPublic) {
+                $db->setQuery(
+                    $db->getQuery(true)
+                        ->update($db->quoteName('#__languages'))
+                        ->set($db->quoteName('published') . ' = 0')
+                        ->where($db->quoteName('lang_id') . ' = ' . (int) $language->lang_id)
+                )->execute();
+            }
+        };
+    }
+
+    /**
+     * A GET of the endpoint without any cookie, exactly like the checker's curl:
+     * no language cookie and no session, redirects followed by hand without
+     * sending a cookie back.
+     *
+     * The language filter may redirect once to the language-prefixed URL (301
+     * or 302). That hop must keep the query intact (raw &, every parameter
+     * still there), and the next request must be answered with JSON. Version
+     * 1.5.24 answered the second request with a 303 to Route::_('index.php')
+     * (Session::checkToken() on a new session), whose Location carried &amp;
+     * and broke the parameters on every further hop.
+     */
+    private function testCookielessGetDoesNotLoop(string $task): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: Cookie-less GET (task=$task) on a multilingual site answers without a redirect loop... ";
+
+        $expected = [
+            'option' => 'com_ajax',
+            'plugin' => 'joomlaajaxforms',
+            'format' => 'json',
+            'task'   => $task,
+        ];
+
+        $url      = $this->baseUrl . '/index.php?' . http_build_query($expected);
+        $hops     = [];
+        $problems = [];
+        $status   = 0;
+        $body     = '';
+
+        for ($i = 0; $i < 5; $i++) {
+            [$status, $location, $body] = $this->rawGet($url);
+
+            if ($status < 300 || $status >= 400) {
+                break;
+            }
+
+            $hops[] = "$status $location";
+
+            if ($location === '') {
+                $problems[] = "HTTP $status without Location";
+                break;
+            }
+
+            if (stripos($location, '&amp;') !== false
+                || stripos($location, 'amp;') !== false
+                || stripos($location, 'amp%3B') !== false
+            ) {
+                $problems[] = "Location carries an HTML-escaped ampersand: $location";
+            }
+
+            if ($status === 303) {
+                $problems[] = "HTTP 303 (the redirect of Session::checkToken()): $location";
+            }
+
+            parse_str((string) parse_url($location, PHP_URL_QUERY), $vars);
+
+            foreach ($expected as $name => $value) {
+                if (($vars[$name] ?? null) !== $value) {
+                    $problems[] = "Location lost $name=$value: $location";
+                }
+            }
+
+            if ($problems !== []) {
+                break;
+            }
+
+            $url = $this->absoluteUrl($location);
+        }
+
+        // The language filter is the only redirect allowed, and it must be
+        // there: without it this test would not prove the multilingual case.
+        if (count($hops) !== 1) {
+            $problems[] = 'expected exactly one language redirect, got ' . count($hops)
+                . ($hops === [] ? ' (is the language filter active?)' : ': ' . implode(' -> ', $hops));
+        } elseif (!preg_match('#/en/|[?&]lang=en(&|$)#', $hops[0])) {
+            $problems[] = 'the redirect does not lead to the language URL: ' . $hops[0];
+        }
+
+        if ($problems === [] && $status !== 200) {
+            $problems[] = "final answer HTTP $status, body " . substr($body, 0, 150);
+        }
+
+        if ($problems === []) {
+            $payload = ajaxforms_decode_response($body);
+
+            if ($task === 'texts') {
+                if (($payload['success'] ?? null) !== true || !is_array($payload['data'] ?? null)) {
+                    $problems[] = 'texts are not delivered without a token: ' . substr($body, 0, 150);
+                }
+            } elseif (!ajaxforms_is_json_rejection($body)) {
+                $problems[] = 'a task without a token is not rejected with JSON: ' . substr($body, 0, 150);
+            }
+        }
+
+        if ($problems === []) {
+            echo "PASS (" . $hops[0] . ")\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', array_unique($problems)) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * Session::checkToken() must not be called by the plugin: for a request
+     * without a session it redirects with 303 to Route::_('index.php'), which
+     * carries the current com_ajax query HTML-escaped. That redirect was the
+     * loop the dev checker found with version 1.5.24. Comments are ignored.
+     */
+    private function testNoSessionRedirectingTokenCheck(): bool
+    {
+        echo "Test: Plugin never calls Session::checkToken()... ";
+
+        $tokens = $this->pluginTokens();
+
+        if ($tokens === null) {
+            echo "FAIL (plugin source not found)\n";
+
+            return false;
+        }
+
+        foreach ($tokens as $i => $token) {
+            if (is_array($token) && $token[0] === T_STRING && strcasecmp($token[1], 'checkToken') === 0) {
+                echo "FAIL (checkToken called on line {$token[2]})\n";
+
+                return false;
+            }
+        }
+
+        echo "PASS\n";
+
+        return true;
+    }
+
+    /**
+     * Every URL the plugin routes ends up in a JSON answer the script follows
+     * (redirect after login and MFA) or in a stored return URL, never in HTML.
+     * Each Route::_() call must therefore pass xhtml=false, otherwise the
+     * script receives &amp; instead of & and the query breaks.
+     */
+    private function testRoutedUrlsAreRaw(): bool
+    {
+        echo "Test: Every Route::_() call of the plugin returns a raw URL (xhtml=false)... ";
+
+        $tokens = $this->pluginTokens();
+
+        if ($tokens === null) {
+            echo "FAIL (plugin source not found)\n";
+
+            return false;
+        }
+
+        $tokens   = array_values(array_filter($tokens, static function ($t): bool {
+            return !is_array($t) || $t[0] !== T_WHITESPACE;
+        }));
+        $calls    = 0;
+        $problems = [];
+
+        for ($i = 0, $n = count($tokens); $i < $n - 3; $i++) {
+            $isRoute = is_array($tokens[$i]) && in_array($tokens[$i][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+                && preg_match('/(^|\\\\)Route$/', $tokens[$i][1]);
+
+            if (!$isRoute
+                || !is_array($tokens[$i + 1]) || $tokens[$i + 1][0] !== T_DOUBLE_COLON
+                || !is_array($tokens[$i + 2]) || $tokens[$i + 2][1] !== '_'
+                || $tokens[$i + 3] !== '('
+            ) {
+                continue;
+            }
+
+            $calls++;
+            $line  = $tokens[$i][2];
+            $depth = 0;
+            $args  = [''];
+
+            for ($j = $i + 3; $j < $n; $j++) {
+                $text = is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+
+                if (in_array($text, ['(', '[', '{'], true)) {
+                    $depth++;
+                    if ($depth === 1) {
+                        continue;
+                    }
+                } elseif (in_array($text, [')', ']', '}'], true)) {
+                    $depth--;
+                    if ($depth === 0) {
+                        break;
+                    }
+                } elseif ($text === ',' && $depth === 1) {
+                    $args[] = '';
+                    continue;
+                }
+
+                $args[count($args) - 1] .= $text;
+            }
+
+            if (strtolower(trim($args[1] ?? '')) !== 'false') {
+                $problems[] = "line $line";
+            }
+        }
+
+        if ($calls === 0) {
+            echo "FAIL (no Route::_() call found, the check reads the wrong file)\n";
+
+            return false;
+        }
+
+        if ($problems === []) {
+            echo "PASS ($calls calls)\n";
+
+            return true;
+        }
+
+        echo "FAIL (xhtml not false on " . implode(', ', $problems) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * The script builds the endpoint URL itself. It must use a raw & so that a
+     * redirect of the language filter keeps every parameter.
+     */
+    private function testScriptEndpointUrlIsRaw(): bool
+    {
+        require_once __DIR__ . '/ajax-test-helpers.php';
+
+        echo "Test: The script's endpoint URL uses a raw & (no &amp;)... ";
+
+        $source = @file_get_contents(ajaxforms_script_path());
+
+        if (!is_string($source) || $source === '') {
+            echo "FAIL (script not found)\n";
+
+            return false;
+        }
+
+        preg_match_all('/[\'"]([^\'"]*option=com_ajax[^\'"]*)[\'"]/', $source, $m);
+        $urls     = $m[1];
+        $problems = [];
+
+        if ($urls === []) {
+            $problems[] = 'no endpoint URL found in the script';
+        }
+
+        foreach ($urls as $u) {
+            if (stripos($u, 'amp;') !== false) {
+                $problems[] = "escaped ampersand in '$u'";
+            }
+
+            if (strpos($u, 'option=com_ajax&plugin=joomlaajaxforms&format=json') === false) {
+                $problems[] = "unexpected endpoint URL '$u'";
+            }
+        }
+
+        if ($problems === []) {
+            echo "PASS (" . count($urls) . " URLs)\n";
+
+            return true;
+        }
+
+        echo "FAIL (" . implode('; ', $problems) . ")\n";
+
+        return false;
+    }
+
+    /**
+     * Tokens of the installed plugin class without comments, or null.
+     *
+     * @return array<int, mixed>|null
+     */
+    private function pluginTokens(): ?array
+    {
+        $file = '/var/www/html/plugins/ajax/joomlaajaxforms/src/Extension/JoomlaAjaxForms.php';
+        $code = @file_get_contents($file);
+
+        if (!is_string($code) || $code === '') {
+            return null;
+        }
+
+        return array_values(array_filter(token_get_all($code), static function ($t): bool {
+            return !is_array($t) || !in_array($t[0], [T_COMMENT, T_DOC_COMMENT], true);
+        }));
+    }
+
+    /**
+     * One GET without cookies and without following redirects.
+     *
+     * @return array{0:int, 1:string, 2:string}  Status, Location header, body.
+     */
+    private function rawGet(string $url): array
+    {
+        $location = '';
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($ch, string $line) use (&$location): int {
+            if (stripos($line, 'Location:') === 0) {
+                $location = trim(substr($line, 9));
+            }
+
+            return strlen($line);
+        });
+        $body   = (string) curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$status, $location, $body];
+    }
+
+    private function absoluteUrl(string $location): string
+    {
+        if (preg_match('#^https?://#i', $location)) {
+            return $location;
+        }
+
+        return $this->baseUrl . '/' . ltrim($location, '/');
     }
 
     private function printSummary(): void
