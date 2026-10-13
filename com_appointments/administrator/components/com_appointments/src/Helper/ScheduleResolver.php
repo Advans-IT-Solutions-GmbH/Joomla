@@ -150,6 +150,36 @@ final class ScheduleResolver
     }
 
     /**
+     * Whether this window may supply the grid for a start on its local date.
+     * An override owns its date's starts, even where an earlier night overlaps.
+     */
+    public function allowsStartFrom(AvailabilityWindow $window, \DateTimeImmutable $start): bool
+    {
+        $local = $start->setTimezone($this->zone);
+        $date = $local->format('Y-m-d');
+
+        if (isset($this->closedDates[$date])) {
+            return false;
+        }
+
+        if (!isset($this->overrides[$date])) {
+            return true;
+        }
+
+        $calendar = $start->setTimezone(new \DateTimeZone('UTC'))
+            ->setDate((int) $local->format('Y'), (int) $local->format('m'), (int) $local->format('d'))
+            ->setTime(0, 0);
+
+        foreach ($this->windowsForCalendar($calendar) as $ownWindow) {
+            if ($ownWindow->getStart() == $window->getStart() && $ownWindow->getEnd() == $window->getEnd()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Resolve the schedule into the UTC windows that overlap the given range.
      *
      * The windows are returned **whole, not clipped to the range**, and the

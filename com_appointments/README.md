@@ -94,6 +94,9 @@ blocked periods.
 An interval whose end precedes its start crosses midnight. A date-specific override replaces the
 weekly intervals of that date, and a closed date cannot also contain open override intervals.
 Overrides are dates in the schedule's zone, not instants converted into the reader's zone.
+Their own intervals define that date's slot grid; an overlapping rule from the previous night
+cannot add starts on another grid. A meeting starting before midnight may still extend into the
+override's open time.
 The time zone selector includes UTC explicitly and defaults new schedules to the site's zone.
 Closed dates reload with empty time fields; the database's midnight sentinels are not editable
 availability. A date skipped entirely by a time-zone change offers no windows, even for overnight

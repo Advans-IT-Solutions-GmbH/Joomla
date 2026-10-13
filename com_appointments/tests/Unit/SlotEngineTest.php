@@ -644,6 +644,73 @@ final class SlotEngineTest extends TestCase
         $this->assertSame(['2026-06-02 15:00'], $this->asLocal($slots));
     }
 
+    public function testAnOverlappingNightCannotAddStartsToAnOverrideGrid(): void
+    {
+        foreach ([false, true] as $previousOverride) {
+            $night = ['start_time' => '22:00', 'end_time' => '02:00'];
+            $weekly = $previousOverride ? [] : [array_merge($night, ['weekday' => 2])];
+            $overrides = [['specific_date' => '2026-06-03', 'start_time' => '00:15', 'end_time' => '02:00']];
+
+            if ($previousOverride) {
+                $overrides[] = array_merge($night, ['specific_date' => '2026-06-02']);
+            }
+
+            $engine = $this->engine($weekly, new SlotRules(15, 30), $overrides);
+            $now = $this->utc('2026-06-02 00:00');
+            $wide = $this->asLocal($engine->findSlots($now, $now, $this->utc('2026-06-04 00:00')));
+            $narrow = $this->asLocal($engine->findSlots(
+                $now,
+                $this->utc('2026-06-02 22:00'),
+                $this->utc('2026-06-03 00:00')
+            ));
+            $expected = ['2026-06-03 00:15', '2026-06-03 00:45', '2026-06-03 01:15', '2026-06-03 01:45'];
+
+            $this->assertSame($expected, array_values(array_filter(
+                $wide,
+                static fn (string $slot): bool => str_starts_with($slot, '2026-06-03 ')
+            )));
+            $this->assertSame($expected, $narrow);
+        }
+    }
+
+    public function testAnOverrideGridPreservesMeetingsStartingBeforeMidnight(): void
+    {
+        $engine = $this->engine(
+            [['weekday' => 2, 'start_time' => '22:10', 'end_time' => '02:00']],
+            new SlotRules(45, 30),
+            [['specific_date' => '2026-06-03', 'start_time' => '00:00', 'end_time' => '02:00']]
+        );
+        $now = $this->utc('2026-06-02 00:00');
+
+        $this->assertSame(
+            [
+                '2026-06-02 22:10', '2026-06-02 22:40', '2026-06-02 23:10', '2026-06-02 23:40',
+                '2026-06-03 00:00', '2026-06-03 00:30', '2026-06-03 01:00',
+            ],
+            $this->asLocal($engine->findSlots($now, $now, $this->utc('2026-06-04 00:00')))
+        );
+    }
+
+    public function testAnOverrideGridKeepsItsOwnPhaseAcrossRepeatedTime(): void
+    {
+        $engine = $this->engine(
+            [['weekday' => 6, 'start_time' => '22:00', 'end_time' => '05:00']],
+            new SlotRules(20, 40),
+            [['specific_date' => '2026-10-25', 'start_time' => '01:15', 'end_time' => '05:00']]
+        );
+        $now = $this->utc('2026-10-24 00:00');
+        $slots = $this->asLocal($engine->findSlots(
+            $now,
+            $this->utc('2026-10-24 22:00'),
+            $this->utc('2026-10-25 05:00')
+        ));
+
+        $this->assertSame(
+            ['2026-10-25 01:15', '2026-10-25 01:55', '2026-10-25 02:35', '2026-10-25 03:35', '2026-10-25 04:15'],
+            $slots
+        );
+    }
+
     public function testAnUnavailableDateYieldsNoSlots(): void
     {
         $engine = $this->engine(

@@ -52,7 +52,7 @@ same: neither a meeting nor a buffer may lie inside it.
 The engine never applies the searched event type's buffers to somebody else's booking, because one
 host can serve several event types with different buffers.
 
-### Three rules about the grid that are easy to break
+### Rules about the grid that are easy to break
 
 - **The grid is anchored to the start of the schedule window, never to a cut-down window.** A window
   clipped at `now + minimum notice`, at the horizon edge, at a clock change or next to a
@@ -60,6 +60,11 @@ host can serve several event types with different buffers.
   10:31 for a schedule of 10:00 and 10:30. `ScheduleResolver` therefore returns whole windows and
   reports what has to come out of them separately, and the engine removes those like any other
   occupied period.
+- **An override owns the starts on its local date.** An earlier overnight window can overlap the
+  override's open time without contributing its own grid there. The engine accepts starts on that
+  date only from the override's resolved windows, while preserving valid meetings that start
+  before midnight and extend into its open time. Weekly and date-specific overnight rules follow
+  the same rule, including across clock changes.
 - **Windows of two different local dates are never merged.** Merging them makes the anchor depend on
   which date the resolution started from, so a month-long availability query and a one-day re-check
   can offer different times for the same day — and the second one is the booking guard. The price is

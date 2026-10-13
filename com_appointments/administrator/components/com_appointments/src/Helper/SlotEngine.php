@@ -250,6 +250,10 @@ final class SlotEngine
                 continue;
             }
 
+            if (!$this->resolver->allowsStartFrom($window, $start)) {
+                continue;
+            }
+
             $meeting  = new AvailabilityWindow($start, $meetingEnd);
             $occupied = $meeting->expand($before, $after);
 

@@ -147,6 +147,9 @@ Pure-helper regressions cover both supported calendar-date edges, synthetic adja
 overnight windows on the maximum date, and fixed horizons supplied as non-UTC instants.
 Rolling-horizon tests include Apia's skipped date and Havana's repeated midnight, using the
 resolver's convention for the exclusive boundary.
+An overlapping weekly or date-specific overnight rule must not add its grid to the following
+date's override. Tests compare wide and narrow queries, retain meetings starting before midnight,
+and cover override grid phases across repeated time.
 The schedule form explicitly includes Joomla's translated UTC option; HTTP assertions verify the
 site-zone default and the unchanged save of an existing UTC schedule from rendered fields.
 The structure suite verifies the mandatory schedule foreign key, the legacy schema migration and
