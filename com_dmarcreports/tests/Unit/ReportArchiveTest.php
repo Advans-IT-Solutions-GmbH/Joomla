@@ -75,9 +75,10 @@ class ReportArchiveTest extends TestCase
 
     public function testOversizedRawXmlIsRejected(): void
     {
-        // A raw document larger than the 32 MiB ceiling must be refused outright
-        // rather than buffered, to bound memory on a hostile attachment.
-        $payload = '<?xml version="1.0"?><feedback>' . str_repeat('A', 33554432) . '</feedback>';
+        // A raw document larger than the decompressed-size ceiling must be
+        // refused outright rather than buffered, to bound memory on a hostile
+        // attachment. The payload below is comfortably over the 8 MiB ceiling.
+        $payload = '<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>';
 
         $this->assertSame([], ReportArchive::extract($payload, 'huge.xml'));
     }
@@ -88,9 +89,9 @@ class ReportArchiveTest extends TestCase
             $this->markTestSkipped('zlib extension not available');
         }
 
-        // Decompresses to just over the 32 MiB ceiling; decompression itself is
+        // Decompresses to just over the ceiling; decompression itself is
         // bounded, so the payload must be refused rather than fully expanded.
-        $payload = gzencode('<?xml version="1.0"?><feedback>' . str_repeat('A', 33554432) . '</feedback>');
+        $payload = gzencode('<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
 
         $this->assertSame([], ReportArchive::extract($payload, 'bomb.xml.gz'));
     }

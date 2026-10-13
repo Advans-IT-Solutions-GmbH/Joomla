@@ -25,15 +25,23 @@ final class ReportArchive
 {
     /**
      * Largest single decompressed document accepted, to bound memory use on a
-     * hostile or corrupt attachment (aggregate reports are a few hundred KB).
+     * hostile or corrupt attachment (real aggregate reports are a few hundred
+     * KB, so 8 MiB is already generous). This is the figure that drives XML
+     * parser expansion: the caller parses one document at a time with SimpleXML,
+     * which can hold several times the document's byte size in memory, so the
+     * ceiling is kept well below a conservative PHP memory_limit.
      */
-    private const MAX_BYTES = 33554432; // 32 MiB
+    private const MAX_BYTES = 8388608; // 8 MiB
 
     /**
-     * Largest total uncompressed payload accepted from a single archive, so a
-     * zip bomb packing many entries cannot exhaust memory one entry at a time.
+     * Largest total uncompressed payload buffered from a single archive. The
+     * extracted documents are returned as strings and the caller parses them
+     * one at a time (extract -> parse -> release), so peak memory is this
+     * buffered total plus a single document's parser expansion. Both terms are
+     * bounded deliberately small so a zip bomb packing many entries cannot
+     * accumulate enough XML to exhaust memory before parsing even begins.
      */
-    private const MAX_TOTAL_BYTES = 134217728; // 128 MiB
+    private const MAX_TOTAL_BYTES = 16777216; // 16 MiB
 
     /**
      * Largest number of XML documents extracted from a single archive.
