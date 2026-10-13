@@ -14,6 +14,10 @@ class StructureTest
     {
         echo "=== Structure Tests ===\n\n";
 
+        // Administrator modules install their <languages> into the shared
+        // administrator language folder, not into the module directory.
+        $lang = '/var/www/html/administrator/language';
+
         $files = [
             'Module manifest'      => $this->base . '/mod_dmarcreports.xml',
             'Installer script'     => $this->base . '/script.php',
@@ -22,10 +26,10 @@ class StructureTest
             'DmarcReports helper'  => $this->base . '/src/Helper/DmarcReportsHelper.php',
             'Default layout'       => $this->base . '/tmpl/default.php',
             'LICENSE.txt'          => $this->base . '/LICENSE.txt',
-            'Language en-GB (.ini)'     => $this->base . '/language/en-GB/mod_dmarcreports.ini',
-            'Language en-GB (.sys.ini)' => $this->base . '/language/en-GB/mod_dmarcreports.sys.ini',
-            'Language de-DE (.ini)'     => $this->base . '/language/de-DE/mod_dmarcreports.ini',
-            'Language fr-FR (.ini)'     => $this->base . '/language/fr-FR/mod_dmarcreports.ini',
+            'Language en-GB (.ini)'     => $lang . '/en-GB/mod_dmarcreports.ini',
+            'Language en-GB (.sys.ini)' => $lang . '/en-GB/mod_dmarcreports.sys.ini',
+            'Language de-DE (.ini)'     => $lang . '/de-DE/mod_dmarcreports.ini',
+            'Language fr-FR (.ini)'     => $lang . '/fr-FR/mod_dmarcreports.ini',
         ];
 
         foreach ($files as $label => $path) {

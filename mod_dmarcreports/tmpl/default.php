@@ -88,14 +88,15 @@ $hasData    = (int) ($totals['total'] ?? 0) > 0 || (int) ($totals['domains'] ?? 
             <?php echo Text::_('MOD_DMARCREPORTS_ACTION_CENTER_HEADING'); ?>
         </h4>
 
-        <?php if ($actions === []) : ?>
+        <?php if ($activeCnt === 0) : ?>
             <div class="alert alert-success" role="alert">
                 <?php echo Text::_('MOD_DMARCREPORTS_NO_ACTIONS'); ?>
             </div>
         <?php else : ?>
+            <?php if ($actions !== []) : ?>
             <ul class="list-group mod-dmarcreports__actions mb-2">
                 <?php foreach ($actions as $action) : ?>
-                    <li class="list-group-item d-flex align-items-start gap-2">
+                    <a class="list-group-item list-group-item-action d-flex align-items-start gap-2" href="<?php echo htmlspecialchars($link, ENT_QUOTES, 'UTF-8'); ?>">
                         <span class="badge bg-<?php echo htmlspecialchars($action['severityClass'], ENT_QUOTES, 'UTF-8'); ?> flex-shrink-0">
                             <?php echo htmlspecialchars($action['severityLabel'], ENT_QUOTES, 'UTF-8'); ?>
                         </span>
@@ -107,9 +108,10 @@ $hasData    = (int) ($totals['total'] ?? 0) > 0 || (int) ($totals['domains'] ?? 
                             <br>
                             <span class="small text-muted"><?php echo htmlspecialchars($action['text'], ENT_QUOTES, 'UTF-8'); ?></span>
                         </span>
-                    </li>
+                    </a>
                 <?php endforeach; ?>
             </ul>
+            <?php endif; ?>
 
             <?php if ($activeCnt > \count($actions)) : ?>
                 <p class="small text-muted">

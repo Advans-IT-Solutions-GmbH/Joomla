@@ -82,15 +82,7 @@ class DmarcReportsHelper
 
             $app->getLanguage()->load(self::COMPONENT, JPATH_ADMINISTRATOR);
 
-            $totals             = $this->normaliseTotals($model->getTotals());
-            $data['totals']     = $totals;
-            $data['rejectRate'] = self::rejectRate($totals);
-
-            $active                = $model->getActions();
-            $data['activeCount']   = \count($active);
-            $limit                 = (int) $params->get('action_limit', 5);
-            $data['actions']       = $this->presentActions(self::limitActions($active, $limit));
-            $data['state']         = 'ok';
+            $data = $this->presentDashboard($model, $params);
         } catch (\Throwable $e) {
             $data['state']  = 'error';
             $data['totals'] = self::summariseTotals([]);
@@ -99,6 +91,34 @@ class DmarcReportsHelper
         }
 
         return $data;
+    }
+
+    /**
+     * Turn a component Dashboard model into the "ok" payload the layout renders.
+     * Kept separate from getDashboard so the transformation and ActionPresenter
+     * reuse can be exercised with a model double, without a running component.
+     *
+     * @param   object    $model   A component Dashboard model (getTotals/getActions).
+     * @param   Registry  $params  The module parameters.
+     *
+     * @return  array<string, mixed>
+     *
+     * @since   1.0.0
+     */
+    public function presentDashboard(object $model, Registry $params): array
+    {
+        $totals = $this->normaliseTotals($model->getTotals());
+        $active = $model->getActions();
+        $limit  = (int) $params->get('action_limit', 5);
+
+        return [
+            'state'       => 'ok',
+            'totals'      => $totals,
+            'rejectRate'  => self::rejectRate($totals),
+            'actions'     => $this->presentActions(self::limitActions($active, $limit)),
+            'activeCount' => \count($active),
+            'link'        => 'index.php?option=' . self::COMPONENT,
+        ];
     }
 
     /**

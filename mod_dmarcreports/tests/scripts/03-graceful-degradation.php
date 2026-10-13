@@ -7,28 +7,19 @@
  * instead of fatalling: the helper reports the 'unavailable' state and the
  * layout renders a short, translated notice rather than any statistics.
  *
- * This boots the real Joomla administrator application, so the test exercises
+ * This boots a real Joomla console application, so the test exercises
  * ComponentHelper, the shipped helper and the shipped layout together — not a
  * reflection or a file_exists() stand-in.
  */
 
-set_error_handler(static function ($severity, $message, $file, $line) {
-    throw new ErrorException($message, 0, $severity, $file, $line);
-});
-
 define('_JEXEC', 1);
-define('JPATH_BASE', '/var/www/html/administrator');
+define('JPATH_BASE', '/var/www/html');
 
 require_once JPATH_BASE . '/includes/defines.php';
-
-$_SERVER['HTTP_HOST']       = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$_SERVER['SCRIPT_NAME']     = $_SERVER['SCRIPT_NAME'] ?? '/administrator/index.php';
-$_SERVER['REQUEST_METHOD']  = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$_SERVER['REQUEST_URI']     = $_SERVER['REQUEST_URI'] ?? '/administrator/';
-
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Advans\Module\DmarcReports\Administrator\Helper\DmarcReportsHelper;
+use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -55,7 +46,14 @@ $check = static function (string $name, callable $fn) use (&$passed, &$failed): 
 
 echo "=== Graceful Degradation Tests ===\n\n";
 
-$app = Factory::getApplication('administrator');
+// Boot a real Joomla console application the way cli/joomla.php does. The
+// shipped administrator web application cannot start from a test process, but
+// the console application is a genuine CMSApplicationInterface with a live
+// database, so ComponentHelper reports the real (absent) state of the
+// component and the helper runs against real Joomla services.
+$app = Factory::getContainer()->get(ConsoleApplication::class);
+Factory::$application = $app;
+
 $app->getLanguage()->load('mod_dmarcreports', JPATH_ADMINISTRATOR);
 
 require_once $base . '/src/Helper/DmarcReportsHelper.php';

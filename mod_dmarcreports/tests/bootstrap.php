@@ -13,3 +13,7 @@
 defined('_JEXEC') or define('_JEXEC', 1);
 
 require_once dirname(__DIR__) . '/src/Helper/DmarcReportsHelper.php';
+
+// A light-weight ActionPresenter stub in the component namespace so the enabled
+// path (presentDashboard) can be exercised without the real component present.
+require_once __DIR__ . '/Fixtures/ActionPresenterStub.php';
