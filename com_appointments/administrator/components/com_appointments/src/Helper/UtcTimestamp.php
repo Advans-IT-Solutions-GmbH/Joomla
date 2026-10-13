@@ -158,16 +158,23 @@ final class UtcTimestamp
      * hour by a stated convention, while a one-off absence an operator typed
      * is better refused with a question than stored as a guess.
      *
-     * @param   string         $value  The wall clock, in the format `parse()` accepts.
+     * @param   string|\DateTimeImmutable  $value  Strict timestamp text, or UTC calendar
+     *                                            fields used for internal date arithmetic.
      * @param   \DateTimeZone  $zone   The zone the wall clock is read in.
      *
      * @return  \DateTimeImmutable[]  The matching instants, in UTC.
      */
-    public static function localInstants(string $value, \DateTimeZone $zone): array
+    public static function localInstants(string|\DateTimeImmutable $value, \DateTimeZone $zone): array
     {
+        if ($value instanceof \DateTimeImmutable && $value->getTimezone()->getName() !== 'UTC') {
+            throw new \InvalidArgumentException('Calendar fields must use the UTC time zone.');
+        }
+
         // Read strictly first: an impossible calendar date has no instant in
         // any zone, and that is not a time-zone question.
-        $wall = self::parse($value);
+        // Typed calendar arithmetic may cross the persisted range at an
+        // exclusive endpoint; submitted and stored text must still stay in it.
+        $wall = $value instanceof \DateTimeImmutable ? $value : self::parse($value);
 
         if ($wall === null) {
             return [];

@@ -184,8 +184,8 @@ final class ScheduleResolver
         $range   = new AvailabilityWindow($fromUtc, $toUtc);
         $windows = [];
 
-        foreach ($this->localDatesFor($range) as $date) {
-            foreach ($this->windowsForDate($date) as $window) {
+        foreach ($this->localDatesFor($range) as $calendar) {
+            foreach ($this->windowsForCalendar($calendar) as $window) {
                 if ($window->overlaps($range)) {
                     $windows[] = $window;
                 }
@@ -227,8 +227,9 @@ final class ScheduleResolver
         $range   = new AvailabilityWindow($fromUtc, $toUtc);
         $periods = [];
 
-        foreach ($this->localDatesFor($range) as $date) {
-            $repeated = $this->repeatedHour($date);
+        foreach ($this->localDatesFor($range) as $calendar) {
+            $date     = $calendar->format('Y-m-d');
+            $repeated = $this->repeatedHour($calendar);
 
             if ($repeated !== null) {
                 $periods[] = $repeated;
@@ -238,14 +239,14 @@ final class ScheduleResolver
                 continue;
             }
 
-            $day = $this->localDayWindow($date);
+            $day = $this->localDayWindow($calendar);
 
             if ($day === null) {
                 continue;
             }
 
             // Everything of that day its own rules do not cover.
-            foreach ($day->subtractAll($this->windowsForDate($date)) as $piece) {
+            foreach ($day->subtractAll($this->windowsForCalendar($calendar)) as $piece) {
                 $periods[] = $piece;
             }
         }
@@ -264,17 +265,15 @@ final class ScheduleResolver
      * One local day as a UTC window, from local midnight to the next local
      * midnight.
      *
-     * The length is 23, 24 or 25 hours depending on the day, which is exactly
-     * why it is built from the local dates and not by adding 86400 seconds.
+     * Its length depends on the zone's clock changes; a wholly skipped date
+     * yields no window. Both local midnights must therefore be resolved, not
+     * derived by adding 86400 seconds to a real instant.
      */
-    private function localDayWindow(string $date): ?AvailabilityWindow
+    private function localDayWindow(\DateTimeImmutable $calendar): ?AvailabilityWindow
     {
-        $next = (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))
-            ->modify('+1 day')
-            ->format('Y-m-d');
-
-        $start = $this->localToUtc($date, '00:00:00');
-        $end   = $this->localToUtc($next, '00:00:00');
+        $midnight = $calendar->setTime(0, 0);
+        $start    = $this->localToUtc($midnight);
+        $end      = $this->localToUtc($midnight->modify('+1 day'));
 
         return $start < $end ? new AvailabilityWindow($start, $end) : null;
     }
@@ -292,7 +291,14 @@ final class ScheduleResolver
             throw new \InvalidArgumentException('A schedule date must be a valid calendar date.');
         }
 
-        if ($this->localDayWindow($date) === null) {
+        return $this->windowsForCalendar(new \DateTimeImmutable($date . ' 00:00:00', new \DateTimeZone('UTC')));
+    }
+
+    private function windowsForCalendar(\DateTimeImmutable $calendar): array
+    {
+        $date = $calendar->format('Y-m-d');
+
+        if ($this->localDayWindow($calendar) === null) {
             return [];
         }
 
@@ -305,7 +311,7 @@ final class ScheduleResolver
         if (isset($this->overrides[$date])) {
             $rules = $this->overrides[$date];
         } else {
-            $weekday = (int) (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))->format('N');
+            $weekday = (int) $calendar->format('N');
             $rules   = $this->weekly[$weekday] ?? [];
         }
 
@@ -316,7 +322,7 @@ final class ScheduleResolver
         $windows = [];
 
         foreach ($rules as $rule) {
-            $window = $this->ruleToWindow($date, $rule['start'], $rule['end']);
+            $window = $this->ruleToWindow($calendar, $rule['start'], $rule['end']);
 
             if ($window !== null) {
                 $windows[] = $window;
@@ -334,21 +340,24 @@ final class ScheduleResolver
      * One rule of one date as a UTC window, or null when it describes no real
      * time at all.
      *
-     * @param   string  $date   `Y-m-d` in the schedule's zone.
+     * @param   \DateTimeImmutable  $calendar  UTC calendar fields for the local date.
      * @param   string  $start  `H:i:s` local.
      * @param   string  $end    `H:i:s` local, on the next day when it is not
      *                          after the start.
      */
-    private function ruleToWindow(string $date, string $start, string $end): ?AvailabilityWindow
+    private function ruleToWindow(\DateTimeImmutable $calendar, string $start, string $end): ?AvailabilityWindow
     {
         // An end that is not after the start continues past midnight, which
         // stays one window: a night shift is one period of availability.
-        $endDate = $end > $start
-            ? $date
-            : (new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
+        $startClock = $calendar->setTime(...array_map('intval', explode(':', $start)));
+        $endClock   = $calendar->setTime(...array_map('intval', explode(':', $end)));
 
-        $startUtc = $this->localToUtc($date, $start);
-        $endUtc   = $this->localToUtc($endDate, $end);
+        if ($end <= $start) {
+            $endClock = $endClock->modify('+1 day');
+        }
+
+        $startUtc = $this->localToUtc($startClock);
+        $endUtc   = $this->localToUtc($endClock);
 
         if ($startUtc >= $endUtc) {
             // The rule lies entirely inside an hour that did not happen.
@@ -360,6 +369,8 @@ final class ScheduleResolver
 
     /**
      * A local date and time as a UTC instant.
+     * The argument holds local calendar fields in UTC, allowing internal
+     * next-day endpoints beyond the range of persisted timestamp strings.
      *
      * Two corrections are applied here, and both are the reason this method
      * exists instead of a bare `new DateTimeImmutable()`:
@@ -382,19 +393,12 @@ final class ScheduleResolver
      * case and is refused rather than converted by convention, which is what
      * `UtcTimestamp::localInstants()` is for.
      */
-    private function localToUtc(string $date, string $time): \DateTimeImmutable
+    private function localToUtc(\DateTimeImmutable $nominal): \DateTimeImmutable
     {
-        $value    = $date . ' ' . $time;
-        $instants = UtcTimestamp::localInstants($value, $this->zone);
+        $instants = UtcTimestamp::localInstants($nominal, $this->zone);
 
         if ($instants !== []) {
             return $instants[0];
-        }
-
-        $nominal = UtcTimestamp::parse($value);
-
-        if ($nominal === null) {
-            throw new \InvalidArgumentException('A schedule bound must be a valid local date and time.');
         }
 
         // Test the full wall-clock interval skipped by each forward change,
@@ -423,9 +427,9 @@ final class ScheduleResolver
      * The second occurrence of the hour that happens twice on the given local
      * date, as a UTC window, or null when the clocks do not move back.
      */
-    private function repeatedHour(string $date): ?AvailabilityWindow
+    private function repeatedHour(\DateTimeImmutable $calendar): ?AvailabilityWindow
     {
-        foreach ($this->transitionsOn($date) as $transition) {
+        foreach ($this->transitionsOn($calendar) as $transition) {
             if ($transition['difference'] < 0) {
                 return new AvailabilityWindow(
                     $transition['at'],
@@ -444,9 +448,10 @@ final class ScheduleResolver
      *          is the change of the UTC offset in seconds: positive when the
      *          clocks move forward, negative when they move back.
      */
-    private function transitionsOn(string $date): array
+    private function transitionsOn(\DateTimeImmutable $calendar): array
     {
-        $utc = new \DateTimeZone('UTC');
+        $utc  = new \DateTimeZone('UTC');
+        $date = $calendar->format('Y-m-d');
 
         // A transition belongs to the local date its own clock reads after the
         // change, and that is the whole test. The arithmetic this replaces,
@@ -458,7 +463,7 @@ final class ScheduleResolver
         // for neither date and an ambiguous start could be offered twice.
         // Reading the instant in the zone needs no midnight arithmetic at all
         // and gives the 4th, which is the date the repeated wall clocks lie on.
-        $anchor = (new \DateTimeImmutable($date . ' 12:00:00', $this->zone))->getTimestamp();
+        $anchor = $calendar->setTime(12, 0)->getTimestamp();
 
         // Two days of slack on each side, so the transition in effect before
         // the date is always present and can be compared against.
@@ -493,20 +498,25 @@ final class ScheduleResolver
      * The day before the range is included, because a window that crosses
      * midnight starts on the previous local date.
      *
-     * @return  string[]  `Y-m-d`, ordered.
+     * @return  \DateTimeImmutable[]  UTC calendar dates, ordered.
      */
     private function localDatesFor(AvailabilityWindow $range): array
     {
-        $first = $range->getStart()->setTimezone($this->zone)->format('Y-m-d');
-        $last  = $range->getEnd()->setTimezone($this->zone)->format('Y-m-d');
+        $first = $range->getStart()->setTimezone($this->zone);
+        $last  = $range->getEnd()->setTimezone($this->zone);
         $dates = [];
 
         $utc    = new \DateTimeZone('UTC');
-        $cursor = (new \DateTimeImmutable($first . ' 12:00:00', $utc))->modify('-1 day');
-        $end    = new \DateTimeImmutable($last . ' 12:00:00', $utc);
+        $cursor = $first->setTimezone($utc)
+            ->setDate((int) $first->format('Y'), (int) $first->format('m'), (int) $first->format('d'))
+            ->setTime(12, 0)
+            ->modify('-1 day');
+        $end = $last->setTimezone($utc)
+            ->setDate((int) $last->format('Y'), (int) $last->format('m'), (int) $last->format('d'))
+            ->setTime(12, 0);
 
         while ($cursor <= $end) {
-            $dates[] = $cursor->format('Y-m-d');
+            $dates[] = $cursor;
             $cursor  = $cursor->modify('+1 day');
         }
 

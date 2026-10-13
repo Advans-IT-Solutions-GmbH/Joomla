@@ -60,8 +60,8 @@ final class SlotRules
      * @param   int                      $bufferAfterMinutes    Kept free after a meeting.
      * @param   int                      $minimumNoticeMinutes  How far ahead the earliest slot is.
      * @param   int                      $horizonDays           Rolling horizon in calendar days; 0 means the fixed range is used.
-     * @param   \DateTimeImmutable|null  $horizonStart          Fixed range start, UTC, only with `$horizonDays === 0`.
-     * @param   \DateTimeImmutable|null  $horizonEnd            Fixed range end, UTC, only with `$horizonDays === 0`.
+     * @param   \DateTimeImmutable|null  $horizonStart          Fixed range start instant, normalized to UTC.
+     * @param   \DateTimeImmutable|null  $horizonEnd            Fixed range end instant, normalized to UTC.
      * @param   int                      $maxPerDay             0 means unlimited.
      * @param   int                      $maxPerWeek            0 means unlimited.
      *
@@ -125,8 +125,8 @@ final class SlotRules
         $this->bufferAfterMinutes   = $bufferAfterMinutes;
         $this->minimumNoticeMinutes = $minimumNoticeMinutes;
         $this->horizonDays          = $horizonDays;
-        $this->horizonStart         = $horizonStart;
-        $this->horizonEnd           = $horizonEnd;
+        $this->horizonStart         = $horizonStart?->setTimezone(new \DateTimeZone('UTC'));
+        $this->horizonEnd           = $horizonEnd?->setTimezone(new \DateTimeZone('UTC'));
         $this->maxPerDay            = $maxPerDay;
         $this->maxPerWeek           = $maxPerWeek;
     }

@@ -143,6 +143,8 @@ containing a closed day, and verifies successful save and checkout release, not 
 database rows after a possible validation failure.
 Both administration suites also request list ordering by the ambiguous bare `id` and by the
 qualified table alias, and require the stored fixture to render without a joined-query failure.
+Pure-helper regressions cover both supported calendar-date edges, synthetic adjacent dates,
+overnight windows on the maximum date, and fixed horizons supplied as non-UTC instants.
 
 ### The blocked-period redisplay assertions
 

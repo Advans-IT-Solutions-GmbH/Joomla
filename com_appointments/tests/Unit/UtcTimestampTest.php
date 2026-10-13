@@ -141,6 +141,26 @@ final class UtcTimestampTest extends TestCase
         $this->assertSame('2026-06-02 12:00:00', $instants[0]->format('Y-m-d H:i:s'));
     }
 
+    public function testTypedCalendarArithmeticMayCrossTheColumnRangeButTextMayNot(): void
+    {
+        $utc      = new \DateTimeZone('UTC');
+        $boundary = (new \DateTimeImmutable('9999-12-31 00:00:00', $utc))->modify('+1 day');
+        $instants = UtcTimestamp::localInstants($boundary, $utc);
+
+        $this->assertCount(1, $instants);
+        $this->assertEquals($boundary, $instants[0]);
+        $this->assertSame([], UtcTimestamp::localInstants('10000-01-01 00:00:00', $utc));
+        $this->assertNull(UtcTimestamp::parse('10000-01-01 00:00:00'));
+    }
+
+    public function testTypedCalendarFieldsRequireUtc(): void
+    {
+        $zone = new \DateTimeZone('Europe/Zurich');
+        $this->expectException(\InvalidArgumentException::class);
+
+        UtcTimestamp::localInstants(new \DateTimeImmutable('2026-06-02 14:00:00', $zone), $zone);
+    }
+
     public function testAWallClockInTheSkippedHourStandsForNoInstant(): void
     {
         // 02:00 local becomes 03:00 local, so 02:30 never happens. PHP's own

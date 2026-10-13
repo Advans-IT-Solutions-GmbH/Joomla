@@ -86,6 +86,10 @@ A date or a timestamp is also refused outside the years 1000 to 9999, which is t
 `UtcTimestamp::parse()` are the one definition of a usable date in the component, and every layer
 that validates one uses them, so a value that reaches a column has already been through the same
 check.
+Internal calendar arithmetic uses typed UTC calendar fields, not strings to be persisted. Synthetic
+adjacent dates, including the exclusive day end after `9999-12-31`, must remain resolvable without
+relaxing the strict year range for submitted or stored timestamp text. Fixed-horizon instants passed
+to `SlotRules` are normalized to UTC without changing their timestamps.
 
 The clock-change cases that must have tests:
 

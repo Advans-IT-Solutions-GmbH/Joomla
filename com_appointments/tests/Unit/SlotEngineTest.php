@@ -360,6 +360,23 @@ final class SlotEngineTest extends TestCase
         $this->assertSame('2026-07-02 10:00', end($slots));
     }
 
+    public function testFixedHorizonBoundsMayCarryAnyTimeZone(): void
+    {
+        $zone = new \DateTimeZone(self::ZONE);
+        $rules = new SlotRules(
+            30, 30, 0, 0, 0, 0,
+            new \DateTimeImmutable('2026-06-02 10:30:00', $zone),
+            new \DateTimeImmutable('2026-06-02 11:30:00', $zone)
+        );
+        $engine = $this->engine($this->tuesdayMorning(), $rules);
+
+        $this->assertSame(['2026-06-02 10:30', '2026-06-02 11:00'], $this->asLocal($engine->findSlots(
+            $this->utc('2026-06-01 06:00'),
+            $this->utc('2026-06-01 06:00'),
+            $this->utc('2026-06-30 00:00')
+        )));
+    }
+
     public function testAFixedHorizonRangeIsHonoured(): void
     {
         $engine = $this->engine(

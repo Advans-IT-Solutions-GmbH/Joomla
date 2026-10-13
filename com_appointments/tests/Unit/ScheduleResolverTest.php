@@ -216,6 +216,51 @@ final class ScheduleResolverTest extends TestCase
         }
     }
 
+    public function testSupportedEdgeDatesResolveWithSyntheticAdjacentBoundaries(): void
+    {
+        foreach (['1000-01-01', '9999-12-31'] as $date) {
+            $resolver = new ScheduleResolver('UTC', [], [
+                ['specific_date' => $date, 'start_time' => '10:00', 'end_time' => '12:00'],
+            ]);
+            $from = new \DateTimeImmutable($date . ' 00:00:00', new \DateTimeZone('UTC'));
+            $to   = $from->modify('+1 day');
+            $expected = [$date . ' 10:00-' . $date . ' 12:00'];
+
+            $this->assertSame($expected, $this->asStrings($resolver->windowsForDate($date)));
+            $this->assertSame($expected, $this->asStrings($resolver->resolve($from, $to)));
+            $this->assertSame(
+                [$date . ' 00:00-' . $date . ' 10:00', $date . ' 12:00-' . $to->format('Y-m-d H:i')],
+                $this->asStrings($resolver->unavailablePeriods($from, $to))
+            );
+        }
+    }
+
+    public function testAnOvernightRuleOnTheMaximumDateUsesATypedNextDay(): void
+    {
+        $resolver = new ScheduleResolver('UTC', [], [
+            ['specific_date' => '9999-12-31', 'start_time' => '22:00', 'end_time' => '02:00'],
+        ]);
+        $from = new \DateTimeImmutable('9999-12-31 12:00:00', new \DateTimeZone('UTC'));
+        $to   = $from->modify('+1 day')->setTime(3, 0);
+        $expected = ['9999-12-31 22:00-10000-01-01 02:00'];
+
+        $this->assertSame($expected, $this->asStrings($resolver->windowsForDate('9999-12-31')));
+        $this->assertSame($expected, $this->asStrings($resolver->resolve($from, $to)));
+    }
+
+    public function testTheMaximumDateAlsoResolvesInAnIanaZone(): void
+    {
+        $resolver = new ScheduleResolver('Europe/Zurich', [], [
+            ['specific_date' => '9999-12-31', 'start_time' => '10:00', 'end_time' => '12:00'],
+        ]);
+        $from = new \DateTimeImmutable('9999-12-31 00:00:00', new \DateTimeZone('UTC'));
+        $to   = $from->modify('+1 day');
+        $expected = ['9999-12-31 09:00-9999-12-31 11:00'];
+
+        $this->assertSame($expected, $this->asStrings($resolver->windowsForDate('9999-12-31')));
+        $this->assertSame($expected, $this->asStrings($resolver->resolve($from, $to)));
+    }
+
     public function testAWeeklyRuleOnASkippedDateDoesNotMoveToTheNextDate(): void
     {
         $resolver = new ScheduleResolver('Pacific/Apia', [

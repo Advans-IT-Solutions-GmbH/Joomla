@@ -88,6 +88,19 @@ final class SlotRulesTest extends TestCase
         $this->assertSame(3, $rules->getMaxPerWeek());
     }
 
+    public function testFixedHorizonInstantsAreNormalizedWithoutChangingTheirMeaning(): void
+    {
+        $zone  = new \DateTimeZone('Europe/Zurich');
+        $start = new \DateTimeImmutable('2026-06-02 10:30:00', $zone);
+        $end   = new \DateTimeImmutable('2026-06-02 11:30:00', $zone);
+        $rules = new SlotRules(30, 30, 0, 0, 0, 0, $start, $end);
+
+        $this->assertSame('UTC', $rules->getHorizonStart()->getTimezone()->getName());
+        $this->assertSame('UTC', $rules->getHorizonEnd()->getTimezone()->getName());
+        $this->assertSame($start->getTimestamp(), $rules->getHorizonStart()->getTimestamp());
+        $this->assertSame($end->getTimestamp(), $rules->getHorizonEnd()->getTimestamp());
+    }
+
     public function testABookingIsWidenedByTheRulesOfItsOwnEventType(): void
     {
         $rules  = new SlotRules(20, 30, 10, 15);
