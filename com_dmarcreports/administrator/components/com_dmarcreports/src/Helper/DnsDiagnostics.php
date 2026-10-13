@@ -169,6 +169,17 @@ final class DnsDiagnostics
         // typo such as p=bogus, or no p tag at all) is an invalid record.
         $valid = \in_array($result['policy'], ['none', 'quarantine', 'reject'], true);
 
+        // RFC 7489 §6.3 fixes the tag order: v MUST appear first and p MUST be
+        // the very next tag. A record that places p elsewhere (for example
+        // "v=DMARC1; rua=mailto:dmarc@example.org; p=reject") is rejected outright
+        // by conformant receivers, so a recognised p alone is not enough — it
+        // must also sit in the second position, otherwise the record is invalid.
+        $orderedKeys = $this->orderedTagKeys($record);
+
+        if (($orderedKeys[0] ?? '') !== 'v' || ($orderedKeys[1] ?? '') !== 'p') {
+            $valid = false;
+        }
+
         if (isset($tags['pct'])) {
             // pct is an integer percentage 0-100; a non-numeric or out-of-range
             // value (pct=abc, pct=101) makes the record invalid rather than a
@@ -286,6 +297,33 @@ final class DnsDiagnostics
         }
 
         return $tags;
+    }
+
+    /**
+     * Return the record's tag keys in the order they appear, lowercased. Unlike
+     * tags(), this preserves position and repetition so the caller can enforce
+     * the RFC 7489 §6.3 requirement that v is first and p second.
+     *
+     * @return string[]
+     */
+    private function orderedTagKeys(string $record): array
+    {
+        $keys = [];
+
+        foreach (explode(';', $record) as $part) {
+            if (!str_contains($part, '=')) {
+                continue;
+            }
+
+            [$key] = explode('=', $part, 2);
+            $key   = strtolower(trim($key));
+
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 
     /**

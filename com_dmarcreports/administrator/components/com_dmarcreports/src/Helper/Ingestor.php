@@ -244,7 +244,25 @@ final class Ingestor
             return;
         }
 
-        $domainId = $forcedDomainId > 0 ? $forcedDomainId : $this->resolveDomain($report['policy']['domain']);
+        if ($forcedDomainId > 0) {
+            // A mailbox bound to one monitored domain still delivers untrusted
+            // content: a valid aggregate report for an unrelated domain would
+            // otherwise be stored under this tenant and skew its volume, pass
+            // rates and rollout recommendations. Only honour the binding when the
+            // report's policy domain belongs to the same organizational domain as
+            // the bound one (equal, or either a subdomain of the other under
+            // DMARC organizational-policy inheritance); a genuinely unrelated
+            // report is skipped rather than cross-attributed.
+            if (!$this->boundDomainMatchesPolicy($forcedDomainId, (string) ($report['policy']['domain'] ?? ''))) {
+                $summary['skipped']++;
+
+                return;
+            }
+
+            $domainId = $forcedDomainId;
+        } else {
+            $domainId = $this->resolveDomain((string) ($report['policy']['domain'] ?? ''));
+        }
 
         if ($domainId <= 0) {
             // Either the report carries no usable policy domain, or an operator
@@ -342,6 +360,48 @@ final class Ingestor
     private function lockDomain(int $domainId): bool
     {
         return DomainLock::lock($this->db, $domainId);
+    }
+
+    /**
+     * Whether a mailbox's forced domain binding may accept a report carrying the
+     * given policy domain. Returns true only when the bound monitored domain and
+     * the report's policy domain share an organizational domain: identical, or
+     * either one a subdomain of the other (DMARC organizational-policy
+     * inheritance). The leading dot in the suffix test prevents a sibling such as
+     * evil-example.com from matching example.com. Without the Public Suffix List
+     * the exact organizational boundary cannot be proven, but the binding is
+     * operator-chosen, so this blocks the real risk — untrusted mailbox content
+     * for an unrelated domain being attributed to this tenant — while still
+     * accepting legitimate same-origin subdomain reports.
+     */
+    private function boundDomainMatchesPolicy(int $domainId, string $policyDomain): bool
+    {
+        $policyDomain = strtolower(trim($policyDomain));
+
+        if ($policyDomain === '') {
+            return false;
+        }
+
+        $query = $this->query()
+            ->select($this->db->quoteName('domain'))
+            ->from($this->db->quoteName('#__dmarc_domains'))
+            ->where($this->db->quoteName('id') . ' = :id')
+            ->bind(':id', $domainId, ParameterType::INTEGER);
+        $bound = strtolower(trim((string) $this->db->setQuery($query)->loadResult()));
+
+        if ($bound === '') {
+            // The bound domain row was deleted between configuration and this
+            // run; treat it as no match so the report is skipped rather than
+            // stored under a tenant that no longer exists.
+            return false;
+        }
+
+        if ($bound === $policyDomain) {
+            return true;
+        }
+
+        return str_ends_with($policyDomain, '.' . $bound)
+            || str_ends_with($bound, '.' . $policyDomain);
     }
 
     /**

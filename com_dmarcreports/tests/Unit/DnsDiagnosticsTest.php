@@ -215,6 +215,22 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertContains('dns_dmarc_invalid', $this->codes($diagnostics->inspect('example.org')));
     }
 
+    public function testMisorderedPolicyTagIsReportedAsInvalid(): void
+    {
+        // RFC 7489 §6.3 requires v first and p immediately after it. A record
+        // that defers p ("v=DMARC1; rua=...; p=reject") is rejected by conformant
+        // receivers, so it must not be reported as a healthy reject policy.
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; rua=mailto:dmarc@example.org; p=reject'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+        $codes  = $this->codes($result);
+
+        $this->assertFalse($result['dmarc']['valid']);
+        $this->assertContains('dns_dmarc_invalid', $codes);
+    }
+
     public function testDuplicateTagsInOneRecordAreReportedAsInvalid(): void
     {
         // RFC 7489 §6.3 permits each tag once: "p=reject; p=none" conflicts and

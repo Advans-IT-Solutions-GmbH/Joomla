@@ -37,11 +37,24 @@ class DisplayController extends BaseController
 
     public function display($cachable = false, $urlparams = [])
     {
+        $user = $this->app->getIdentity();
+
+        // Every view in this component renders sensitive operational data —
+        // report volumes, sending-source IP addresses, pass/fail breakdowns and
+        // mailbox host/user/folder configuration — so reaching ANY view requires
+        // the component management permission. Hiding the admin menu entry is not
+        // an authorization boundary: a backend user without core.manage could
+        // still request option=com_dmarcreports (or view=detail/domains/sources/
+        // systemcheck) directly. Enforce core.manage for all views first, then
+        // apply the finer create/edit checks to the editable forms below.
+        if (!$user->authorise('core.manage', 'com_dmarcreports')) {
+            throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
         $view = $this->input->getCmd('view', $this->default_view);
 
         if (\in_array($view, self::EDIT_VIEWS, true)) {
-            $user = $this->app->getIdentity();
-            $id   = $this->input->getInt('id', 0);
+            $id = $this->input->getInt('id', 0);
 
             // An existing record (id > 0) exposes stored configuration — mailbox
             // host/user/folder and domain notes — so reading it requires
