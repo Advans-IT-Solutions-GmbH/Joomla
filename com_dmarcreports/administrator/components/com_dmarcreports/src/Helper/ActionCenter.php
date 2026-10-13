@@ -89,17 +89,22 @@ final class ActionCenter
         // the configured target so the Action Center never over-recommends.
         $policyPct = (int) ($metrics['current_policy_pct'] ?? 100);
 
-        if ($policy === 'reject') {
-            if ($policyPct >= 100) {
-                $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
-            } else {
-                // p=reject with pct<100 only subjects that share of mail to the
-                // policy; under RFC 7489 receivers are only asked to treat the
-                // remainder as though p=quarantine applied (a SHOULD, so it is
-                // receiver-dependent), which is not full enforcement and must
-                // not be reported as "done".
-                $items[] = self::item('partial_enforcement', 'policy', 2, $domainId, [$domain, $policyPct]);
-            }
+        if ($policy === 'reject' && $policyPct >= 100) {
+            $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
+        } elseif ($policyRank > $targetRank) {
+            // The published policy is already stricter than the configured
+            // target, so the rollout goal is met. Do not push the operator to
+            // complete a partial rollout (raise pct to 100) of a policy stricter
+            // than they asked for; report the target as reached instead.
+            $items[] = self::item('at_target', 'policy', 0, $domainId, [$domain, $target]);
+        } elseif ($policy === 'reject') {
+            // p=reject with pct<100 only subjects that share of mail to the
+            // policy; under RFC 7489 receivers are only asked to treat the
+            // remainder as though p=quarantine applied (a SHOULD, so it is
+            // receiver-dependent), which is not full enforcement and must not be
+            // reported as "done". Reached only when reject does not exceed the
+            // target, i.e. the configured target is reject.
+            $items[] = self::item('partial_enforcement', 'policy', 2, $domainId, [$domain, $policyPct]);
         } elseif ($policy === 'quarantine' && $policyPct < 100) {
             // A quarantine policy applied to only part of the mail stream has not
             // been fully exercised. Raise pct to 100 before advancing to reject
@@ -137,6 +142,10 @@ final class ActionCenter
         }
 
         // Unaligned senders with meaningful volume: fix authentication first.
+        // Both the failing volume and the share denominator are measured over
+        // the same current reporting window as the rollout decision, so a sender
+        // that has since been aligned drops out of the list instead of lingering
+        // forever on its historical failures.
         foreach ((array) ($metrics['unaligned_sources'] ?? []) as $source) {
             $ip    = (string) ($source['ip'] ?? '');
             $count = (int) ($source['count'] ?? 0);
@@ -145,7 +154,7 @@ final class ActionCenter
                 continue;
             }
 
-            $share    = round($count / $total * 100, 1);
+            $share    = $rolloutTotal > 0 ? round($count / $rolloutTotal * 100, 1) : 0.0;
             $severity = $share >= 5 ? 3 : ($share >= 1 ? 2 : 1);
             $items[]  = self::item('align_source', 'alignment', $severity, $domainId, [$ip, $count, $share], $ip);
         }

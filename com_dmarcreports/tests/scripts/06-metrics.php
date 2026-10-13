@@ -97,10 +97,14 @@ class MetricsTest
                 && !in_array('10.0.0.1', $ips, true);
         });
 
-        $this->test('Unaligned senders surface a failing source', function () use ($bundle) {
+        $this->test('Unaligned senders surface a current-window failing source only', function () use ($bundle) {
             $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['unaligned_sources']);
 
-            return in_array('10.0.0.2', $ips, true);
+            // 10.0.0.3 fails alignment inside the current rolling window and must
+            // surface; 10.0.0.2 failed only in the previous window, so once a
+            // sender is fixed it drops out of the window-scoped Action Center.
+            return in_array('10.0.0.3', $ips, true)
+                && !in_array('10.0.0.2', $ips, true);
         });
 
         $this->test('Timeline is chronological and spans every report day', function () use ($bundle) {
@@ -166,10 +170,11 @@ class MetricsTest
                 && !in_array('10.0.0.1', $ips, true);
         });
 
-        $this->test('Bulk unaligned senders surface a failing source', function () use ($action) {
+        $this->test('Bulk unaligned senders surface a current-window failing source only', function () use ($action) {
             $ips = array_map(static fn (array $s): string => $s['ip'], $action['unaligned_sources'] ?? []);
 
-            return in_array('10.0.0.2', $ips, true);
+            return in_array('10.0.0.3', $ips, true)
+                && !in_array('10.0.0.2', $ips, true);
         });
 
         $this->cleanup();

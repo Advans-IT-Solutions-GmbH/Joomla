@@ -309,30 +309,51 @@ final class Metrics
     }
 
     /**
-     * Sources with mail that fails DMARC alignment, ranked by failing volume.
-     * This is queried independently of the display-oriented top-source table so
-     * a heavy failing sender ranked below the top N still reaches the Action
+     * Sources with mail that fails DMARC alignment within the CURRENT reporting
+     * window, ranked by failing volume. Scoped to the rolling window (reports
+     * whose end falls in the seven days up to the newest report) and joined
+     * through the reports table so a sender that has since been aligned drops
+     * out of the Action Center instead of lingering forever on its historical
+     * failures. Queried independently of the display-oriented top-source table
+     * so a heavy failing sender ranked below the top N still reaches the Action
      * Center and can earn an alignment recommendation.
      *
      * @return array<int, array<string, mixed>>
      */
     private function unalignedSources(int $domainId, int $limit = 20): array
     {
-        $count = $this->db->quoteName('count');
-        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
-            . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+        $anchor = $this->latestReportEnd($domainId);
+
+        if ($anchor === 0) {
+            return [];
+        }
+
+        $windowStart = $anchor - (7 * 86400);
+
+        $count = $this->db->quoteName('rec.count');
+        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND '
+            . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
 
         $query = $this->query()
             ->select(
                 [
-                    $this->db->quoteName('source_ip'),
+                    $this->db->quoteName('rec.source_ip', 'source_ip'),
                     $fail . ' AS fail',
                 ]
             )
-            ->from($this->db->quoteName('#__dmarc_records'))
-            ->where($this->db->quoteName('domain_id') . ' = :domainId')
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'rec'),
+                $this->db->quoteName('rec.report_id') . ' = ' . $this->db->quoteName('rep.id')
+            )
+            ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
+            ->where($this->db->quoteName('rep.date_end') . ' > :windowStart')
+            ->where($this->db->quoteName('rep.date_end') . ' <= :anchor')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->group($this->db->quoteName('source_ip'))
+            ->bind(':windowStart', $windowStart, ParameterType::INTEGER)
+            ->bind(':anchor', $anchor, ParameterType::INTEGER)
+            ->group($this->db->quoteName('rec.source_ip'))
             ->having($fail . ' > 0')
             ->order('fail DESC');
 
@@ -672,9 +693,12 @@ final class Metrics
     }
 
     /**
-     * Unaligned sending sources for every supplied domain, keyed by domain id,
-     * resolved in a single grouped query and sliced to the top $limit per domain
-     * (ordered by failing volume) in PHP.
+     * Unaligned sending sources within each domain's CURRENT reporting window,
+     * keyed by domain id, resolved in a single grouped query and ranked so the
+     * database returns only the top $limit per domain (ordered by failing
+     * volume). Mirrors unalignedSources() for a single domain, but anchors each
+     * domain's window on its own newest report through a derived per-domain
+     * anchor table so one query serves all domains at once.
      *
      * @param   array<int, int>  $domainIds
      *
@@ -686,31 +710,63 @@ final class Metrics
             return [];
         }
 
-        $count = $this->db->quoteName('count');
-        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
-            . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+        $in     = $this->intList($domainIds);
+        $window = 7 * 86400;
 
-        // Collapse the full history to one failing-volume total per
-        // (domain, source_ip), keeping only groups that actually failed
-        // alignment.
-        $grouped = (string) $this->query()
+        $count = $this->db->quoteName('cur.count');
+        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_aligned') . ' = 0 AND '
+            . $this->db->quoteName('cur.spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+
+        // Anchor each domain's current window on its own newest report end, so
+        // one query serves every domain at once.
+        $anchor = (string) $this->query()
             ->select(
                 [
                     $this->db->quoteName('domain_id'),
-                    $this->db->quoteName('source_ip'),
+                    'MAX(' . $this->db->quoteName('date_end') . ') AS anchor',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        // Collapse the CURRENT reporting window to one failing-volume total per
+        // (domain, source_ip), keeping only groups that actually failed
+        // alignment. Restricting to the rolling window (reports whose end falls
+        // in the seven days up to the newest report, matching windowTotalsAll)
+        // means a sender that has since been aligned drops out instead of
+        // lingering forever on its historical failures.
+        $grouped = (string) $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('rep.domain_id', 'domain_id'),
+                    $this->db->quoteName('cur.source_ip', 'source_ip'),
                     $fail . ' AS fail',
                 ]
             )
-            ->from($this->db->quoteName('#__dmarc_records'))
-            ->where($this->db->quoteName('domain_id') . ' IN (' . $this->intList($domainIds) . ')')
-            ->group($this->db->quoteName('domain_id') . ', ' . $this->db->quoteName('source_ip'))
+            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_records', 'cur'),
+                $this->db->quoteName('cur.report_id') . ' = ' . $this->db->quoteName('rep.id')
+            )
+            ->join(
+                'INNER',
+                '(' . $anchor . ') AS ' . $this->db->quoteName('a'),
+                $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id')
+            )
+            ->where($this->db->quoteName('rep.domain_id') . ' IN (' . $in . ')')
+            ->where($this->db->quoteName('rep.date_end') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')')
+            ->where($this->db->quoteName('rep.date_end') . ' <= ' . $this->db->quoteName('a.anchor'))
+            ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
             ->having($fail . ' > 0');
 
         // Rank each domain's failing sources by volume so the outer query keeps
         // only the top $limit per domain. Ranking and slicing in the database
         // bounds both the result transfer and PHP memory to $limit rows per
-        // domain, instead of materialising every distinct source ever seen; the
-        // source_ip tiebreak makes the ranking deterministic for equal volumes.
+        // domain, instead of materialising every distinct source in the window;
+        // the source_ip tiebreak makes the ranking deterministic for equal
+        // volumes.
         $ranked = (string) $this->query()
             ->select(
                 [

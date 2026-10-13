@@ -197,6 +197,34 @@ class ActionCenterTest extends TestCase
         $this->assertNotContains('partial_enforcement', $codes);
     }
 
+    public function testPolicyStricterThanTargetIsReportedAtTargetNotPartial(): void
+    {
+        // Target is quarantine but the domain publishes p=reject at only 10%.
+        // The rollout goal (quarantine) is already exceeded, so this must report
+        // the target as reached, never demand completing the reject rollout to
+        // 100% of a policy stricter than the operator asked for.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'          => 9,
+                'domain'             => 'example.org',
+                'total'              => 1000,
+                'current_policy'     => 'reject',
+                'current_policy_pct' => 10,
+                'expected_policy'    => 'quarantine',
+                'dmarc_pass'         => 999,
+            ],
+            self::CONFIG
+        );
+
+        $codes = $this->codes($items);
+        $this->assertContains('at_target', $codes);
+        $this->assertNotContains('partial_enforcement', $codes);
+
+        $item = $this->find($items, 'at_target');
+        $this->assertSame(0, $item['severity']);
+        $this->assertSame('quarantine', $item['params'][1]);
+    }
+
     public function testQuarantineTargetWithPartialPercentageIsNotAtTarget(): void
     {
         // Target is quarantine and the policy is quarantine, but only 10% of
@@ -323,6 +351,32 @@ class ActionCenterTest extends TestCase
         $this->assertSame(3, $item['severity']);
         $this->assertSame('align_source:1:203.0.113.9', $item['action_key']);
         $this->assertSame(['203.0.113.9', 80, 8.0], $item['params']);
+    }
+
+    public function testAlignSourceShareUsesCurrentWindowTotal(): void
+    {
+        // The failing volume and its share are measured over the current window,
+        // not lifetime: 40 failing of a 500-message window is an 8% share even
+        // though lifetime volume is far larger, so a sender aligned long ago no
+        // longer skews the alignment recommendation.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'         => 1,
+                'domain'            => 'example.org',
+                'total'             => 5000,
+                'current_policy'    => 'none',
+                'dmarc_pass'        => 4950,
+                'window_total'      => 500,
+                'pass_rate_window'  => 99.0,
+                'unaligned_sources' => [['ip' => '203.0.113.9', 'count' => 40]],
+            ],
+            self::CONFIG
+        );
+
+        $item = $this->find($items, 'align_source');
+        $this->assertNotNull($item);
+        $this->assertSame(3, $item['severity']);
+        $this->assertSame(['203.0.113.9', 40, 8.0], $item['params']);
     }
 
     public function testWouldBeRejectedIsFlaggedWhenNotYetEnforcing(): void
