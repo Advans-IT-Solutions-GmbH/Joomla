@@ -39,6 +39,16 @@ final class ImapClient
      */
     private const MAX_TOTAL_BYTES = 134217728; // 128 MiB
 
+    /**
+     * Upper bound on the per-source retry set of UIDs awaiting decode support.
+     * A report that cannot be decompressed because a PHP extension is missing is
+     * remembered so it can be re-fetched once the extension is installed, rather
+     * than being lost below the import cursor. Capping the set stops a badly
+     * misconfigured host from growing the stored list without limit; the lowest
+     * (oldest) UIDs are kept.
+     */
+    private const MAX_DEFERRED_UIDS = 512;
+
     /** @var resource|null */
     private $socket;
 
@@ -98,25 +108,29 @@ final class ImapClient
      * mailbox operations address messages by UID (RFC 3501), so flags and
      * expunges always reference the exact message even as the mailbox changes.
      *
-     * The callback returns one of three outcomes (matching
+     * The callback returns one of four outcomes (matching
      * {@see Ingestor}'s RESULT_* constants): "new" when it stored a new report,
-     * "skip" when the message was a duplicate or could not be parsed, or
-     * "retry" when a transient failure (e.g. a database error) prevented
-     * storage. "new" and "skip" messages advance the component-owned import
-     * cursor (a per-source high-water UID, persisted with the folder's
+     * "skip" when the message was a duplicate or could not be parsed, "retry"
+     * when a transient failure (e.g. a database error) prevented storage, or
+     * "blocked" when the container cannot be decoded at all because a PHP
+     * extension is missing. "new" and "skip" messages advance the component-owned
+     * import cursor (a per-source high-water UID, persisted with the folder's
      * UIDVALIDITY); "retry" messages stop the cursor so the next run re-fetches
-     * them instead of losing an unstored report. Messages are still flagged
-     * \Seen (or \Deleted and expunged when the source opts into deletion) as
-     * mailbox housekeeping, but the import no longer depends on that flag, so a
+     * them instead of losing an unstored report; "blocked" messages advance the
+     * cursor (so one undecodable report cannot starve newer mail) but their UID
+     * is kept in a per-source retry set and re-fetched each run until the
+     * extension is installed, so the report is not lost. Messages are still
+     * flagged \Seen (or \Deleted and expunged when the source opts into deletion)
+     * as mailbox housekeeping, but the import no longer depends on that flag, so a
      * report another client, rule or operator marks read is still imported.
      *
      * @param   array<string, mixed>  $config     host, port, security (ssl|tls),
      *                                            username, password, folder, limit,
      *                                            delete_after_import, uidvalidity,
-     *                                            last_uid.
+     *                                            last_uid, deferred_uids.
      * @param   callable(array{uid: int, raw: string}): string  $onMessage
      *
-     * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int, uidvalidity: int, last_uid: int}
+     * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int, blocked: int, uidvalidity: int, last_uid: int, deferred_uids: int[]}
      *
      * @throws  \RuntimeException  On any connection, authentication or protocol error.
      */
@@ -135,6 +149,15 @@ final class ImapClient
         // start of the folder.
         $storedValidity = max(0, (int) ($config['uidvalidity'] ?? 0));
         $lastUid        = max(0, (int) ($config['last_uid'] ?? 0));
+
+        // UIDs of reports a previous run could not decode because the PHP zlib
+        // or zip extension was missing. They sit below the high-water cursor
+        // (the run advanced past them so one undecodable report could not starve
+        // newer mail), so the UID scan never re-presents them; they are
+        // re-fetched explicitly each run until the extension is installed and
+        // they decode, rather than being permanently lost. Reset with the cursor
+        // when the mailbox is renumbered.
+        $pending = array_values(array_unique(array_map('intval', (array) ($config['deferred_uids'] ?? []))));
 
         if ($host === '') {
             throw new \RuntimeException('No IMAP host configured.');
@@ -164,6 +187,7 @@ final class ImapClient
             // value is unknown (0) the cursor is kept as-is.
             if ($this->uidvalidity > 0 && $storedValidity > 0 && $this->uidvalidity !== $storedValidity) {
                 $lastUid = 0;
+                $pending = [];
             }
 
             // Candidate messages are those with a UID above the component-owned
@@ -176,6 +200,8 @@ final class ImapClient
 
             $handled = []; // produced a new report
             $touched = []; // processed but no new report (empty, duplicate or invalid)
+            $deferred = []; // UIDs still awaiting decode support, re-tried next run
+            $idsSet   = array_flip($ids); // UIDs seen in the scan below, to skip in the retry pass
             $budget  = self::MAX_TOTAL_BYTES;
 
             // Contiguous high-water mark: advanced to a UID only while every
@@ -238,11 +264,13 @@ final class ImapClient
                     // extension) — a permanent condition. Unlike a transient
                     // retry it must NOT pin the cursor: doing so would let one
                     // undecodable report starve every newer message behind it
-                    // forever. Advance past it (marking it processed for
-                    // housekeeping) and count it so the caller can surface the
-                    // missing requirement to the operator.
+                    // forever. Advance past it so newer mail flows, but remember
+                    // its UID in the retry set so it is re-fetched (not lost)
+                    // once the extension is installed. Count it so the caller can
+                    // surface the missing requirement to the operator.
                     $stats['blocked']++;
-                    $touched[] = $id;
+                    $deferred[] = $id;
+                    $touched[]  = $id;
 
                     if ($progressOpen) {
                         $highWater = $id;
@@ -264,10 +292,71 @@ final class ImapClient
                 }
             }
 
+            // Re-try reports an earlier run could not decode for lack of a PHP
+            // extension. They sit below the cursor, so the UID scan above never
+            // returns them; fetch each one explicitly. Skip any already seen in
+            // this run's scan (a UID blocked again above is re-added there). A
+            // fetch that returns nothing means the message was expunged or is
+            // empty, so stop tracking it. On success it is stored and dropped
+            // from the retry set; while it still cannot be decoded it stays.
+            foreach ($pending as $uid) {
+                if (isset($idsSet[$uid])) {
+                    continue;
+                }
+
+                $raw = $this->fetchBody($uid);
+
+                if ($raw === '') {
+                    continue;
+                }
+
+                if (\strlen($raw) > $budget) {
+                    // No run budget left; keep it for the next run.
+                    $deferred[] = $uid;
+                    unset($raw);
+
+                    continue;
+                }
+
+                $stats['seen']++;
+                $budget -= \strlen($raw);
+                $result = (string) $onMessage(['uid' => $uid, 'raw' => $raw]);
+                unset($raw);
+
+                if ($result === 'blocked') {
+                    $stats['blocked']++;
+                    $deferred[] = $uid;
+                    $touched[]  = $uid;
+                } elseif ($result === 'retry') {
+                    // A transient failure on a below-cursor message: the UID scan
+                    // cannot re-reach it, so keep it in the retry set rather than
+                    // relying on the cursor to re-present it next run.
+                    $stats['deferred']++;
+                    $deferred[] = $uid;
+                } elseif ($result === 'new') {
+                    $stats['ingested']++;
+                    $handled[] = $uid;
+                } else {
+                    $stats['skipped']++;
+                    $touched[] = $uid;
+                }
+            }
+
             $this->advance($handled, $touched, $delete);
 
-            $stats['uidvalidity'] = $this->uidvalidity;
-            $stats['last_uid']    = $highWater;
+            // Persist a bounded, ascending retry set so the stored list cannot
+            // grow without limit; the lowest (oldest) UIDs are kept so the
+            // earliest undecoded reports remain the ones re-tried.
+            $deferred = array_values(array_unique($deferred));
+            sort($deferred);
+
+            if (\count($deferred) > self::MAX_DEFERRED_UIDS) {
+                $deferred = \array_slice($deferred, 0, self::MAX_DEFERRED_UIDS);
+            }
+
+            $stats['uidvalidity']   = $this->uidvalidity;
+            $stats['last_uid']      = $highWater;
+            $stats['deferred_uids'] = $deferred;
 
             return $stats;
         } finally {

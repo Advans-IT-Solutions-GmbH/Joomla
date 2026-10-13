@@ -80,6 +80,7 @@ class IngestController extends BaseController
                     'delete_after_import' => (int) $source->delete_after_import,
                     'uidvalidity'         => (int) ($source->uidvalidity ?? 0),
                     'last_uid'            => (int) ($source->last_uid ?? 0),
+                    'deferred_uids'       => $this->parseUidList((string) ($source->deferred_uids ?? '')),
                 ],
                 function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): string {
                     return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
@@ -111,15 +112,17 @@ class IngestController extends BaseController
 
             // Persist the component-owned import cursor returned by the run so
             // the next poll resumes above the last fully processed UID instead
-            // of depending on the mailbox \Seen state. Only a successful run
-            // advances it; the error path below leaves the stored cursor intact.
+            // of depending on the mailbox \Seen state, together with the retry
+            // set of UIDs awaiting decode support. Only a successful run advances
+            // them; the error path below leaves the stored values intact.
             $this->recordRun(
                 $sourceId,
                 $status,
                 $message,
                 (int) ($stats['uidvalidity'] ?? 0),
                 (int) ($stats['last_uid'] ?? 0),
-                $polledIdentity
+                $polledIdentity,
+                $this->formatUidList((array) ($stats['deferred_uids'] ?? []))
             );
 
             $this->setRedirect($redirect, $message, $flashType);
@@ -218,7 +221,7 @@ class IngestController extends BaseController
         return $db->setQuery($query)->loadObject() ?: null;
     }
 
-    private function recordRun(int $sourceId, string $status, string $message, ?int $uidvalidity = null, ?int $lastUid = null, ?array $polledIdentity = null): void
+    private function recordRun(int $sourceId, string $status, string $message, ?int $uidvalidity = null, ?int $lastUid = null, ?array $polledIdentity = null, ?string $deferredUids = null): void
     {
         if ($sourceId <= 0) {
             return;
@@ -266,6 +269,15 @@ class IngestController extends BaseController
                 if (!$this->cursorWouldRegress($db, $sourceId, $uidvalidity, $lastUid)) {
                     $row->uidvalidity = $uidvalidity;
                     $row->last_uid    = $lastUid;
+
+                    // The retry set is tied to the cursor it was computed
+                    // against, so persist it under the same guard: an edit that
+                    // changed the mailbox (identity changed) or a late, out-of-
+                    // order poll (cursor would regress) leaves the newer value in
+                    // place instead of clobbering it with a stale list.
+                    if ($deferredUids !== null) {
+                        $row->deferred_uids = $deferredUids;
+                    }
                 }
             }
 
@@ -347,5 +359,39 @@ class IngestController extends BaseController
     private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
     {
         return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
+     * Parse a stored comma-separated UID retry list into integers, ignoring any
+     * malformed token so a corrupt column can never inject non-numeric input.
+     *
+     * @return  int[]
+     */
+    private function parseUidList(string $csv): array
+    {
+        $ids = [];
+
+        foreach (explode(',', $csv) as $token) {
+            $token = trim($token);
+
+            if ($token !== '' && ctype_digit($token)) {
+                $ids[] = (int) $token;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Serialise a UID retry list to an ascending, de-duplicated CSV for storage.
+     *
+     * @param   int[]  $ids
+     */
+    private function formatUidList(array $ids): string
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        sort($ids);
+
+        return implode(',', $ids);
     }
 }

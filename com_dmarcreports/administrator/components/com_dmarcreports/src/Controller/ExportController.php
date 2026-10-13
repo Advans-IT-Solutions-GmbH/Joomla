@@ -54,8 +54,8 @@ class ExportController extends BaseController
         // are append-only (ingestion inserts rows with higher auto-increment ids
         // and never reorders or rewrites existing ones), so an id ceiling freezes
         // the ordered result set: rows ingested during a long export get a higher
-        // id and are excluded from all pages, keeping OFFSET pagination stable so
-        // no record is duplicated or skipped as later pages are read.
+        // id and are excluded from all pages, so no record is duplicated or
+        // skipped as later pages are read.
         $maxId = (int) $db->setQuery(
             (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
                 ->select('MAX(' . $db->quoteName('id') . ')')
@@ -63,31 +63,6 @@ class ExportController extends BaseController
                 ->where($db->quoteName('domain_id') . ' = :domainId')
                 ->bind(':domainId', $domainId, ParameterType::INTEGER)
         )->loadResult();
-
-        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
-            ->select(
-                [
-                    $db->quoteName('rep.org_name'),
-                    $db->quoteName('rep.date_begin'),
-                    $db->quoteName('rep.date_end'),
-                    $db->quoteName('rec.source_ip'),
-                    $db->quoteName('rec.count'),
-                    $db->quoteName('rec.disposition'),
-                    $db->quoteName('rec.dkim_result'),
-                    $db->quoteName('rec.spf_result'),
-                    $db->quoteName('rec.dkim_aligned'),
-                    $db->quoteName('rec.spf_aligned'),
-                    $db->quoteName('rec.header_from'),
-                ]
-            )
-            ->from($db->quoteName('#__dmarc_records', 'rec'))
-            ->join('INNER', $db->quoteName('#__dmarc_reports', 'rep'),
-                $db->quoteName('rep.id') . ' = ' . $db->quoteName('rec.report_id'))
-            ->where($db->quoteName('rec.domain_id') . ' = :domainId')
-            ->where($db->quoteName('rec.id') . ' <= :maxId')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->bind(':maxId', $maxId, ParameterType::INTEGER)
-            ->order($db->quoteName('rep.date_begin') . ' DESC, ' . $db->quoteName('rec.id') . ' ASC');
 
         $app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);
         $app->setHeader('Content-Disposition', 'attachment; filename="dmarc-records-' . $domainId . '.csv"', true);
@@ -103,21 +78,75 @@ class ExportController extends BaseController
         ], ',', '"', '');
 
         // Stream the records in bounded chunks so a domain with a very large
-        // history does not have to be buffered in memory all at once.
-        $chunk  = 2000;
-        $offset = 0;
+        // history does not have to be buffered in memory all at once. Each chunk
+        // resumes from the last row's (date_begin, rec.id) key instead of a
+        // growing OFFSET, so the database seeks straight to the next page via the
+        // ordering columns rather than rescanning and discarding every preceding
+        // row — keeping the export linear rather than quadratic in the number of
+        // records.
+        $chunk     = 2000;
+        $cursorSet = false;
+        $lastDate  = 0;
+        $lastRecId = 0;
 
         do {
-            $query->setLimit($chunk, $offset);
+            $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->select(
+                    [
+                        $db->quoteName('rep.org_name'),
+                        $db->quoteName('rep.date_begin'),
+                        $db->quoteName('rep.date_end'),
+                        $db->quoteName('rec.source_ip'),
+                        $db->quoteName('rec.count'),
+                        $db->quoteName('rec.disposition'),
+                        $db->quoteName('rec.dkim_result'),
+                        $db->quoteName('rec.spf_result'),
+                        $db->quoteName('rec.dkim_aligned'),
+                        $db->quoteName('rec.spf_aligned'),
+                        $db->quoteName('rec.header_from'),
+                        $db->quoteName('rec.id', 'rec_id'),
+                    ]
+                )
+                ->from($db->quoteName('#__dmarc_records', 'rec'))
+                ->join('INNER', $db->quoteName('#__dmarc_reports', 'rep'),
+                    $db->quoteName('rep.id') . ' = ' . $db->quoteName('rec.report_id'))
+                ->where($db->quoteName('rec.domain_id') . ' = :domainId')
+                ->where($db->quoteName('rec.id') . ' <= :maxId')
+                ->bind(':domainId', $domainId, ParameterType::INTEGER)
+                ->bind(':maxId', $maxId, ParameterType::INTEGER)
+                ->order($db->quoteName('rep.date_begin') . ' DESC, ' . $db->quoteName('rec.id') . ' ASC');
+
+            if ($cursorSet) {
+                // Keyset resume: continue strictly after the previous page's last
+                // key under the "date_begin DESC, id ASC" order — an older report
+                // date, or the same date with a higher record id. Two bound
+                // placeholders carry the same date because a named parameter is
+                // referenced twice in the predicate.
+                $query->where(
+                    '(' . $db->quoteName('rep.date_begin') . ' < :cursorDateLt'
+                    . ' OR (' . $db->quoteName('rep.date_begin') . ' = :cursorDateEq'
+                    . ' AND ' . $db->quoteName('rec.id') . ' > :cursorId))'
+                )
+                    ->bind(':cursorDateLt', $lastDate, ParameterType::INTEGER)
+                    ->bind(':cursorDateEq', $lastDate, ParameterType::INTEGER)
+                    ->bind(':cursorId', $lastRecId, ParameterType::INTEGER);
+            }
+
+            $query->setLimit($chunk);
             $rows = $db->setQuery($query)->loadAssocList() ?: [];
 
             foreach ($rows as $row) {
+                // Capture the keyset cursor, then drop the helper id so it never
+                // reaches the CSV; the remaining columns stay in header order.
+                $lastDate  = (int) $row['date_begin'];
+                $lastRecId = (int) $row['rec_id'];
+                unset($row['rec_id']);
+                $cursorSet = true;
+
                 $row['date_begin'] = gmdate('Y-m-d', (int) $row['date_begin']);
                 $row['date_end']   = gmdate('Y-m-d', (int) $row['date_end']);
                 fputcsv($out, array_map([self::class, 'sanitiseCell'], $row), ',', '"', '');
             }
-
-            $offset += $chunk;
         } while (\count($rows) === $chunk);
 
         fclose($out);

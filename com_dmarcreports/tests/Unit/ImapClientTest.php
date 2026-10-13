@@ -118,7 +118,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 2],
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 1, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 2, 'deferred_uids' => []],
             $result['stats']
         );
 
@@ -159,7 +159,7 @@ class ImapClientTest extends TestCase
         );
 
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 0],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 1, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 0, 'deferred_uids' => []],
             $result['stats']
         );
 
@@ -193,13 +193,111 @@ class ImapClientTest extends TestCase
 
         // Unlike a transient retry, a blocked message does not pin the cursor: it
         // is counted, flagged \Seen and the high-water mark advances past it to
-        // UID 2, so a single undecodable report cannot starve the newer one.
+        // UID 2, so a single undecodable report cannot starve the newer one. Its
+        // UID is kept in the retry set so it is re-fetched (not lost) once the
+        // decoder extension is installed.
         $this->assertSame(
-            ['seen' => 2, 'ingested' => 1, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 1, 'uidvalidity' => 0, 'last_uid' => 2],
+            ['seen' => 2, 'ingested' => 1, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 1, 'uidvalidity' => 0, 'last_uid' => 2, 'deferred_uids' => [1]],
             $result['stats']
         );
 
         $this->assertStringContainsString('UID STORE 1,2 +FLAGS.SILENT (\\Seen)', $result['sent']);
+    }
+
+    public function testRetriesPreviouslyDeferredUidBelowCursor(): void
+    {
+        $body = "Subject: Late report\r\n\r\nnow-decodable";
+
+        // The cursor is already at UID 5 and the scan finds nothing newer, but a
+        // previous run recorded UID 1 as awaiting decode support. The client must
+        // fetch that below-cursor UID explicitly and, now that it decodes, store
+        // it and drop it from the retry set.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, $body, 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            static fn (array $m): string => 'new'
+        );
+
+        // The retry succeeded: the report is ingested, the cursor stays at 5
+        // (the retried UID is below it and never governs the high-water mark),
+        // and the UID is removed from the retry set.
+        $this->assertSame(
+            ['seen' => 1, 'ingested' => 1, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 5, 'deferred_uids' => []],
+            $result['stats']
+        );
+
+        // The below-cursor UID was fetched explicitly and flagged \Seen.
+        $this->assertStringContainsString('UID FETCH 1 (BODY.PEEK[])', $result['sent']);
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Seen)', $result['sent']);
+        $this->assertSame($body, $result['seen'][1] ?? null);
+    }
+
+    public function testKeepsDeferredUidWhenStillUndecodable(): void
+    {
+        $body = "Subject: Still zipped\r\n\r\nstill-blocked";
+
+        // UID 1 remains undecodable (the extension is still missing): it must be
+        // re-fetched, counted as blocked and kept in the retry set for next time.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, $body, 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            static fn (array $m): string => 'blocked'
+        );
+
+        $this->assertSame(
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 1, 'uidvalidity' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            $result['stats']
+        );
+    }
+
+    public function testDropsDeferredUidThatNoLongerExists(): void
+    {
+        // The retried UID was expunged from the mailbox since it was recorded, so
+        // the FETCH returns no body. The client must stop tracking it rather than
+        // retrying a vanished message forever.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH\r\nA0004 OK SEARCH completed\r\n"
+            . "A0005 OK FETCH completed\r\n"
+            . "* BYE\r\nA0006 OK LOGOUT completed\r\n";
+
+        $called = 0;
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            static function () use (&$called): string {
+                $called++;
+
+                return 'new';
+            }
+        );
+
+        $this->assertSame(0, $called);
+        $this->assertSame(
+            ['seen' => 0, 'ingested' => 0, 'skipped' => 0, 'transport_skipped' => 0, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 5, 'deferred_uids' => []],
+            $result['stats']
+        );
     }
 
     public function testRejectsTruncatedLiteralBody(): void
@@ -285,7 +383,7 @@ class ImapClientTest extends TestCase
 
         $this->assertSame(0, $called);
         $this->assertSame(
-            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 1],
+            ['seen' => 1, 'ingested' => 0, 'skipped' => 1, 'transport_skipped' => 1, 'deferred' => 0, 'blocked' => 0, 'uidvalidity' => 0, 'last_uid' => 1, 'deferred_uids' => []],
             $result['stats']
         );
 

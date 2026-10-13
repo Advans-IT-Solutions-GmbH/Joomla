@@ -132,6 +132,9 @@ class SourceModel extends AdminModel
             if ($existing !== null && SourceIdentity::changed($existing, $data)) {
                 $data['uidvalidity'] = 0;
                 $data['last_uid']    = 0;
+                // The retry set holds UIDs from the previous mailbox, so it is
+                // meaningless once the mailbox changes: clear it with the cursor.
+                $data['deferred_uids'] = '';
             }
         }
 

@@ -19,7 +19,13 @@ throws `DecoderUnavailableException`, whereas genuinely corrupt data returns `[]
 handled differently: on IMAP ingest `Ingestor::ingestMessage()` catches the exception and returns
 `RESULT_BLOCKED` — a *permanent* condition (unlike a transient `RESULT_RETRY`) so the client advances
 past it instead of pinning the cursor, which would let one undecodable container starve every newer
-message behind it forever. The run is counted (`stats['blocked']`) and recorded with a `blocked`
+message behind it forever. To avoid the opposite failure — losing the report once the extension is
+installed, because its UID now sits below the cursor — the blocked UID is kept in a durable per-source
+retry set (`#__dmarc_sources.deferred_uids`, an ascending CSV capped at `MAX_DEFERRED_UIDS`). Each run
+re-fetches those below-cursor UIDs explicitly; a UID that now decodes is stored and dropped from the
+set, one still blocked stays, and an expunged one (empty fetch) is dropped. The retry set is persisted
+only under the same lock/guard as the cursor and reset with it (identity change in `SourceModel::save()`
+or a `UIDVALIDITY` renumber). The run is counted (`stats['blocked']`) and recorded with a `blocked`
 status plus a `warning` flash (`COM_DMARCREPORTS_INGEST_BLOCKED`) naming the missing extension, so the
 operator installs it and re-runs; on upload `ingestFile()` lets the exception propagate so
 `IngestController` shows the concrete requirement (`COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE`)
@@ -67,8 +73,9 @@ Streaming design (do not revert to loading all messages into an array):
   `RESULT_RETRY` (a transient failure, e.g. the DB transaction could not commit) leaves the
   message untouched so the next run retries it. `RESULT_BLOCKED` (a permanent failure, e.g. a
   compressed container the host cannot decode) is **also advanced** — counted as `stats['blocked']`
-  and surfaced to the operator — so it cannot pin the cursor and starve newer messages. The callback
-  advances on everything except `RESULT_RETRY`.
+  and surfaced to the operator — so it cannot pin the cursor and starve newer messages, but its UID
+  is added to the durable retry set so a later run re-fetches it once the decoder is available. The
+  callback advances on everything except `RESULT_RETRY`.
 - The cursor is scoped to one mailbox. `SourceModel::save()` resets it (via `SourceIdentity`) when
   any identity field (`protocol`, `host`, `port`, `security`, `username`, `folder`) changes, and
   `IngestController::recordRun()` re-checks the identity under a `SourceLock` row lock before
