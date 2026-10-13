@@ -6,6 +6,16 @@
     Both bounds are instants, so the calendar fields translate the operator's
     own time zone to UTC with `filter="user_utc"`. That is the opposite of the
     date-specific schedule override, where a conversion would be wrong.
+
+    Each bound carries an explicit `format` and deliberately no
+    `translateformat`. With `translateformat="true"` the field submits the
+    active language's `DATE_FORMAT_FILTER_DATETIME`, so a German operator sends
+    02.06.2026 14:00:00 and a French one something else again. The controller
+    has to read the submitted text strictly, before Joomla converts it, to
+    refuse an impossible date and a local time the clock change skips or
+    repeats, and it cannot do that against a format that changes with the
+    reader. One canonical format in every language is the price of that check,
+    and it is the format the stored value has anyway.
 -->
 <form>
     <fieldset name="details">
@@ -39,7 +49,7 @@
             type="calendar"
             label="COM_APPOINTMENTS_BLOCKED_FIELD_START"
             required="true"
-            translateformat="true"
+            format="%Y-%m-%d %H:%M:%S"
             showtime="true"
             filter="user_utc"
         />
@@ -49,7 +59,7 @@
             type="calendar"
             label="COM_APPOINTMENTS_BLOCKED_FIELD_END"
             required="true"
-            translateformat="true"
+            format="%Y-%m-%d %H:%M:%S"
             showtime="true"
             filter="user_utc"
         />

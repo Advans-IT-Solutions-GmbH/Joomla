@@ -366,9 +366,79 @@ class StructureTest
             });
         }
 
+        $this->testCalendarFields();
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * Every calendar field in the component, checked for the two defaults of
+     * Joomla's calendar field that are traps rather than conveniences.
+     *
+     * - **No translated submit format.** With `translateformat="true"` the
+     *   field submits the active language's `DATE_FORMAT_FILTER_DATETIME`, so
+     *   the same form sends 2026-06-02 14:00:00 in English and 02.06.2026
+     *   14:00:00 in German. Code that has to read the submitted text before
+     *   Joomla converts it, to refuse an impossible date or a local time the
+     *   clock change skips, cannot do that against a format that changes with
+     *   the reader.
+     * - **An explicit filter.** When the attribute is missing, the field
+     *   defaults its *display* filter to `user_utc` while its output filter
+     *   stays unset, so a stored bare date is converted on the way out and not
+     *   on the way back in. For an operator west of UTC that moves the date one
+     *   day earlier on every round trip.
+     *
+     * The test covers the forms as a set rather than the two fields this stage
+     * happens to have, so a field added later is covered without anybody
+     * remembering this.
+     */
+    private function testCalendarFields(): void
+    {
+        $forms = glob($this->admin . '/forms/*.xml') ?: [];
+
+        $this->test('There are calendar fields to check at all', function () use ($forms) {
+            return $forms !== [];
+        });
+
+        $checked = 0;
+
+        foreach ($forms as $form) {
+            $xml = simplexml_load_file($form);
+
+            if ($xml === false) {
+                $this->test(basename($form) . ' is readable XML', function () {
+                    return false;
+                });
+
+                continue;
+            }
+
+            foreach ($xml->xpath('//field[@type="calendar"]') ?: [] as $field) {
+                $checked++;
+                $name      = (string) $field['name'];
+                $where     = basename($form) . ':' . $name;
+                $translate = strtolower((string) $field['translateformat']);
+                $filter    = strtolower((string) $field['filter']);
+
+                $this->test($where . ' does not submit a translated format', function () use ($translate) {
+                    return $translate === '' || $translate === 'false' || $translate === '0';
+                });
+
+                $this->test($where . ' names its filter explicitly', function () use ($filter) {
+                    return $filter !== '';
+                });
+
+                $this->test($where . ' declares the format it submits', function () use ($field) {
+                    return (string) $field['format'] !== '';
+                });
+            }
+        }
+
+        $this->test('Every calendar field was checked', function () use ($checked) {
+            return $checked >= 3;
+        });
     }
 
     private function test(string $name, callable $fn): void

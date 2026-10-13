@@ -29,6 +29,20 @@ $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com
 $asLocal = static function (string $utc): string {
     return HTMLHelper::_('date', $utc, Text::_('DATE_FORMAT_LC5'));
 };
+
+/**
+ * The internal note of a blocked period, escaped, or the stand-in when there
+ * is none.
+ *
+ * The comparison is against the empty string on purpose. `?:` would read a note
+ * of "0" as false and replace a note somebody wrote with "without a note",
+ * because that is how PHP reads the string "0".
+ */
+$noteOf = function ($title): string {
+    $title = (string) $title;
+
+    return $title === '' ? Text::_('COM_APPOINTMENTS_BLOCKED_UNTITLED') : $this->escape($title);
+};
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>" method="post"
       name="adminForm" id="adminForm">
@@ -66,10 +80,10 @@ $asLocal = static function (string $utc): string {
                                     <td>
                                         <?php if ($canEdit) : ?>
                                             <a href="<?php echo Route::_('index.php?option=com_appointments&task=blocked.edit&id=' . (int) $item->id); ?>">
-                                                <?php echo $this->escape($item->title) ?: Text::_('COM_APPOINTMENTS_BLOCKED_UNTITLED'); ?>
+                                                <?php echo $noteOf($item->title); ?>
                                             </a>
                                         <?php else : ?>
-                                            <?php echo $this->escape($item->title) ?: Text::_('COM_APPOINTMENTS_BLOCKED_UNTITLED'); ?>
+                                            <?php echo $noteOf($item->title); ?>
                                         <?php endif; ?>
                                     </td>
                                     <td><?php echo $this->escape((string) $item->user_name); ?></td>

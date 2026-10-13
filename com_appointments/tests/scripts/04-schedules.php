@@ -20,6 +20,8 @@ class ScheduleAdminTest
     private $dbPrefix;
     private $baseUrl;
     private $cookieJar = '/tmp/suite-schedules-cookies.txt';
+    private $adminId = 0;
+    private $originalParams = '';
     private $passed = 0;
     private $failed = 0;
 
@@ -104,6 +106,32 @@ class ScheduleAdminTest
             return strpos($html, '10:00') !== false && strpos($html, '2026-12-24') !== false;
         });
 
+        // --- The override date must survive a reader west of UTC -----------
+        // A date-specific override is a plain local date in the schedule's own
+        // zone, but Joomla's calendar field defaults its *display* filter to
+        // user_utc when the attribute is missing. The stored 2026-12-24 was
+        // then read as midnight UTC and shown to an operator in a negative
+        // offset as the 23rd, which they would save on the next edit. The zone
+        // is restored before anything else runs.
+        try {
+            if (!$this->useZoneForAdmin('America/New_York')) {
+                echo "✗ Could not set the time zone of the administrator account\n";
+                $this->failed++;
+            } else {
+                $this->test('An override keeps its date for a reader west of UTC', function () use ($scheduleId) {
+                    $html = $this->get(
+                        '/administrator/index.php?option=com_appointments&task=schedule.edit&id=' . $scheduleId
+                    );
+
+                    return strpos($html, '2026-12-24') !== false
+                        && strpos($html, '2026-12-23') === false;
+                });
+            }
+        } finally {
+            $this->restoreAdminZone();
+            $this->login();
+        }
+
         // --- An invalid submission must write nothing ----------------------
         $before = $this->ruleCount($scheduleId);
         $fields = $this->validFields();
@@ -141,6 +169,46 @@ class ScheduleAdminTest
         $this->summary();
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Give the logged-in account a time zone and log in again, because the
+     * session caches the user object and the form filters read it from there.
+     */
+    private function useZoneForAdmin(string $zone): bool
+    {
+        $users  = "{$this->dbPrefix}users";
+        $name   = $this->db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
+        $result = $this->db->query("SELECT id, params FROM {$users} WHERE username = '{$name}' LIMIT 1");
+        $row    = $result ? $result->fetch_assoc() : null;
+
+        if (!$row) {
+            return false;
+        }
+
+        $this->adminId        = (int) $row['id'];
+        $this->originalParams = (string) $row['params'];
+
+        $params             = json_decode($this->originalParams, true);
+        $params             = \is_array($params) ? $params : [];
+        $params['timezone'] = $zone;
+        $encoded            = $this->db->real_escape_string((string) json_encode($params));
+
+        $this->db->query("UPDATE {$users} SET params = '{$encoded}' WHERE id = {$this->adminId}");
+
+        return $this->login();
+    }
+
+    private function restoreAdminZone(): void
+    {
+        if ($this->adminId === 0) {
+            return;
+        }
+
+        $users  = "{$this->dbPrefix}users";
+        $params = $this->db->real_escape_string($this->originalParams);
+        $this->db->query("UPDATE {$users} SET params = '{$params}' WHERE id = {$this->adminId}");
+        $this->adminId = 0;
     }
 
     /**

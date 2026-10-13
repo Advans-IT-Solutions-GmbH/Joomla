@@ -5,8 +5,17 @@
     single different day easy to express.
 
     The date is a plain local date in the schedule's own time zone, so the
-    calendar field deliberately carries no time and no time-zone filter:
+    calendar field deliberately carries no time and no time-zone conversion:
     converting it to UTC could move it to the day before or after.
+
+    That takes `filter="none"` rather than no filter attribute at all. Joomla's
+    calendar field defaults its *display* filter to `user_utc` when the
+    attribute is missing, so a stored 2026-12-24 was read as midnight UTC and
+    shown to an operator west of UTC as the 23rd, which they would then save.
+    The save itself did not convert, because the output filter is read straight
+    from the attribute, and that asymmetry is what moved the date one day
+    earlier on every round trip. Any value other than `server_utc` or
+    `user_utc` turns both conversions off.
 -->
 <form>
     <fieldset>
@@ -16,6 +25,7 @@
             label="COM_APPOINTMENTS_OVERRIDE_FIELD_DATE"
             format="%Y-%m-%d"
             showtime="false"
+            filter="none"
             size="12"
         />
 
