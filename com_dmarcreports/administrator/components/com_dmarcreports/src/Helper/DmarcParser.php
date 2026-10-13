@@ -85,6 +85,18 @@ final class DmarcParser
             throw new \InvalidArgumentException('Empty DMARC report document.');
         }
 
+        // A legitimate aggregate report is UTF-8 (or ASCII) XML, and XML 1.0
+        // forbids the NUL character outright. A UTF-16/UTF-32 encoded document
+        // spreads its ASCII markup — including a DOCTYPE — across NUL-padded
+        // multi-byte sequences, so the byte-level DOCTYPE guard below would not
+        // match it while simplexml_load_string() still honours the encoding
+        // declaration and could expand a DTD. Reject any NUL byte (and therefore
+        // any UTF-16/UTF-32 payload) up front so the DOCTYPE invariant cannot be
+        // bypassed by re-encoding the document.
+        if (strpos($xml, "\0") !== false) {
+            throw new \InvalidArgumentException('DMARC reports must be UTF-8 XML without NUL bytes.');
+        }
+
         // Reject any DOCTYPE outright: a legitimate aggregate report never has one,
         // and forbidding it removes the whole class of entity-expansion attacks.
         if (preg_match('/<!DOCTYPE/i', $xml)) {

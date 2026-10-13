@@ -162,7 +162,7 @@ $statusLabels = [
             <?php if (empty($this->summaries)) : ?>
                 <div class="alert alert-info mb-0">
                     <?php echo Text::_('COM_DMARCREPORTS_DASHBOARD_NO_DOMAINS'); ?>
-                    <a href="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>">
+                    <a href="<?php echo Route::_('index.php?option=com_dmarcreports&view=domains'); ?>">
                         <?php echo Text::_('COM_DMARCREPORTS_DASHBOARD_NO_DOMAINS_CTA'); ?>
                     </a>
                 </div>

@@ -157,6 +157,26 @@ XML;
         DmarcParser::parse('<?xml version="1.0"?><!DOCTYPE feedback [<!ENTITY x "y">]><feedback/>');
     }
 
+    public function testRejectsUtf16DoctypeThatBypassesByteLevelGuard(): void
+    {
+        // A DOCTYPE smuggled in through a non-UTF-8 encoding must still be
+        // rejected. Encoding an XXE-style document as UTF-16LE gives every ASCII
+        // byte a NUL high byte, so the literal "<!DOCTYPE" sequence the
+        // byte-level guard matches on is absent, yet libxml would otherwise
+        // honour the encoding declaration and expand the DTD. The NUL-byte guard
+        // closes that bypass.
+        $utf8  = '<?xml version="1.0" encoding="UTF-16"?>'
+            . '<!DOCTYPE feedback [<!ENTITY x "y">]><feedback/>';
+        $utf16 = "\xFF\xFE"; // UTF-16LE byte order mark
+
+        for ($i = 0, $len = \strlen($utf8); $i < $len; $i++) {
+            $utf16 .= $utf8[$i] . "\0";
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        DmarcParser::parse($utf16);
+    }
+
     public function testRejectsNonFeedbackDocument(): void
     {
         $this->expectException(\InvalidArgumentException::class);
