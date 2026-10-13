@@ -56,8 +56,8 @@ class IngestController extends BaseController
         }
 
         try {
-            $client   = new ImapClient((int) $this->getConfig('imap_timeout', 20));
-            $limit    = (int) $this->getConfig('max_messages_per_run', 200);
+            $client   = new ImapClient($this->boundedConfig('imap_timeout', 20, 5, 120));
+            $limit    = $this->boundedConfig('max_messages_per_run', 200, 10, 2000);
             $ingestor = new Ingestor(null, $this->canAutoCreateDomains());
             $summary  = $ingestor->newSummary();
             $domainId = (int) $source->domain_id;
@@ -431,6 +431,38 @@ class IngestController extends BaseController
     private function getConfig(string $key, $default)
     {
         return \Joomla\CMS\Component\ComponentHelper::getParams('com_dmarcreports')->get($key, $default);
+    }
+
+    /**
+     * Read an integer option and clamp it to the declared [min, max] range,
+     * falling back to the default when the stored value is empty, non-numeric or
+     * out of range. The form range rule only guards future submissions; a value
+     * such as a 999-second timeout that version 1.0.0 persisted before the rule
+     * existed must still be normalized at read time so it cannot drive an
+     * out-of-range socket timeout or fetch cap after an upgrade.
+     *
+     * @param   string  $key      Option name.
+     * @param   int     $default  Fallback when empty, non-numeric or out of range.
+     * @param   int     $min      Lowest value accepted (inclusive).
+     * @param   int     $max      Highest value accepted (inclusive).
+     *
+     * @return  int
+     */
+    private function boundedConfig(string $key, int $default, int $min, int $max): int
+    {
+        $value = $this->getConfig($key, $default);
+
+        if (!is_numeric($value)) {
+            return $default;
+        }
+
+        $value = (int) $value;
+
+        if ($value < $min || $value > $max) {
+            return $default;
+        }
+
+        return $value;
     }
 
     private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
