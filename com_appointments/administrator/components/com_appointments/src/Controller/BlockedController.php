@@ -33,15 +33,21 @@ class BlockedController extends FormController
     private const LOCAL_TIMESTAMPS = ['start_utc', 'end_utc'];
 
     /**
-     * Refuse a date that does not exist before Joomla converts it.
+     * Refuse a wall clock that is not one instant before Joomla converts it.
      *
      * The two bounds are calendar fields with `filter="user_utc"`, so Joomla
-     * turns the operator's local time into universal time. That filter is also
-     * forgiving: it reads an impossible 2026-02-31 as the 3rd of March, and by
-     * the time the table sees the value it is a perfectly good instant that
-     * nobody entered. The strict check therefore has to happen here, on the
-     * submitted text, because this is the last point at which the operator's
-     * own input still exists.
+     * reads the operator's local time in the operator's zone and stores
+     * universal time. That reading is forgiving in three ways, and each one
+     * stores an instant nobody entered:
+     *
+     * - an impossible calendar date such as 2026-02-31 becomes the 3rd of March;
+     * - a wall clock in the hour the clocks skip forward is moved past the
+     *   transition, so 02:30 becomes 03:30;
+     * - a wall clock in the hour the clocks repeat stands for two instants, and
+     *   one of them is picked silently.
+     *
+     * The check therefore has to happen here, on the submitted text, because
+     * this is the last point at which the operator's own input still exists.
      *
      * @param   string|null  $key     The name of the primary key of the URL parameter.
      * @param   string|null  $urlVar  The name of the URL parameter the id is in.
@@ -50,17 +56,75 @@ class BlockedController extends FormController
      */
     public function save($key = null, $urlVar = null)
     {
+        // Before anything is read out of the request, let alone written to the
+        // session: a refusal below returns without reaching the base
+        // controller, so its own check would never run on a forged submission.
+        // Checking here costs nothing, because `Session::checkToken()` compares
+        // the token and does not consume it, so the base controller's check
+        // still succeeds on a genuine submission.
+        if (!$this->checkToken()) {
+            return false;
+        }
+
         $data = (array) $this->input->post->get('jform', [], 'array');
+        $zone = $this->operatorZone();
 
         foreach (self::LOCAL_TIMESTAMPS as $field) {
             $value = trim((string) ($data[$field] ?? ''));
 
-            if ($value !== '' && !UtcTimestamp::isTimestamp($value)) {
+            if ($value === '') {
+                continue;
+            }
+
+            if (!UtcTimestamp::isTimestamp($value)) {
                 return $this->refuse($data, Text::sprintf('COM_APPOINTMENTS_BLOCKED_ERROR_NOT_A_DATE', $value));
+            }
+
+            $instants = UtcTimestamp::localInstants($value, $zone);
+
+            if ($instants === []) {
+                return $this->refuse(
+                    $data,
+                    Text::sprintf('COM_APPOINTMENTS_BLOCKED_ERROR_SKIPPED_TIME', $value, $zone->getName())
+                );
+            }
+
+            if (\count($instants) > 1) {
+                return $this->refuse(
+                    $data,
+                    Text::sprintf(
+                        'COM_APPOINTMENTS_BLOCKED_ERROR_AMBIGUOUS_TIME',
+                        $value,
+                        $zone->getName(),
+                        $instants[0]->format('H:i') . ' UTC',
+                        $instants[1]->format('H:i') . ' UTC'
+                    )
+                );
             }
         }
 
         return parent::save($key, $urlVar);
+    }
+
+    /**
+     * The zone Joomla's `user_utc` filter will read the two bounds in: the
+     * logged-in account's own zone, falling back to the site's.
+     *
+     * The fallback to UTC is for a site whose offset is unusable, which would
+     * otherwise make the check throw on a value the filter still converts.
+     */
+    private function operatorZone(): \DateTimeZone
+    {
+        $app      = $this->app;
+        $fallback = (string) $app->get('offset', 'UTC');
+        $identity = $app->getIdentity();
+        $name     = $identity !== null ? (string) $identity->getParam('timezone', $fallback) : $fallback;
+
+        try {
+            return new \DateTimeZone($name !== '' ? $name : 'UTC');
+        } catch (\Exception $e) {
+            return new \DateTimeZone('UTC');
+        }
     }
 
     /**

@@ -76,7 +76,7 @@ com_appointments/tests/scripts/
 ├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
 ├── 03-site-page.php         # the public pages really render over HTTP, empty and with seeded rows
 ├── 04-schedules.php         # a schedule is really submitted, stored, reloaded and validated
-├── 05-blocked.php           # a blocked period is submitted from a non-UTC zone and stored as UTC
+├── 05-blocked.php           # a blocked period is submitted from a non-UTC zone, stored as UTC, and the clock-change refusals hold
 ├── 06-eventtypes.php        # CRUD, ACL, feed token generated and unique
 ├── 07-slots.php             # the site slot endpoint returns what the engine returns
 ├── 08-booking.php           # end-to-end booking, both concurrency cases

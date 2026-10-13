@@ -353,6 +353,12 @@ final class ScheduleResolver
      *   repeat. Without this, a rule that begins inside the repeated hour would
      *   be read as the occurrence that `windowsForDate()` then removes, and the
      *   hour would be lost entirely instead of being offered once.
+     *
+     * Both corrections are conventions, and they are right only because a
+     * recurring rule has to resolve to something: a weekly interval cannot
+     * disappear twice a year. A wall clock somebody typed once is a different
+     * case and is refused rather than converted by convention, which is what
+     * `UtcTimestamp::localInstants()` is for.
      */
     private function localToUtc(string $date, string $time): \DateTimeImmutable
     {

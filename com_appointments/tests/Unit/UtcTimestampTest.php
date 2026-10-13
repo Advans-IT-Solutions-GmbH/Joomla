@@ -72,16 +72,100 @@ final class UtcTimestampTest extends TestCase
         ];
     }
 
-    public function testIsTimestampAnswersTheSameQuestionWithoutAnInstant(): void
+    public function testIsTimestampAnswersTheCalendarQuestionOnly(): void
     {
         // Used on a value that is still in somebody's local time, before the
-        // form filter converts it: whether a date and time exist has the same
-        // answer in every zone.
+        // form filter converts it. Whether the date and the time of day exist
+        // at all has the same answer in every zone; whether that wall clock
+        // exists in a particular zone is what localInstants() answers below.
         $this->assertTrue(UtcTimestamp::isTimestamp('2026-06-02 10:30:00'));
         $this->assertTrue(UtcTimestamp::isTimestamp('2026-06-02 10:30'));
         $this->assertFalse(UtcTimestamp::isTimestamp('2026-02-31 10:00:00'));
         $this->assertFalse(UtcTimestamp::isTimestamp('tomorrow'));
         $this->assertFalse(UtcTimestamp::isTimestamp(''));
+    }
+
+    /**
+     * The clocks in Europe/Zurich move forward on 29 March 2026 and back on
+     * 25 October 2026, both at 01:00 UTC. Every case below is one of those two
+     * nights or an ordinary day, so the expectations are arithmetic rather
+     * than taken from the implementation.
+     */
+    public function testAnOrdinaryWallClockStandsForExactlyOneInstant(): void
+    {
+        $instants = UtcTimestamp::localInstants('2026-06-02 14:00:00', new \DateTimeZone('Europe/Zurich'));
+
+        $this->assertCount(1, $instants);
+        // Summer time, so local 14:00 is 12:00 UTC.
+        $this->assertSame('2026-06-02 12:00:00', $instants[0]->format('Y-m-d H:i:s'));
+    }
+
+    public function testAWallClockInTheSkippedHourStandsForNoInstant(): void
+    {
+        // 02:00 local becomes 03:00 local, so 02:30 never happens. PHP's own
+        // reading would answer 03:30, which is a different time.
+        $this->assertSame(
+            [],
+            UtcTimestamp::localInstants('2026-03-29 02:30:00', new \DateTimeZone('Europe/Zurich'))
+        );
+    }
+
+    public function testTheWallClocksAroundTheSkippedHourStillExist(): void
+    {
+        $zone = new \DateTimeZone('Europe/Zurich');
+
+        $before = UtcTimestamp::localInstants('2026-03-29 01:59:00', $zone);
+        $after  = UtcTimestamp::localInstants('2026-03-29 03:00:00', $zone);
+
+        $this->assertCount(1, $before);
+        $this->assertSame('2026-03-29 00:59:00', $before[0]->format('Y-m-d H:i:s'));
+
+        $this->assertCount(1, $after);
+        $this->assertSame('2026-03-29 01:00:00', $after[0]->format('Y-m-d H:i:s'));
+    }
+
+    public function testAWallClockInTheRepeatedHourStandsForTwoInstants(): void
+    {
+        $instants = UtcTimestamp::localInstants('2026-10-25 02:30:00', new \DateTimeZone('Europe/Zurich'));
+
+        $this->assertCount(2, $instants);
+        // First under summer time, then an hour later under winter time, and in
+        // that order, because a caller that names both has to name them the way
+        // they happen.
+        $this->assertSame('2026-10-25 00:30:00', $instants[0]->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-25 01:30:00', $instants[1]->format('Y-m-d H:i:s'));
+    }
+
+    public function testTheHourAfterTheRepeatedHourIsNotAmbiguous(): void
+    {
+        $instants = UtcTimestamp::localInstants('2026-10-25 03:00:00', new \DateTimeZone('Europe/Zurich'));
+
+        $this->assertCount(1, $instants);
+        $this->assertSame('2026-10-25 02:00:00', $instants[0]->format('Y-m-d H:i:s'));
+    }
+
+    public function testAZoneWithoutATransitionAnswersWithOneInstant(): void
+    {
+        $instants = UtcTimestamp::localInstants('2026-03-29 02:30:00', new \DateTimeZone('UTC'));
+
+        $this->assertCount(1, $instants);
+        $this->assertSame('2026-03-29 02:30:00', $instants[0]->format('Y-m-d H:i:s'));
+    }
+
+    public function testAnImpossibleCalendarDateHasNoInstantInAnyZone(): void
+    {
+        $this->assertSame(
+            [],
+            UtcTimestamp::localInstants('2026-02-31 10:00:00', new \DateTimeZone('Europe/Zurich'))
+        );
+        $this->assertSame([], UtcTimestamp::localInstants('tomorrow', new \DateTimeZone('UTC')));
+    }
+
+    public function testTheReturnedInstantsAreInUtc(): void
+    {
+        $instants = UtcTimestamp::localInstants('2026-06-02 14:00:00', new \DateTimeZone('Europe/Zurich'));
+
+        $this->assertSame('UTC', $instants[0]->getTimezone()->getName());
     }
 
     public function testToSqlConvertsToUtc(): void

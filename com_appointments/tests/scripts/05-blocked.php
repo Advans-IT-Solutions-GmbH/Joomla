@@ -190,6 +190,68 @@ class BlockedAdminTest
                     && $stored['start_utc'] === '2026-06-02 12:00:00'
                     && stripos($html, 'is not a date and a time that exist') !== false;
             });
+
+            // --- The two daylight-saving refusals -------------------------------
+            // The account is on Europe/Zurich, where the clocks move forward on
+            // 29 March 2026 and back on 25 October 2026. A wall clock of 02:30
+            // is skipped on the first night and repeated on the second, and
+            // Joomla's own conversion would silently answer 03:30 for the one
+            // and pick one of the two instants for the other.
+            $html = $this->post('blocked.save', $editToken, [
+                'jform[id]'        => (string) $secondId,
+                'jform[user_id]'   => (string) $this->adminId,
+                'jform[title]'     => self::TITLE,
+                'jform[start_utc]' => '2026-03-29 02:30:00',
+                'jform[end_utc]'   => '2026-06-02 16:00:00',
+            ]);
+
+            $this->test('A local time that the clock change skips is refused', function () use ($html) {
+                $stored = $this->fixture();
+
+                return $stored !== null
+                    && $stored['start_utc'] === '2026-06-02 12:00:00'
+                    && stripos($html, 'does not exist in Europe/Zurich') !== false;
+            });
+
+            $html = $this->post('blocked.save', $editToken, [
+                'jform[id]'        => (string) $secondId,
+                'jform[user_id]'   => (string) $this->adminId,
+                'jform[title]'     => self::TITLE,
+                'jform[start_utc]' => '2026-10-25 02:30:00',
+                'jform[end_utc]'   => '2026-10-25 06:00:00',
+            ]);
+
+            $this->test('A local time that the clock change repeats is refused', function () use ($html) {
+                $stored = $this->fixture();
+
+                return $stored !== null
+                    && $stored['start_utc'] === '2026-06-02 12:00:00'
+                    && stripos($html, 'occurs twice in Europe/Zurich') !== false;
+            });
+
+            // --- The refusal does not run before the token check ----------------
+            // The checks above return before the base controller is reached, so
+            // without a token check of its own the controller would read a
+            // forged submission and write it into the operator's session state.
+            $html = $this->request('/administrator/index.php?option=com_appointments', [
+                'task'             => 'blocked.save',
+                'jform[id]'        => (string) $secondId,
+                'jform[user_id]'   => (string) $this->adminId,
+                'jform[title]'     => self::TITLE,
+                'jform[start_utc]' => '2026-02-31 10:00:00',
+                'jform[end_utc]'   => '2026-06-02 16:00:00',
+            ]);
+
+            $this->test('A submission without a token is refused before it is read', function () use ($html) {
+                $stored = $this->fixture();
+
+                return $stored !== null
+                    && $stored['start_utc'] === '2026-06-02 12:00:00'
+                    && stripos($html, 'invalid security token') !== false
+                    // Not the validation message: nothing was read out of the
+                    // forged request at all.
+                    && stripos($html, 'is not a date and a time that exist') === false;
+            });
         } finally {
             $this->restoreAdminZone();
             $this->cleanUp();

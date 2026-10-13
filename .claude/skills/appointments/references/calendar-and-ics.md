@@ -74,6 +74,25 @@ The two cases that must have tests, with `Europe/Zurich`:
   resolved once, using the first occurrence, so no duplicate slot is offered and no booking can be
   made at an ambiguous time.
 
+Those two rules are for a **recurring availability rule**, which has to resolve to something: a
+weekly 02:00 to 10:00 rule cannot simply disappear twice a year, so the resolver states a
+convention and holds to it.
+
+A **wall clock an operator typed once** is the opposite case, and is handled the opposite way. A
+blocked period, and later any single timestamp entered by hand, is refused when it does not stand
+for exactly one instant in the reader's zone, with a message that says which of the two nights it
+is. There is no convention worth guessing there: the operator is present and can be asked, and a
+guess would record an absence an hour away from the one they meant.
+
+The question is asked by `UtcTimestamp::localInstants()`, which returns every instant a wall clock
+stands for in a zone: none for the skipped hour, one ordinarily, two for the repeated hour.
+`new DateTime($value, $zone)` must not be used for this, and neither must a strict reading of the
+value as UTC: the first silently shifts the skipped hour and picks one of the repeated ones, and the
+second cannot see a zone at all, so it accepts both. The check belongs in the **controller**,
+before Joomla's `user_utc` filter runs, because the filter is the thing that converts and after it
+the operator's own input no longer exists. The controller checks the request token first, so a
+refusal cannot become a way to write a forged submission into the operator's session state.
+
 ## iCalendar output
 
 RFC 5545. Two shapes are produced, and they are not the same.
