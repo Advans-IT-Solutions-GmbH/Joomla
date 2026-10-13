@@ -729,6 +729,9 @@ class AjaxEndpointTest
             if (count($branchUrls) !== 1) {
                 $problems[] = "return #$returns of config.baseUrl carries " . count($branchUrls)
                     . ' endpoint URLs instead of one';
+            } elseif (!$this->returnsEndpointLast($tokens, $i)) {
+                $problems[] = "return #$returns of config.baseUrl does not end in the endpoint URL"
+                    . ' (only "\'URL\'" or "root + \'URL\'" is accepted)';
             }
 
             array_push($urls, ...$branchUrls);
@@ -749,6 +752,71 @@ class AjaxEndpointTest
         }
 
         return $problems;
+    }
+
+    /**
+     * Whether the return statement at $returnAt always returns the endpoint
+     * URL literal, so the literal cannot be dead code. Accepted shapes only:
+     *
+     * - 'URL'
+     * - ROOT + 'URL', where ROOT is built from identifiers, ".", calls and
+     *   parentheses, with "||" and the empty string '' allowed only inside
+     *   parentheses (as in (paths.root || '') + 'URL').
+     *
+     * Anything else (a ternary, a top-level "||" or "&&", a comma, a second
+     * operand after the URL) is rejected, because the URL could then be
+     * skipped at run time.
+     *
+     * @param  array<int, mixed>  $tokens
+     */
+    private function returnsEndpointLast(array $tokens, int $returnAt): bool
+    {
+        $expression = [];
+
+        for ($j = $returnAt + 1, $n = count($tokens); $j < $n && $tokens[$j] !== ';'; $j++) {
+            if (!is_array($tokens[$j]) || !in_array($tokens[$j][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                $expression[] = $tokens[$j];
+            }
+        }
+
+        $last = array_pop($expression);
+
+        if (!is_array($last) || $last[0] !== T_CONSTANT_ENCAPSED_STRING || strpos($last[1], 'option=com_ajax') === false) {
+            return false;
+        }
+
+        if ($expression === []) {
+            return true;
+        }
+
+        if (array_pop($expression) !== '+' || $expression === []) {
+            return false;
+        }
+
+        $depth = 0;
+
+        foreach ($expression as $token) {
+            if ($token === '(') {
+                $depth++;
+            } elseif ($token === ')') {
+                $depth--;
+
+                if ($depth < 0) {
+                    return false;
+                }
+            } elseif ($token === '.' || (is_array($token) && $token[0] === T_STRING)) {
+                continue;
+            } elseif ($depth > 0 && is_array($token)
+                && ($token[0] === T_BOOLEAN_OR
+                    || ($token[0] === T_CONSTANT_ENCAPSED_STRING && strlen($token[1]) === 2))
+            ) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+
+        return $depth === 0;
     }
 
     /**
@@ -890,8 +958,19 @@ class AjaxEndpointTest
             [$content, $at] = $literal[2];
             $branch         = $k + 1;
 
+            [$quoted, $quotedAt] = $literal[0];
+
             $mustFail["return branch $branch broken"]  = $replace(substr_replace($real, '/broken', $at, strlen($content)));
             $mustFail["return branch $branch escaped"] = $replace(substr_replace($real, str_replace('&', '&amp;', $content), $at, strlen($content)));
+
+            // The literal is still there but dead: the branch returns something else.
+            foreach ([
+                'dead ternary'     => "false ? $quoted : '/broken'",
+                'dead fallback'    => "'/broken' || $quoted",
+                'trailing operand' => "$quoted + '/broken'",
+            ] as $kind => $expression) {
+                $mustFail["return branch $branch $kind"] = $replace(substr_replace($real, $expression, $quotedAt, strlen($quoted)));
+            }
         }
 
         $mustPass = [
