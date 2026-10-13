@@ -53,10 +53,42 @@ CREATE TABLE IF NOT EXISTS `#__appointments_schedule_rules` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
+-- One row per host, keyed by the Joomla user id. It does two jobs that both
+-- need a row that is unique per host, which neither a schedule nor an event
+-- type is:
+--
+-- 1. It is the lock target of the booking transaction. A booking selects its
+--    host's row FOR UPDATE before it validates and inserts, so two submissions
+--    for one host are serialised and the second sees the first one's booking.
+--    A schedule row cannot serve for this: a host may own several schedules,
+--    and an event type's host is not required to be the owner of its schedule,
+--    so two submissions could lock two different rows and both pass.
+-- 2. It holds the token of the host's combined feed. The contract wants every
+--    feed token independently rotatable, so the host feed cannot borrow or
+--    derive the token of one of the host's event types.
+--
+-- The row is created on demand, the first time a host is given an event type or
+-- receives a booking.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
+    `user_id` INT UNSIGNED NOT NULL,
+    `feed_token` CHAR(64) NOT NULL,
+    `created_utc` DATETIME NOT NULL,
+    `modified_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`user_id`),
+    UNIQUE KEY `idx_host_feed_token` (`feed_token`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
 -- The bookable thing. `horizon_days` = 0 means the fixed range in
 -- `horizon_start_utc`/`horizon_end_utc` is used instead of a rolling horizon.
 -- `max_per_day` and `max_per_week` = 0 mean unlimited. `retention_days` NULL
 -- means the component default applies.
+--
+-- `feed_token` has no default on purpose. It is a bearer credential of 32
+-- random bytes, and a default of '' would hand an empty one to the first row
+-- inserted by a code path that forgot to generate it; the unique index would
+-- only catch the second such row. Without a default, that insert fails instead.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -87,7 +119,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `language` CHAR(7) NOT NULL DEFAULT '*',
     `published` TINYINT(1) NOT NULL DEFAULT 1,
     `ordering` INT NOT NULL DEFAULT 0,
-    `feed_token` CHAR(64) NOT NULL DEFAULT '',
+    `feed_token` CHAR(64) NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     `checked_out` INT UNSIGNED DEFAULT NULL,

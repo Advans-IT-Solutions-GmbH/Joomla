@@ -62,8 +62,9 @@ list, with and without JavaScript.
 
 **Done when:** two concurrency tests pass. The first fires two simultaneous submissions for the
 identical slot, the second fires two simultaneous submissions for two different but overlapping
-slots of the same host, across two event types. In both cases exactly one succeeds and the other
-receives the friendly message and a reloaded slot list.
+slots of the same host, across two event types that use **different schedules**, which is the case
+that proves the lock is taken on the host row and not on a schedule. In both cases exactly one
+succeeds and the other receives the friendly message and a reloaded slot list.
 
 ## Stage 6 — iCalendar and e-mail
 
@@ -93,13 +94,15 @@ receives the friendly message and a reloaded slot list.
 
 ## Stage 8 — feeds and the scheduler task
 
-- Per-event-type and per-host feeds, token verification, rotation, ETag, `304`, TTL headers,
-  `noindex`, rate limiting.
+- Per-event-type and per-host feeds, each with its own token
+  (`#__appointments_eventtypes.feed_token` and `#__appointments_hosts.feed_token`), token
+  verification, independent rotation, ETag, `304`, TTL headers, `noindex`, rate limiting.
 - Joomla Scheduler task plugin for reminders and for retention, registered at install.
 - Single-booking `.ics` export in the administrator.
 
 **Done when:** a desktop mail client subscribes to the feed and shows the bookings, a rotated token
-invalidates the old URL immediately, and the retention task is proved idempotent.
+invalidates the old URL immediately, rotating an event type's token leaves the host feed reachable
+and the other way round, and the retention task is proved idempotent.
 
 ## Stage 9 — conferencing
 

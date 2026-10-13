@@ -139,8 +139,11 @@ host serves more than one event type: two different `start_utc` values, or two d
 types, can still describe meetings that overlap or that break the daily or weekly cap.
 
 - Every booking insert runs inside a transaction that first takes a row-level lock on the host, by
-  selecting the host's schedule row `FOR UPDATE`. Two submissions for the same host are therefore
-  serialised, and the second one sees the first one's booking.
+  selecting the host's row in `#__appointments_hosts` `FOR UPDATE`. Two submissions for the same
+  host are therefore serialised, and the second one sees the first one's booking. The lock target is
+  that row and nothing else: a schedule row will not do, because a host may own several schedules
+  and an event type's host is not required to be the owner of its schedule, so two submissions could
+  lock two different rows and both pass. The row is created on demand before the lock is taken.
 - Inside that transaction `BookingGuard` re-validates the slot against the engine: still in the
   future, still within the horizon and the minimum notice, no overlap with another booking of any
   event type of this host once buffers are applied, and still within the daily and weekly caps.
@@ -148,7 +151,8 @@ types, can still describe meetings that overlap or that break the daily or weekl
 
 The lock is per host, not global, so two hosts never wait for each other. Stage 5 implements it and
 its concurrency test fires two simultaneous submissions for one slot and, separately, two
-simultaneous submissions for two overlapping slots of one host.
+simultaneous submissions for two overlapping slots of one host, across two event types that use
+**different schedules** — the case that proves the lock is on the host and not on a schedule.
 
 ## Security
 

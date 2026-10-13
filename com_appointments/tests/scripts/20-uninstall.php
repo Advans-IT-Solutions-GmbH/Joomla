@@ -16,6 +16,7 @@ class UninstallTest
     private const TABLES = [
         'appointments_schedules',
         'appointments_schedule_rules',
+        'appointments_hosts',
         'appointments_eventtypes',
         'appointments_blocked',
         'appointments_bookings',

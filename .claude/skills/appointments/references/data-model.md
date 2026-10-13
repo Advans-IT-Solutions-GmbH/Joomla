@@ -8,6 +8,30 @@ The schema below is the target. Write it as `sql/install.mysql.utf8.sql`, with a
 `sql/updates/mysql/<version>.sql` for every later change. Never alter a shipped install file to
 change an existing installation.
 
+## `#__appointments_hosts`
+
+One row per host, keyed by the Joomla user id, created on demand the first time a host is given an
+event type or receives a booking. It exists because two things need a row that is unique per host,
+and neither a schedule nor an event type is one: a host may own several schedules, and an event
+type's `host_user_id` is not required to be the owner of its schedule.
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `INT UNSIGNED NOT NULL` | primary key, the Joomla user id |
+| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default** |
+| `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
+
+Unique `feed_token`.
+
+Its two jobs:
+
+1. **The lock target of the booking transaction.** A booking selects its host's row `FOR UPDATE`
+   before it validates and inserts, so two submissions for one host are serialised. See
+   `references/architecture.md`, section "Concurrency".
+2. **The token of the host's combined feed.** `references/calendar-and-ics.md` requires a feed per
+   event type and one per host, each independently rotatable, so the host feed cannot borrow or
+   derive the token of one of the host's event types.
+
 ## `#__appointments_eventtypes`
 
 The bookable thing.
@@ -40,7 +64,7 @@ The bookable thing.
 | `language` | `CHAR(7) NOT NULL DEFAULT '*'` | |
 | `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
 | `ordering` | `INT NOT NULL DEFAULT 0` | |
-| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes |
+| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default**: a default of `''` would give the first row inserted by a forgetful code path an empty bearer credential, and the unique index would only catch the second one |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
 | `checked_out`, `checked_out_time` | Joomla standard | |
 

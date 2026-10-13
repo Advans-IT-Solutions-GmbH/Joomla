@@ -95,7 +95,10 @@ One `VCALENDAR` with `METHOD:PUBLISH` and one `VEVENT` per active booking, serve
 - Respond to `If-None-Match` with `304` when nothing changed. The ETag is a hash over the booking
   ids and their `modified_utc`.
 
-Two feeds exist: one per event type, and one per host covering all their event types.
+Two feeds exist: one per event type, and one per host covering all their event types. They have
+separate tokens, in `#__appointments_eventtypes.feed_token` and `#__appointments_hosts.feed_token`,
+because every token has to be rotatable on its own: a host feed that borrowed or derived the token
+of one of its event types would either be revoked by that event type's rotation or survive it.
 
 ### Feed security
 

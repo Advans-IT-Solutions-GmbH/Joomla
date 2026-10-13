@@ -14,5 +14,6 @@ DROP TABLE IF EXISTS `#__appointments_fields`;
 DROP TABLE IF EXISTS `#__appointments_bookings`;
 DROP TABLE IF EXISTS `#__appointments_blocked`;
 DROP TABLE IF EXISTS `#__appointments_eventtypes`;
+DROP TABLE IF EXISTS `#__appointments_hosts`;
 DROP TABLE IF EXISTS `#__appointments_schedule_rules`;
 DROP TABLE IF EXISTS `#__appointments_schedules`;
