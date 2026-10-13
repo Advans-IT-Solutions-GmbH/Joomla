@@ -14,6 +14,7 @@ defined('_JEXEC') or die;
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
+use Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts;
 use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -258,6 +259,17 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 } catch (\Throwable $e) {
                     $otherErrors++;
                     $this->logTask('Error removing consent evidence: ' . $e->getMessage(), 'error');
+                }
+            }
+
+            // Failed attempts of the confirmation page: hashes of ended windows are removed (the
+            // page also removes them whenever it counts a failure).
+            if ($this->loadPrivacyClass(ConfirmAttempts::class, '/Security/ConfirmAttempts.php')) {
+                try {
+                    $purged = (new ConfirmAttempts($db, ''))->purgeExpired();
+                    $this->logTask("Expired confirmation attempt records removed: {$purged}");
+                } catch (\Throwable $e) {
+                    $this->logTask('Confirmation attempt records not removed: ' . $e->getMessage(), 'warning');
                 }
             }
 

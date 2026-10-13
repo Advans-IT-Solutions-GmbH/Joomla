@@ -54,6 +54,18 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
             return [];
         }
 
+        /** Server-side attempt counter with a fixed test secret (no application in CLI). */
+        protected function confirmAttempts(): ?\Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts
+        {
+            $file = JPATH_BASE . '/plugins/privacy/j2commerce/src/Security/ConfirmAttempts.php';
+
+            if (!class_exists(\Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts::class) && is_file($file)) {
+                require_once $file;
+            }
+
+            return new \Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts($this->getDatabase(), 'guest-request-test-secret');
+        }
+
         protected function afterRequestConfirmed(object $request): void
         {
             $this->confirmed[] = (int) $request->id;
@@ -1268,6 +1280,13 @@ class DataIsolationTest
             return;
         }
 
+        // Counters of earlier suites or runs must not decide here (the table check is in testConfirmAttemptLimits()).
+        try {
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->execute();
+        } catch (\Throwable $e) {
+            // Reported by testConfirmAttemptLimits().
+        }
+
         $class = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class;
         parse_str((string) parse_url($class::CONFIRM_ROUTE, PHP_URL_QUERY), $route);
 
@@ -1328,7 +1347,36 @@ class DataIsolationTest
             }
 
             $answer = $this->guestHttp($jar2, 'POST', $route, ['email' => $email, 'confirm_token' => md5('wrong-last'), $form2 => '1']);
-            $this->test('Attempt limit: after the maximum of failed attempts the page refuses', str_contains($answer, 'alert-danger') && !str_contains($answer, 'name="email"'), $this->lastHttp);
+            $this->test('Attempt limit: after the maximum of failed attempts the page answers with the same failure form', str_contains($answer, 'alert-danger') && str_contains($answer, 'name="email"'), $this->lastHttp);
+
+            // Per address across sessions over HTTP: every failed attempt in a new session, then the
+            // right code in yet another session is refused with the same failure form.
+            $limitEmail = 'http.limit.' . random_int(1000, 9999) . '@example.com';
+            $limitToken = md5('http-limit-' . random_int(1, PHP_INT_MAX));
+            $limitRow   = (object) [
+                'email' => $limitEmail, 'requested_at' => gmdate('Y-m-d H:i:s'), 'status' => 0, 'request_type' => 'export',
+                'confirm_token' => \Joomla\CMS\User\UserHelper::hashPassword($limitToken), 'confirm_token_created_at' => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__privacy_requests', $limitRow, 'id');
+            $limitStatus = fn (): int => (int) $this->db->setQuery('SELECT status FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . (int) $limitRow->id)->loadResult();
+
+            try {
+                $limitClass = \Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts::class;
+
+                for ($i = 0; $i < $limitClass::MAX_EMAIL_FAILURES; $i++) {
+                    $jars[]  = $sessionJar = tempnam(sys_get_temp_dir(), 'guest-confirm-');
+                    $sessionForm = $this->guestFormToken($this->guestHttp($sessionJar, 'GET', $route));
+                    $this->guestHttp($sessionJar, 'POST', $route, ['email' => $limitEmail, 'confirm_token' => md5('http-wrong' . $i), $sessionForm => '1']);
+                }
+
+                $jars[]      = $sessionJar = tempnam(sys_get_temp_dir(), 'guest-confirm-');
+                $sessionForm = $this->guestFormToken($this->guestHttp($sessionJar, 'GET', $route));
+                $answer      = $this->guestHttp($sessionJar, 'POST', $route, ['email' => $limitEmail, 'confirm_token' => $limitToken, $sessionForm => '1']);
+                $this->test('HTTP, fresh sessions: after the maximum of failures for an address its right code is refused with the same failure form',
+                    str_contains($answer, 'alert-danger') && str_contains($answer, 'name="email"') && $limitStatus() === 0, $this->lastHttp);
+            } finally {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . (int) $limitRow->id)->execute();
+            }
 
             // JSON address task as a guest: the plugin answer reaches the response through the event.
             $json = json_decode($this->guestHttp($jar, 'GET', ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy', 'format' => 'json', 'task' => 'deleteAddress', 'address_id' => 1]), true);
@@ -1618,6 +1666,102 @@ class DataIsolationTest
         }
     }
 
+    /**
+     * Attempt limits of the confirmation page stored server-side: per e-mail address across fresh
+     * sessions, per client IP address, the window ends, and a used-up limit of one address does
+     * not block the right code of another. Only hashes are stored.
+     */
+    private function testConfirmAttemptLimits(): void
+    {
+        echo "\n--- Confirmation attempt limits across sessions (per address, per IP) ---\n";
+
+        $class = \Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts::class;
+        $table = $this->db->getPrefix() . 'privacy_j2commerce_attempts';
+        $this->test('Attempt table exists after installation', in_array($table, $this->db->getTableList(), true));
+
+        if (!class_exists('GuestRequestTestPlugin') || !in_array($table, $this->db->getTableList(), true)) {
+            return;
+        }
+
+        $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]);
+        $plugin->setDatabase($this->db);
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->execute();
+
+        $suffix   = (string) random_int(10000, 99999);
+        $ids      = [];
+        $insert   = function (string $email, string $token) use (&$ids): int {
+            $row = (object) [
+                'email' => $email, 'requested_at' => gmdate('Y-m-d H:i:s'), 'status' => 0, 'request_type' => 'export',
+                'confirm_token' => \Joomla\CMS\User\UserHelper::hashPassword($token), 'confirm_token_created_at' => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__privacy_requests', $row, 'id');
+            $ids[] = (int) $row->id;
+
+            return (int) $row->id;
+        };
+        $status = fn (int $id): int => (int) $this->db->setQuery('SELECT status FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . $id)->loadResult();
+        $fresh  = fn (): GuestTestSession => new GuestTestSession();
+        $t0     = time();
+
+        try {
+            $x = 'limit-x-' . $suffix . '@example.com';
+            $y = 'limit-y-' . $suffix . '@example.com';
+            $z = 'limit-z-' . $suffix . '@example.com';
+            $tx = md5('limit-x' . $suffix);
+            $ty = md5('limit-y' . $suffix);
+            $tz = md5('limit-z' . $suffix);
+            $idX = $insert($x, $tx);
+            $idY = $insert($y, $ty);
+            $idZ = $insert($z, $tz);
+
+            // Per address: every attempt in a fresh session (the session limit never applies).
+            for ($i = 1; $i <= $class::MAX_EMAIL_FAILURES; $i++) {
+                $plugin->attemptConfirmation($x, md5('wrong' . $i), $fresh(), 'client-a', $t0 + $i);
+            }
+
+            $this->test('Per address: after the maximum of failures in fresh sessions the right code is refused (other IP too)',
+                $plugin->attemptConfirmation($x, $tx, $fresh(), 'client-b', $t0 + 10) === 'failed' && $status($idX) === 0);
+
+            // The limit of one address does not block another address from the same client.
+            $this->test('Another address with its right code from the same client is confirmed',
+                $plugin->attemptConfirmation($y, $ty, $fresh(), 'client-a', $t0 + 11) === 'confirmed' && $status($idY) === 1);
+
+            // Per IP: failures for many addresses from one client.
+            for ($i = 1; $i <= $class::MAX_IP_FAILURES; $i++) {
+                $plugin->attemptConfirmation('flood-' . $i . '-' . $suffix . '@example.com', md5('flood' . $i), $fresh(), 'client-c', $t0 + 20);
+            }
+
+            $this->test('Per IP: after the maximum of failures from one client its right code for a third address is refused',
+                $plugin->attemptConfirmation($z, $tz, $fresh(), 'client-c', $t0 + 21) === 'failed' && $status($idZ) === 0);
+            $this->test('Per IP: the same address and code from another client is confirmed',
+                $plugin->attemptConfirmation($z, $tz, $fresh(), 'client-d', $t0 + 22) === 'confirmed' && $status($idZ) === 1);
+
+            // The window ends: the blocked address gets through with its right code again.
+            $this->test('After the window the right code of the blocked address is confirmed',
+                $plugin->attemptConfirmation($x, $tx, $fresh(), 'client-b', $t0 + $class::WINDOW + 30) === 'confirmed' && $status($idX) === 1);
+
+            // Only hashes are stored.
+            $rows = $this->db->setQuery('SELECT scope, subject_hash FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadObjectList();
+            $raw  = array_filter($rows, static fn ($row): bool => !preg_match('/^[0-9a-f]{64}$/', (string) $row->subject_hash));
+            $this->test('Attempt records hold only 64-character hashes, no address or client value',
+                $rows !== [] && $raw === [] && !in_array('client-a', array_column($rows, 'subject_hash'), true), json_encode($rows));
+
+            $limiter = new $class($this->db, 'guest-request-test-secret');
+            $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
+            $limiter->purgeExpired($t0 + 3 * $class::WINDOW);
+            $left = (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadResult();
+            $this->test('Records of ended windows are purged', $left === 0, (string) $left);
+        } catch (\Throwable $e) {
+            $this->test('Attempt limit tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            if ($ids !== []) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id IN (' . implode(',', $ids) . ')')->execute();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->execute();
+        }
+    }
+
     // -------------------------------------------------------------------------
 
     public function run(): bool
@@ -1633,6 +1777,7 @@ class DataIsolationTest
         $this->testRequestConfirmation();
         $this->testAdminRequestMailLink();
         $this->testConfirmationPageHttp();
+        $this->testConfirmAttemptLimits();
 
         echo "\n=== Data Isolation Test Summary ===\n";
         echo "Passed: {$this->passed}\n";
