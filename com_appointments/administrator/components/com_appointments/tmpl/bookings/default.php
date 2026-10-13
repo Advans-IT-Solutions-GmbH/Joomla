@@ -9,9 +9,11 @@
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Factory;
 
 defined('_JEXEC') or die;
 $states = [0 => 'COM_APPOINTMENTS_BOOKINGS_PENDING', 1 => 'COM_APPOINTMENTS_BOOKINGS_CONFIRMED', 2 => 'COM_APPOINTMENTS_BOOKINGS_CANCELLED'];
+$user = Factory::getApplication()->getIdentity();
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=bookings'); ?>" method="post" name="adminForm" id="adminForm">
     <?php if (!$this->items) : ?>
@@ -26,6 +28,7 @@ $states = [0 => 'COM_APPOINTMENTS_BOOKINGS_PENDING', 1 => 'COM_APPOINTMENTS_BOOK
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BOOKINGS_START'); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BOOKINGS_CONTACT'); ?></th>
                 <th scope="col"><?php echo Text::_('JSTATUS'); ?></th>
+                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_EXPORT'); ?></th>
             </tr></thead>
             <tbody>
             <?php foreach ($this->items as $i => $item) : ?>
@@ -35,6 +38,11 @@ $states = [0 => 'COM_APPOINTMENTS_BOOKINGS_PENDING', 1 => 'COM_APPOINTMENTS_BOOK
                     <td><?php echo $this->escape($item->start_utc); ?></td>
                     <td><?php echo $this->escape((string) $item->invitee_name); ?><br><?php echo $this->escape((string) $item->invitee_email); ?></td>
                     <td><?php echo Text::_($states[(int) $item->state]); ?></td>
+                    <td>
+                        <?php if ($user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $item->eventtype_id)) : ?>
+                            <a href="<?php echo Route::_('index.php?option=com_appointments&task=feeds.export&id=' . (int) $item->id); ?>"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_EXPORT'); ?></a>
+                        <?php endif; ?>
+                    </td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

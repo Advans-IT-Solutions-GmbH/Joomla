@@ -9,11 +9,13 @@
 
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Factory;
 
 defined('_JEXEC') or die;
 
 $counts  = $this->counts;
 $isEmpty = $counts['eventtypes'] === 0 && $counts['bookings'] === 0;
+$user = Factory::getApplication()->getIdentity();
 ?>
 <div class="com-appointments-dashboard">
     <nav class="mb-3">
@@ -23,6 +25,9 @@ $isEmpty = $counts['eventtypes'] === 0 && $counts['bookings'] === 0;
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=schedules'); ?>"><?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_TITLE'); ?></a>
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>"><?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_TITLE'); ?></a>
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_TITLE'); ?></a>
+        <?php if ($user->authorise('core.manage', 'com_appointments') && $user->authorise('core.options', 'com_appointments')) : ?>
+            <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=feeds'); ?>"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_TITLE'); ?></a>
+        <?php endif; ?>
     </nav>
     <div class="row">
         <div class="col-md-6 mb-3">

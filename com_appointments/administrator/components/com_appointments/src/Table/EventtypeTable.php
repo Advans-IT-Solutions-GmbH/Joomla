@@ -122,6 +122,18 @@ class EventtypeTable extends Table
 
         $this->modified_utc = $now;
 
-        return parent::store(true);
+        if (!$this->id) {
+            return parent::store(true);
+        }
+
+        // Exclude the credential from metadata UPDATEs, rather than reloading a
+        // value that a concurrent rotation can replace before the UPDATE runs.
+        $credential = $this->feed_token;
+        unset($this->feed_token);
+        try {
+            return parent::store(true);
+        } finally {
+            $this->feed_token = $credential;
+        }
     }
 }

@@ -211,11 +211,13 @@ final class BookingStore
         }
     }
 
-    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = ''): array
+    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null): array
     {
         if (!in_array($path, ['self_service', 'privacy_request', 'retention', 'admin'], true)
             || ($path === 'admin' ? $actor === null || $actor < 1 : $actor !== null)
-            || ($path === 'self_service' && $links === null)) {
+            || ($path === 'self_service' && $links === null)
+            || ($path === 'retention' && ($retentionDays === null || $retentionDays < 0 || $retentionDays > 65535))
+            || ($path !== 'retention' && $retentionDays !== null)) {
             throw new \InvalidArgumentException('Invalid erasure provenance.');
         }
         $db = $this->db;
@@ -235,6 +237,25 @@ final class BookingStore
                 $db->transactionCommit();
 
                 return ['changed' => false, 'notification' => null];
+            }
+            if ($path === 'retention') {
+                $event = $this->lockedEvent((int) $booking['eventtype_id']);
+                if (!$event) {
+                    throw new \RuntimeException('The retention booking event type is missing.');
+                }
+                $days = $event['retention_days'] === null ? $retentionDays : (int) $event['retention_days'];
+                $cutoff = $now->setTimezone(new \DateTimeZone('UTC'))->modify('-' . $days . ' days');
+                $end = UtcTimestamp::parse($booking['end_utc']);
+                if ($end === null) {
+                    throw new \RuntimeException('The retention booking end time is invalid.');
+                }
+                // The candidate may have been rescheduled while this worker waited
+                // for the host lock. Never erase its newly future appointment.
+                if ($end->format('Y-m-d H:i:s') >= $cutoff->format('Y-m-d H:i:s')) {
+                    $db->transactionCommit();
+
+                    return ['changed' => false, 'notification' => null];
+                }
             }
             $anonymiser = new Anonymiser();
             $erased = $anonymiser->anonymise($booking, $now);

@@ -45,6 +45,10 @@ class UninstallTest
         $this->test('Extension ID found before uninstall', function () use ($extensionId) {
             return $extensionId > 0;
         });
+        foreach (['reminders', 'retention'] as $routine) {
+            $time = gmdate('Y-m-d H:i:s');
+            $this->db->query("INSERT INTO {$this->dbPrefix}scheduler_tasks (title,type,execution_rules,cron_rules,state,params,created,created_by) VALUES ('Appointments removal test','plg_task_appointments.{$routine}','{\"rule-type\":\"manual\"}','{\"type\":\"manual\",\"exp\":\"\"}',1,'{}','{$time}',0)");
+        }
 
         $output = [];
         $exitCode = 0;
@@ -66,6 +70,14 @@ class UninstallTest
 
         $this->test('Site files removed', function () {
             return !is_dir('/var/www/html/components/com_appointments');
+        });
+        $this->test('Bundled Scheduler plugin and configured routines removed', function () {
+            $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'");
+            $plugins = $result ? $result->fetch_assoc() : null;
+            $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention')");
+            $tasks = $result ? $result->fetch_assoc() : null;
+            return $plugins && $tasks && (int) $plugins['cnt'] === 0 && (int) $tasks['cnt'] === 0
+                && !is_dir('/var/www/html/plugins/task/appointments');
         });
 
         $this->test('Appointment tables dropped by the uninstall SQL', function () {

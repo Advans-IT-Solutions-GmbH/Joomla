@@ -15,6 +15,8 @@ use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Application\ConsoleApplication;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
@@ -149,12 +151,29 @@ final class NotificationService
 
     public function links(array $booking): array
     {
-        $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+        $app = Factory::getApplication();
+        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
+        if ($base === '') {
+            $base = (string) $app->get('live_site', '');
+        }
+        if ($base === '') {
+            if ($app instanceof ConsoleApplication) {
+                throw new NotificationException('Configure the public site URL before running reminders from the CLI.');
+            }
+            $base = Uri::root();
+        }
+        $parts = parse_url($base);
+        if (!filter_var($base, FILTER_VALIDATE_URL) || !is_array($parts)
+            || !in_array($parts['scheme'] ?? '', ['http', 'https'], true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            throw new NotificationException('The appointment public site URL is invalid.');
+        }
+        $signed = new SignedLink(new KeyProvider((string) $app->get('secret')));
         $result = [];
         $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
 
         foreach ($names as $action => $key) {
-            $result[$key] = rtrim(Uri::root(), '/') . '/index.php?' . http_build_query([
+            $result[$key] = rtrim($base, '/') . '/index.php?' . http_build_query([
                 'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
                 'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
             ]);

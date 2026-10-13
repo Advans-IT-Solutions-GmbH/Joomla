@@ -11,6 +11,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
+use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -89,6 +90,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         $this->ensureUpdateSite();
         $this->seedMailTemplates($parent);
+        $this->installBundledPlugins($parent);
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -121,6 +123,77 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    public function uninstall($parent)
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        foreach (['task'] as $group) {
+            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('appointments'));
+            $id = (int) $db->setQuery($query)->loadResult();
+            if ($id > 0) {
+                foreach (['#__schemas', '#__extensions'] as $table) {
+                    $db->setQuery($this->createDbQuery($db)->delete($db->quoteName($table))
+                        ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
+                }
+            }
+            $folder = JPATH_PLUGINS . '/' . $group . '/appointments';
+            if (is_dir($folder) && !Folder::delete($folder)) {
+                throw new \RuntimeException('The bundled appointments plugin could not be removed.');
+            }
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/plg_' . $group . '_appointments.' . $suffix;
+                    if (is_file($file) && !File::delete($file)) {
+                        throw new \RuntimeException('The bundled appointments plugin language could not be removed.');
+                    }
+                }
+            }
+        }
+        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
+            ->where($db->quoteName('type') . ' IN (' . $db->quote('plg_task_appointments.reminders')
+                . ',' . $db->quote('plg_task_appointments.retention') . ')'))->execute();
+
+        return true;
+    }
+
+    private function installBundledPlugins($parent): void
+    {
+        $source = $parent->getParent()->getPath('source');
+        $manifest = $parent->getManifest();
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        foreach ($manifest->plugins->plugin as $entry) {
+            $group = (string) $entry['group'];
+            $element = (string) $entry['element'];
+            $folder = (string) $entry['folder'];
+            if (!in_array($group, ['task', 'privacy'], true) || $element !== 'appointments'
+                || $folder !== 'plugins/' . $group . '/appointments'
+                || !is_file($source . '/' . $folder . '/appointments.xml')) {
+                throw new \RuntimeException('The bundled appointments plugin package is invalid.');
+            }
+            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                ->where($db->quoteName('element') . ' = ' . $db->quote($element));
+            $existed = (int) $db->setQuery($query)->loadResult() > 0;
+            $installer = new Installer();
+            $installer->setDatabase($db);
+            if (!$installer->install($source . '/' . $folder)) {
+                throw new \RuntimeException('The bundled appointments plugin could not be installed.');
+            }
+            if (!$existed) {
+                $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__extensions'))
+                    ->set($db->quoteName('enabled') . ' = 1')
+                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                    ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                    ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
+            }
+        }
     }
 
     /**

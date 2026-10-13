@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    @copyright (C) 2026 Advans IT Solutions GmbH
+    @license GNU General Public License version 3 or later; see LICENSE.txt
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<form>
+    <fields name="params">
+        <fieldset name="task_params">
+            <field name="batch_size" type="number" label="PLG_TASK_APPOINTMENTS_BATCH_SIZE" description="PLG_TASK_APPOINTMENTS_BATCH_SIZE_DESC" default="100" min="1" max="1000" required="true" filter="integer" />
+        </fieldset>
+    </fields>
+</form>

@@ -32,6 +32,13 @@ class InstallationTest
             $row = $result ? $result->fetch_assoc() : null;
             return $row && $row['enabled'] == 1;
         });
+        $this->test('Bundled Scheduler plugin and its license are installed', function () {
+            $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'");
+            $row = $result ? $result->fetch_assoc() : null;
+            return $row && (int) $row['enabled'] === 1
+                && is_file('/var/www/html/plugins/task/appointments/services/provider.php')
+                && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
+        });
 
         $this->test('Admin menu entry exists', function () {
             $result = $this->db->query("SELECT id FROM {$this->dbPrefix}menu WHERE link LIKE '%com_appointments%' AND client_id = 1");

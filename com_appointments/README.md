@@ -98,13 +98,83 @@ The component registers its own update site during installation, so later versio
   deleting the row entirely. A future appointment triggers only a host cancellation with no former
   invitee data. The administrator can erase selected bookings with event-specific permission.
 
-Still to come: calendar subscription feeds, reminders, automatic retention, conferencing
-integration and the Joomla privacy-request plugin.
+- **Scheduled reminders and retention.** The bundled task plugin offers separate reminder and
+  retention routines. Confirmed appointments receive calendar reminders at configurable offsets;
+  completed offsets are recorded without changing the booking's signed-link revision. Booking,
+  audit and keyed rate-limit retention are bounded and can be rerun safely.
+
+- **Calendar subscriptions and export.** Each host and event type has an independently rotatable
+  bearer credential. Subscription responses support conditional requests, private caching and
+  bounded history; booking-list ICS exports respect the event type's edit permission.
+
+Still to come: conferencing integration and the Joomla privacy-request plugin.
 
 ## Configuration
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Scheduler, reminders and retention
+
+The component installs and enables **Task - Appointments**. Updates preserve its enabled/disabled
+state; uninstalling the component removes the plugin and its Scheduler tasks. Create two tasks in
+**System → Scheduled Tasks**: **Appointments: reminders**, running every five minutes, and
+**Appointments: retention**, running daily. Configure Joomla's Scheduler execution mechanism or
+invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
+execution for timely reminders.
+
+In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
+Joomla subdirectory if applicable. CLI reminders require this setting unless Joomla's `live_site`
+is configured. It controls the signed links in reminder messages and avoids deriving a public link
+from a CLI script path. Use HTTPS in production.
+
+**Reminder offsets** is a comma-separated list of minutes before a confirmed appointment. The
+default `1440,60` sends reminders one day and one hour beforehand; each value must be 1–525600.
+An empty list disables reminders. Pending approval, cancelled, anonymised and already-started
+appointments are not reminded. A delayed Scheduler run sends unsent due offsets while the
+appointment is still in the future. Each successful offset receives a timestamp marker; rescheduling
+resets the markers. Delivery is serialized with lifecycle changes. Mail failures mark the task
+failed and leave that offset eligible for retry. SMTP cannot guarantee crash-proof exactly-once
+delivery: a transport failure after some recipients accepted a message can repeat those deliveries
+on retry.
+
+**Booking retention** defaults to 365 days after the appointment ended. A nullable per-event-type
+value inherits this default; zero removes completed data on the next run. The component's
+**Erasure mode** chooses anonymisation or outright deletion. Eligibility is rechecked under the
+host and booking locks, so a concurrently rescheduled appointment is not erased from a stale
+candidate list. Retention uses the same erasure transaction and audit contract as self-service.
+
+**Audit retention** defaults to three calendar years and is independent of booking retention.
+Expired keyed rate-limit windows become eligible for cleanup after one day. Each task's **Batch
+size** defaults to 100 (1–1000); the retention routine processes at most that many bookings, audit
+rows and rate-limit windows per invocation. Run additional batches or increase the frequency when
+an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
+task prevents both personal-data retention and metadata cleanup from being enforced.
+
+### Calendar subscriptions
+
+Open **Components → Appointments → Calendar feeds** with component management and options
+permission. Copy an event-type URL or a host URL into your calendar client's subscription settings.
+Each credential controls only that feed; rotating a host URL does not rotate its event-type URLs,
+and vice versa. Rotation requires explicit confirmation and revokes the old URL immediately.
+Replace the URL in the calendar client afterwards. Normal event-type edits cannot restore an old
+credential.
+
+**Treat the full URL as a password.** Anyone who obtains it can read the calendar's appointment
+details. Never put it in an invitee email, a public page, an error report or application logs.
+Configure web-server and reverse-proxy access logs to redact the `token` query parameter or omit
+query strings on the feed endpoint; the component cannot control infrastructure access logs.
+Use HTTPS and private calendar clients. Feed responses are `noindex` and private/no-store, enforce
+a keyed request limit and return the same generic 404 for missing calendars and wrong credentials.
+
+Subscriptions are **read-only**: deleting a calendar entry does not cancel its booking. A
+15-minute refresh is requested, but the client controls when it actually refreshes. ETags allow
+an unchanged response to return 304. Feeds bound future entries by the booking horizon, include
+90 days of history and retain cancellation tombstones for 30 days. Anonymised entries expose only
+their anonymous slot metadata, never former contact, custom-answer or conference data.
+
+For an individual booking, use **Export ICS** in the booking list. The download requires edit
+permission on that booking's event type; credentials for subscription feeds are not included.
 
 ### Booking information
 

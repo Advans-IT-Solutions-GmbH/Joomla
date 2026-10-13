@@ -16,6 +16,9 @@
 
     <namespace path="src">Advans\Component\Appointments</namespace>
     <scriptfile>script.php</scriptfile>
+    <plugins>
+        <plugin group="task" element="appointments" folder="plugins/task/appointments" />
+    </plugins>
 
     <install>
         <sql>
@@ -90,6 +93,10 @@
                     <option value="anonymise">COM_APPOINTMENTS_CONFIG_ERASE_ANONYMISE</option>
                     <option value="delete">COM_APPOINTMENTS_CONFIG_ERASE_DELETE</option>
                 </field>
+                <field name="reminder_offsets" type="text" label="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS" description="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS_DESC" default="1440,60" filter="string" />
+                <field name="public_site_url" type="url" label="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL" description="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL_DESC" filter="url" />
+                <field name="retention_days" type="number" label="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS" description="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS_DESC" default="365" min="0" max="65535" required="true" filter="integer" />
+                <field name="audit_retention_years" type="number" label="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION" description="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC" default="3" min="1" max="100" required="true" filter="integer" />
             </fieldset>
 
             <fieldset
