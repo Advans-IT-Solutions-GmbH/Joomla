@@ -106,7 +106,8 @@ echo $_layout->render([
     'showRequest'    => $_userId > 0 || $_isGuest,
     'showExport'     => (bool) $_params->get('show_export_data', 1),
     'showDelete'     => (bool) $_params->get('show_delete_all', 1),
-    'requestUrl'     => $_userId > 0 ? Route::_('index.php?option=com_privacy&view=request') : '',
+    // Raw URL: the layout escapes it once.
+    'requestUrl'     => $_userId > 0 ? Route::_('index.php?option=com_privacy&view=request', false) : '',
     'contactEmail'   => filter_var($_contactEmail, FILTER_VALIDATE_EMAIL) ? $_contactEmail : '',
     'retentionYears' => (int) $_params->get('retention_years', 10),
 ]);
