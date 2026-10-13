@@ -126,7 +126,14 @@ class AjaxEndpointTest
             echo "PASS (language redirect)\n";
             return true;
         }
-        
+
+        // Any other status (303 or another 3xx above all) fails before the body
+        // is looked at: a redirect body can carry JSON or HTML as well.
+        if ($httpCode !== 200) {
+            echo "FAIL (HTTP $httpCode)\n";
+            return false;
+        }
+
         // com_ajax wraps plugin response, try to decode
         $data = json_decode($response, true);
         
