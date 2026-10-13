@@ -22,9 +22,15 @@
   findet. Nach jedem Fix-Push Copilot erneut anfordern. Gilt für Entwickler und Agenten. Ablauf:
   Review + Threads via `gh api repos/{owner}/{repo}/pulls/{pull_number}/reviews` und die GraphQL-Query `reviewThreads` holen; jeden offenen
   Thread behandeln; Fixes pushen; Threads mit der GraphQL-Mutation `resolveReviewThread`
-  schließen; Copilot per
-  `gh api --method POST repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`
-  erneut anfordern; wiederholen, bis nichts mehr kommt.
+  schließen; Copilot mit der GraphQL-Mutation
+  `rerequestReviews(input:{pullRequestId, botIds:["BOT_kgDOCnlnWA"]})` erneut anfordern (lässt alle
+  anderen angeforderten Reviewer unberührt; der REST-Aufruf `POST …/requested_reviewers` meldet
+  Erfolg, startet aber keine neue Runde; die allererste Anforderung geht mit `requestReviews` und
+  `union:true`); wiederholen, bis nichts mehr kommt.
+- **Merge-Empfehlung ist Pflicht:** Die letzte Copilot-Übersicht auf dem aktuellen Kopf-Commit muss
+  „🟢 Approval recommended“ lauten. „🔵 Needs a closer look“ oder „🟡 Changes recommended“ ist nie
+  fertig, auch nicht mit 0 Funden, ohne „Previously missed“ und mit grüner CI: den genannten Grund
+  beheben und Copilot erneut anfordern, bis 🟢 dasteht.
 - **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die intern gepflegte
   SSOT (Single Source of Truth) müssen konsistent bleiben und nur das Minimum
   tragen (kurze Zusammenfassungen plus Verweise, kein duplizierter voller Regelsatz). Jede AI,
@@ -92,7 +98,7 @@ Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus.
 
 Festgehaltene Entscheidungen (Details im Skill `joomla-extensions`):
 - Alle Extensions verlangen Joomla 5.4 oder neuer; die Anhebung der Mindestversion wird als Patch-Release ausgeliefert.
-- Die CI testet immer die neuesten Joomla-5.4.x- und 6.x-Releases; J2Commerce 6 ist auf einen Commit gepinnt.
+- Die CI testet immer die neuesten Joomla-5.4.x- und 6.x-Releases und die neuesten Shop-Stände, nie einen Pin: J2Commerce 6 als neuester abgeglichener Commit von `main`, J2Store 4 als neuestes Release mit geprüfter sha256-Prüfsumme (`.github/actions/resolve-shops`, einmal je Lauf).
 - Deprecation-Gate in den produktionsnahen Lanes und statischer Scan nach veralteten Joomla-APIs in jeder Workflow-Datei; beide müssen grün sein.
 - Plugin-Service-Provider übergeben den Dispatcher weder im Konstruktor noch per `setDispatcher()`.
 - Pro Extension existiert nur das neueste GitHub-Release; ältere Releases und Tags löscht der Publish-Workflow bewusst.

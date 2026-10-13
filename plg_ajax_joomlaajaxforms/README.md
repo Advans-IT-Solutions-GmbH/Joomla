@@ -233,7 +233,7 @@ Creates: `plg_ajax_joomlaajaxforms_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, J2Commerce 6 production pin). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -270,14 +270,14 @@ authoritative cart gate: both are required (the final `Ajax Forms / all jobs` jo
 fails if any job fails, and the `official-j5-j2c4` / `official-j6-j2c6` checks verify
 each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 
-**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads `com_j2store_v4-4.1.4-pro.zip` from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub release, installs it into a Joomla 5 container, seeds a cart for test user `999` (3 items), then verifies — via real HTTP requests with CSRF tokens plus direct DB-state assertions:
+**`test-j2c4-full` (Joomla 5 + J2Commerce 4)** — runs on every push/PR. Downloads the latest J2Store 4 release (`com_j2store*.zip`, verified against its sha256 digest) from the public [j2commerce/j2cart](https://github.com/j2commerce/j2cart/releases) GitHub releases, installs it into a Joomla 5 container, seeds a cart for test user `999` (3 items), then verifies — via real HTTP requests with CSRF tokens plus direct DB-state assertions:
 - `isJ2CommerceInstalled()` returns `true`, `isJ2Commerce4()` returns `true`
 - `getCartCountForUser(999)` returns 3 (matching seeded rows)
 - `getCartCount` HTTP endpoint returns `cartCount = 0` for a guest (guest guard)
 - IDOR: unauthenticated `removeCartItem` rejected, victim row still present in `#__j2store_cartitems`
 - Authenticated `removeCartItem` (login over HTTP) deletes the row, returns an updated `cartCount`, and the deletion is confirmed in the database
 
-**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the commit pinned in the workflow (`J2C6_REF`, `7edb6e11ae9148bf996b06c47a0d8266865af7b2`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
+**`test-j2c6-full` (Joomla 6 + J2Commerce 6)** — runs on every push/PR. Builds J2Commerce 6 from source at the newest aligned commit of `main` (`J2C6_REF`, resolved once per run by the job `Resolve Shop Releases`) since no public release ZIP exists. The cart test mirrors the J2C4 suite (HTTP + DB + IDOR + authenticated delete) against the `#__j2commerce_*` tables.
 
 **Shop detection (`13-shop-detection.php`, both full-install lanes)** — the script lives in `tests-j2c6/scripts/`; `tests-j2c4/run-tests.sh` copies it. A dedicated test user gets a cart in both table sets with different quantities (5 in `#__j2commerce_*`, 7 in `#__j2store_*`), so the `cartCount` returned by the HTTP endpoint shows which tables the plugin used. In the J2C6 lane the suite adds stale `#__j2store_*` tables and a disabled `com_j2store` row (migration): the AJAX login redirects to `com_j2commerce`, `getCartCount` returns 5 and `removeCartItem` deletes only from `#__j2commerce_cartitems`; with `com_j2commerce` disabled and `com_j2store` enabled it returns 7. In the J2C4 lane it adds `#__j2commerce_*` tables and a disabled `com_j2commerce` row: the login redirects to `com_j2store` and `getCartCount` returns 7; with `com_j2commerce` enabled it returns 5. In both lanes, with both components disabled, `getCartCount` returns 0, `removeCartItem` reports that no shop is installed, and a login in a fresh session redirects to the Joomla user profile, which opens for the logged-in user. The same login with an MFA record for the test user must answer with Joomla's captive page whose `return` parameter is the same profile target as an absolute URL (the MFA code itself is not entered; the captive page is Joomla core). Then the cart tables of the other shop are renamed so they are missing: with both components enabled, the installed shop is still used (5 in the J2C6 lane, 7 in the J2C4 lane, where the enabled `com_j2commerce` without tables must not block J2Store); with only the component without tables enabled, `getCartCount` returns 0 and the login redirects to the Joomla user profile. The CSRF token is read again after the login; if that fails, the suite fails instead of falling back to the guest token. All changes (component states and rows, tables and renamed tables, user, carts, sessions, MFA record, remember-me keys, action log entries) are reverted at the end of the suite and checked afterwards.
 
@@ -286,15 +286,14 @@ each matrix passed), so a broken cart genuinely fails CI for **both** stacks.
 Prerequisites (full commands: [Local Prerequisites](../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites)):
 
 - Build the plugin (`./build.sh`) and copy `plg_ajax_joomlaajaxforms_<version>.zip` as `extension.zip` into each test directory you use (`tests/`, `tests-j2c4/`, `tests-j2c6/`).
-- `tests-j2c4/`: J2Commerce 4 is downloaded automatically during the image build. Build the image from the repository root:
+- `tests-j2c4/`: J2Commerce 4 is downloaded automatically during the image build (CI passes the latest release as `--build-arg J2C4_URL=…` and `--build-arg J2C4_SHA256=…`; without them the Dockerfile uses its fallback release, unverified). Build the image from the repository root:
   ```bash
   docker build \
     -f plg_ajax_joomlaajaxforms/tests-j2c4/Dockerfile \
-    --build-arg J2C4_URL=https://github.com/j2commerce/j2cart/releases/download/v4.1.4/com_j2store_v4-4.1.4-pro.zip \
     -t plg_ajax_j2c4_test \
     .
   ```
-- `tests-j2c6/`: build J2Commerce 6 from the pinned commit (see testing.md) and copy the package to `plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip`, then build the image from the repository root:
+- `tests-j2c6/`: build J2Commerce 6 from the latest aligned commit (see testing.md) and copy the package to `plg_ajax_joomlaajaxforms/tests-j2c6/j2commerce6.zip`, then build the image from the repository root:
   ```bash
   docker build \
     -f plg_ajax_joomlaajaxforms/tests-j2c6/Dockerfile \
