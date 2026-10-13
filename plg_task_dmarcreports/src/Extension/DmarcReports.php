@@ -12,6 +12,7 @@ namespace Advans\Plugin\Task\DmarcReports\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Component\DmarcReports\Administrator\Service\SourcePoller;
+use Advans\Plugin\Task\DmarcReports\Support\IngestSummary;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -106,23 +107,13 @@ final class DmarcReports extends CMSPlugin implements SubscriberInterface
             return Status::OK;
         }
 
-        $imported   = 0;
-        $duplicates = 0;
-        $failed     = 0;
-        $blocked    = 0;
-        $errors     = 0;
+        $results = [];
 
         foreach ($sources as $source) {
-            $result = $poller->poll($source, $allowAutoCreate);
-            $sum    = $result['summary'] ?? [];
-
-            $imported   += (int) ($sum['imported'] ?? 0);
-            $duplicates += (int) ($sum['duplicates'] ?? 0);
-            $failed     += (int) ($sum['failed'] ?? 0);
-            $blocked    += (int) ($result['blocked'] ?? 0);
+            $result    = $poller->poll($source, $allowAutoCreate);
+            $results[] = $result;
 
             if (($result['status'] ?? '') === SourcePoller::STATUS_ERROR) {
-                $errors++;
                 $this->logTask('Source #' . (int) $source->id . ': ' . $result['message'], 'warning');
 
                 continue;
@@ -130,6 +121,9 @@ final class DmarcReports extends CMSPlugin implements SubscriberInterface
 
             $this->logTask('Source #' . (int) $source->id . ': ' . $result['message']);
         }
+
+        ['imported' => $imported, 'duplicates' => $duplicates, 'failed' => $failed, 'blocked' => $blocked, 'errors' => $errors]
+            = IngestSummary::aggregate($results);
 
         $this->logTask(
             "Ingestion complete: {$imported} imported, {$duplicates} duplicate(s), "
