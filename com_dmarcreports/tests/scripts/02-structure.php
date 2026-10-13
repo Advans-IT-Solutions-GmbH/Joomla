@@ -87,6 +87,7 @@ class StructureTest
                 'reject_pass_threshold',
                 'imap_timeout',
                 'max_messages_per_run',
+                'csv_delimiter',
                 'dns_diagnostics',
                 'rules',
             ];
@@ -112,6 +113,75 @@ class StructureTest
             $contents = file_get_contents($this->base . '/forms/source.xml');
 
             return strpos($contents, 'value_field="text"') !== false;
+        });
+
+        // K-E1d: the domain picker's blank option must be the "Automatic" choice,
+        // not Joomla's generic published-status placeholder.
+        $this->test('source domain picker drops the published-status header', function () {
+            $contents = file_get_contents($this->base . '/forms/source.xml');
+
+            return strpos($contents, 'JOPTION_SELECT_PUBLISHED') === false
+                && strpos($contents, 'COM_DMARCREPORTS_FIELD_DOMAIN_ID_AUTO') !== false;
+        });
+
+        // K-E1c / K-E5c: numeric options and the source port must carry a real
+        // server-side range rule, not just the browser min/max, so an
+        // out-of-range value posted directly is rejected before it is stored.
+        $this->test('config.xml declares the range rule prefix', function () {
+            $contents = file_get_contents($this->base . '/config.xml');
+
+            return strpos($contents, 'addruleprefix="Advans\\Component\\DmarcReports\\Administrator\\Rule"') !== false;
+        });
+
+        foreach (['quarantine_pass_threshold', 'reject_pass_threshold', 'imap_timeout', 'max_messages_per_run'] as $numeric) {
+            $this->test("config option {$numeric} validates server-side", function () use ($numeric) {
+                $xml = @simplexml_load_file($this->base . '/config.xml');
+
+                if ($xml === false) {
+                    return false;
+                }
+
+                foreach ($xml->xpath('/config/fieldset/field[@name="' . $numeric . '"]') as $field) {
+                    // A non-coercing filter is required so the range rule judges
+                    // the lexical value the operator typed; filter="integer"
+                    // would round "50.5"/"1e2" into range before validation.
+                    return (string) $field['validate'] === 'range'
+                        && (string) $field['filter'] === 'raw'
+                        && (string) $field['message'] !== '';
+                }
+
+                return false;
+            });
+        }
+
+        $this->test('source port validates server-side with a range rule', function () {
+            $xml = @simplexml_load_file($this->base . '/forms/source.xml');
+
+            if ($xml === false) {
+                return false;
+            }
+
+            foreach ($xml->xpath('//field[@name="port"]') as $field) {
+                return (string) $field['validate'] === 'range'
+                    && (string) $field['filter'] === 'raw'
+                    && (string) $field['message'] !== '';
+            }
+
+            return false;
+        });
+
+        // E1-B: the manifest must register a schema path and ship a baseline
+        // schema file so #__schemas gets a row for future sql/updates.
+        $this->test('manifest registers an update schema path', function () {
+            $manifest = file_get_contents($this->base . '/com_dmarcreports.xml');
+
+            return $manifest !== false
+                && strpos($manifest, '<schemas>') !== false
+                && strpos($manifest, 'sql/updates/mysql') !== false;
+        });
+
+        $this->test('a baseline schema update file ships', function () {
+            return is_file($this->base . '/sql/updates/mysql/1.0.0.sql');
         });
 
         echo "\n=== Structure Test Summary ===\n";

@@ -114,8 +114,8 @@ class DetailModel extends BaseDatabaseModel
     {
         $params = ComponentHelper::getParams('com_dmarcreports');
         $config = [
-            'quarantine_pass_threshold' => (float) $params->get('quarantine_pass_threshold', 95),
-            'reject_pass_threshold'     => (float) $params->get('reject_pass_threshold', 99),
+            'quarantine_pass_threshold' => $params->get('quarantine_pass_threshold', 95),
+            'reject_pass_threshold'     => $params->get('reject_pass_threshold', 99),
         ];
 
         $items = ActionCenter::generate($metrics, $config, $dns['findings'] ?? []);

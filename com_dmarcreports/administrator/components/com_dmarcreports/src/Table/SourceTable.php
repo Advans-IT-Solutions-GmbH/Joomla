@@ -37,8 +37,22 @@ class SourceTable extends Table
             return false;
         }
 
-        if ((int) $this->port <= 0) {
+        // Apply the default port only when none was supplied. Any supplied
+        // value is validated strictly here — the form range rule covers the UI,
+        // this backstop covers every path that writes the table directly — so a
+        // non-numeric string, 0, a negative value or an out-of-range number is
+        // rejected instead of being silently coerced to the default.
+        if ($this->port === null || $this->port === '') {
             $this->port = 993;
+        } elseif (preg_match('/^\d+$/', (string) $this->port) !== 1 || (int) $this->port < 1 || (int) $this->port > 65535) {
+            // Require a plain decimal integer: is_numeric() would also accept
+            // decimal ("1.5") and exponent ("1e2") notation and silently coerce
+            // them to a different port than the operator submitted.
+            $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT'));
+
+            return false;
+        } else {
+            $this->port = (int) $this->port;
         }
 
         // A source may be left unbound (domain_id = 0) so ingestion maps each

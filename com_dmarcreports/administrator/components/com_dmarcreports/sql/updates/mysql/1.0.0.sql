@@ -1,0 +1,12 @@
+--
+-- Baseline schema version for com_dmarcreports.
+--
+-- This file establishes the 1.0.0 schema baseline so a fresh install records a
+-- row in #__schemas and every future sql/updates/mysql file has a version to
+-- upgrade from. The full table set is created by sql/install.mysql.utf8.sql, so
+-- this baseline intentionally contains no statements.
+--
+-- @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+-- @license     GNU General Public License version 3 or later; see LICENSE.txt
+-- SPDX-License-Identifier: GPL-3.0-or-later
+--

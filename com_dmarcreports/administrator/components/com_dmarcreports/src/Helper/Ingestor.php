@@ -23,6 +23,8 @@ defined('_JEXEC') or die;
  * writes use prepared statements and run inside a transaction per report.
  *
  * @since  1.0.0
+ *
+ * @phpstan-type DmarcIngestSummary array{imported:int, duplicates:int, failed:int, skipped:int, blocked:int, records:int, dropped:int, reason:string}
  */
 final class Ingestor
 {
@@ -74,7 +76,7 @@ final class Ingestor
      *                                     instead of resolving it from the report XML
      *                                     (an operator binding a mailbox to one domain).
      *
-     * @return  array<string, int>  imported, duplicates, failed, records
+     * @return  DmarcIngestSummary  imported, duplicates, failed, skipped, blocked, records, dropped, reason
      */
     public function ingestMessages(array $messages, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
@@ -100,7 +102,7 @@ final class Ingestor
      * operator is told to install the extension.
      *
      * @param   array{uid?: int, raw?: string}  $message
-     * @param   array<string, int>              $summary  Mutated in place.
+     * @param   DmarcIngestSummary              $summary  Mutated in place.
      *
      * @return  self::RESULT_*
      */
@@ -111,8 +113,10 @@ final class Ingestor
         $blocked = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
+            $stats = [];
+
             try {
-                $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
+                $documents = ReportArchive::extract($attachment['content'], $attachment['filename'], $stats);
             } catch (DecoderUnavailableException) {
                 // The host cannot decompress this container because the PHP zlib
                 // or zip extension is absent. This is a permanent configuration
@@ -131,6 +135,11 @@ final class Ingestor
                 $retry = true;
                 continue;
             }
+
+            // A zip that packs more than the per-archive document cap has its
+            // surplus reports counted so the caller can note the dropped total
+            // in the run summary instead of discarding them silently.
+            $summary['dropped'] = (int) ($summary['dropped'] ?? 0) + (int) ($stats['dropped'] ?? 0);
 
             $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
         }
@@ -158,7 +167,7 @@ final class Ingestor
     /**
      * Ingest a single uploaded report file (.xml, .gz or .zip).
      *
-     * @return  array<string, int>
+     * @return  DmarcIngestSummary
      *
      * @throws  DecoderUnavailableException  When the file is a recognised
      *          compressed container but the PHP extension needed to decode it is
@@ -172,16 +181,28 @@ final class Ingestor
         $summary = $this->newSummary();
 
         if (!is_readable($path)) {
+            // Unreadable is not the same as empty: the file may exist but a
+            // permission or storage error prevents reading it. Report it as a
+            // distinct read error so the operator is not told it was empty.
             $summary['failed']++;
+            $summary['reason'] = 'unreadable';
 
             return $summary;
         }
 
         $size = (int) @filesize($path);
 
-        if ($size <= 0 || $size > self::MAX_UPLOAD_BYTES) {
-            // Empty, unreadable or larger than the accepted compressed ceiling.
+        if ($size <= 0) {
             $summary['failed']++;
+            $summary['reason'] = 'empty';
+
+            return $summary;
+        }
+
+        if ($size > self::MAX_UPLOAD_BYTES) {
+            // Larger than the accepted compressed ceiling.
+            $summary['failed']++;
+            $summary['reason'] = 'bomb';
 
             return $summary;
         }
@@ -191,22 +212,43 @@ final class Ingestor
         // before the archive helper applies its decompression limits.
         $payload = (string) @file_get_contents($path, false, null, 0, self::MAX_UPLOAD_BYTES + 1);
 
-        if ($payload === '' || \strlen($payload) > self::MAX_UPLOAD_BYTES) {
+        if ($payload === '') {
+            // filesize() already reported a positive size above, so an empty
+            // read here is a read failure (permissions/storage), not a genuinely
+            // empty file; classify it as unreadable rather than empty.
             $summary['failed']++;
+            $summary['reason'] = 'unreadable';
+
+            return $summary;
+        }
+
+        if (\strlen($payload) > self::MAX_UPLOAD_BYTES) {
+            $summary['failed']++;
+            $summary['reason'] = 'bomb';
 
             return $summary;
         }
 
         $retry     = false;
-        $documents = ReportArchive::extract($payload, $filename);
+        $stats     = [];
+        $documents = ReportArchive::extract($payload, $filename, $stats);
+        $summary['dropped'] += (int) ($stats['dropped'] ?? 0);
         $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+
+        // When nothing was imported, explain why. A parse-level reason recorded
+        // by ingestDocuments (malformed or wrong format) takes precedence over
+        // the container-level reason from the archive helper (empty, bomb or
+        // unrecognised format), so the operator sees the most specific cause.
+        if ((int) $summary['imported'] === 0 && ($summary['reason'] ?? '') === '' && ($stats['reason'] ?? '') !== '') {
+            $summary['reason'] = (string) $stats['reason'];
+        }
 
         return $summary;
     }
 
     /**
      * @param   string[]            $documents
-     * @param   array<string, int>  $summary
+     * @param   DmarcIngestSummary  $summary
      */
     private function ingestDocuments(array $documents, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
@@ -221,8 +263,13 @@ final class Ingestor
         foreach ($documents as $xml) {
             try {
                 $report = DmarcParser::parse($xml);
-            } catch (\InvalidArgumentException) {
+            } catch (\InvalidArgumentException $e) {
                 $summary['failed']++;
+
+                if (($summary['reason'] ?? '') === '') {
+                    $summary['reason'] = self::parseReason((int) $e->getCode());
+                }
+
                 continue;
             }
 
@@ -231,8 +278,22 @@ final class Ingestor
     }
 
     /**
+     * Map a {@see DmarcParser} failure code to the short reason the upload
+     * controller shows the operator. A hardening guard (NUL bytes or a DOCTYPE,
+     * i.e. the XXE class) is "malformed"; an empty or non-report document is a
+     * wrong-"format" upload. Any other parse failure defaults to malformed.
+     */
+    private static function parseReason(int $code): string
+    {
+        return match ($code) {
+            DmarcParser::ERROR_EMPTY, DmarcParser::ERROR_NOT_REPORT => 'format',
+            default => 'malformed',
+        };
+    }
+
+    /**
      * @param   array<string, mixed>  $report
-     * @param   array<string, int>    $summary
+     * @param   DmarcIngestSummary    $summary
      */
     private function store(array $report, ?int $sourceId, int $forcedDomainId, array &$summary, bool &$retry): void
     {
@@ -554,10 +615,10 @@ final class Ingestor
      * A fresh, zeroed ingestion summary. Public so a streaming caller can seed
      * one and accumulate across per-message calls.
      *
-     * @return array<string, int>
+     * @return DmarcIngestSummary
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'dropped' => 0, 'reason' => ''];
     }
 }
