@@ -687,6 +687,7 @@ class AjaxEndpointTest
         }
 
         $problems = [];
+        $returns  = 0;
         $tokens   = token_get_all('<?php ' . $blocks[0][1][0]);
 
         foreach ($tokens as $i => $token) {
@@ -709,19 +710,31 @@ class AjaxEndpointTest
                 continue;
             }
 
-            // The string literals of this return statement (comments are
-            // separate tokens and never count).
+            // Each return branch on its own: it must return exactly one
+            // endpoint URL literal (comments are separate tokens and never
+            // count). A branch without one, for example a fallback that
+            // returns '/broken', fails even when another branch is fine.
+            $returns++;
+            $branchUrls = [];
+
             for ($j = $i + 1, $n = count($tokens); $j < $n && $tokens[$j] !== ';'; $j++) {
                 if (is_array($tokens[$j]) && $tokens[$j][0] === T_CONSTANT_ENCAPSED_STRING
                     && strpos($tokens[$j][1], 'option=com_ajax') !== false
                 ) {
-                    $urls[] = substr($tokens[$j][1], 1, -1);
+                    $branchUrls[] = substr($tokens[$j][1], 1, -1);
                 }
             }
+
+            if (count($branchUrls) !== 1) {
+                $problems[] = "return #$returns of config.baseUrl carries " . count($branchUrls)
+                    . ' endpoint URLs instead of one';
+            }
+
+            array_push($urls, ...$branchUrls);
         }
 
-        if ($problems === [] && $urls === []) {
-            $problems[] = 'config.baseUrl returns no endpoint URL';
+        if ($problems === [] && $returns === 0) {
+            $problems[] = 'config.baseUrl has no return statement';
         }
 
         foreach ($urls as $u) {
@@ -805,6 +818,23 @@ class AjaxEndpointTest
             'line comment'              => $replace("// baseUrl: (function(){ return '" . $url . "'; })(),"),
             'escaped ampersand'         => $replace(str_replace('&plugin', '&amp;plugin', $real)),
         ];
+
+        // One return branch at a time: break or escape only that branch while
+        // the others stay valid. Each such variant must fail on its own.
+        preg_match_all('/([\'"])([^\'"]*option=com_ajax[^\'"]*)\1/', $real, $literals, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+
+        if ($literals === []) {
+            return ['self-check: no endpoint URL literal found in config.baseUrl'];
+        }
+
+        foreach ($literals as $k => $literal) {
+            [$content, $at] = $literal[2];
+            $branch         = $k + 1;
+
+            $mustFail["return branch $branch broken"]  = $replace(substr_replace($real, '/broken', $at, strlen($content)));
+            $mustFail["return branch $branch escaped"] = $replace(substr_replace($real, str_replace('&', '&amp;', $content), $at, strlen($content)));
+        }
+
         $mustPass = [
             'extra commented-out copy' => $replace("/* baseUrl: (function(){ return '/x'; })() */\n" . $real),
         ];
