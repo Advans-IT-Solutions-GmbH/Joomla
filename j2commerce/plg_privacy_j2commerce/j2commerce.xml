@@ -15,6 +15,27 @@
 
     <namespace path="src">Advans\Plugin\Privacy\J2Commerce</namespace>
 
+    <install>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/install.mysql.utf8.sql</file>
+            <file driver="postgresql" charset="utf8">sql/install.postgresql.utf8.sql</file>
+        </sql>
+    </install>
+
+    <uninstall>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/uninstall.mysql.utf8.sql</file>
+            <file driver="postgresql" charset="utf8">sql/uninstall.postgresql.utf8.sql</file>
+        </sql>
+    </uninstall>
+
+    <update>
+        <schemas>
+            <schemapath type="mysql">sql/updates/mysql</schemapath>
+            <schemapath type="postgresql">sql/updates/postgresql</schemapath>
+        </schemas>
+    </update>
+
     <files>
         <folder plugin="j2commerce">services</folder>
         <folder>src</folder>
@@ -22,6 +43,7 @@
         <folder>overrides</folder>
         <folder>layouts</folder>
         <folder>media</folder>
+        <folder>sql</folder>
         <filename>LICENSE.txt</filename>
         <filename>THIRD-PARTY-NOTICES.txt</filename>
     </files>

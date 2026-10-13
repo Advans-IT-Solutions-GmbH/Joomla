@@ -14,6 +14,7 @@ defined('_JEXEC') or die;
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
+use Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts;
 use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Date\Date;
@@ -301,6 +302,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $classes = [
             RetentionPeriod::class => '/../Retention/RetentionPeriod.php',
             LifetimeLicenses::class => '/../Retention/LifetimeLicenses.php',
+            ConfirmAttempts::class => '/../Security/ConfirmAttempts.php',
             J2CommerceStack::class => '/../Support/J2CommerceStack.php',
             ConsentRepository::class => '/../Consent/ConsentRepository.php',
         ];
@@ -2309,10 +2311,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * for their address.
      *
      * GET shows a form (e-mail address, token from the mail, prefilled from the link). POST checks
-     * the form token, the number of failed attempts in this session and then the request
-     * (confirmPrivacyRequest()). A wrong code, an address without a pending request and a request
-     * that is no longer pending get the same message, so the page does not tell whether a request
-     * exists. Only a matching code that has expired gets its own message.
+     * the form token and then the attempt (attemptConfirmation()): failed attempts are limited per
+     * session, per e-mail address and per client IP address. A wrong code, an address without a
+     * pending request, a request that is no longer pending and a used-up limit get the same message
+     * and the same work, so the page does not tell whether a request exists. Only a matching code
+     * that has expired gets its own message.
      */
     protected function handleConfirmationPage($app): string
     {
@@ -2342,31 +2345,121 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $this->renderConfirmationForm($email, $token, Text::_('JINVALID_TOKEN_NOTICE'), 'danger');
         }
 
-        if (self::confirmAttemptsExceeded($session)) {
-            return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TOO_MANY_ATTEMPTS'), 'danger');
-        }
-
-        try {
-            $status = $this->confirmPrivacyRequest($email, $token);
-        } catch (\Throwable $e) {
-            // com_ajax would print the exception class and message to the visitor.
-            Log::add('Privacy request confirmation failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
-            $status = self::CONFIRM_FAILED;
-        }
+        // Joomla's IpHelper uses X-Forwarded-For only with "Behind Load Balancer" enabled in the
+        // Global Configuration; otherwise the address of the connection.
+        $status = $this->attemptConfirmation($email, $token, $session, (string) IpHelper::getIp());
 
         if ($status === self::CONFIRM_OK) {
-            $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
-
             return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_SUCCESS'), 'success');
         }
-
-        self::registerConfirmFailure($session);
 
         if ($status === self::CONFIRM_EXPIRED) {
             return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_EXPIRED'), 'warning');
         }
 
         return $this->renderConfirmationForm($email, $token, Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_FAILED'), 'danger');
+    }
+
+    /**
+     * One confirmation attempt with its limits: failed attempts per session (CONFIRM_MAX_FAILURES)
+     * and, stored server-side so that a new session does not reset them, per e-mail address and
+     * per client IP address (Security\ConfirmAttempts). While a limit is used up the request is
+     * not confirmed, even with the right code, but the same work is done (a code check that
+     * cannot match) and the same answer given as for a wrong code. Every failure counts for the
+     * session, the address and the IP address.
+     *
+     * @param   object  $session   Session with get($name, $default) and set($name, $value)
+     * @param   string  $clientIp  Client IP address (only its hash is stored)
+     *
+     * @return  string  CONFIRM_OK, CONFIRM_EXPIRED or CONFIRM_FAILED
+     */
+    public function attemptConfirmation(string $email, string $token, object $session, string $clientIp, ?int $now = null): string
+    {
+        self::loadHelperClasses();
+        $now      = $now ?? time();
+        $subjects = ['email' => ConsentRepository::normaliseAddress($email), 'ip' => trim($clientIp)];
+        $limiter  = $this->confirmAttempts();
+        $blocked  = self::confirmAttemptsExceeded($session, $now);
+        $reserved = false;
+
+        // Admission is atomic: the attempt is counted before it is checked (ConfirmAttempts::reserve()),
+        // so parallel requests cannot pass the limit together. Without the server-side counter
+        // (table missing, database error) nothing is confirmed: fail closed.
+        if (!$blocked) {
+            if ($limiter === null) {
+                $blocked = true;
+            } else {
+                // Passed to reserve(): what it counted stays counted, also when it fails part way
+                // (for example after the IP address), and is never counted a second time below.
+                $reserved = true;
+
+                try {
+                    $blocked = !$limiter->reserve($subjects, $now);
+                } catch (\Throwable $e) {
+                    Log::add('Confirmation attempt limit not available, nothing confirmed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                    $blocked = true;
+                }
+            }
+        }
+
+        try {
+            // Blocked: the same work with a code that cannot match, so the answer time is the same.
+            $status = $this->confirmPrivacyRequest($email, $blocked ? bin2hex(random_bytes(16)) : $token);
+        } catch (\Throwable $e) {
+            // com_ajax would print the exception class and message to the visitor.
+            Log::add('Privacy request confirmation failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
+            $status = self::CONFIRM_FAILED;
+        }
+
+        if ($blocked) {
+            $status = self::CONFIRM_FAILED;
+        }
+
+        // A successful attempt is given back: the limits count failed attempts, so customers who
+        // confirm correctly from one shared network do not use up its IP limit.
+        if ($status === self::CONFIRM_OK) {
+            $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
+
+            if ($reserved) {
+                try {
+                    $limiter->release($subjects, $now);
+                } catch (\Throwable $e) {
+                    Log::add('Confirmation attempt not given back: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                }
+            }
+
+            return $status;
+        }
+
+        self::registerConfirmFailure($session, $now);
+
+        // An attempt refused by the session limit never reached reserve(): it is counted here.
+        if (!$reserved && $limiter !== null) {
+            try {
+                $limiter->registerFailure($subjects, $now);
+            } catch (\Throwable $e) {
+                Log::add('Confirmation attempt not counted: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+        }
+
+        return $status;
+    }
+
+    /**
+     * Server-side attempt counter; null without an application (logged). Without it the page confirms nothing.
+     */
+    protected function confirmAttempts(): ?ConfirmAttempts
+    {
+        try {
+            self::loadHelperClasses();
+            $app = $this->getApplication() ?? Factory::getApplication();
+
+            return new ConfirmAttempts($this->getDatabase(), (string) $app->get('secret', ''));
+        } catch (\Throwable $e) {
+            Log::add('Confirmation attempt limit not available: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return null;
+        }
     }
 
     /**

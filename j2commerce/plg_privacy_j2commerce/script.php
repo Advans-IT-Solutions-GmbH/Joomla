@@ -87,6 +87,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             }
 
             $this->ensureUpdateSite();
+            $this->ensureAttemptsTable();
             $this->removeLegacyAutoCleanupTaskFile();
             $this->warnIfJ2CommerceMissing();
 
@@ -336,6 +337,37 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         $this->uninstallTaskPlugin();
         $this->uninstallConsentSystemPlugin();
+    }
+
+    /**
+     * Table of the failed attempts on the confirmation page (#__privacy_j2commerce_attempts).
+     * The manifest creates it on installation and through its schema update; Joomla does not run
+     * the update file when an installed version had no schema entry yet (the first update that
+     * brings a schema only records the version). This runs the idempotent install file of the
+     * database type on installation and on every update, so the table exists in any case.
+     */
+    private function ensureAttemptsTable(): void
+    {
+        $db     = Factory::getContainer()->get(DatabaseInterface::class);
+        $driver = method_exists($db, 'getServerType') && strtolower((string) $db->getServerType()) === 'postgresql' ? 'postgresql' : 'mysql';
+        $file   = JPATH_PLUGINS . '/privacy/j2commerce/sql/install.' . $driver . '.utf8.sql';
+
+        if (!is_file($file)) {
+            return;
+        }
+
+        try {
+            foreach ($db->splitSql((string) file_get_contents($file)) as $statement) {
+                if (trim($statement) !== '') {
+                    $db->setQuery($statement)->execute();
+                }
+            }
+        } catch (\Throwable $e) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('PLG_PRIVACY_J2COMMERCE_WARN_ATTEMPTS_TABLE_FAILED', htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8')),
+                'warning'
+            );
+        }
     }
 
     /**
