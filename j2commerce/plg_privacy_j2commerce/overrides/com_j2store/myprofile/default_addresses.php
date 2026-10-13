@@ -114,7 +114,11 @@ document.addEventListener('DOMContentLoaded', function () {
             fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
-                    if (data && data.success) {
+                    // com_ajax: data.success only says no exception occurred, the plugin's own
+                    // answer is the first entry of data.data.
+                    var result = data && data.success && Array.isArray(data.data) ? data.data[0] : null;
+
+                    if (result && result.success) {
                         if (addressRow) {
                             addressRow.remove();
                         }

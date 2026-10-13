@@ -136,8 +136,49 @@ This plugin is a **privacy group plugin** that extends Joomla's built-in Privacy
 - Checkout consent checkbox
 - Self-service privacy tab in the J2Commerce MyProfile page
 - Scheduled automatic cleanup task
+- Privacy requests of guest customers (no user account) and of accounts with earlier guest orders, see [Guest Customers](#guest-customers-and-earlier-guest-orders)
 
 For a full overview of how Joomla's Privacy Suite works, see the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide).
+
+---
+
+## Guest Customers and Earlier Guest Orders
+
+J2Commerce stores a guest order with `user_id = 0` and the e-mail address the customer entered (`user_email`). It never links such an order to a user account created later with the same address. Joomla's `com_privacy` passes no user to the privacy plugins when no account exists for the request address (`user = null`), and its frontend request and confirmation pages are only open to logged-in users.
+
+### Which data a request covers
+
+For export and removal requests this plugin matches, in every J2Commerce data set:
+
+| Data | Matched by |
+|------|-----------|
+| Orders (incl. order items and the complete order info row: billing and shipping name, address, phone, company, tax number) | `user_id` of the account, **and** guest orders (`user_id = 0`) whose `user_email` equals the request address or the account address |
+| Saved addresses | `user_id` of the account, and guest addresses (`user_id = 0`) whose `email` equals one of these addresses |
+| Checkout consent records of guest orders | the J2Commerce 6 order (marker with the order number; consents are recorded for J2Commerce 6 orders only, so J2Store order numbers are not used for the lookup); every record of the order is exported with its state (valid, obsolete, invalidated), IP address and user agent are removed when the order is anonymized |
+| Carts | `user_id` of the account only. Guest carts carry no e-mail address and expire with the session; a request without account never touches carts |
+| AcyMailing, records of an earlier template override | the request and account address; guest records are exported unchanged (domain `legacy_consents`, Joomla's consent plugin exports only account records) and anonymized by a removal request. A guest record of an earlier template override counts only when one of the complete addresses in its text equals a request address (same address syntax as a request address, case-insensitive), so `anna@example.com` never matches `joanna@`, `o'anna@`, `éanna@` or `💡anna@` |
+
+The comparison ignores case and surrounding spaces. Order items, billing data and checkout consents are linked to an order only by its order number; if that number also belongs to an order outside the request, they are neither exported nor anonymized for it (logged). Orders of **another account** are never matched, even if they carry the same e-mail address, and guest orders of other addresses are never matched, even with the same name. The placeholder `anonymized@deleted.invalid` of anonymized orders is never used as a request address. A request without account and without a valid address changes nothing.
+
+This applies to both cases:
+
+- **Guest customer without account:** the export contains the guest orders, guest addresses and checkout consents of the address. A removal request anonymizes the guest orders outside the retention period, keeps and reports the others (e-mail to the request address, administrator message) and deletes the guest addresses while **Delete Addresses** is on. The customer e-mail names only what was removed: it says saved addresses were deleted only with that option on.
+- **Account with earlier guest orders:** the export and the removal request cover the account's orders and the guest orders placed with the request or account address before the account existed.
+
+Retention works as for registered users: every order is kept until the end of its retention period (**Retention Period**, counted from the end of the fiscal year of the order) and anonymized afterwards. Orders with a lifetime license keep their order e-mail address. Guest orders kept by a removal request are anonymized later by the cleanup task (guest orders outside the retention period, per order). A removal request is never refused.
+
+### Process for a guest customer
+
+1. **The customer asks by e-mail.** The Privacy tab of a guest session shows a `mailto:` link to **Support Email** (see [Profile Privacy Tab](#profile-privacy-tab)); any other written request works as well.
+2. **The administrator creates the request** under **Users → Privacy → Requests → New**: e-mail address of the customer (exactly as used for the orders, case does not matter), request type export or removal. Joomla sets the status *Pending* and sends the customer the mail *Privacy: Request Export of Data (Admin)* or *Privacy: Request Removal of Data (Admin)* with a confirmation code valid for 24 hours. Joomla refuses a second open request of the same type for the same address.
+3. **The customer confirms** through the link in that mail. With **Guest Request Confirmation** on (default), the bundled system plugin points both links of the mail (`{TOKENURL}` and `{FORMURL}`) to the confirmation page of this plugin, `index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=html&task=confirmRequest`. The page asks for the e-mail address and the confirmation code (prefilled from the link) and works without login. It checks the code exactly as `com_privacy` does (stored hash, 24 hours from creation), sets the request to *Confirmed* (status 1), removes the code so the link cannot be used twice, notifies the super users and writes the action log entry *confirmed request*. An expired code that matches cancels the request (status *Invalid*), as in `com_privacy`; the administrator then creates a new one. A wrong code changes nothing. A wrong code, an address without a pending request and a request that is no longer pending all get the same message, so the page does not tell whether a request exists. The submission needs Joomla's form token, and the page refuses after 5 failed attempts per session within 15 minutes.
+4. **The administrator carries out the request** in the request view: **Export Data** / **Email Data Export** for an export, **Delete Data** for a removal (see [Managing Requests](#managing-requests)), then **Complete**.
+
+The same page also works for customers with an account, so the request mail can be used by both. Requests a logged-in user creates in the frontend keep Joomla's own confirmation links.
+
+**Mail template:** no change is needed. The plugin replaces the link values while Joomla renders the mail (`onMailBeforeRendering`), the template text under **System → Templates → Mail Templates** stays as it is. If you rewrote these templates, keep `{TOKENURL}` or `{FORMURL}` and `{TOKEN}` in them. With **Guest Request Confirmation** off, the mail keeps Joomla's links and the confirmation page answers that it is not available; customers without account can then not confirm requests (Joomla's page requires a login).
+
+**Requirement:** the bundled system plugin **System - J2Commerce Privacy Consent** must be enabled (the installer enables it on the first installation), otherwise the mail keeps Joomla's links.
 
 ---
 
@@ -180,9 +221,9 @@ Consent is stored in Joomla's core table `#__privacy_consents`. No table of its 
 
 **What is stored and why:** the time of the consent (`created`), the order number, the IP address and the browser user agent (`body`), and the `user_id` of the order. IP address and user agent are stored as proof of the consent and for the security of the shop (legitimate interest).
 
-**How long:** IP address and user agent are kept as long as the order they belong to has to be kept (accounting retention period, counted from the end of the fiscal year of the order). They are removed from the consent record when this plugin anonymizes the order (removal request or cleanup task; only orders outside the retention period), and the cleanup task also removes them when the record is outside the retention period, when its order no longer exists in any J2Commerce data set (deleted) or when the order was already anonymized. The record itself stays as evidence without these personal data: `user_id`, `state`, `created`, `subject` and the order number are kept, and `body` then says that IP address and user agent were removed (marker `<!-- j2commerce-evidence-removed -->`), in the website's default site language (this note is written while an administrator or the cleanup task processes the order, so it does not depend on the language of the acting person). Consent records of other orders are not changed. With **Anonymize Orders** (plugin) or `anonymize_orders` (task) off, orders are not anonymized; the cleanup task still removes the evidence of records outside the retention period.
+**How long:** IP address and user agent are kept as long as the order they belong to has to be kept (accounting retention period, counted from the end of the fiscal year of the order). They are removed from the consent record when this plugin anonymizes the order (removal request or cleanup task; only orders outside the retention period; a removal request does this for J2Commerce 6 orders, as consents are recorded only for them and name only the order number), and the cleanup task also removes them when the record is outside the retention period, when its order no longer exists in any J2Commerce data set (deleted) or when the order was already anonymized. The record itself stays as evidence without these personal data: `user_id`, `state`, `created`, `subject` and the order number are kept, and `body` then says that IP address and user agent were removed (marker `<!-- j2commerce-evidence-removed -->`), in the website's default site language (this note is written while an administrator or the cleanup task processes the order, so it does not depend on the language of the acting person). Consent records of other orders are not changed. With **Anonymize Orders** (plugin) or `anonymize_orders` (task) off, orders are not anonymized; the cleanup task still removes the evidence of records outside the retention period.
 
-**Export and deletion:** Joomla's privacy export (`plg_privacy_consents`) only includes consent records with the requesting user's `user_id`, and Joomla deletes consent records only when a user account is deleted. Checkout consents of guest orders (`user_id = 0`) are therefore not covered by com_privacy export or deletion requests, and this plugin does not export or delete checkout consent records itself (it only removes IP address and user agent when it anonymizes the order, see above). Handle requests of guest customers manually in **Users → Privacy → Consents**.
+**Export and deletion:** Joomla's privacy export (`plg_privacy_consents`) only includes consent records with the requesting user's `user_id`, and Joomla deletes consent records only when a user account is deleted. For checkout consents of guest orders (`user_id = 0`), this plugin adds the domain `checkout_consents` to the export of a request whose address matches the guest order (see [Guest Customers](#guest-customers-and-earlier-guest-orders)). It does not delete consent records: it removes IP address and user agent when it anonymizes the order (see above).
 
 **Operator responsibilities:** describe the stored data (IP address, user agent, order number, time), its purpose (proof of consent, shop security) and its storage period (the retention period of the order) in your privacy policy. Schedule the cleanup task (or process removal requests) so that expired orders are anonymized; guest orders are anonymized by the cleanup task. The consent records themselves, without IP address and user agent, are not deleted automatically; decide how long you keep them.
 
@@ -210,7 +251,7 @@ The privacy tab in J2Commerce's "My Profile" shows consent status and a privacy 
 | User Type | Link |
 |-----------|------|
 | Logged-in | Both buttons open the `com_privacy` request form (`index.php?option=com_privacy&view=request`; requires the menu item, see above). The form offers both request types and cannot be preselected through the URL, so the shopper selects the type there |
-| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty, with the request type as subject (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login) |
+| Guest | `mailto:` link to **Support Email**, or the site e-mail address if empty, with the request type as subject (guests cannot use `com_privacy`: Joomla's Dispatcher redirects them to login). The administrator then creates the request, see [Process for a guest customer](#process-for-a-guest-customer) |
 
 **Show Privacy Section** off hides the tab. **Show Delete Address Buttons** off hides the delete button per address in the Addresses tab (`myprofile/default_addresses.php`). Every option applies only while the plugin is enabled; with the plugin disabled, the overrides show neither the tab nor the delete buttons.
 
@@ -569,7 +610,7 @@ Payment data (credit card details, bank information) is stored by payment servic
    ↓
 2. Request carried out (never refused by this plugin):
           • account pseudonymised (Joomla core privacy user plugin)
-          • saved addresses, carts, AcyMailing data deleted
+          • saved addresses, carts of the account, AcyMailing data deleted
           • orders outside the retention period anonymized
             (lifetime-license orders keep their order e-mail)
           • orders within the retention period kept intact;
@@ -605,7 +646,7 @@ Payment data (credit card details, bank information) is stored by payment servic
 3. Deletes their saved addresses
 4. Logs the effective fiscal year end and time zone (an invalid stored value is logged and replaced by `12-31`)
 5. Finds guest orders (`user_id = 0`) outside the retention period that still contain personal data and anonymizes them per order (orders with a lifetime license keep the e-mail address)
-6. Removes IP address and user agent from the checkout consent records of all anonymized orders
+6. Removes IP address and user agent from the checkout consent records of all anonymized J2Commerce 6 orders (consents are recorded only for them and name only the order number); an order number that also belongs to another order keeps its order info and consent evidence (logged)
 7. Logs all actions; the task ends with an error status when guest orders or all users failed
 
 ---
@@ -675,7 +716,7 @@ Insert the flag via SQL as shown in [Implementation Guide](#implementation-guide
 
 The export request flow is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for how users submit export requests and how administrators process them.
 
-This plugin extends the export with J2Commerce-specific data: orders, order items, addresses, optional Joomla user/profile/action logs, and AcyMailing data.
+This plugin extends the export with J2Commerce-specific data: orders, order items, addresses, checkout consents of guest orders, optional Joomla user/profile/action logs, and AcyMailing data. Guest orders placed with the request or account address are included, also when no account exists (see [Guest Customers](#guest-customers-and-earlier-guest-orders)).
 
 ---
 
@@ -790,7 +831,7 @@ The administrator message and the customer e-mail list the lifetime-license orde
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request (captured before Joomla's privacy user plugin pseudonymises the account).
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request and the account address (every matching subscriber is exported and deleted) (captured before Joomla's privacy user plugin pseudonymises the account). Requests of customers without account are created by the administrator and confirmed by the customer on the confirmation page of this plugin, see [Process for a guest customer](#process-for-a-guest-customer).
 
 ---
 
@@ -907,7 +948,7 @@ This plugin complies with Swiss legal requirements:
 - Orders within the retention period: **Kept intact** (not anonymized); a removal request is still carried out for all other data
 - Orders outside retention period: **Anonymized** on deletion request and by the cleanup task (registered users and guest orders)
 - Address book entries: **Deleted** immediately on request
-- Cart data: **Deleted** immediately on request — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
+- Cart data: **Deleted** immediately on request (carts of the account; guest carts carry no e-mail address and are not touched) — cart items are deleted via a subquery on `#__j2store_carts` / `#__j2commerce_carts` (neither `#__j2store_cartitems` nor `#__j2commerce_cartitems` has a `user_id` column)
 
 ### Payment Provider Data
 
@@ -959,6 +1000,7 @@ This plugin does not store or have access to complete payment details. Users mus
 | Show Delete Address Buttons | Yes | Show per-address delete buttons in the Addresses tab (`myprofile/default_addresses.php` override) |
 | Show Delete All Data | Yes | Show the data deletion request button in the Privacy tab |
 | Show Export Data | Yes | Show the data export request button in the Privacy tab |
+| Guest Request Confirmation | Yes | Customers without account confirm a request created by an administrator on the confirmation page of this plugin; the links of the request mail lead there (see [Process for a guest customer](#process-for-a-guest-customer)). Guest orders are matched by the request address also with this option off |
 
 These options are evaluated by the deployed MyProfile overrides; see [Profile Privacy Tab](#profile-privacy-tab).
 
@@ -1212,9 +1254,9 @@ Order as in `tests/test.env`:
 2. **Configuration** — plugin params, language files, XML manifest
 3. **Privacy Plugin Base** — method existence and class structure
 4. **Data Integration** — test data setup and CRUD operations
-5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure (a recent order does not block the request and is listed with a retention end on 31.12.)
+5. **Data Isolation** — cart and address deletion affect only the target user; `checkRetentionPeriod()` result structure (a recent order does not block the request and is listed with a retention end on 31.12.); guest requests through the com_privacy events with `user = null`: export of the guest orders, guest address and checkout consents by the request address (case-insensitive), retention list, removal (expired guest order anonymized incl. consent evidence, recent one kept, guest address and legacy consent record of the address removed (not a record of a longer or HTML-escaped address containing it), guest carts untouched), an account with an earlier guest order (export and removal), an order number shared with another account's order (only the guest's order row anonymized, the other order and the shared order info untouched), on J2Store no consent lookup by order number, and orders of another guest with the same name or of another account with the same address untouched; the confirmation of a request without login (valid code confirms once and notifies, wrong, used, foreign, placeholder and not pending refused, expired code invalidates the request, attempt limit); the confirmation page over HTTP through the real `com_ajax` endpoint in a guest session (GET form with prefilled code, POST without form token refused, wrong code refused, valid code confirmed, attempt limit, option off, JSON task answer inside `data`); legacy guest consent records of the address exported, those of other addresses not; the administrator request mail links `{TOKENURL}` (with the code) and `{FORMURL}` to the confirmation page, rendered through Joomla's `MailTemplate`, not for other mails, not with the option off or the privacy plugin disabled
 6. **Data Export** — `onPrivacyExportRequest` output validation
-7. **Data Anonymization** — migrated site (`#__j2store_*` tables present): active shop per enabled component (enabled component without tables skipped, disabled component not counted), both data sets are processed and the J2Store copy is anonymized too; `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized order, consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); an expired lifetime-license order keeps only its e-mail and does not block the request; administrator message after the customer e-mail (sent, invalid address, failed), customer text in German; `RetentionPeriod` dates incl. site time zone (New Year CET, summer time), 02-29 and invalid values, form rule, cutoff consistency in four time zones
+7. **Data Anonymization** — migrated site (`#__j2store_*` tables present): active shop per enabled component (enabled component without tables skipped, disabled component not counted), both data sets are processed and the J2Store copy is anonymized too; `onPrivacyRemoveData` retention logic; IP address and user agent removed from the consent record of the anonymized J2Commerce 6 order (a J2Store order number leaves consent records alone), consent records of a recent order and of another user unchanged; an order of 1 January ten years ago is kept (retention from the end of the fiscal year); an expired lifetime-license order keeps only its e-mail and does not block the request; administrator message after the customer e-mail (sent, invalid address, failed), customer text in German; `RetentionPeriod` dates incl. site time zone (New Year CET, summer time), 02-29 and invalid values, form rule, cutoff consistency in four time zones
 8. **GDPR Compliance** — all DSGVO-relevant methods and hooks
 9. **Template Overrides** — override source files and deployment verification (no J2Commerce 6 checkout override)
 10. **Consent UI Render** — renders the checkout (J2Store override, or on J2Commerce 6 the `AfterDisplayShippingPayment` output) and the MyProfile override for the active stack (`com_j2store` / `com_j2commerce`) and asserts the real consent checkbox (`id`/`name="j2commerce_privacy_consent"`) and Privacy tab markup (`j2commerce-privacy-tab`, shield icon, translated tab title) actually appear in the produced HTML; the frontend options (Show Privacy Section hides the tab, all options off while the plugin is disabled, address delete button depends on its option). Limitation: to render in CLI the test injects the application and the plugin cache via reflection; it does not prove that Joomla loads the plugin or that a real checkout request reaches these layouts. On the J2Store 4 lane it also asserts that the checkout step posts itself (hidden `task`/`option`/`view` inputs, the `button-payment-method` button of `type="button"`, a 32-character form token) and that the consent click guard and the fail-closed disabled Continue button are present; the guard's runtime blocking is executed separately by the Node DOM test `tests/js/consent-validator.test.js` (CI job “Consent Validator (JS)”). Not covered here: a live J2Store 4.1.8 checkout (server-side token acceptance)
