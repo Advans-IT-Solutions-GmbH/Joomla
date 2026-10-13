@@ -70,6 +70,12 @@ The component registers its own update site during installation, so later versio
   days a year on which the clocks change: a time that never happened is never offered, and an hour
   that happens twice is offered once. The engine has no clock and no database of its own, which is
   why all of that is covered by unit tests.
+- **Event types and custom fields.** Configure the duration, slot grid, buffers, notice, horizon,
+  limits, location, host, schedule, publication, access, content language, ordering and retention
+  through the administrator. Custom fields support every form type listed below. Each event type
+  has its own Joomla permission asset and independently generated feed credential.
+- **Menu item types.** Publish the list of event types or one event type through Joomla's menu
+  manager. Direct links enforce publication, access and content language too.
 
 Still to come: the public booking form itself, e-mail notifications with the calendar attachment,
 calendar subscription feeds, the reschedule, cancel and erasure links, and the conferencing links.
@@ -77,8 +83,38 @@ calendar subscription feeds, the reschedule, cancel and erasure links, and the c
 ## Configuration
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
-ACL. General booking settings arrive in later stages; the current screens configure schedules and
-blocked periods.
+ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Event types
+
+| Setting | Purpose |
+|---------|---------|
+| Title, alias, description | Public title, unique URL alias and rich-text description |
+| Schedule, host | Existing availability schedule and Joomla user hosting the appointment |
+| Duration, slot step | Meeting length and independent grid spacing, in minutes |
+| Buffers before/after | Minimum gaps around the meeting, in minutes |
+| Minimum notice | Earliest bookable start relative to now, in minutes |
+| Horizon days | Rolling Gregorian calendar days in the schedule's zone; zero selects a fixed range |
+| Fixed start/end | Explicit UTC timestamps, `YYYY-MM-DD HH:MM:SS`; start inclusive, end exclusive |
+| Daily/weekly limits | Per-event-type caps, with weeks starting Monday; zero means unlimited |
+| Location and instructions | Host-calls telephone, invitee-calls telephone, in-person, custom text or conference |
+| Conference provider | Jitsi, generic room URL or fixed room; public integration is in progress |
+| Require approval | Holds a pending request's slot until approval or cancellation |
+| Retention days | Per-event override; empty inherits the component setting, zero expires after the meeting ends |
+| Colour | Six-digit hexadecimal colour |
+| Published, access, language | Visibility controls for the public list and direct event links |
+| Ordering | Order in the public list |
+| Permissions | Joomla per-event-type edit, state and deletion rules |
+
+An event type with bookings cannot be deleted; unpublish it instead. Feed credentials cannot be
+edited through the ordinary event form.
+
+### Custom booking fields
+
+Each field belongs to an event type and has a label, description, required flag, publication state
+and ordering. Types are single-line text, multiline text, number, telephone with country selector,
+email, URL, single choice, multiple choice, checkbox and date. Enter choices one per non-empty line
+for the two choice types. Editing or deleting a field inherits its event type's permissions.
 
 ### Schedules
 
@@ -122,8 +158,10 @@ normalised or converted again. Correcting and saving restores the normal calenda
 2. Add weekly intervals and any date-specific replacements or closures, then save.
 3. Open **Blocked periods** to record a host's absences independently of an event type.
 
-The dashboard links to both lists. Event-type administration and the public booking form are not
-implemented yet; these screens prepare the availability the later booking flow will use.
+4. Create an event type, assign the schedule and host, and configure its meeting rules.
+5. Add its custom booking fields and create a Joomla menu item for the list or the individual type.
+
+The dashboard links to all configuration lists. The public booking submission is in progress.
 
 ## Signing keys
 

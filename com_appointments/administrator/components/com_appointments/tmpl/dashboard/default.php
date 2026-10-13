@@ -8,6 +8,7 @@
  */
 
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -15,6 +16,12 @@ $counts  = $this->counts;
 $isEmpty = $counts['eventtypes'] === 0 && $counts['bookings'] === 0;
 ?>
 <div class="com-appointments-dashboard">
+    <nav class="mb-3">
+        <a class="btn btn-primary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_TITLE'); ?></a>
+        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=fields'); ?>"><?php echo Text::_('COM_APPOINTMENTS_FIELDS_TITLE'); ?></a>
+        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=schedules'); ?>"><?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_TITLE'); ?></a>
+        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>"><?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_TITLE'); ?></a>
+    </nav>
     <div class="row">
         <div class="col-md-6 mb-3">
             <div class="card h-100">
