@@ -60,17 +60,34 @@ class StructureTest
             });
         }
 
-        // config.xml must carry the option fields so the com_config Options
+        // config.xml must carry every option field so the com_config Options
         // screen can load them; the manifest <config> block is not read for a
-        // component's global options.
-        $this->test('config.xml defines the component option fields', function () {
+        // component's global options. Assert the complete migrated field set so
+        // a dropped field cannot ship an incomplete Options screen undetected.
+        $this->test('config.xml defines every migrated option field', function () {
             $xml = @simplexml_load_file($this->base . '/config.xml');
 
-            if ($xml === false || !isset($xml->fields)) {
+            if ($xml === false) {
                 return false;
             }
 
-            return strpos(file_get_contents($this->base . '/config.xml'), 'default_policy_target') !== false;
+            $names = [];
+
+            foreach ($xml->xpath('//field[@name]') as $field) {
+                $names[] = (string) $field['name'];
+            }
+
+            $expected = [
+                'default_policy_target',
+                'quarantine_pass_threshold',
+                'reject_pass_threshold',
+                'imap_timeout',
+                'max_messages_per_run',
+                'dns_diagnostics',
+                'rules',
+            ];
+
+            return \count(array_diff($expected, $names)) === 0;
         });
 
         // The edit layouts must load the form.validate web asset, otherwise
