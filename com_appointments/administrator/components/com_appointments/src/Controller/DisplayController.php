@@ -70,6 +70,10 @@ class DisplayController extends BaseController
             if (!$allowed) {
                 throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
+
+            if ($id > 0 && !$this->checkEditId('com_appointments.edit.' . $view, $id)) {
+                throw new \Exception(Text::sprintf('JLIB_APPLICATION_ERROR_UNHELD_ID', $id), 403);
+            }
         }
 
         return parent::display($cachable, $urlparams);

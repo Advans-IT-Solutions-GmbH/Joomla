@@ -105,6 +105,8 @@ Overrides are dates in the schedule's zone, not instants converted into the read
 Calendar fields use `YYYY-MM-DD HH:MM:SS` in every language so submitted values can be validated
 before conversion. Nonexistent or ambiguous local times at a clock change are refused instead of
 silently shifted. A blocked period has no published state.
+After such a refusal, the bounds temporarily render as plain text so the original input is not
+normalised or converted again. Correcting and saving restores the normal calendar fields.
 
 ## Usage
 

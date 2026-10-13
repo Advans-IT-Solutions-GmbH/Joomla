@@ -135,6 +135,15 @@ request omits `published` or tries to set it to `1`; the database's default must
 An editor without that permission must still be able to change the schedule's content while its
 existing publication state stays unchanged. An administrator with the permission is the positive
 control and can create a published schedule.
+Direct edit views, including mixed-case names, must also refuse an existing record until the edit
+task has checked it out for that session. The edit task must not acquire another operator's checkout.
+
+### The blocked-period redisplay assertions
+
+`05-blocked.php` checks the actual input values, not only the error message, after an impossible
+date and each DST refusal. Both bounds must remain exactly as submitted. A corrected submission
+must update the same row using the normal UTC conversion, and a subsequent edit must display it in
+the operator's zone again.
 
 ### The mail assertion
 

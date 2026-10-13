@@ -259,12 +259,37 @@ class ScheduleAdminTest
 
         // Editing content must still work without permission to change state.
         try {
+            $this->tokenFromEditForm($scheduleId);
             $operator = $this->createOperatorWithoutStatePermission(true);
 
             if ($operator === null) {
                 echo "✗ Could not create an operator without the state permission\n";
                 $this->failed++;
             } else {
+                foreach (['schedule', 'Schedule', 'SCHEDULE'] as $spelling) {
+                    $this->test('An editor cannot bypass checkout through view=' . $spelling, function () use ($spelling, $scheduleId) {
+                        [, $status] = $this->statusOf(
+                            '/administrator/index.php?option=com_appointments&view=' . $spelling . '&id=' . $scheduleId
+                        );
+
+                        return $status === 403;
+                    });
+                }
+
+                $this->test('The edit task refuses a schedule checked out by another editor', function () use ($scheduleId) {
+                    [, $status] = $this->statusOf(
+                        '/administrator/index.php?option=com_appointments&task=schedule.edit&id=' . $scheduleId
+                    );
+
+                    return $status === 403 && (int) $this->column($scheduleId, 'checked_out') !== $this->operatorId;
+                });
+
+                $this->login();
+                $this->post('schedule.cancel', $this->tokenFromListForm() ?? '', [
+                    'jform[id]' => (string) $scheduleId,
+                ]);
+                $this->loginAs(self::OPERATOR, self::OPERATOR_PASSWORD);
+
                 $this->test('An editor without core.edit.state preserves the existing published state', function () use ($scheduleId) {
                     $token = $this->tokenFromEditForm($scheduleId);
 

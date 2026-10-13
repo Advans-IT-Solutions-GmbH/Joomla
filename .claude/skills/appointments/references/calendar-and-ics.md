@@ -122,6 +122,11 @@ before Joomla's `user_utc` filter runs, because the filter is the thing that con
 the operator's own input no longer exists. The controller checks the request token first, so a
 refusal cannot become a way to write a forged submission into the operator's session state.
 
+An early refusal keeps the original local strings in the form state, not UTC timestamps. Its
+redisplay therefore uses plain text fields for both bounds: Joomla's calendar field would otherwise
+convert them again and even normalise an impossible date. The refusal marker is cleared before the
+next valid submission; normal saves and edits continue to use the calendar's `user_utc` conversion.
+
 ## iCalendar output
 
 RFC 5545. Two shapes are produced, and they are not the same.

@@ -71,9 +71,14 @@ final class AvailabilityWindow
      */
     public static function fromUtcStrings(string $start, string $end): self
     {
-        $zone = new \DateTimeZone('UTC');
+        $startUtc = UtcTimestamp::parse($start);
+        $endUtc   = UtcTimestamp::parse($end);
 
-        return new self(new \DateTimeImmutable($start, $zone), new \DateTimeImmutable($end, $zone));
+        if ($startUtc === null || $endUtc === null) {
+            throw new \InvalidArgumentException('A window requires two valid UTC timestamps.');
+        }
+
+        return new self($startUtc, $endUtc);
     }
 
     public function getStart(): \DateTimeImmutable

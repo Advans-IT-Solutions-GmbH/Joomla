@@ -24,6 +24,7 @@ class BlockedAdminTest
     private $dbPrefix;
     private $baseUrl;
     private $cookieJar = '/tmp/suite-blocked-cookies.txt';
+    private $lastStatus = 0;
     private $adminId = 0;
     private $originalParams = '';
     private $passed = 0;
@@ -95,6 +96,14 @@ class BlockedAdminTest
             if ($row === null) {
                 return false;
             }
+
+            $this->test('A direct edit view cannot skip the blocked-period edit task', function () use ($row) {
+                $html = $this->get(
+                    '/administrator/index.php?option=com_appointments&view=Blocked&id=' . (int) $row['id']
+                );
+
+                return $this->lastStatus === 403 && strpos($html, 'name="jform[start_utc]"') === false;
+            });
 
             $this->test('The entered local time was stored as universal time', function () use ($row) {
                 return $row['start_utc'] === '2026-06-02 12:00:00'
@@ -188,7 +197,9 @@ class BlockedAdminTest
                 return $stored !== null
                     // Untouched: no normalised March date reached the row.
                     && $stored['start_utc'] === '2026-06-02 12:00:00'
-                    && stripos($html, 'is not a date and a time that exist') !== false;
+                    && stripos($html, 'is not a date and a time that exist') !== false
+                    && $this->fieldValue($html, 'start_utc') === '2026-02-31 10:00:00'
+                    && $this->fieldValue($html, 'end_utc') === '2026-06-02 16:00:00';
             });
 
             // --- The two daylight-saving refusals -------------------------------
@@ -210,7 +221,9 @@ class BlockedAdminTest
 
                 return $stored !== null
                     && $stored['start_utc'] === '2026-06-02 12:00:00'
-                    && stripos($html, 'does not exist in Europe/Zurich') !== false;
+                    && stripos($html, 'does not exist in Europe/Zurich') !== false
+                    && $this->fieldValue($html, 'start_utc') === '2026-03-29 02:30:00'
+                    && $this->fieldValue($html, 'end_utc') === '2026-06-02 16:00:00';
             });
 
             $html = $this->post('blocked.save', $editToken, [
@@ -226,7 +239,9 @@ class BlockedAdminTest
 
                 return $stored !== null
                     && $stored['start_utc'] === '2026-06-02 12:00:00'
-                    && stripos($html, 'occurs twice in Europe/Zurich') !== false;
+                    && stripos($html, 'occurs twice in Europe/Zurich') !== false
+                    && $this->fieldValue($html, 'start_utc') === '2026-10-25 02:30:00'
+                    && $this->fieldValue($html, 'end_utc') === '2026-10-25 06:00:00';
             });
 
             // --- The refusal does not run before the token check ----------------
@@ -270,6 +285,30 @@ class BlockedAdminTest
                 echo '    landed on the edit form: ' . ($elsewhere ? 'no' : 'yes') . "\n";
 
                 return false;
+            });
+
+            $editToken = $this->tokenIn(
+                $this->get('/administrator/index.php?option=com_appointments&task=blocked.edit&id=' . $secondId)
+            ) ?? $token;
+            $this->post('blocked.save', $editToken, [
+                'jform[id]'        => (string) $secondId,
+                'jform[user_id]'   => (string) $this->adminId,
+                'jform[title]'     => self::TITLE,
+                'jform[start_utc]' => '2026-06-02 15:00:00',
+                'jform[end_utc]'   => '2026-06-02 17:00:00',
+            ]);
+
+            $this->test('A corrected submission uses normal UTC conversion after redisplay', function () use ($secondId) {
+                $stored = $this->fixture();
+                $html = $this->get(
+                    '/administrator/index.php?option=com_appointments&task=blocked.edit&id=' . $secondId
+                );
+
+                return $stored !== null
+                    && (int) $stored['id'] === $secondId
+                    && $stored['start_utc'] === '2026-06-02 13:00:00'
+                    && $stored['end_utc'] === '2026-06-02 15:00:00'
+                    && $this->fieldValue($html, 'start_utc') === '2026-06-02 15:00:00';
             });
         } finally {
             $this->restoreAdminZone();
@@ -411,7 +450,20 @@ class BlockedAdminTest
         $fields['task'] = $task;
         $fields[$token] = '1';
 
-        return $this->request('/administrator/index.php?option=com_appointments', $fields);
+        $id = isset($fields['jform[id]']) ? '&id=' . (int) $fields['jform[id]'] : '';
+
+        return $this->request('/administrator/index.php?option=com_appointments' . $id, $fields);
+    }
+
+    private function fieldValue(string $html, string $field): ?string
+    {
+        if (!preg_match('#<input\b[^>]*\bname="jform\[' . preg_quote($field, '#') . '\]"[^>]*>#', $html, $input)
+            || !preg_match('/\bvalue="([^"]*)"/', $input[0], $value)
+        ) {
+            return null;
+        }
+
+        return html_entity_decode($value[1], ENT_QUOTES, 'UTF-8');
     }
 
     private function get(string $path): string
@@ -441,6 +493,7 @@ class BlockedAdminTest
         }
 
         $body = curl_exec($handle);
+        $this->lastStatus = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
         curl_close($handle);
 
         return $body === false ? '' : $body;

@@ -66,6 +66,7 @@ class BlockedController extends FormController
             return false;
         }
 
+        $this->app->setUserState('com_appointments.edit.blocked.local_timestamps', false);
         $data = (array) $this->input->post->get('jform', [], 'array');
         $zone = $this->operatorZone();
 
@@ -142,6 +143,7 @@ class BlockedController extends FormController
 
         $app->enqueueMessage($message, 'error');
         $app->setUserState($context . '.data', $data);
+        $app->setUserState($context . '.local_timestamps', true);
 
         $this->setRedirect(
             Route::_(

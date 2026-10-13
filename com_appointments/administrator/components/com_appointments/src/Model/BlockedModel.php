@@ -48,7 +48,26 @@ class BlockedModel extends AdminModel
             ['control' => 'jform', 'load_data' => $loadData]
         );
 
-        return empty($form) ? false : $form;
+        if (empty($form)) {
+            return false;
+        }
+
+        $app       = Factory::getApplication();
+        $submitted = $app->getUserState('com_appointments.edit.blocked.data', []);
+
+        if ($loadData
+            && $app->getUserState('com_appointments.edit.blocked.local_timestamps', false)
+            && !empty($submitted)
+        ) {
+            // CalendarField normalises even unfiltered values on display.
+            // Rejected wall clocks must remain exactly what the operator typed.
+            foreach (['start_utc', 'end_utc'] as $field) {
+                $form->setFieldAttribute($field, 'type', 'text');
+                $form->setFieldAttribute($field, 'filter', 'none');
+            }
+        }
+
+        return $form;
     }
 
     protected function loadFormData()

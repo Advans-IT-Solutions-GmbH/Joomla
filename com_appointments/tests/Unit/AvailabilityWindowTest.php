@@ -9,10 +9,40 @@
 namespace Advans\Component\Appointments\Tests\Unit;
 
 use Advans\Component\Appointments\Administrator\Helper\AvailabilityWindow;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class AvailabilityWindowTest extends TestCase
 {
+    #[DataProvider('invalidUtcBounds')]
+    public function testUtcStringFactoryRejectsInvalidBounds(string $start, string $end): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        AvailabilityWindow::fromUtcStrings($start, $end);
+    }
+
+    public static function invalidUtcBounds(): array
+    {
+        $start = '2026-06-02 10:00:00';
+        $end   = '2026-06-02 11:00:00';
+        $rows  = [];
+
+        foreach ([
+            '2026-02-31 10:00:00',
+            'tomorrow',
+            '',
+            '0000-00-00 00:00:00',
+            '0999-06-02 10:00:00',
+            '2026-06-02 10:00:00+02:00',
+        ] as $value) {
+            $rows['start ' . $value] = [$value, $end];
+            $rows['end ' . $value]   = [$start, $value];
+        }
+
+        return $rows;
+    }
+
     private function window(string $start, string $end): AvailabilityWindow
     {
         return AvailabilityWindow::fromUtcStrings('2026-06-02 ' . $start, '2026-06-02 ' . $end);
