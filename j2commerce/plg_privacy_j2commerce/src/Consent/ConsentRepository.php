@@ -88,6 +88,110 @@ final class ConsentRepository
      * Whether an order number can be referenced safely. J2Commerce generates numeric order IDs;
      * the character set is limited so the marker can never break out of its HTML comment.
      */
+    /**
+     * Characters of an e-mail address token: everything except white space, "@" and the RFC 5322
+     * specials that never occur in an unquoted address (parentheses, angle and square brackets,
+     * braces, quote, comma, semicolon, colon, backslash). Used for request addresses and for
+     * the addresses found in a consent body, so both follow the same syntax.
+     */
+    public const ADDRESS_CHARS = '[^\s@<>()\[\]{}",;:\\\\]';
+
+    /**
+     * Whether $email (trimmed, lower case) is a request address: local part "@" domain with a dot,
+     * only ADDRESS_CHARS, no leading or trailing dot, at most 320 bytes.
+     */
+    public static function isAddress(string $email): bool
+    {
+        return $email !== '' && \strlen($email) <= 320
+            && !str_starts_with($email, '.') && !str_ends_with($email, '.')
+            && preg_match('/^' . self::ADDRESS_CHARS . '+@' . self::ADDRESS_CHARS . '+\.' . self::ADDRESS_CHARS . '+$/u', $email) === 1;
+    }
+
+    /**
+     * The complete e-mail address tokens of a text (HTML tags removed, entities decoded), lower
+     * case, a sentence-ending dot removed. A token is a maximal run of ADDRESS_CHARS around "@",
+     * so "o'anna@example.com" or "💡anna@example.com" is never the token "anna@example.com".
+     *
+     * @return  string[]
+     */
+    public static function addressTokens(string $text): array
+    {
+        $text = html_entity_decode(strip_tags(str_replace('<', ' <', $text)), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        if (!preg_match_all('/' . self::ADDRESS_CHARS . '+@' . self::ADDRESS_CHARS . '+/u', $text, $matches)) {
+            return [];
+        }
+
+        return array_map(static fn (string $token): string => mb_strtolower(rtrim($token, '.'), 'UTF-8'), $matches[0]);
+    }
+
+    /**
+     * Whether one of the complete address tokens of $body is a key of $wanted (lower case).
+     *
+     * @param   array<string, mixed>  $wanted
+     */
+    private static function bodyHasAddress(string $body, array $wanted): bool
+    {
+        foreach (self::addressTokens($body) as $token) {
+            if (isset($wanted[$token])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Guest records (user_id 0) of an earlier template override (LEGACY_SUBJECT) that name one
+     * of $emails as a complete address, for a privacy export; nothing is changed. Joomla's consent
+     * plugin exports only records of an account (user_id), never guest records.
+     *
+     * @param   string[]  $emails
+     *
+     * @return  object[]  Rows with id, state, created, subject and body, ordered by ID
+     */
+    public function findLegacyGuestConsents(array $emails): array
+    {
+        $emails = array_values(array_unique(array_filter(array_map(static fn ($email): string => mb_strtolower(trim((string) $email), 'UTF-8'), $emails), 'strlen')));
+
+        if ($emails === []) {
+            return [];
+        }
+
+        $wanted = array_flip($emails);
+        $likes  = array_map(
+            fn (string $email): string => $this->addressPrefilter($email),
+            $emails
+        );
+        $rows   = [];
+        $lastId = 0;
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
+                ->where($this->db->quoteName('user_id') . ' = 0')
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+
+            $this->db->setQuery($query);
+            $batch = $this->db->loadObjectList() ?: [];
+
+            foreach ($batch as $row) {
+                $lastId = max($lastId, (int) $row->id);
+
+                if (self::bodyHasAddress((string) $row->body, $wanted)) {
+                    $rows[] = $row;
+                }
+            }
+        } while (\count($batch) === self::BATCH_SIZE);
+
+        return $rows;
+    }
+
     public static function isValidOrderId(string $orderId): bool
     {
         return $orderId !== '' && \strlen($orderId) <= 100 && preg_match('/^[A-Za-z0-9_.\-]+$/', $orderId) === 1;
@@ -366,6 +470,46 @@ final class ConsentRepository
     }
 
     /**
+     * All checkout consent records of the given orders, whatever their state (valid, obsolete,
+     * invalidated): for a privacy export every record of the data subject counts.
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  object[]  Rows with id, user_id, state, created, subject, body and order_id, ordered by ID
+     */
+    public function findConsentsForOrders(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('strval', $orderIds), [self::class, 'isValidOrderId'])));
+        $rows     = [];
+
+        foreach (array_chunk($orderIds, 50) as $chunk) {
+            $wanted = array_flip($chunk);
+            $likes  = array_map(fn (string $orderId): string => $this->db->quoteName('body') . ' LIKE ' . $this->likeMarker($orderId), $chunk);
+            $query  = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'user_id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::SUBJECT))
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->order($this->db->quoteName('id') . ' ASC');
+
+            $this->db->setQuery($query);
+
+            foreach ($this->db->loadObjectList() ?: [] as $row) {
+                $row->order_id = self::extractOrderId((string) $row->body);
+
+                // Only records whose order marker names one of the orders.
+                if ($row->order_id !== null && isset($wanted[$row->order_id])) {
+                    $rows[(int) $row->id] = $row;
+                }
+            }
+        }
+
+        ksort($rows);
+
+        return array_values($rows);
+    }
+
+    /**
      * Record consent for an order unless a valid record already exists (no duplicates). Two
      * parallel requests (double submit) can both insert; the later rows are removed again, so one
      * record per order remains.
@@ -448,25 +592,39 @@ final class ConsentRepository
      * IP address and user agent are removed; the body gets a neutral note and the subject
      * LEGACY_DONE_SUBJECT and state -1 (invalid). Such records are not counted as consent.
      *
-     * @param   int|null  $userId  Only this user's records (null: all)
+     * @param   int|null  $userId  Only this user's records (null: all; 0: no account, only the
+     *                             guest records of $emails)
      * @param   string[]  $emails  With $userId: also guest records (user_id 0) mentioning one of these addresses
      *
      * @return  int  Number of records anonymized
      */
     public function anonymizeLegacyConsents(?int $userId = null, array $emails = []): int
     {
+        $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
+
+        // A request without account and without an address has no records of its own; "user_id 0"
+        // alone would match the guest records of every customer.
+        if ($userId !== null && $userId <= 0 && $emails === []) {
+            return 0;
+        }
+
         [$text, $tag] = self::legacyBody(self::loadSiteBodyLanguage());
         $body         = $text . self::LEGACY_MARKER . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($tag);
-        $emails  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $emails)), 'strlen')));
         // The raw-key body repair is a data migration for records anonymized by an older version.
         // It runs only in the unscoped cleanup/installer path; a scoped removal request must not
         // touch other users' already-anonymized records or inflate the returned count.
         $changed = $userId === null ? $this->repairLegacyAnonymizedBodies($body) : 0;
         $lastId  = 0;
 
+        // The SQL LIKE below only preselects: "anna@example.com" is also contained in
+        // "joanna@example.com", "o'anna@example.com" or "💡anna@example.com". A guest record
+        // counts only when one of the complete address tokens of its body (addressTokens(), the
+        // same syntax as an accepted request address) equals a request address.
+        $wanted = array_flip(array_map(static fn (string $email): string => mb_strtolower($email, 'UTF-8'), $emails));
+
         do {
             $query = $this->createQuery()
-                ->select($this->db->quoteName('id'))
+                ->select($this->db->quoteName(['id', 'user_id', 'body']))
                 ->from($this->db->quoteName('#__privacy_consents'))
                 ->where($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_SUBJECT))
                 ->where($this->db->quoteName('id') . ' > ' . $lastId)
@@ -474,35 +632,53 @@ final class ConsentRepository
                 ->setLimit(self::BATCH_SIZE);
 
             if ($userId !== null) {
-                $scope = [$this->db->quoteName('user_id') . ' = ' . (int) $userId];
+                $scope = $userId > 0 ? [$this->db->quoteName('user_id') . ' = ' . (int) $userId] : [];
 
+                // LOWER on both sides: the preselection must not depend on the column collation.
+                // Under a case-sensitive collation "Anna@Example.com" in the body would otherwise
+                // never reach the case-insensitive check below.
                 foreach ($emails as $email) {
-                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->db->quoteName('body') . ' LIKE '
-                        . $this->db->quote('%' . $this->db->escape(htmlspecialchars($email, ENT_QUOTES, 'UTF-8'), true) . '%', false) . ')';
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->addressPrefilter($email) . ')';
                 }
 
                 $query->where('(' . implode(' OR ', $scope) . ')');
             }
 
             $this->db->setQuery($query);
-            $ids = array_map('intval', $this->db->loadColumn() ?: []);
+            $rows = $this->db->loadObjectList() ?: [];
 
-            if ($ids === []) {
+            if ($rows === []) {
                 break;
             }
 
-            $update = $this->createQuery()
-                ->update($this->db->quoteName('#__privacy_consents'))
-                ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
-                ->set($this->db->quoteName('body') . ' = :body')
-                ->set($this->db->quoteName('state') . ' = -1')
-                ->whereIn($this->db->quoteName('id'), $ids)
-                ->bind(':body', $body);
-            $this->db->setQuery($update)->execute();
+            $ids = [];
+
+            foreach ($rows as $row) {
+                $own = $userId === null || ($userId > 0 && (int) $row->user_id === $userId);
+
+                if (!$own && (int) $row->user_id === 0) {
+                    $own = self::bodyHasAddress((string) $row->body, $wanted);
+                }
+
+                if ($own) {
+                    $ids[] = (int) $row->id;
+                }
+            }
+
+            if ($ids !== []) {
+                $update = $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('subject') . ' = ' . $this->db->quote(self::LEGACY_DONE_SUBJECT))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->set($this->db->quoteName('state') . ' = -1')
+                    ->whereIn($this->db->quoteName('id'), $ids)
+                    ->bind(':body', $body);
+                $this->db->setQuery($update)->execute();
+            }
 
             $changed += \count($ids);
-            $lastId   = max($ids);
-        } while (\count($ids) === self::BATCH_SIZE);
+            $lastId   = max(array_map(static fn (object $row): int => (int) $row->id, $rows));
+        } while (\count($rows) === self::BATCH_SIZE);
 
         return $changed;
     }
@@ -689,6 +865,27 @@ final class ConsentRepository
         $record = $this->findOrderConsent($orderId);
 
         return $record !== null && (int) $record->user_id === 0 ? [$record] : [];
+    }
+
+    /**
+     * SQL preselection of bodies that may contain $email. Only the domain is compared ("@" or
+     * its entity "&#64;" plus the domain, lower case): the local part may be stored raw or with
+     * HTML entities in several forms. The exact decision is bodyHasAddress().
+     */
+    private function addressPrefilter(string $email): string
+    {
+        $email  = mb_strtolower(trim($email), 'UTF-8');
+        $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
+        $likes  = [];
+
+        foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
+            foreach (['@', '&#64;'] as $at) {
+                $likes[] = 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
+                    . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+            }
+        }
+
+        return '(' . implode(' OR ', $likes) . ')';
     }
 
     private function likeMarker(string $orderId): string

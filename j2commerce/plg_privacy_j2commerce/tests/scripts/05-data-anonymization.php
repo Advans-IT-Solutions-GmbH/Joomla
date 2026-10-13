@@ -507,6 +507,14 @@ class DataAnonymizationTest
                 $expired = $loadConsent($consentIds['expired']);
                 $before  = $consentsBefore['expired'];
                 $this->test('consent of the anonymized order still exists', $expired !== null);
+
+                if (!$isJ6) {
+                    // Consents are recorded for J2Commerce 6 orders only and name only the order
+                    // number: a J2Store order number may belong to another customer's J2Commerce 6
+                    // order, so anonymizing a J2Store order leaves consent records alone.
+                    $this->test('J2Store order anonymized: consent record with the same order number unchanged',
+                        $expired && $before && $expired->body === $before->body);
+                } else {
                 $this->test('consent IP address removed', $expired && !str_contains($expired->body, '203.0.113.50'));
                 $this->test('consent user agent removed', $expired && !str_contains($expired->body, 'AnonTestAgent/1.0'));
                 $this->test('consent keeps order reference and removal marker',
@@ -519,6 +527,7 @@ class DataAnonymizationTest
                     && (int) $expired->state === (int) $before->state
                     && $expired->created === $before->created
                     && $expired->subject === $before->subject);
+                }
 
                 foreach (['recent' => 'recent order of the same user (within retention)', 'other' => 'order of another user'] as $key => $label) {
                     $after = $loadConsent($consentIds[$key]);

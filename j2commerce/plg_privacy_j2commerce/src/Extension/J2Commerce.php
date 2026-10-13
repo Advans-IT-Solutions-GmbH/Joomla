@@ -16,6 +16,7 @@ use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Advans\Plugin\Privacy\J2Commerce\Support\J2CommerceStack;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Date\Date;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
@@ -30,6 +31,7 @@ use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
+use Joomla\CMS\User\UserHelper;
 use Joomla\Component\Privacy\Administrator\Export\Domain;
 use Joomla\Component\Privacy\Administrator\Export\Field;
 use Joomla\Component\Privacy\Administrator\Export\Item;
@@ -58,6 +60,107 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** Data set used by isJ2Commerce4() inside forEachDataSet() (null: active set). */
     private ?bool $dataSetOverride = null;
+
+    /** The removal request being reported has no Joomla account (guest customer). */
+    private bool $guestRequest = false;
+
+    /** Order e-mail of anonymized orders; never matched as a customer address. */
+    public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
+
+    /**
+     * Route of the confirmation page for privacy requests (com_ajax, this plugin). The bundled
+     * system plugin links the administrator request mail to it (GUEST_CONFIRM_ROUTE there).
+     */
+    public const CONFIRM_ROUTE = 'index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=html&task=confirmRequest';
+
+    /** Task of the confirmation page in onAjaxJ2commercePrivacy(). */
+    public const CONFIRM_TASK = 'confirmRequest';
+
+    /** Result codes of confirmPrivacyRequest(). */
+    public const CONFIRM_OK      = 'confirmed';
+    public const CONFIRM_FAILED  = 'failed';
+    public const CONFIRM_EXPIRED = 'expired';
+
+    /** Session key of the failed confirmation attempts. */
+    public const CONFIRM_ATTEMPTS_KEY = 'plg_privacy_j2commerce.confirm_attempts';
+
+    /** Failed attempts per session within CONFIRM_ATTEMPT_WINDOW seconds before the page refuses. */
+    public const CONFIRM_MAX_FAILURES = 5;
+
+    public const CONFIRM_ATTEMPT_WINDOW = 900;
+
+    /** Hash verifications per confirmation attempt (one per request type: export, remove). */
+    private const CONFIRM_HASH_CHECKS = 2;
+
+    /** Validity of a confirmation token, as in Joomla's com_privacy ConfirmModel. */
+    private const CONFIRM_TOKEN_LIFETIME = 'P1D';
+
+    /**
+     * Hash of a random value, created like a confirmation token hash (UserHelper::hashPassword(),
+     * same algorithm and cost) once per request: verified in place of a missing request, so a
+     * missing request takes as long as a wrong token.
+     */
+    private static ?string $dummyTokenHash = null;
+
+    /**
+     * E-mail addresses of a privacy request as they are compared with order and address data:
+     * trimmed, lower case, plausible addresses only, without the placeholder of anonymized orders
+     * and without duplicates.
+     *
+     * @param   array<int, mixed>  $emails
+     *
+     * @return  string[]
+     */
+    public static function requestEmails(array $emails): array
+    {
+        self::loadHelperClasses();
+        $result = [];
+
+        foreach ($emails as $email) {
+            $email = mb_strtolower(trim((string) $email), 'UTF-8');
+
+            // Same address syntax as the address tokens of consent bodies (ConsentRepository).
+            if ($email === self::ANONYMIZED_EMAIL || !ConsentRepository::isAddress($email)) {
+                continue;
+            }
+
+            $result[$email] = $email;
+        }
+
+        return array_values($result);
+    }
+
+    /**
+     * SQL condition for the records of a privacy request: the records of the account ($userId,
+     * if any) and the guest records (user_id 0) whose e-mail column holds one of the request's
+     * addresses, compared case-insensitively. Records of another account never match, also when
+     * they carry the same e-mail address. Values are quoted inline, so the condition can be used
+     * in subqueries.
+     *
+     * @param   int       $userId       Joomla user ID of the request (0: no account)
+     * @param   string[]  $emails       E-mail addresses of the request (see requestEmails())
+     * @param   string    $emailColumn  E-mail column of the table (orders: user_email, addresses: email)
+     * @param   string    $alias        Table alias, '' for none
+     */
+    protected function ownerCondition(int $userId, array $emails, string $emailColumn = 'user_email', string $alias = ''): string
+    {
+        $db     = $this->getDatabase();
+        $prefix = $alias !== '' ? $alias . '.' : '';
+        $parts  = [];
+
+        if ($userId > 0) {
+            $parts[] = $db->quoteName($prefix . 'user_id') . ' = ' . $userId;
+        }
+
+        $emails = self::requestEmails($emails);
+
+        if ($emails !== []) {
+            $parts[] = '(' . $db->quoteName($prefix . 'user_id') . ' = 0 AND LOWER(TRIM(' . $db->quoteName($prefix . $emailColumn) . ')) IN ('
+                . implode(',', array_map([$db, 'quote'], $emails)) . '))';
+        }
+
+        return $parts === [] ? '1 = 0' : '(' . implode(' OR ', $parts) . ')';
+    }
 
     /**
      * Returns true if J2Commerce 4.x is installed (#__j2store_* tables).
@@ -222,11 +325,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     {
         // Joomla 5: Event object
         if ($eventOrUser instanceof ExportRequestEvent) {
-            $user = $eventOrUser->getUser();
-            if (!$user) {
+            // Without a Joomla account for the request address (guest customer) the user is null;
+            // the guest orders are then found through the e-mail address of the request.
+            $user         = $eventOrUser->getUser();
+            $requestEmail = (string) ($eventOrUser->getRequest()->email ?? '');
+
+            if (!$user && self::requestEmails([$requestEmail]) === []) {
                 return;
             }
-            $domains = $this->collectExportDomains($user);
+
+            $domains = $this->collectExportDomains($user, $requestEmail);
             $eventOrUser->addResult($domains);
             return;
         }
@@ -237,14 +345,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Collect all export domains for a user
+     * Collect all export domains of a privacy request: the account's data (if there is an
+     * account) and the guest orders placed with the request or account e-mail address.
+     *
+     * @param   User|null  $user          Account of the request address (null: guest customer)
+     * @param   string     $requestEmail  E-mail address of the privacy request
      */
-    protected function collectExportDomains(User $user): array
+    protected function collectExportDomains(?User $user, string $requestEmail = ''): array
     {
         $domains = [];
+        $emails  = self::requestEmails([$requestEmail, $user->email ?? '']);
 
         // Every J2Commerce data set: a migrated site can still hold the user's data in #__j2store_*.
-        foreach ($this->forEachDataSet(fn (bool $isJ4): array => [$isJ4, $this->createOrdersDomain($user), $this->createAddressesDomain($user)]) as $index => [$isJ4, $orders, $addresses]) {
+        foreach ($this->forEachDataSet(fn (bool $isJ4): array => [$isJ4, $this->createOrdersDomain($user, $emails), $this->createAddressesDomain($user, $emails)]) as $index => [$isJ4, $orders, $addresses]) {
             if ($index > 0) {
                 $orders->name         = ($isJ4 ? 'j2store_' : 'j2commerce_') . $orders->name;
                 $addresses->name      = ($isJ4 ? 'j2store_' : 'j2commerce_') . $addresses->name;
@@ -256,18 +369,147 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $domains[] = $addresses;
         }
 
-        if ($this->params->get('include_joomla_data', 1)) {
+        // Checkout consents of guest orders: Joomla's consent plugin exports only the records of
+        // the account (user_id), guest orders have user_id 0.
+        $consents = $this->createGuestConsentsDomain($emails);
+        if ($consents !== null) {
+            $domains[] = $consents;
+        }
+
+        // Guest records of an earlier template override that name the request or account address.
+        $legacy = $this->createLegacyGuestConsentsDomain($emails);
+        if ($legacy !== null) {
+            $domains[] = $legacy;
+        }
+
+        if ($user && $this->params->get('include_joomla_data', 1)) {
             $domains[] = $this->createJoomlaUserDomain($user);
             $domains[] = $this->createJoomlaProfileDomain($user);
             $domains[] = $this->createJoomlaActionLogsDomain($user);
         }
 
-        $acymDomain = $this->createAcyMailingDomain($user);
+        $acymDomain = $this->createAcyMailingDomain($user, $emails);
         if ($acymDomain !== null) {
             $domains[] = $acymDomain;
         }
 
         return $domains;
+    }
+
+    /**
+     * Order numbers of the guest orders (user_id 0) placed with one of $emails, in every
+     * J2Commerce data set or only in the J2Commerce 6 tables.
+     *
+     * @param   string[]  $emails
+     * @param   bool      $j2commerce6Only  Only #__j2commerce_orders (checkout consents are recorded
+     *                                      for these orders only, identified by the order number)
+     *
+     * @return  string[]
+     */
+    protected function guestOrderIds(array $emails, bool $j2commerce6Only = false): array
+    {
+        if (self::requestEmails($emails) === []) {
+            return [];
+        }
+
+        $db  = $this->getDatabase();
+        $ids = [];
+
+        foreach ($this->forEachDataSet(function () use ($db, $emails, $j2commerce6Only): array {
+            if ($j2commerce6Only && $this->isJ2Commerce4()) {
+                return [];
+            }
+
+            $pkCol = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName([$pkCol, 'order_id']))
+                    ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
+                    ->where($this->ownerCondition(0, $emails))
+            );
+            $pkByNumber = [];
+
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                $pkByNumber[(string) $row->order_id][] = (int) $row->$pkCol;
+            }
+
+            // A number shared with an order outside the request cannot be attributed.
+            return array_keys(array_diff_key($pkByNumber, $this->sharedOrderNumbers($pkByNumber)));
+        }) as $orderIds) {
+            foreach ($orderIds as $orderId) {
+                $ids[(string) $orderId] = true;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * Checkout consent records of the guest orders placed with one of $emails, in every state
+     * (valid, obsolete, invalidated), with their state (null if there is none). The consent system
+     * plugin records consents for J2Commerce 6 orders only and marks them with the order number,
+     * so only J2Commerce 6 orders are looked up: an order number of the J2Store tables could
+     * belong to another customer's J2Commerce 6 order.
+     *
+     * @param   string[]  $emails
+     */
+    protected function createGuestConsentsDomain(array $emails): ?Domain
+    {
+        $orderIds = $this->guestOrderIds($emails, true);
+
+        if ($orderIds === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $domain = null;
+
+        foreach ((new ConsentRepository($this->getDatabase()))->findConsentsForOrders($orderIds) as $record) {
+            if ((int) $record->user_id !== 0) {
+                continue;
+            }
+
+            $domain ??= $this->createDomain('checkout_consents', 'J2Commerce checkout consents of guest orders');
+            $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
+
+            $domain->addItem($this->createItemFromArray([
+                'order_id' => (string) $record->order_id,
+                'state'    => (int) $record->state,
+                'created'  => (string) $record->created,
+                'consent'  => preg_replace("/\n{2,}/", "\n", $text),
+            ], $record->id));
+        }
+
+        return $domain;
+    }
+
+    /**
+     * Guest consent records (user_id 0) of an earlier template override that name one of $emails
+     * as a complete address (null if none). They are exported unchanged.
+     *
+     * @param   string[]  $emails
+     */
+    protected function createLegacyGuestConsentsDomain(array $emails): ?Domain
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $domain = null;
+
+        foreach ((new ConsentRepository($this->getDatabase()))->findLegacyGuestConsents($emails) as $record) {
+            $domain ??= $this->createDomain('legacy_consents', 'Privacy consents of an earlier shop template (guest records)');
+            $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
+
+            $domain->addItem($this->createItemFromArray([
+                'state'   => (int) $record->state,
+                'created' => (string) $record->created,
+                'consent' => preg_replace("/\n{2,}/", "\n", html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8')),
+            ], $record->id));
+        }
+
+        return $domain;
     }
 
     // =========================================================================
@@ -317,180 +559,198 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * regardless of AcyMailing version, license tier (Starter/Essential/Enterprise),
      * or whether AcyMailing is currently enabled/disabled.
      */
-    protected function createAcyMailingDomain(User $user): ?Domain
+    protected function createAcyMailingDomain(?User $user, ?array $emails = null): ?Domain
     {
         $prefix = $this->getAcymTablePrefix();
         if ($prefix === null) {
             return null;
         }
 
-        $db    = $this->getDatabase();
-        $email = $user->email;
+        $db        = $this->getDatabase();
+        $acymUsers = [];
 
-        // Load subscriber record
-        try {
-            $query = $this->createDbQuery()
-                ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
-                ->from($db->quoteName($prefix . 'user'))
-                ->where($db->quoteName('email') . ' = :email')
-                ->bind(':email', $email);
-            $acymUser = $db->setQuery($query)->loadObject();
-        } catch (\Exception $e) {
-            return null;
+        // Default: the account e-mail. A privacy request passes its addresses (request address
+        // first); every subscriber record of these addresses is exported.
+        foreach ($emails ?? [(string) ($user->email ?? '')] as $email) {
+            $email = (string) $email;
+
+            if ($email === '') {
+                continue;
+            }
+
+            // Load subscriber record
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
+                    ->from($db->quoteName($prefix . 'user'))
+                    ->where($db->quoteName('email') . ' = :email')
+                    ->bind(':email', $email);
+
+                foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                    $acymUsers[(int) $row->id] = $row;
+                }
+            } catch (\Exception $e) {
+                return null;
+            }
         }
 
-        if (!$acymUser) {
+        if ($acymUsers === []) {
             return null;
         }
 
         $domain = $this->createDomain('newsletter_subscriptions', Text::_('PLG_PRIVACY_J2COMMERCE_ACYM_DOMAIN'));
 
-        $domain->addItem($this->createItemFromArray([
-            'email'     => $acymUser->email,
-            'name'      => $acymUser->name ?? '',
-            'confirmed' => $acymUser->confirmed ? 'yes' : 'no',
-            'created'   => $acymUser->creation_date ?? '',
-        ], 'subscriber'));
+        foreach ($acymUsers as $acymUser) {
+            // Several subscribers (request and account address): IDs per subscriber.
+            $itemPrefix = \count($acymUsers) > 1 ? 'subscriber_' . (int) $acymUser->id . '_' : '';
 
-        // Load list subscriptions with list names
-        try {
-            $query = $this->createDbQuery()
-                ->select([
-                    'uhl.list_id',
-                    'uhl.status',
-                    'uhl.subscription_date',
-                    'uhl.unsubscribe_date',
-                    'l.name AS list_name',
-                    'l.display_name AS list_display_name',
-                ])
-                ->from($db->quoteName($prefix . 'user_has_list', 'uhl'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'list', 'l') .
-                    ' ON ' . $db->quoteName('l.id') . ' = ' . $db->quoteName('uhl.list_id')
-                )
-                ->where($db->quoteName('uhl.user_id') . ' = ' . (int) $acymUser->id);
-            $subscriptions = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $subscriptions = [];
-        }
-
-        foreach ($subscriptions as $sub) {
-            $listName = !empty($sub->list_display_name) ? $sub->list_display_name : ($sub->list_name ?? 'List #' . $sub->list_id);
             $domain->addItem($this->createItemFromArray([
-                'list'              => $listName,
-                'status'            => (int) $sub->status === 1 ? 'subscribed' : 'unsubscribed',
-                'subscription_date' => $sub->subscription_date ?? '',
-                'unsubscribe_date'  => $sub->unsubscribe_date ?? '',
-            ], 'subscription_' . $sub->list_id));
-        }
+                'email'     => $acymUser->email,
+                'name'      => $acymUser->name ?? '',
+                'confirmed' => $acymUser->confirmed ? 'yes' : 'no',
+                'created'   => $acymUser->creation_date ?? '',
+            ], $itemPrefix . 'subscriber'));
 
-        // Load custom field values (may contain name, address, phone, etc.)
-        try {
-            $query = $this->createDbQuery()
-                ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
-                ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'field', 'f') .
-                    ' ON ' . $db->quoteName('f.id') . ' = ' . $db->quoteName('uhf.field_id')
-                )
-                ->where($db->quoteName('uhf.user_id') . ' = ' . (int) $acymUser->id);
-            $fields = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $fields = [];
-        }
-
-        foreach ($fields as $field) {
-            if (empty($field->value)) {
-                continue;
+            // Load list subscriptions with list names
+            try {
+                $query = $this->createDbQuery()
+                    ->select([
+                        'uhl.list_id',
+                        'uhl.status',
+                        'uhl.subscription_date',
+                        'uhl.unsubscribe_date',
+                        'l.name AS list_name',
+                        'l.display_name AS list_display_name',
+                    ])
+                    ->from($db->quoteName($prefix . 'user_has_list', 'uhl'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'list', 'l') .
+                        ' ON ' . $db->quoteName('l.id') . ' = ' . $db->quoteName('uhl.list_id')
+                    )
+                    ->where($db->quoteName('uhl.user_id') . ' = ' . (int) $acymUser->id);
+                $subscriptions = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $subscriptions = [];
             }
 
-            $domain->addItem($this->createItemFromArray([
-                'field' => $field->field_name ?? 'field_' . $field->field_id,
-                'type'  => $field->field_type ?? '',
-                'value' => $field->value,
-            ], 'field_' . $field->field_id));
-        }
+            foreach ($subscriptions as $sub) {
+                $listName = !empty($sub->list_display_name) ? $sub->list_display_name : ($sub->list_name ?? 'List #' . $sub->list_id);
+                $domain->addItem($this->createItemFromArray([
+                    'list'              => $listName,
+                    'status'            => (int) $sub->status === 1 ? 'subscribed' : 'unsubscribed',
+                    'subscription_date' => $sub->subscription_date ?? '',
+                    'unsubscribe_date'  => $sub->unsubscribe_date ?? '',
+                ], $itemPrefix . 'subscription_' . $sub->list_id));
+            }
 
-        // Load send/open/click stats per campaign
-        try {
-            $query = $this->createDbQuery()
-                ->select(['us.mail_id', 'us.send_date', 'us.open', 'us.open_date', 'us.bounce',
-                          'us.bounce_rule', 'us.unsubscribe', 'us.device', 'us.opened_with',
-                          'm.name AS mail_name'])
-                ->from($db->quoteName($prefix . 'user_stat', 'us'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'mail', 'm') .
-                    ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('us.mail_id')
-                )
-                ->where($db->quoteName('us.user_id') . ' = ' . (int) $acymUser->id);
-            $stats = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $stats = [];
-        }
+            // Load custom field values (may contain name, address, phone, etc.)
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['uhf.field_id', 'uhf.value', 'f.name AS field_name', 'f.type AS field_type'])
+                    ->from($db->quoteName($prefix . 'user_has_field', 'uhf'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'field', 'f') .
+                        ' ON ' . $db->quoteName('f.id') . ' = ' . $db->quoteName('uhf.field_id')
+                    )
+                    ->where($db->quoteName('uhf.user_id') . ' = ' . (int) $acymUser->id);
+                $fields = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $fields = [];
+            }
 
-        foreach ($stats as $stat) {
-            $domain->addItem($this->createItemFromArray([
-                'campaign'    => $stat->mail_name ?? 'mail_' . $stat->mail_id,
-                'send_date'   => $stat->send_date ?? '',
-                'opened'      => $stat->open ? 'yes' : 'no',
-                'open_date'   => $stat->open_date ?? '',
-                'bounce'      => $stat->bounce ? 'yes' : 'no',
-                'bounce_rule' => $stat->bounce_rule ?? '',
-                'unsubscribed'=> $stat->unsubscribe ? 'yes' : 'no',
-                'device'      => $stat->device ?? '',
-                'opened_with' => $stat->opened_with ?? '',
-            ], 'stat_' . $stat->mail_id));
-        }
+            foreach ($fields as $field) {
+                if (empty($field->value)) {
+                    continue;
+                }
 
-        // Load URL click history
-        try {
-            $query = $this->createDbQuery()
-                ->select(['uc.mail_id', 'uc.url_id', 'uc.click', 'uc.date_click',
-                          'u.url', 'm.name AS mail_name'])
-                ->from($db->quoteName($prefix . 'url_click', 'uc'))
-                ->leftJoin(
-                    $db->quoteName($prefix . 'url', 'u') .
-                    ' ON ' . $db->quoteName('u.id') . ' = ' . $db->quoteName('uc.url_id')
-                )
-                ->leftJoin(
-                    $db->quoteName($prefix . 'mail', 'm') .
-                    ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('uc.mail_id')
-                )
-                ->where($db->quoteName('uc.user_id') . ' = ' . (int) $acymUser->id);
-            $clicks = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $clicks = [];
-        }
+                $domain->addItem($this->createItemFromArray([
+                    'field' => $field->field_name ?? 'field_' . $field->field_id,
+                    'type'  => $field->field_type ?? '',
+                    'value' => $field->value,
+                ], $itemPrefix . 'field_' . $field->field_id));
+            }
 
-        foreach ($clicks as $click) {
-            $domain->addItem($this->createItemFromArray([
-                'campaign'   => $click->mail_name ?? 'mail_' . $click->mail_id,
-                'url'        => $click->url ?? 'url_' . $click->url_id,
-                'clicks'     => $click->click,
-                'last_click' => $click->date_click ?? '',
-            ], 'click_' . $click->mail_id . '_' . $click->url_id));
-        }
+            // Load send/open/click stats per campaign
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['us.mail_id', 'us.send_date', 'us.open', 'us.open_date', 'us.bounce',
+                              'us.bounce_rule', 'us.unsubscribe', 'us.device', 'us.opened_with',
+                              'm.name AS mail_name'])
+                    ->from($db->quoteName($prefix . 'user_stat', 'us'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'mail', 'm') .
+                        ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('us.mail_id')
+                    )
+                    ->where($db->quoteName('us.user_id') . ' = ' . (int) $acymUser->id);
+                $stats = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $stats = [];
+            }
 
-        // Load action history (incl. IP address)
-        try {
-            $query = $this->createDbQuery()
-                ->select(['h.date', 'h.ip', 'h.action', 'h.data', 'h.unsubscribe_reason'])
-                ->from($db->quoteName($prefix . 'history', 'h'))
-                ->where($db->quoteName('h.user_id') . ' = ' . (int) $acymUser->id)
-                ->order($db->quoteName('h.date') . ' DESC');
-            $history = $db->setQuery($query)->loadObjectList();
-        } catch (\Exception $e) {
-            $history = [];
-        }
+            foreach ($stats as $stat) {
+                $domain->addItem($this->createItemFromArray([
+                    'campaign'    => $stat->mail_name ?? 'mail_' . $stat->mail_id,
+                    'send_date'   => $stat->send_date ?? '',
+                    'opened'      => $stat->open ? 'yes' : 'no',
+                    'open_date'   => $stat->open_date ?? '',
+                    'bounce'      => $stat->bounce ? 'yes' : 'no',
+                    'bounce_rule' => $stat->bounce_rule ?? '',
+                    'unsubscribed'=> $stat->unsubscribe ? 'yes' : 'no',
+                    'device'      => $stat->device ?? '',
+                    'opened_with' => $stat->opened_with ?? '',
+                ], $itemPrefix . 'stat_' . $stat->mail_id));
+            }
 
-        foreach ($history as $i => $entry) {
-            $domain->addItem($this->createItemFromArray([
-                'date'               => date('Y-m-d H:i:s', (int) $entry->date),
-                'ip'                 => $entry->ip ?? '',
-                'action'             => $entry->action ?? '',
-                'data'               => $entry->data ?? '',
-                'unsubscribe_reason' => $entry->unsubscribe_reason ?? '',
-            ], 'history_' . $i));
+            // Load URL click history
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['uc.mail_id', 'uc.url_id', 'uc.click', 'uc.date_click',
+                              'u.url', 'm.name AS mail_name'])
+                    ->from($db->quoteName($prefix . 'url_click', 'uc'))
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'url', 'u') .
+                        ' ON ' . $db->quoteName('u.id') . ' = ' . $db->quoteName('uc.url_id')
+                    )
+                    ->leftJoin(
+                        $db->quoteName($prefix . 'mail', 'm') .
+                        ' ON ' . $db->quoteName('m.id') . ' = ' . $db->quoteName('uc.mail_id')
+                    )
+                    ->where($db->quoteName('uc.user_id') . ' = ' . (int) $acymUser->id);
+                $clicks = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $clicks = [];
+            }
+
+            foreach ($clicks as $click) {
+                $domain->addItem($this->createItemFromArray([
+                    'campaign'   => $click->mail_name ?? 'mail_' . $click->mail_id,
+                    'url'        => $click->url ?? 'url_' . $click->url_id,
+                    'clicks'     => $click->click,
+                    'last_click' => $click->date_click ?? '',
+                ], $itemPrefix . 'click_' . $click->mail_id . '_' . $click->url_id));
+            }
+
+            // Load action history (incl. IP address)
+            try {
+                $query = $this->createDbQuery()
+                    ->select(['h.date', 'h.ip', 'h.action', 'h.data', 'h.unsubscribe_reason'])
+                    ->from($db->quoteName($prefix . 'history', 'h'))
+                    ->where($db->quoteName('h.user_id') . ' = ' . (int) $acymUser->id)
+                    ->order($db->quoteName('h.date') . ' DESC');
+                $history = $db->setQuery($query)->loadObjectList();
+            } catch (\Exception $e) {
+                $history = [];
+            }
+
+            foreach ($history as $i => $entry) {
+                $domain->addItem($this->createItemFromArray([
+                    'date'               => date('Y-m-d H:i:s', (int) $entry->date),
+                    'ip'                 => $entry->ip ?? '',
+                    'action'             => $entry->action ?? '',
+                    'data'               => $entry->data ?? '',
+                    'unsubscribe_reason' => $entry->unsubscribe_reason ?? '',
+                ], $itemPrefix . 'history_' . $i));
+            }
         }
 
         return $domain;
@@ -502,11 +762,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Deletes the subscriber record and all list associations.
      * Uses raw SQL for version-independence — no AcyMailing PHP classes required.
      *
-     * @param   User      $user    The user of the request
-     * @param   string[]  $emails  Addresses to look up, captured before Joomla's privacy user plugin
-     *                             pseudonymised $user->email; default: $user->email
+     * @param   User|null  $user    The user of the request (null: guest customer without account)
+     * @param   string[]   $emails  Addresses to look up, captured before Joomla's privacy user plugin
+     *                              pseudonymised $user->email; default: $user->email
      */
-    protected function removeAcyMailingData(User $user, ?array $emails = null): void
+    protected function removeAcyMailingData(?User $user, ?array $emails = null): void
     {
         $prefix = $this->getAcymTablePrefix();
         if ($prefix === null) {
@@ -514,7 +774,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         $db     = $this->getDatabase();
-        $emails = array_values(array_unique(array_filter(array_map('strval', $emails ?? [(string) $user->email]), 'strlen')));
+        $emails = array_values(array_unique(array_filter(array_map('strval', $emails ?? [(string) ($user->email ?? '')]), 'strlen')));
 
         if ($emails === []) {
             return;
@@ -531,7 +791,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         foreach ($acymIds as $acymId) {
-            $this->removeAcyMailingSubscriber($prefix, $acymId, (int) $user->id);
+            $this->removeAcyMailingSubscriber($prefix, $acymId, (int) ($user->id ?? 0));
         }
     }
 
@@ -615,10 +875,17 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         return $item;
     }
 
-    protected function createOrdersDomain(User $user): Domain
+    /**
+     * Orders of the account and the guest orders (user_id 0) placed with one of $emails.
+     *
+     * @param   User|null  $user    Account (null: guest customer without account)
+     * @param   string[]   $emails  E-mail addresses of the request
+     */
+    protected function createOrdersDomain(?User $user, array $emails = []): Domain
     {
         $domain = $this->createDomain('orders', 'J2Commerce order data');
         $db     = $this->getDatabase();
+        $owner  = $this->ownerCondition((int) ($user->id ?? 0), $emails, 'user_email', 'o');
 
         if ($this->isJ2Commerce4()) {
             $query = $this->createDbQuery()
@@ -627,11 +894,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->from($db->quoteName('#__j2store_orders', 'o'))
                 ->leftJoin($db->quoteName('#__j2store_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
                 ->leftJoin($db->quoteName('#__j2store_orderinfos', 'inf') . ' ON o.order_id = inf.order_id')
-                ->where($db->quoteName('o.user_id') . ' = :userid')
-                ->bind(':userid', $user->id, ParameterType::INTEGER);
+                ->where($owner);
 
             $db->setQuery($query);
-            $rows = $db->loadAssocList();
+            $rows   = $db->loadAssocList();
+            $shared = $this->sharedNumbersOfRows($rows);
 
             $orders = [];
             foreach ($rows as $row) {
@@ -643,13 +910,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         'order_total'        => $row['order_total'],
                         'currency_code'      => $row['currency_code'],
                         'created_on'         => $row['created_on'],
-                        'billing_first_name' => $row['billing_first_name'],
-                        'billing_last_name'  => $row['billing_last_name'],
+                        'billing_first_name' => isset($shared[(string) $row['order_id']]) ? '' : $row['billing_first_name'],
+                        'billing_last_name'  => isset($shared[(string) $row['order_id']]) ? '' : $row['billing_last_name'],
                         'user_email'         => $row['user_email'],
                         'items'              => [],
                     ];
                 }
-                if ($row['orderitem_name']) {
+                if ($row['orderitem_name'] && !isset($shared[(string) $row['order_id']])) {
                     $orders[$orderId]['items'][] = [
                         'name'     => $row['orderitem_name'],
                         'sku'      => $row['orderitem_sku'],
@@ -668,11 +935,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->from($db->quoteName('#__j2commerce_orders', 'o'))
                 ->leftJoin($db->quoteName('#__j2commerce_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
                 ->leftJoin($db->quoteName('#__j2commerce_orderinfos', 'inf') . ' ON o.order_id = inf.order_id')
-                ->where($db->quoteName('o.user_id') . ' = :userid')
-                ->bind(':userid', $user->id, ParameterType::INTEGER);
+                ->where($owner);
 
             $db->setQuery($query);
-            $rows = $db->loadAssocList();
+            $rows   = $db->loadAssocList();
+            $shared = $this->sharedNumbersOfRows($rows);
 
             $orders = [];
             foreach ($rows as $row) {
@@ -684,13 +951,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                         'order_total'        => $row['order_total'],
                         'currency_code'      => $row['currency_code'],
                         'created_on'         => $row['created_on'],
-                        'billing_first_name' => $row['billing_first_name'] ?? '',
-                        'billing_last_name'  => $row['billing_last_name'] ?? '',
+                        'billing_first_name' => isset($shared[(string) $row['order_id']]) ? '' : ($row['billing_first_name'] ?? ''),
+                        'billing_last_name'  => isset($shared[(string) $row['order_id']]) ? '' : ($row['billing_last_name'] ?? ''),
                         'user_email'         => $row['user_email'],
                         'items'              => [],
                     ];
                 }
-                if (!empty($row['orderitem_name'])) {
+                if (!empty($row['orderitem_name']) && !isset($shared[(string) $row['order_id']])) {
                     $orders[$orderId]['items'][] = [
                         'name'     => $row['orderitem_name'],
                         'sku'      => $row['orderitem_sku'],
@@ -701,14 +968,102 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        foreach ($orders as $order) {
+        // Complete billing and shipping data of each order (order info row), except for order
+        // numbers shared with an order outside the request.
+        $pkCol      = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $numberByPk = [];
+
+        foreach ($rows as $row) {
+            $numberByPk[$row[$pkCol]] = (string) $row['order_id'];
+        }
+
+        $infos = $this->orderInfoRows(array_values(array_diff(array_unique(array_values($numberByPk)), array_map('strval', array_keys($shared)))));
+
+        foreach ($orders as $pk => $order) {
+            $orderInfos = $infos[$numberByPk[$pk] ?? ''] ?? [];
+
+            if ($orderInfos !== []) {
+                // Order fields keep precedence over equally named order info columns.
+                $order += array_shift($orderInfos);
+
+                if ($orderInfos !== []) {
+                    $order['additional_order_info'] = $orderInfos;
+                }
+            }
+
             $domain->addItem($this->createItemFromArray($order, $order['order_id']));
         }
 
         return $domain;
     }
 
-    protected function createAddressesDomain(User $user): Domain
+    /**
+     * Order info rows (billing and shipping data) of the given order numbers in the current data
+     * set, without their own key and the order number.
+     *
+     * @param   string[]  $orderNumbers
+     *
+     * @return  array<string, array<int, array<string, mixed>>>  Order number => rows
+     */
+    protected function orderInfoRows(array $orderNumbers): array
+    {
+        $db     = $this->getDatabase();
+        $table  = $this->isJ2Commerce4() ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+        $infoPk = $this->isJ2Commerce4() ? 'j2store_orderinfo_id' : 'j2commerce_orderinfo_id';
+        $result = [];
+
+        foreach (array_chunk(array_map('strval', $orderNumbers), 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select('*')
+                    ->from($db->quoteName($table))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            );
+
+            foreach ($db->loadAssocList() ?: [] as $info) {
+                $number = (string) $info['order_id'];
+                unset($info['order_id'], $info[$infoPk]);
+                $result[$number][] = $info;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Order numbers of exported order rows that also belong to an order outside the request:
+     * their order items and billing names are joined only by the order number and are not
+     * exported, they could be another customer's.
+     *
+     * @param   array<int, array<string, mixed>>  $rows  Rows with order_id and the primary key
+     *
+     * @return  array<string, true>
+     */
+    protected function sharedNumbersOfRows(array $rows): array
+    {
+        $pkCol      = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $pkByNumber = [];
+
+        foreach ($rows as $row) {
+            $pkByNumber[(string) $row['order_id']][(int) $row[$pkCol]] = (int) $row[$pkCol];
+        }
+
+        $shared = $this->sharedOrderNumbers(array_map('array_values', $pkByNumber));
+
+        if ($shared !== []) {
+            Log::add('Export: order numbers shared with another order, items and billing names not exported: ' . implode(', ', array_keys($shared)), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        return $shared;
+    }
+
+    /**
+     * Saved addresses of the account and guest addresses (user_id 0) with one of $emails.
+     *
+     * @param   User|null  $user    Account (null: guest customer without account)
+     * @param   string[]   $emails  E-mail addresses of the request
+     */
+    protected function createAddressesDomain(?User $user, array $emails = []): Domain
     {
         $domain = $this->createDomain('addresses', 'J2Commerce address data');
         $db     = $this->getDatabase();
@@ -719,8 +1074,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $query = $this->createDbQuery()
             ->select('*')
             ->from($db->quoteName($table))
-            ->where($db->quoteName('user_id') . ' = :userid')
-            ->bind(':userid', $user->id, ParameterType::INTEGER);
+            ->where($this->ownerCondition((int) ($user->id ?? 0), $emails, 'email'));
 
         $db->setQuery($query);
         $addresses = $db->loadAssocList();
@@ -886,47 +1240,66 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * within the retention period are listed to the administrator (message, notification, log)
      * and to the customer (e-mail to the request address).
      *
-     * @param User|null $user          User object
+     * Besides the orders of the account, the guest orders (user_id 0) placed with the request or
+     * account e-mail address are processed: J2Commerce never links a guest order to an account
+     * created later with the same address. Without an account ($user null) only these guest
+     * orders and guest addresses are processed.
+     *
+     * @param User|null $user          User object (null: no Joomla account for the request address)
      * @param string    $requestEmail  E-mail address of the privacy request
      */
     protected function processDataRemoval(?User $user, string $requestEmail = ''): void
     {
-        if (!$user) {
-            return;
-        }
-
         // Username and account e-mail as captured in onPrivacyCanRemoveData(): Joomla's privacy
         // user plugin may already have pseudonymised this User object (same ordering, lower
         // extension ID). Without that capture (direct call) the current values are used.
-        $userId        = (int) $user->id;
-        $account       = $this->accountsBeforeRemoval[$userId] ?? ['username' => (string) $user->username, 'email' => (string) $user->email];
+        $userId        = $user ? (int) $user->id : 0;
+        $account       = $user
+            ? ($this->accountsBeforeRemoval[$userId] ?? ['username' => (string) $user->username, 'email' => (string) $user->email])
+            : ['username' => '', 'email' => ''];
         unset($this->accountsBeforeRemoval[$userId]);
         $username      = $account['username'];
         $accountEmail  = $account['email'];
+        $emails        = self::requestEmails([$requestEmail, $accountEmail]);
+
+        if ($userId <= 0 && $emails === []) {
+            return;
+        }
+
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
-        $check         = $this->checkRetentionPeriod($userId);
+        $check         = $this->retentionOverDataSets($userId, $emails);
+        // Before the anonymization: it replaces the order e-mail the guest orders are found by.
+        $languageTag   = $this->customerLanguage($userId, $emails);
         $retained      = $check['orders'];
         $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
 
         // Log the deletion request
         $this->logActivity('data_deletion_requested', $userId, $summary);
-        $this->sendAdminNotification('data_deletion', $user, $summary, $username);
+
+        if ($user) {
+            $this->sendAdminNotification('data_deletion', $user, $summary, $username);
+        } else {
+            $this->sendAdminNotification('guest_data_deletion', new User(), $summary, $customerEmail);
+        }
 
         // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
         // #__j2store_* copies; personal data must not survive there).
-        $this->forEachDataSet(function () use ($userId): void {
+        $this->forEachDataSet(function () use ($userId, $emails): void {
             // Always delete address book entries (not order-related)
             if ($this->params->get('delete_addresses', 1)) {
-                $this->deleteAddresses($userId);
+                $this->deleteAddresses($userId, $emails);
             }
 
-            // Always delete cart data
-            $this->deleteCartData($userId);
+            // Carts belong to an account; guest carts carry no e-mail address and expire with
+            // the session. Never called with user ID 0: that would hit every guest cart.
+            if ($userId > 0) {
+                $this->deleteCartData($userId);
+            }
 
             // Anonymize only orders OUTSIDE retention period
             // Orders within retention period are kept intact for legal compliance
             if ($this->params->get('anonymize_orders', 1)) {
-                $this->anonymizeOrders($userId);
+                $this->anonymizeOrders($userId, $emails);
             }
         });
 
@@ -950,27 +1323,47 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Remove AcyMailing subscriber data (request and account e-mail as captured above)
         $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
 
-        $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $this->customerLanguage($userId));
+        $this->guestRequest = $user === null;
+
+        try {
+            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
+        } finally {
+            $this->guestRequest = false;
+        }
     }
 
     /**
-     * Language of the customer: customer_language of the newest order, else the default site
-     * language.
+     * Language of the customer: customer_language of the newest order (of the account or a guest
+     * order with one of $emails), else the default site language.
+     *
+     * @param   int       $userId  Joomla user ID (0: no account)
+     * @param   string[]  $emails  E-mail addresses of the request
      */
-    protected function customerLanguage(int $userId): string
+    protected function customerLanguage(int $userId, array $emails = []): string
     {
-        $db = $this->getDatabase();
+        $db     = $this->getDatabase();
+        $tag    = '';
+        $newest = '';
 
         try {
-            $db->setQuery(
-                $this->createDbQuery()
-                    ->select($db->quoteName('customer_language'))
-                    ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
-                    ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
-                    ->order($db->quoteName('created_on') . ' DESC')
-                    ->setLimit(1)
-            );
-            $tag = trim((string) $db->loadResult());
+            // Newest order over every J2Commerce data set (a migrated site keeps #__j2store_*).
+            foreach ($this->forEachDataSet(function () use ($db, $userId, $emails): ?object {
+                $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName(['customer_language', 'created_on']))
+                        ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
+                        ->where($this->ownerCondition($userId, $emails))
+                        ->order($db->quoteName('created_on') . ' DESC')
+                        ->setLimit(1)
+                );
+
+                return $db->loadObject() ?: null;
+            }) as $order) {
+                if ($order !== null && (string) $order->created_on > $newest) {
+                    $newest = (string) $order->created_on;
+                    $tag    = trim((string) $order->customer_language);
+                }
+            }
         } catch (\Throwable $e) {
             $tag = '';
         }
@@ -1112,6 +1505,25 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Language key of the customer e-mail text: it names only what this request removed (an
+     * account exists or not, saved addresses deleted by the option "Delete Addresses" or kept).
+     */
+    protected function customerNoticeBodyKey(): string
+    {
+        $addressesDeleted = (bool) (int) $this->params->get('delete_addresses', 1);
+
+        if ($this->guestRequest) {
+            return $addressesDeleted
+                ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST'
+                : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT';
+        }
+
+        return $addressesDeleted
+            ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY'
+            : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT';
+    }
+
+    /**
      * E-mail the kept orders to the customer, in the customer's language.
      *
      * @return  string  'sent', 'invalid' (no valid address) or 'failed'
@@ -1129,7 +1541,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
             $mailer->setBody(
-                $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY') . "\n\n"
+                $language->_($this->customerNoticeBodyKey()) . "\n\n"
                 . $this->formatRetainedOrders($retained, $lifetime, $language)
                 . sprintf($language->_('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT'), (string) ($this->params->get('support_email') ?: $app->get('mailfrom')))
             );
@@ -1195,7 +1607,53 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
     }
 
-    protected function checkRetentionPeriod(int $userId): array
+    /**
+     * checkRetentionPeriod() over every J2Commerce data set, as the removal itself runs on every
+     * set: a migrated site can hold an order only in the inactive copy. An order number found in
+     * several sets (migration copy) is listed once, the active set first.
+     *
+     * @param   int       $userId  Joomla user ID (0: no account)
+     * @param   string[]  $emails  E-mail addresses of the request
+     */
+    protected function retentionOverDataSets(int $userId, array $emails = []): array
+    {
+        $result = [
+            'can_delete'       => true,
+            'retention_years'  => (int) $this->params->get('retention_years', 10),
+            'orders'           => [],
+            'lifetime_expired' => [],
+        ];
+        $checks = $this->forEachDataSet(fn (): array => $this->checkRetentionPeriod($userId, $emails));
+        $seen   = [];
+
+        // One seen set for both lists: an order number is reported once. A copy that is still
+        // within the retention period in one set wins over an expired copy in another set (the
+        // order is kept, so it is reported as kept).
+        foreach (['orders', 'lifetime_expired'] as $key) {
+            foreach ($checks as $check) {
+                foreach ($check[$key] ?? [] as $order) {
+                    $number = (string) $order['order_number'];
+
+                    if (!isset($seen[$number])) {
+                        $seen[$number] = true;
+                        $result[$key][] = $order;
+                    }
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Orders of a removal request within the retention period (kept and reported) and expired
+     * lifetime-license orders (anonymized, e-mail kept), in the current data set.
+     *
+     * @param   int       $userId  Joomla user ID (0: no account)
+     * @param   string[]  $emails  E-mail addresses of the request: guest orders (user_id 0) with
+     *                             one of them are included
+     */
+    protected function checkRetentionPeriod(int $userId, array $emails = []): array
     {
         $retentionYears = (int) $this->params->get('retention_years', 10);
         $db = $this->getDatabase();
@@ -1205,16 +1663,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ->select(['o.j2store_order_id', 'o.order_id AS order_number', 'o.created_on', 'o.order_total', 'o.currency_code', 'oi.product_id'])
                 ->from($db->quoteName('#__j2store_orders', 'o'))
                 ->leftJoin($db->quoteName('#__j2store_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
-                ->where($db->quoteName('o.user_id') . ' = :userid')
-                ->bind(':userid', $userId, ParameterType::INTEGER);
+                ->where($this->ownerCondition($userId, $emails, 'user_email', 'o'));
         } else {
             // FK in #__j2commerce_orderitems is order_id (VARCHAR), not j2commerce_order_id.
             $query = $this->createDbQuery()
                 ->select(['o.j2commerce_order_id', 'o.order_id AS order_number', 'o.created_on', 'o.order_total', 'o.currency_code', 'oi.product_id'])
                 ->from($db->quoteName('#__j2commerce_orders', 'o'))
                 ->leftJoin($db->quoteName('#__j2commerce_orderitems', 'oi') . ' ON o.order_id = oi.order_id')
-                ->where($db->quoteName('o.user_id') . ' = :userid')
-                ->bind(':userid', $userId, ParameterType::INTEGER);
+                ->where($this->ownerCondition($userId, $emails, 'user_email', 'o'));
         }
 
         $db->setQuery($query);
@@ -1345,170 +1801,193 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Order numbers of $pkByNumber that also belong to an order outside it, in the orders table of
+     * the current data set. Order info rows, order items and checkout consent records are linked
+     * only by the order number, so for such a number they cannot be told apart.
+     *
+     * @param   array<string, int[]>  $pkByNumber  Order number => primary keys of the request's orders
+     *
+     * @return  array<string, true>
+     */
+    protected function sharedOrderNumbers(array $pkByNumber): array
+    {
+        if ($pkByNumber === []) {
+            return [];
+        }
+
+        $db          = $this->getDatabase();
+        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $pkCol       = $this->isJ2Commerce4() ? 'j2store_order_id' : 'j2commerce_order_id';
+        $ownPks      = array_flip(array_merge(...array_values($pkByNumber)));
+        $shared      = [];
+
+        foreach (array_chunk(array_map('strval', array_keys($pkByNumber)), 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName([$pkCol, 'order_id']))
+                    ->from($db->quoteName($ordersTable))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            );
+
+            foreach ($db->loadObjectList() ?: [] as $row) {
+                if (!isset($ownPks[(int) $row->$pkCol])) {
+                    $shared[(string) $row->order_id] = true;
+                }
+            }
+        }
+
+        return $shared;
+    }
+
+    /**
      * Anonymize orders that are OUTSIDE the retention period.
      * Orders within retention period (default 10 years) are kept intact
      * due to Swiss legal requirements (OR Art. 958f, MWSTG Art. 70).
      *
-     * @param int $userId User ID
+     * The orders are those of the account and the guest orders (user_id 0) placed with one of
+     * $emails. They are selected once by primary key; the updates of the orders table use these
+     * keys, because the first update replaces the e-mail address the guest orders were found by.
+     * Order info rows and checkout consent records are linked only by the order number: an order
+     * number that also belongs to an order outside this request is left alone there (logged).
+     *
+     * @param int      $userId User ID (0: no account)
+     * @param string[] $emails E-mail addresses of the request (guest orders)
      */
-    protected function anonymizeOrders(int $userId): void
+    protected function anonymizeOrders(int $userId, array $emails = []): void
     {
-        $db = $this->getDatabase();
+        $db          = $this->getDatabase();
+        $isJ4        = $this->isJ2Commerce4();
+        $ordersTable = $isJ4 ? '#__j2store_orders' : '#__j2commerce_orders';
+        $infosTable  = $isJ4 ? '#__j2store_orderinfos' : '#__j2commerce_orderinfos';
+        $pkCol       = $isJ4 ? 'j2store_order_id' : 'j2commerce_order_id';
+
         // Only orders whose retention period (from the end of their fiscal year) has ended
-        $cutoffDate = $this->retentionCutoff();
-
-        $safeUserId = (int) $userId;
-        $safeCutoff = $db->quote($cutoffDate);
-
-        // Orders anonymized below: their checkout consent records lose IP address and user agent.
         $db->setQuery(
             $this->createDbQuery()
-                ->select($db->quoteName('order_id'))
-                ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff)
+                ->select($db->quoteName([$pkCol, 'order_id']))
+                ->from($db->quoteName($ordersTable))
+                ->where($this->ownerCondition($userId, $emails))
+                ->where($db->quoteName('created_on') . ' <= ' . $db->quote($this->retentionCutoff()))
         );
-        $anonymizedOrderIds = $db->loadColumn() ?: [];
+        $rows = $db->loadObjectList() ?: [];
+
+        if ($rows === []) {
+            return;
+        }
+
+        $pkByNumber = [];
+
+        foreach ($rows as $row) {
+            $pkByNumber[(string) $row->order_id][] = (int) $row->$pkCol;
+        }
+
+        $orderIds = array_map('strval', array_keys($pkByNumber));
+        $ownPks   = array_flip(array_merge(...array_values($pkByNumber)));
+        $shared   = $this->sharedOrderNumbers($pkByNumber);
+
+        if ($shared !== []) {
+            Log::add(
+                'Order numbers shared with another order, order info and consent evidence not anonymized: ' . implode(', ', array_keys($shared)),
+                Log::WARNING,
+                'plg_privacy_j2commerce'
+            );
+        }
 
         // Lifetime-license orders keep their order e-mail address (provisional rule, pending confirmation).
-        $lifetimeIds  = $this->lifetimeOrderIds($anonymizedOrderIds);
-        $emailFilter  = $lifetimeIds === []
-            ? ''
-            : ' AND ' . $db->quoteName('order_id') . ' NOT IN (' . implode(',', array_map([$db, 'quote'], $lifetimeIds)) . ')';
-        $ordersTable  = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
+        $lifetimeIds = array_flip($this->lifetimeOrderIds($orderIds));
+        $emailPks    = [];
 
-        if ($anonymizedOrderIds !== []) {
+        foreach ($pkByNumber as $orderId => $pks) {
+            if (!isset($lifetimeIds[(string) $orderId])) {
+                array_push($emailPks, ...$pks);
+            }
+        }
+
+        foreach (array_chunk($emailPks, 500) as $chunk) {
             $db->setQuery(
                 $this->createDbQuery()
                     ->update($db->quoteName($ordersTable))
-                    ->set($db->quoteName('user_email') . ' = ' . $db->quote('anonymized@deleted.invalid'))
-                    ->where($db->quoteName('user_id') . ' = ' . $safeUserId . ' AND ' . $db->quoteName('created_on') . ' <= ' . $safeCutoff . $emailFilter)
+                    ->set($db->quoteName('user_email') . ' = ' . $db->quote(self::ANONYMIZED_EMAIL))
+                    ->whereIn($db->quoteName($pkCol), $chunk)
             )->execute();
         }
 
-        if ($this->isJ2Commerce4()) {
-            // Anonymize orders table
-            $query = $this->createDbQuery()
-                ->update($db->quoteName('#__j2store_orders'))
-                ->set([
-                    $db->quoteName('customer_note') . ' = ' . $db->quote(''),
-                    $db->quoteName('ip_address') . ' = ' . $db->quote(''),
-                ])
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
-            $db->setQuery($query);
-            $db->execute();
-
-            // Anonymize billing/shipping data in orderinfos
-            $subQuery = $this->createDbQuery()
-                ->select($db->quoteName('order_id'))
-                ->from($db->quoteName('#__j2store_orders'))
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
-
-            $query = $this->createDbQuery()
-                ->update($db->quoteName('#__j2store_orderinfos'))
-                ->set([
-                    $db->quoteName('billing_first_name')  . ' = ' . $db->quote('Anonymized'),
-                    $db->quoteName('billing_last_name')   . ' = ' . $db->quote('User'),
-                    $db->quoteName('billing_middle_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_1')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_2')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_fax')         . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_1')   . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_2')   . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_city')        . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_zip')         . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_company')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_tax_number')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_last_name')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_middle_name'). ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_1')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_2')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_fax')        . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_1')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_2')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_city')       . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_zip')        . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_company')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_tax_number') . ' = ' . $db->quote(''),
-                    $db->quoteName('all_billing')         . ' = ' . $db->quote(''),
-                    $db->quoteName('all_shipping')        . ' = ' . $db->quote(''),
-                    $db->quoteName('all_payment')         . ' = ' . $db->quote(''),
-                ])
-                ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
-            $db->setQuery($query);
-            $db->execute();
-        } else {
-            // J2Commerce 6 — anonymize PII in #__j2commerce_orders
-            $query = $this->createDbQuery()
-                ->update($db->quoteName('#__j2commerce_orders'))
-                ->set([
-                    $db->quoteName('customer_note') . ' = ' . $db->quote(''),
-                    $db->quoteName('ip_address') . ' = ' . $db->quote(''),
-                ])
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
-            $db->setQuery($query);
-            $db->execute();
-
-            // J2Commerce 6 — billing/shipping data is in #__j2commerce_orderinfos, not in #__j2commerce_orders
-            $subQuery = $this->createDbQuery()
-                ->select($db->quoteName('order_id'))
-                ->from($db->quoteName('#__j2commerce_orders'))
-                ->where($db->quoteName('user_id') . ' = ' . $safeUserId)
-                ->where($db->quoteName('created_on') . ' <= ' . $safeCutoff);
-
-            $query = $this->createDbQuery()
-                ->update($db->quoteName('#__j2commerce_orderinfos'))
-                ->set([
-                    $db->quoteName('billing_first_name')  . ' = ' . $db->quote('Anonymized'),
-                    $db->quoteName('billing_last_name')   . ' = ' . $db->quote('User'),
-                    $db->quoteName('billing_middle_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_1')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_phone_2')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_fax')         . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_1')   . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_address_2')   . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_city')        . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_zip')         . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_company')     . ' = ' . $db->quote(''),
-                    $db->quoteName('billing_tax_number')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_last_name')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_middle_name'). ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_1')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_phone_2')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_fax')        . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_1')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_address_2')  . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_city')       . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_zip')        . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_company')    . ' = ' . $db->quote(''),
-                    $db->quoteName('shipping_tax_number') . ' = ' . $db->quote(''),
-                    $db->quoteName('all_billing')         . ' = ' . $db->quote(''),
-                    $db->quoteName('all_shipping')        . ' = ' . $db->quote(''),
-                    $db->quoteName('all_payment')         . ' = ' . $db->quote(''),
-                ])
-                ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
-            $db->setQuery($query);
-            $db->execute();
+        // Anonymize orders table
+        foreach (array_chunk(array_keys($ownPks), 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName($ordersTable))
+                    ->set([
+                        $db->quoteName('customer_note') . ' = ' . $db->quote(''),
+                        $db->quoteName('ip_address') . ' = ' . $db->quote(''),
+                    ])
+                    ->whereIn($db->quoteName($pkCol), $chunk)
+            )->execute();
         }
 
-        if ($anonymizedOrderIds !== []) {
-            (new ConsentRepository($db))->removeOrderEvidence($anonymizedOrderIds);
+        $ownNumbers = array_values(array_filter($orderIds, static fn (string $id): bool => !isset($shared[$id])));
+
+        // Billing/shipping data is in the orderinfos table (J2Commerce 4 and 6), not in the orders table
+        foreach (array_chunk($ownNumbers, 500) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName($infosTable))
+                    ->set([
+                        $db->quoteName('billing_first_name')  . ' = ' . $db->quote('Anonymized'),
+                        $db->quoteName('billing_last_name')   . ' = ' . $db->quote('User'),
+                        $db->quoteName('billing_middle_name') . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_phone_1')     . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_phone_2')     . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_fax')         . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_address_1')   . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_address_2')   . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_city')        . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_zip')         . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_company')     . ' = ' . $db->quote(''),
+                        $db->quoteName('billing_tax_number')  . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_first_name') . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_last_name')  . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_middle_name'). ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_phone_1')    . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_phone_2')    . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_fax')        . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_address_1')  . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_address_2')  . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_city')       . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_zip')        . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_company')    . ' = ' . $db->quote(''),
+                        $db->quoteName('shipping_tax_number') . ' = ' . $db->quote(''),
+                        $db->quoteName('all_billing')         . ' = ' . $db->quote(''),
+                        $db->quoteName('all_shipping')        . ' = ' . $db->quote(''),
+                        $db->quoteName('all_payment')         . ' = ' . $db->quote(''),
+                    ])
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+            )->execute();
+        }
+
+        // Checkout consents are recorded for J2Commerce 6 orders only and name the order number:
+        // their IP address and user agent are removed in the J2Commerce 6 data set. A J2Store
+        // order number could belong to another customer's J2Commerce 6 order.
+        if (!$isJ4 && $ownNumbers !== []) {
+            (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
         }
     }
 
-    protected function deleteAddresses(int $userId): void
+    /**
+     * Delete the saved addresses of a removal request: those of the account and guest addresses
+     * (user_id 0) with one of the request's e-mail addresses.
+     *
+     * @param int      $userId User ID (0: no account)
+     * @param string[] $emails E-mail addresses of the request
+     */
+    protected function deleteAddresses(int $userId, array $emails = []): void
     {
         $db    = $this->getDatabase();
         $table = $this->isJ2Commerce4() ? '#__j2store_addresses' : '#__j2commerce_addresses';
 
         $query = $this->createDbQuery()
             ->delete($db->quoteName($table))
-            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
+            ->where($this->ownerCondition($userId, $emails, 'email'));
 
         $db->setQuery($query);
         $db->execute();
@@ -1524,8 +2003,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * can use is visible to the language usage check.
      */
     private const ADMIN_NOTIFICATION_KEYS = [
-        'address_deleted' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_DELETED',
-        'data_deletion'   => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_DATA_DELETION',
+        'address_deleted'     => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_DELETED',
+        'data_deletion'       => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_DATA_DELETION',
+        'guest_data_deletion' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_GUEST_DATA_DELETION',
     ];
 
     /**
@@ -1663,15 +2143,53 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             Log::add('Could not write to action_logs: ' . $e->getMessage(), Log::DEBUG, 'plg_privacy_j2commerce');
         }
     }
-    public function onAjaxJ2commercePrivacy(): array
+    /**
+     * com_ajax entry point (index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy).
+     *
+     * - task=confirmRequest (format=html): confirmation page for privacy requests, open to
+     *   guests (see handleConfirmationPage())
+     * - task=deleteAddress (format=json): address deletion, logged-in users with form token
+     *
+     * The result is added to the com_ajax event (a SubscriberInterface listener's return value is
+     * not collected) and also returned for direct calls.
+     *
+     * @param   \Joomla\Event\EventInterface|null  $event  The onAjaxJ2commercePrivacy event
+     *
+     * @return  array|string
+     */
+    public function onAjaxJ2commercePrivacy($event = null)
     {
-        $app = $this->getApplication();
+        $app  = $this->getApplication();
+        $task = (string) $app->getInput()->getCmd('task', '');
 
+        if ($task === self::CONFIRM_TASK) {
+            // Public page: no exception text reaches the visitor (com_ajax prints it otherwise).
+            try {
+                $result = $this->handleConfirmationPage($app);
+            } catch (\Throwable $e) {
+                Log::add('Privacy request confirmation page failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
+                $result = $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_FAILED'), 'danger');
+            }
+        } else {
+            $result = $this->handleAccountTask($app, $task);
+        }
+
+        if (\is_object($event) && method_exists($event, 'addResult')) {
+            $event->addResult($result);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Tasks of a logged-in user (form token required).
+     */
+    protected function handleAccountTask($app, string $task): array
+    {
         if (!Session::checkToken('get') && !Session::checkToken()) {
             return ['success' => false, 'message' => Text::_('JINVALID_TOKEN')];
         }
 
-        $task = $app->getInput()->get('task', '');
         $user = $app->getIdentity();
 
         if (!$user || $user->guest) {
@@ -1684,6 +2202,314 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             default:
                 return ['success' => false, 'message' => 'Invalid task'];
         }
+    }
+
+    // =========================================================================
+    // CONFIRMATION OF PRIVACY REQUESTS (GUESTS)
+    // =========================================================================
+
+    /**
+     * Confirmation page for privacy requests that the customer cannot confirm through
+     * com_privacy: Joomla shows its confirmation form only to logged-in users, so a customer
+     * without an account (guest order) could never confirm a request an administrator created
+     * for their address.
+     *
+     * GET shows a form (e-mail address, token from the mail, prefilled from the link). POST checks
+     * the form token, the number of failed attempts in this session and then the request
+     * (confirmPrivacyRequest()). A wrong code, an address without a pending request and a request
+     * that is no longer pending get the same message, so the page does not tell whether a request
+     * exists. Only a matching code that has expired gets its own message.
+     */
+    protected function handleConfirmationPage($app): string
+    {
+        $document = method_exists($app, 'getDocument') ? $app->getDocument() : null;
+
+        if ($document !== null && method_exists($document, 'setTitle')) {
+            $document->setTitle(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TITLE'));
+        }
+
+        if (!(int) $this->params->get('guest_confirmation', 1)) {
+            return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_UNAVAILABLE'), 'warning');
+        }
+
+        $input = $app->getInput();
+
+        if (strtoupper((string) $input->getMethod()) !== 'POST') {
+            return $this->renderConfirmationForm('', self::cleanConfirmToken($input->get->getString('confirm_token', '')));
+        }
+
+        $email   = trim($input->post->getString('email', ''));
+        $token   = self::cleanConfirmToken($input->post->getString('confirm_token', ''));
+        $session = $app->getSession();
+
+        // The posted form token is checked here instead of Session::checkToken(), which redirects
+        // a new or expired session to the home page: this public page answers on its own.
+        if ((string) $input->post->get(Session::getFormToken(), '', 'alnum') === '') {
+            return $this->renderConfirmationForm($email, $token, Text::_('JINVALID_TOKEN_NOTICE'), 'danger');
+        }
+
+        if (self::confirmAttemptsExceeded($session)) {
+            return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TOO_MANY_ATTEMPTS'), 'danger');
+        }
+
+        try {
+            $status = $this->confirmPrivacyRequest($email, $token);
+        } catch (\Throwable $e) {
+            // com_ajax would print the exception class and message to the visitor.
+            Log::add('Privacy request confirmation failed: ' . $e->getMessage(), Log::ERROR, 'plg_privacy_j2commerce');
+            $status = self::CONFIRM_FAILED;
+        }
+
+        if ($status === self::CONFIRM_OK) {
+            $session->set(self::CONFIRM_ATTEMPTS_KEY, null);
+
+            return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_SUCCESS'), 'success');
+        }
+
+        self::registerConfirmFailure($session);
+
+        if ($status === self::CONFIRM_EXPIRED) {
+            return $this->renderConfirmationMessage(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_EXPIRED'), 'warning');
+        }
+
+        return $this->renderConfirmationForm($email, $token, Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_FAILED'), 'danger');
+    }
+
+    /**
+     * A confirmation token as Joomla creates it (letters and digits), else ''. Placeholders such
+     * as {TOKEN} from a mail template that was not filled are dropped.
+     */
+    public static function cleanConfirmToken(string $token): string
+    {
+        $token = trim($token);
+
+        return preg_match('/^[A-Za-z0-9]{16,64}$/', $token) ? $token : '';
+    }
+
+    /**
+     * Whether this session has used up its failed attempts (CONFIRM_MAX_FAILURES within
+     * CONFIRM_ATTEMPT_WINDOW seconds).
+     *
+     * @param   object  $session  Session with get($name, $default)
+     */
+    public static function confirmAttemptsExceeded(object $session, ?int $now = null): bool
+    {
+        $now      = $now ?? time();
+        $attempts = $session->get(self::CONFIRM_ATTEMPTS_KEY);
+
+        if (!\is_array($attempts) || $now - (int) ($attempts['since'] ?? 0) > self::CONFIRM_ATTEMPT_WINDOW) {
+            return false;
+        }
+
+        return (int) ($attempts['count'] ?? 0) >= self::CONFIRM_MAX_FAILURES;
+    }
+
+    /**
+     * Count a failed confirmation attempt in this session.
+     *
+     * @param   object  $session  Session with get($name, $default) and set($name, $value)
+     */
+    public static function registerConfirmFailure(object $session, ?int $now = null): void
+    {
+        $now      = $now ?? time();
+        $attempts = $session->get(self::CONFIRM_ATTEMPTS_KEY);
+
+        if (!\is_array($attempts) || $now - (int) ($attempts['since'] ?? 0) > self::CONFIRM_ATTEMPT_WINDOW) {
+            $attempts = ['count' => 0, 'since' => $now];
+        }
+
+        $attempts['count'] = (int) ($attempts['count'] ?? 0) + 1;
+        $session->set(self::CONFIRM_ATTEMPTS_KEY, $attempts);
+    }
+
+    /**
+     * Confirm a pending privacy request (status 0) with its e-mail address and the token of the
+     * confirmation mail, with the checks of Joomla's com_privacy ConfirmModel: the token is
+     * verified against the stored hash (UserHelper::verifyPassword()) and is valid for 24 hours
+     * from confirm_token_created_at. On success the request gets status 1 (confirmed) and an
+     * empty token, so the link cannot be used again; Joomla's super users are notified and the
+     * action log records the confirmation like a confirmation through com_privacy.
+     *
+     * An expired token that matches invalidates the request (status -1), as in com_privacy. A
+     * wrong token changes nothing.
+     *
+     * @return  string  CONFIRM_OK, CONFIRM_EXPIRED or CONFIRM_FAILED
+     */
+    public function confirmPrivacyRequest(string $email, string $token): string
+    {
+        $emails = self::requestEmails([$email]);
+        $token  = self::cleanConfirmToken($token);
+        $db     = $this->getDatabase();
+        $rows   = [];
+
+        if ($emails !== [] && $token !== '') {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName(['id', 'email', 'request_type', 'confirm_token', 'confirm_token_created_at']))
+                    ->from($db->quoteName('#__privacy_requests'))
+                    ->where($db->quoteName('status') . ' = 0')
+                    ->where($db->quoteName('confirm_token') . ' <> ' . $db->quote(''))
+                    ->where($db->quoteName('confirm_token_created_at') . ' IS NOT NULL')
+                    ->where('LOWER(TRIM(' . $db->quoteName('email') . ')) = :email')
+                    ->bind(':email', $emails[0])
+                    ->order($db->quoteName('id') . ' DESC')
+                    ->setLimit(self::CONFIRM_HASH_CHECKS)
+            );
+            $rows = $db->loadObjectList() ?: [];
+        }
+
+        // Always the same number of hash verifications (com_privacy allows one open request per
+        // type, so at most export and removal): the answer time does not tell whether or how many
+        // requests exist for the address, nor which of them matched.
+        $match = null;
+
+        // Created on every first attempt of a request, whether or not it is needed, so its cost
+        // does not tell either.
+        self::$dummyTokenHash ??= UserHelper::hashPassword(UserHelper::genRandomPassword(32));
+
+        for ($i = 0; $i < self::CONFIRM_HASH_CHECKS; $i++) {
+            $row = $rows[$i] ?? null;
+
+            if ($row === null) {
+                UserHelper::verifyPassword($token !== '' ? $token : 'invalid', self::$dummyTokenHash);
+                continue;
+            }
+
+            if (UserHelper::verifyPassword($token, (string) $row->confirm_token) && $match === null) {
+                $match = $row;
+            }
+        }
+
+        if ($match === null) {
+            return self::CONFIRM_FAILED;
+        }
+
+        $expires = (new Date((string) $match->confirm_token_created_at))->add(new \DateInterval(self::CONFIRM_TOKEN_LIFETIME));
+
+        if (new Date('now') > $expires) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName('#__privacy_requests'))
+                    ->set($db->quoteName('status') . ' = -1')
+                    ->set($db->quoteName('confirm_token') . ' = ' . $db->quote(''))
+                    ->set($db->quoteName('confirm_token_created_at') . ' = NULL')
+                    ->where($db->quoteName('id') . ' = ' . (int) $match->id)
+                    ->where($db->quoteName('status') . ' = 0')
+                    ->where($db->quoteName('confirm_token') . ' = :hash')
+                    ->bind(':hash', $match->confirm_token)
+            )->execute();
+
+            // A new code issued in the meantime (request resent) is not touched.
+            return (int) $db->getAffectedRows() === 1 ? self::CONFIRM_EXPIRED : self::CONFIRM_FAILED;
+        }
+
+        // Only the request still pending with this token: a parallel confirmation wins once.
+        $db->setQuery(
+            $this->createDbQuery()
+                ->update($db->quoteName('#__privacy_requests'))
+                ->set($db->quoteName('status') . ' = 1')
+                ->set($db->quoteName('confirm_token') . ' = ' . $db->quote(''))
+                ->where($db->quoteName('id') . ' = ' . (int) $match->id)
+                ->where($db->quoteName('status') . ' = 0')
+                ->where($db->quoteName('confirm_token') . ' = :hash')
+                ->bind(':hash', $match->confirm_token)
+        )->execute();
+
+        if ((int) $db->getAffectedRows() !== 1) {
+            return self::CONFIRM_FAILED;
+        }
+
+        $this->afterRequestConfirmed($match);
+
+        return self::CONFIRM_OK;
+    }
+
+    /**
+     * What com_privacy does after a confirmation: notify the super users (Joomla messages) and
+     * write the action log entry COM_PRIVACY_ACTION_LOG_CONFIRMED_REQUEST. Failures are logged
+     * and never undo the confirmation.
+     */
+    protected function afterRequestConfirmed(object $request): void
+    {
+        try {
+            $app      = Factory::getApplication();
+            $language = $app->getLanguage();
+            $language->load('com_privacy', JPATH_SITE) || $language->load('com_privacy', JPATH_SITE . '/components/com_privacy');
+            $language->load('com_privacy', JPATH_ADMINISTRATOR) || $language->load('com_privacy', JPATH_ADMINISTRATOR . '/components/com_privacy');
+        } catch (\Throwable $e) {
+            Log::add('Privacy request confirmation: no application: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return;
+        }
+
+        try {
+            $app->bootComponent('com_messages')->getMVCFactory()->createModel('Message', 'Administrator')->notifySuperUsers(
+                Text::_('COM_PRIVACY_ADMIN_NOTIFICATION_USER_CONFIRMED_REQUEST_SUBJECT'),
+                Text::sprintf('COM_PRIVACY_ADMIN_NOTIFICATION_USER_CONFIRMED_REQUEST_MESSAGE', $request->email)
+            );
+        } catch (\Throwable $e) {
+            Log::add('Privacy request confirmation: super users not notified: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        try {
+            $app->bootComponent('com_actionlogs')->getMVCFactory()
+                ->createModel('Actionlog', 'Administrator', ['ignore_request' => true])
+                ->addLog([[
+                    'action'       => 'request-confirmed',
+                    'subjectemail' => $request->email,
+                    'id'           => (int) $request->id,
+                    'itemlink'     => 'index.php?option=com_privacy&view=request&id=' . (int) $request->id,
+                ]], 'COM_PRIVACY_ACTION_LOG_CONFIRMED_REQUEST', 'com_privacy.request');
+        } catch (\Throwable $e) {
+            Log::add('Privacy request confirmation: action log not written: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+    }
+
+    /**
+     * Absolute URL of the confirmation page.
+     */
+    public static function confirmationUrl(): string
+    {
+        return rtrim(Uri::root(), '/') . '/' . self::CONFIRM_ROUTE;
+    }
+
+    /**
+     * Confirmation form (e-mail address, token, form token).
+     */
+    protected function renderConfirmationForm(string $email, string $token, string $message = '', string $type = 'info'): string
+    {
+        $e = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+
+        return '<div class="j2commerce-privacy-confirm">'
+            . '<h1>' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TITLE')) . '</h1>'
+            . ($message !== '' ? '<div class="alert alert-' . $e($type) . '" role="alert">' . $e($message) . '</div>' : '')
+            . '<p>' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_INTRO')) . '</p>'
+            . '<form action="' . $e(self::confirmationUrl()) . '" method="post">'
+            . '<div class="mb-3">'
+            . '<label class="form-label" for="j2commerce-privacy-confirm-email">' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_EMAIL_LABEL')) . '</label>'
+            . '<input class="form-control" type="email" id="j2commerce-privacy-confirm-email" name="email" value="' . $e($email) . '" required autocomplete="email" maxlength="320">'
+            . '</div>'
+            . '<div class="mb-3">'
+            . '<label class="form-label" for="j2commerce-privacy-confirm-token">' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TOKEN_LABEL')) . '</label>'
+            . '<input class="form-control" type="text" id="j2commerce-privacy-confirm-token" name="confirm_token" value="' . $e($token) . '" required autocomplete="off" maxlength="64" pattern="[A-Za-z0-9]+">'
+            . '</div>'
+            . '<input type="hidden" name="' . $e(Session::getFormToken()) . '" value="1">'
+            . '<button type="submit" class="btn btn-primary">' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_SUBMIT')) . '</button>'
+            . '</form>'
+            . '</div>';
+    }
+
+    /**
+     * Result of the confirmation page without a form.
+     */
+    protected function renderConfirmationMessage(string $message, string $type): string
+    {
+        $e = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+
+        return '<div class="j2commerce-privacy-confirm">'
+            . '<h1>' . $e(Text::_('PLG_PRIVACY_J2COMMERCE_CONFIRM_TITLE')) . '</h1>'
+            . '<div class="alert alert-' . $e($type) . '" role="alert">' . $e($message) . '</div>'
+            . '</div>';
     }
 
     protected function deleteUserAddress(int $addressId, int $userId): array

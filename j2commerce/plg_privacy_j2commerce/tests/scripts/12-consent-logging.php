@@ -714,7 +714,8 @@ class ConsentLoggingTest
         $insert('profile', self::USER_ID, $created, $body('test@example.com', '198.51.100.40', 'LegacyAgent/1.0'));
         $insert('checkout', self::USER_ID, Factory::getDate('-3 days +2 minutes')->toSql(), $body('test@example.com', '198.51.100.41', 'LegacyAgent/1.1'));
         $insert('guestOwn', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-own@example.invalid', '198.51.100.42', 'LegacyAgent/1.2'));
-        $insert('guestOther', 0, Factory::getDate('-4 days')->toSql(), $body('legacy-other@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
+        $insert('guestOwnCase', 0, Factory::getDate('-4 days')->toSql(), $body('Legacy-Own@Example.INVALID', '198.51.100.44', 'LegacyAgent/1.4'));
+        $insert('guestOther', 0,Factory::getDate('-4 days')->toSql(), $body('legacy-other@example.invalid', '198.51.100.43', 'LegacyAgent/1.3'));
         $insert('oldBody', 102, Factory::getDate('-5 days')->toSql(), 'Consent given during J2Commerce checkout');
 
         $load = function (string $key) use (&$ids): ?object {
@@ -767,7 +768,8 @@ class ConsentLoggingTest
             // Removal request of user 100 (account e-mail legacy-own@...): own records and guest
             // records with that e-mail address, nothing else.
             $scoped = $repository->anonymizeLegacyConsents(self::USER_ID, ['legacy-own@example.invalid', '']);
-            $this->test('Removal request anonymizes the user\'s records and guest records with the user\'s e-mail', $scoped === 3, "changed $scoped");
+            $this->test('Removal request anonymizes the user\'s records and guest records with the user\'s e-mail', $scoped === 4, "changed $scoped");
+            $this->test('Guest record with the e-mail in other letter case is anonymized too', $load('guestOwnCase')->subject === ConsentRepository::LEGACY_DONE_SUBJECT);
             $this->test('Guest record with another e-mail is not touched by that request', $load('guestOther')->subject === ConsentRepository::LEGACY_SUBJECT);
             $this->test('Record of another user is not touched by that request', $load('oldBody')->subject === ConsentRepository::LEGACY_SUBJECT);
             $this->test('Scoped removal request does not repair another user\'s already-anonymized record', str_contains((string) ($load('otherRawKey')->body ?? ''), ConsentRepository::LEGACY_BODY_KEY));

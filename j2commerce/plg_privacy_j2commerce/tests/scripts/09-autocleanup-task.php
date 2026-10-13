@@ -239,6 +239,29 @@ class AutoCleanupTaskTest
         $goneOrder  = 'CLEANUP-GONE-' . time();
         $this->test('current order of another user seeded', $this->seedTestOrder(9907, $otherOrder, date('Y-m-d H:i:s', strtotime('-1 year'))) !== null);
 
+        // An expired guest order whose order number also belongs to a current order of user 9907,
+        // with one order info row: the order info cannot be attributed and must stay.
+        $sharedOrder  = 'CLEANUP-SHARED-' . time();
+        $sharedSeeded = $this->seedTestOrder(0, $sharedOrder, sprintf('%04d-12-31 12:00:00', $year - 11)) !== null
+            && $this->seedTestOrder(9907, $sharedOrder, date('Y-m-d H:i:s', strtotime('-1 year'))) !== null;
+        $infosTable   = $this->isJ6Stack() ? '#__j2commerce_orderinfos' : '#__j2store_orderinfos';
+
+        if ($sharedSeeded) {
+            $info = (object) ['order_id' => $sharedOrder, 'all_billing' => '', 'all_shipping' => '', 'all_payment' => ''];
+
+            foreach (['billing', 'shipping'] as $side) {
+                foreach (['first_name', 'last_name', 'middle_name', 'phone_1', 'phone_2', 'fax', 'address_1', 'address_2', 'city', 'zip', 'company', 'tax_number'] as $field) {
+                    $info->{$side . '_' . $field} = $field === 'first_name' ? 'Shared' : 'x';
+                }
+            }
+
+            try {
+                $this->db->insertObject($infosTable, $info);
+            } catch (\Throwable $e) {
+                $sharedSeeded = false;
+            }
+        }
+
         // Migrated site (J2Commerce 6 stack): a copy of the expired order in the #__j2store_*
         // tables the official migration leaves behind must be anonymized as well.
         $migrated = $this->isJ6Stack() ? $this->createJ2StoreCopy($orderId) : ['tables' => [], 'copy' => false];
@@ -298,10 +321,20 @@ class AutoCleanupTaskTest
             'user_email=' . var_export($email, true));
 
         $expiredBody = $consentBody($consentIds['expired']);
-        $this->test('task removes IP address and user agent from the consent of the anonymized order',
-            $expiredBody !== '' && !str_contains($expiredBody, '203.0.113.60') && !str_contains($expiredBody, 'CleanupTaskAgent')
-            && str_contains($expiredBody, "<!-- j2commerce-order:$orderId -->"),
-            'body=' . $expiredBody);
+        // Consents are recorded for J2Commerce 6 orders only and name only the order number: on
+        // the J2Store stack the task leaves consent records alone (a J2Store order number could
+        // belong to another customer's J2Commerce 6 order).
+        $isJ6 = $this->isJ6Stack();
+
+        if ($isJ6) {
+            $this->test('task removes IP address and user agent from the consent of the anonymized order',
+                $expiredBody !== '' && !str_contains($expiredBody, '203.0.113.60') && !str_contains($expiredBody, 'CleanupTaskAgent')
+                && str_contains($expiredBody, "<!-- j2commerce-order:$orderId -->"),
+                'body=' . $expiredBody);
+        } else {
+            $this->test('J2Store stack: the task leaves the consent record with the same order number unchanged',
+                str_contains($expiredBody, '203.0.113.60'), 'body=' . $expiredBody);
+        }
         $this->test('task leaves the consent of another user unchanged', $consentBody($consentIds['other']) === $otherBefore);
 
         $expiredGuest = $guestOrder($guestExpired);
@@ -310,16 +343,46 @@ class AutoCleanupTaskTest
             $expiredGuest && $expiredGuest->user_email === 'anonymized@deleted.invalid' && $expiredGuest->ip_address === '',
             var_export($expiredGuest, true));
         $guestBody = $consentBody($consentIds['guestExpired']);
-        $this->test('task removes IP address and user agent from the consent of the expired guest order',
-            $guestBody !== '' && !str_contains($guestBody, '203.0.113.62') && str_contains($guestBody, "<!-- j2commerce-order:$guestExpired -->"),
-            'body=' . $guestBody);
+
+        if ($isJ6) {
+            $this->test('task removes IP address and user agent from the consent of the expired guest order',
+                $guestBody !== '' && !str_contains($guestBody, '203.0.113.62') && str_contains($guestBody, "<!-- j2commerce-order:$guestExpired -->"),
+                'body=' . $guestBody);
+        } else {
+            $this->test('J2Store stack: the consent record of the expired guest order number unchanged', str_contains($guestBody, '203.0.113.62'), 'body=' . $guestBody);
+        }
         $this->test('task keeps a guest order until the end of its fiscal year plus 10 years',
             $keptGuest && $keptGuest->user_email !== 'anonymized@deleted.invalid' && $keptGuest->ip_address === '127.0.0.1',
             var_export($keptGuest, true));
         $this->test('task leaves the consent of the kept guest order unchanged', $consentBody($consentIds['guestKept']) === $guestKeptBefore);
         $goneBody = $consentBody($consentIds['gone']);
-        $this->test('task removes IP address and user agent from the consent of a deleted order',
-            $goneBody !== '' && !str_contains($goneBody, '203.0.113.64') && str_contains($goneBody, "<!-- j2commerce-order:$goneOrder -->"), 'body=' . $goneBody);
+
+        if ($isJ6) {
+            $this->test('task removes IP address and user agent from the consent of a deleted order',
+                $goneBody !== '' && !str_contains($goneBody, '203.0.113.64') && str_contains($goneBody, "<!-- j2commerce-order:$goneOrder -->"), 'body=' . $goneBody);
+        } else {
+            $this->test('J2Store stack (no J2Commerce 6 tables): no stale-evidence check, consent unchanged', str_contains($goneBody, '203.0.113.64'), 'body=' . $goneBody);
+        }
+
+        if ($sharedSeeded) {
+            $sharedRows = $this->db->setQuery(
+                'SELECT user_id, user_email, ip_address FROM ' . $this->db->quoteName($table)
+                . ' WHERE order_id = ' . $this->db->quote($sharedOrder) . ' ORDER BY user_id'
+            )->loadObjectList();
+            $sharedInfo = (string) $this->db->setQuery(
+                'SELECT billing_first_name FROM ' . $this->db->quoteName($infosTable) . ' WHERE order_id = ' . $this->db->quote($sharedOrder)
+            )->loadResult();
+            $this->test('shared order number: the expired guest order row is anonymized',
+                count($sharedRows) === 2 && $sharedRows[0]->user_email === 'anonymized@deleted.invalid' && $sharedRows[0]->ip_address === '', json_encode($sharedRows));
+            $this->test('shared order number: the current order of user 9907 is untouched',
+                count($sharedRows) === 2 && $sharedRows[1]->user_email === 'cleanup-test-9907@example.com' && $sharedRows[1]->ip_address === '127.0.0.1', json_encode($sharedRows));
+            $this->test('shared order number: the order info is not anonymized', $sharedInfo === 'Shared', 'billing_first_name=' . $sharedInfo);
+        } else {
+            $this->test('shared order number case seeded (two orders, one order info row)', false);
+        }
+
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($infosTable) . ' WHERE order_id = ' . $this->db->quote($sharedOrder))->execute();
+        $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($table) . ' WHERE order_id = ' . $this->db->quote($sharedOrder))->execute();
 
         if ($migrated['copy']) {
             $copyEmail = $this->orderEmail('#__j2store_orders', $orderId);

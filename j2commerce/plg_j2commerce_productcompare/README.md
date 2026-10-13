@@ -143,7 +143,7 @@ This plugin has automated tests that run via GitHub Actions (`j2commerce-product
 
 ### Running Tests Locally
 
-Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the J2Commerce 6 commit pinned in the workflow (`7edb6e11ae9148bf996b06c47a0d8266865af7b2`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves (listed in the summary of the job `Resolve Shop Releases`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash
 # in j2commerce/plg_j2commerce_productcompare

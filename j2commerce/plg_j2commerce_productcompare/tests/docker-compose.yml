@@ -5,6 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Latest J2Store 4 release from the CI (job "Resolve Shop Releases"); empty locally,
+      # then the Dockerfile falls back to a fixed release.
+      args:
+        J2C4_URL: ${J2C4_URL:-}
+        J2C4_SHA256: ${J2C4_SHA256:-}
     container_name: plg_j2commerce_productcompare_test
     ports:
       - "8080:80"

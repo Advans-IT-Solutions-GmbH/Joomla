@@ -462,6 +462,52 @@ class AcyMailingIntegrationTest
 
         $this->test('AcyMailing detected again after the test', $this->getAcymPrefix() === $prefix);
     }
+    /**
+     * A privacy request with a request address and a different account address, both subscribed:
+     * the export contains both subscribers with their own item IDs.
+     */
+    private function testExportBothAddresses(): void
+    {
+        echo "\n--- Export: request and account address both subscribed ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null) {
+            $this->strictSkip('export of two subscribers', 'AcyMailing tables or plugin missing');
+
+            return;
+        }
+
+        $requestEmail = 'acym-request-' . random_int(1000, 9999) . '@example.com';
+        $accountEmail = 'acym-account-' . random_int(1000, 9999) . '@example.com';
+        $ids          = [];
+
+        try {
+            $ids[] = $requestId = $this->insertSubscriber($prefix, $requestEmail, 'Request Address');
+            $ids[] = $accountId = $this->insertSubscriber($prefix, $accountEmail, 'Account Address');
+
+            $method = new \ReflectionMethod($plugin, 'createAcyMailingDomain');
+            $method->setAccessible(true);
+            $domain = $method->invoke($plugin, null, [$requestEmail, $accountEmail]);
+            $itemIds = $domain ? array_map(static fn ($item): string => (string) $item->id, $domain->getItems()) : [];
+
+            $this->test('export contains the subscriber of the request address', in_array('subscriber_' . $requestId . '_subscriber', $itemIds, true), json_encode($itemIds));
+            $this->test('export contains the subscriber of the account address', in_array('subscriber_' . $accountId . '_subscriber', $itemIds, true), json_encode($itemIds));
+            $this->test('item IDs are unique', count($itemIds) === count(array_unique($itemIds)), json_encode($itemIds));
+
+            $single  = $method->invoke($plugin, null, [$requestEmail]);
+            $singleIds = $single ? array_map(static fn ($item): string => (string) $item->id, $single->getItems()) : [];
+            $this->test('one subscriber keeps the item ID "subscriber"', in_array('subscriber', $singleIds, true), json_encode($singleIds));
+        } catch (\Throwable $e) {
+            $this->test('export of two subscribers ran without error', false, $e->getMessage());
+        } finally {
+            foreach ($ids as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . (int) $id)->execute();
+            }
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -530,6 +576,7 @@ class AcyMailingIntegrationTest
         $this->testExportQuery();
         $this->testDeletion();
         $this->testRemovalAfterPseudonymisation();
+        $this->testExportBothAddresses();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";

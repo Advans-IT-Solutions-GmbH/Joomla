@@ -34,7 +34,7 @@ references:
 Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 
 - Exports J2Commerce orders and addresses, optional Joomla user/profile/action-log data, and AcyMailing subscriber data on privacy export requests
-- Carries out removal requests: deletes addresses, carts and AcyMailing data, anonymizes orders outside the retention period, keeps orders within it and reports them (administrator message, customer e-mail)
+- Carries out removal requests: deletes addresses, the carts of the account and AcyMailing data, anonymizes orders outside the retention period, keeps orders within it and reports them (administrator message, customer e-mail)
 - Anonymizes orders outside the retention period instead of deleting them (registered users and, via the task, guest orders)
 - Detects lifetime licenses: those orders keep only their order e-mail after the retention period (provisional, see Decisions)
 - Adds a consent checkbox to the J2Commerce checkout; on J2Commerce 6 validates it server-side and records one `#__privacy_consents` row per order (bundled system plugin)
@@ -47,7 +47,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 |------|---------|
 | `src/Extension/J2Commerce.php` | Main plugin class — all event handlers |
 | `plugins/task/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Scheduled cleanup task (separate task plugin) |
-| `plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | Checkout consent on J2Commerce 6 (`onAfterRoute`, `onJ2CommerceAfterDisplayShippingPayment`, `onJ2CommerceCheckoutCleanup`; records the consent on `checkout.confirmPayment`); bundled system plugin installed by `script.php` |
+| `plugins/system/j2commerceprivacy/src/Extension/J2CommercePrivacy.php` | `onMailBeforeRendering`: links the com_privacy administrator request mail to the confirmation page; checkout consent on J2Commerce 6 (`onAfterRoute`, `onJ2CommerceAfterDisplayShippingPayment`, `onJ2CommerceCheckoutCleanup`; records the consent on `checkout.confirmPayment`); bundled system plugin installed by `script.php` |
 | `src/Consent/ConsentRepository.php` | `#__privacy_consents`: one record per order without duplicates, status lookup by `user_id` or, for guests, only the order of the session token + e-mail |
 | `layouts/privacy_tab.php` | Privacy tab markup, rendered by the `myprofile/default_privacy.php` overrides |
 | `src/Frontend/PrivacyOptions.php` | Frontend options for the MyProfile overrides (`show_privacy_section`, `show_delete_address`, `show_export_data`, `show_delete_all`), all off while the plugin is disabled; loads the plugin language |
@@ -61,7 +61,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 | `onPrivacyExportRequest` | Collect J2Commerce data for export |
 | `onPrivacyCanRemoveData` | Never blocks (orders within the retention period are kept and reported; lifetime-license orders keep only their e-mail, provisional) |
 | `onPrivacyRemoveData` | Anonymize/delete data |
-| `onAjaxJ2commercePrivacy` | Handle address deletion AJAX requests |
+| `onAjaxJ2commercePrivacy` | Address deletion (`task=deleteAddress`, logged-in, JSON) and the confirmation page for privacy requests without login (`task=confirmRequest`, HTML); results go through `$event->addResult()` |
 
 See `references/architecture.md` for full details.
 
@@ -80,4 +80,5 @@ See `references/architecture.md` for full details.
 | Operators | Must define the storage period of consent records and describe the stored data (IP address, user agent, order number, time), its purpose and storage period in their privacy policy; consent records without personal data are not deleted automatically |
 | J2Commerce stack | `Support\J2CommerceStack`: the active shop (display, recording consent) is decided by the enabled component, the same rule as in all Advans J2Commerce extensions: `com_j2commerce` enabled with its tables → `#__j2commerce_*`; otherwise `com_j2store` enabled with its tables → `#__j2store_*`; an enabled component without tables is skipped, an installed but disabled one does not count; otherwise the J2Commerce 6 tables if they exist. Removal, anonymization, retention cleanup and export run on **all** existing sets (`dataSets()`, `forEachDataSet()` / task `dataSetOverride`), so migration copies in `#__j2store_*` are cleaned too |
 | Legacy consents | Records of the earlier advans template override (`PLG_PRIVACY_J2COMMERCE`, e-mail in the body, partly created afterwards) are **never** assigned to an order: only anonymized (`anonymizeLegacyConsents()`: installation and update for **all** accounts with an admin message, removal request scoped to the user plus guest records with the request/account e-mail, task; batches), subject `PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY`, neutral body in the website's **default site language** (`com_languages` → `site`, fallback the packaged `en-GB` file, and if even that is missing the key itself is stored and the next unscoped run replaces it with the text) and `state = -1` (invalid, hidden from the com_privacy lists), not shown or counted in the Privacy tab. The unscoped path also repairs bodies that an older version stored as the raw language key; a scoped removal request never touches another account's record |
+| Guest requests (owner decision 2026-10-12) | Export, retention check, anonymization, guest addresses and the guest consent export match the account (`user_id`) **and** guest records (`user_id = 0`) with the request or account e-mail (`ownerCondition()`, trimmed, case-insensitive, never another account, never `anonymized@deleted.invalid`); `user = null` is processed by the request e-mail; guest carts are never touched. Guests confirm an administrator-created request on `task=confirmRequest` (e-mail + code, checks as com_privacy ConfirmModel, status 0 -> 1, super users + action log, expired matching code -> -1, 5 failures per session in 15 min); the system plugin points `{TOKENURL}`/`{FORMURL}` of `com_privacy.notification.admin.*` there (relies on MailTemplate replacing `tokenurl` before `token`). Option `guest_confirmation` (default on) |
 | Not built | Licenses tab / `#__license_keys`; retroactive consent records; consent recording on J2Commerce 4 / J2Store |

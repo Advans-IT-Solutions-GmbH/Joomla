@@ -247,8 +247,14 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 }
 
                 try {
-                    $stale = $repository->removeStaleEvidence($cutoffDate, $orderTables);
-                    $this->logTask("IP address and user agent removed from {$stale} consent record(s) without a current order");
+                    // Consents belong to J2Commerce 6 orders: only those tables decide whether the
+                    // order still exists with personal data.
+                    if (\in_array('#__j2commerce_orders', $orderTables, true)) {
+                        $stale = $repository->removeStaleEvidence($cutoffDate, ['#__j2commerce_orders']);
+                        $this->logTask("IP address and user agent removed from {$stale} consent record(s) without a current order");
+                    } else {
+                        $this->logTask('No J2Commerce 6 tables: no checkout consent records to check');
+                    }
                 } catch (\Throwable $e) {
                     $otherErrors++;
                     $this->logTask('Error removing consent evidence: ' . $e->getMessage(), 'error');
@@ -433,14 +439,17 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $userCond = $db->quoteName('user_id') . ' = ' . (int) $userId;
 
         if ($lifetime === []) {
-            $this->anonymizeOrdersWhere($userCond, true);
+            $numbers = $this->anonymizeOrdersWhere($userCond, true);
         } else {
-            $in = implode(',', array_map([$db, 'quote'], $lifetime));
-            $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' NOT IN (' . $in . ')', true);
-            $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' IN (' . $in . ')', false);
+            $in      = implode(',', array_map([$db, 'quote'], $lifetime));
+            $numbers = array_merge(
+                $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' NOT IN (' . $in . ')', true),
+                $this->anonymizeOrdersWhere($userCond . ' AND ' . $db->quoteName('order_id') . ' IN (' . $in . ')', false)
+            );
         }
 
-        $this->removeConsentEvidence($userId);
+        $changed = $this->removeConsentEvidenceForOrders($numbers);
+        $this->logTask("Removed IP address and user agent from {$changed} consent record(s) of user ID: {$userId}");
 
         return \count($lifetime);
     }
@@ -485,18 +494,20 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
             $full    = array_values(array_diff($chunk, $lifetime));
             $partial = array_values(array_intersect($chunk, $lifetime));
 
+            $numbers = [];
+
             foreach ([[$full, true], [$partial, false]] as [$ids, $anonymizeEmail]) {
                 if ($ids === []) {
                     continue;
                 }
 
-                $this->anonymizeOrdersWhere(
+                $numbers = array_merge($numbers, $this->anonymizeOrdersWhere(
                     $db->quoteName('user_id') . ' = 0 AND ' . $db->quoteName('order_id') . ' IN (' . implode(',', array_map([$db, 'quote'], $ids)) . ')',
                     $anonymizeEmail
-                );
+                ));
             }
 
-            $this->removeConsentEvidenceForOrders($chunk);
+            $this->removeConsentEvidenceForOrders($numbers);
         }
 
         $this->logTask('Anonymized ' . count($orderIds) . ' guest order(s), ' . count($lifetime) . ' of them with lifetime license (e-mail kept)');
@@ -531,12 +542,16 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
     /**
      * Anonymize the orders matching $where (SQL condition on the orders table) and their order infos.
      *
+     * Order info rows are linked to an order only by its order number: for a number that also
+     * belongs to an order outside $where they are left alone (logged), they could be another
+     * customer's.
+     *
      * @param   string  $where           Condition on the orders table (already quoted)
      * @param   bool    $anonymizeEmail  Whether to anonymize order e-mail addresses
      *
-     * @return  void
+     * @return  string[]  Order numbers whose order info was anonymized (not shared)
      */
-    private function anonymizeOrdersWhere(string $where, bool $anonymizeEmail): void
+    private function anonymizeOrdersWhere(string $where, bool $anonymizeEmail): array
     {
         $db          = $this->getDatabase();
         $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
@@ -558,10 +573,43 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
         $db->setQuery($query);
         $db->execute();
 
-        $subQuery = $this->createDbQuery()
-            ->select($db->quoteName('order_id'))
-            ->from($db->quoteName($ordersTable))
-            ->where($where);
+        $db->setQuery(
+            $this->createDbQuery()
+                ->select('DISTINCT ' . $db->quoteName('order_id'))
+                ->from($db->quoteName($ordersTable))
+                ->where($where)
+        );
+        $numbers = array_values(array_filter(array_map('strval', $db->loadColumn() ?: []), 'strlen'));
+
+        if ($numbers === []) {
+            return [];
+        }
+
+        $shared = [];
+
+        foreach (array_chunk($numbers, 200) as $chunk) {
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->select('DISTINCT ' . $db->quoteName('order_id'))
+                    ->from($db->quoteName($ordersTable))
+                    ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                    ->where('NOT (' . $where . ')')
+            );
+
+            foreach ($db->loadColumn() ?: [] as $number) {
+                $shared[(string) $number] = true;
+            }
+        }
+
+        if ($shared !== []) {
+            $this->logTask('Order numbers shared with another order, order info and consent evidence not anonymized: ' . implode(', ', array_keys($shared)), 'warning');
+        }
+
+        $numbers = array_values(array_filter($numbers, static fn (string $number): bool => !isset($shared[$number])));
+
+        if ($numbers === []) {
+            return [];
+        }
 
         $query = $this->createDbQuery()
             ->update($db->quoteName($infosTable))
@@ -594,43 +642,26 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 $db->quoteName('all_shipping') . ' = ' . $db->quote(''),
                 $db->quoteName('all_payment') . ' = ' . $db->quote(''),
             ])
-            ->where($db->quoteName('order_id') . ' IN (' . $subQuery . ')');
+            ->whereIn($db->quoteName('order_id'), $numbers, ParameterType::STRING);
         $db->setQuery($query);
         $db->execute();
+
+        return $numbers;
     }
 
     /**
-     * Remove IP address and user agent from the checkout consent records of the anonymized orders
-     * (the consent records themselves stay as evidence). The repository belongs to the privacy
-     * plugin that ships this task plugin.
+     * Remove IP address and user agent from the checkout consent records of anonymized orders
+     * (the records stay as evidence). Consents are recorded for J2Commerce 6 orders only and name
+     * only the order number, so only the J2Commerce 6 data set removes evidence: a J2Store order
+     * number could belong to another customer's J2Commerce 6 order.
      *
-     * @param   int  $userId  The user ID
-     *
-     * @return  void
-     */
-    private function removeConsentEvidence(int $userId): void
-    {
-        $db          = $this->getDatabase();
-        $ordersTable = $this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders';
-        $query       = $this->createDbQuery()
-            ->select($db->quoteName('order_id'))
-            ->from($db->quoteName($ordersTable))
-            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
-        $db->setQuery($query);
-        $orderIds = $db->loadColumn() ?: [];
-
-        $changed = $this->removeConsentEvidenceForOrders($orderIds);
-        $this->logTask("Removed IP address and user agent from {$changed} consent record(s) of user ID: {$userId}");
-    }
-
-    /**
-     * @param   string[]  $orderIds  Anonymized order numbers
+     * @param   string[]  $orderIds  Anonymized order numbers (not shared with another order)
      *
      * @return  int  Number of consent records changed
      */
     private function removeConsentEvidenceForOrders(array $orderIds): int
     {
-        if ($orderIds === []) {
+        if ($orderIds === [] || $this->isJ2Commerce4()) {
             return 0;
         }
 

@@ -53,8 +53,10 @@ Advans-IT-Solutions-GmbH/Joomla
 
 - **Minimum platform:** Joomla 5.4 (5.4.x, 6.x) and PHP 8.1 for every extension. Raising the minimum
   to 5.4 ships as a patch release. Details: `references/conventions.md`.
-- **CI tracks the newest Joomla:** moving official image tags (newest 5.4.x and 6.x), no pinned
-  Joomla patch version; J2Commerce 6 is pinned to commit `7edb6e11`. Details: `references/testing.md`.
+- **CI tracks the newest Joomla and shops:** moving official image tags (newest 5.4.x and 6.x), no
+  pinned Joomla patch version; J2Commerce 6 (newest aligned commit of `main`) and J2Store 4 (latest
+  release, sha256-verified) are resolved once per run by `.github/actions/resolve-shops`, never
+  pinned. Details: `references/testing.md`.
 - **Deprecations:** the static scan (`shared/tests/deprecated-api-scan.php`) runs in every workflow;
   the production-like lanes fail on deprecations raised directly by extension code
   (`shared-deprecations.php`). Both must stay green.
