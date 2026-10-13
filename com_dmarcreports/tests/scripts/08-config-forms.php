@@ -237,9 +237,57 @@ class ConfigFormsTest
             });
         }
 
-        $this->cleanup();
+        // --- Manual upload surfaces a reason AND counts the rejection --------
+        // (K-E4a). A container-level rejection — empty file, wrong format, a
+        // DOCTYPE/XXE-class document, or a decompression bomb — imports nothing,
+        // but it must still reach the operator with its specific localized
+        // reason and count as exactly one failure in the summary. An upload that
+        // reported "0 failed" next to a rejection reason would hide that the
+        // file was refused, so each case asserts both the reason text and the
+        // one-failure summary. Only this authenticated path exercises
+        // ingest.upload end to end, so a regression in either is caught here.
+        $dashboard   = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&view=dashboard', [], true);
+        $this->token = $this->extractToken($dashboard['body']) ?: $this->token;
 
-        echo "\n=== Config + Edit Form Test Summary ===\n";
+        $this->test('Dashboard view renders the manual upload form', function () use ($dashboard) {
+            return $dashboard['code'] === 200
+                && !$this->hasErrorMarker($dashboard['body'])
+                && strpos($dashboard['body'], 'report_file') !== false;
+        });
+
+        $uploads = [
+            'empty file'              => ['content' => '', 'name' => 'report.xml', 'reason' => 'COM_DMARCREPORTS_UPLOAD_REASON_EMPTY'],
+            'wrong-format file'       => ['content' => 'this is not a dmarc report', 'name' => 'report.xml', 'reason' => 'COM_DMARCREPORTS_UPLOAD_REASON_FORMAT'],
+            'malformed DOCTYPE report' => ['content' => '<?xml version="1.0"?><!DOCTYPE foo><feedback></feedback>', 'name' => 'report.xml', 'reason' => 'COM_DMARCREPORTS_UPLOAD_REASON_MALFORMED'],
+        ];
+
+        // A gzip whose decompressed size exceeds the archive ceiling must be
+        // refused as a bomb. Build it only when the test host can gzip; the
+        // Joomla container decodes gzip, so a missing encoder here is a test-host
+        // limitation, not a product gap.
+        if (\function_exists('gzencode')) {
+            $uploads['decompression bomb'] = [
+                'content' => gzencode(str_repeat('A', 9 * 1024 * 1024)),
+                'name'    => 'report.xml.gz',
+                'reason'  => 'COM_DMARCREPORTS_UPLOAD_REASON_BOMB',
+            ];
+        }
+
+        $oneFailure = $this->expectedSummary(0, 0, 1, 0);
+
+        foreach ($uploads as $label => $upload) {
+            $res = $this->uploadReport($upload['content'], $upload['name']);
+            $this->test("Upload of an {$label} reports its reason and one failure", function () use ($res, $upload, $oneFailure) {
+                return $res['code'] === 200
+                    && !$this->hasErrorMarker($res['body'])
+                    && !$this->hasSqlError($res['body'])
+                    && $this->containsString($res['body'], $upload['reason'])
+                    && $oneFailure !== ''
+                    && $this->pageShows($res['body'], $oneFailure);
+            });
+        }
+
+        $this->cleanup();
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
     }
@@ -479,11 +527,95 @@ class ConfigFormsTest
             return false;
         }
 
-        // Messages can be HTML-escaped in the alert markup; compare on a
-        // decoded, tag-free copy of the page.
+        return $this->pageShows($body, $text);
+    }
+
+    /**
+     * True when the given literal text appears on the page. Messages can be
+     * HTML-escaped in the alert markup, so compare on a decoded, tag-free copy.
+     */
+    private function pageShows(string $body, string $text): bool
+    {
+        if ($text === '') {
+            return false;
+        }
+
         $plain = html_entity_decode(strip_tags($body), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
         return strpos($plain, $text) !== false;
+    }
+
+    /**
+     * Render the installed ingest-summary string for the given counters so the
+     * upload assertions follow the shipped wording instead of hard-coding it.
+     */
+    private function expectedSummary(int $imported, int $duplicates, int $failed, int $skipped): string
+    {
+        $template = $this->strings['COM_DMARCREPORTS_INGEST_SUMMARY'] ?? '';
+
+        if ($template === '') {
+            return '';
+        }
+
+        return sprintf($template, $imported, $duplicates, $failed, $skipped);
+    }
+
+    /**
+     * POST a manually uploaded report file to ingest.upload as a real multipart
+     * upload (so is_uploaded_file() holds server-side) and follow the redirect
+     * so the enqueued summary and reason message are visible in the body.
+     *
+     * @return array{code:int, body:string}
+     */
+    private function uploadReport(string $content, string $filename): array
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc-upload-');
+        file_put_contents($tmp, $content);
+
+        $post = [
+            'option'      => 'com_dmarcreports',
+            'task'        => 'ingest.upload',
+            'report_file' => new \CURLFile($tmp, 'application/octet-stream', $filename),
+        ];
+
+        if ($this->token !== null) {
+            $post[$this->token] = '1';
+        }
+
+        $res = $this->requestMultipart($this->baseUrl . '/administrator/index.php', $post);
+        @unlink($tmp);
+
+        return $res;
+    }
+
+    /**
+     * Issue a multipart/form-data POST. curl switches to multipart when the
+     * post array holds a CURLFile, so the fields are passed as an array rather
+     * than url-encoded.
+     *
+     * @param   array<string, mixed>  $post
+     *
+     * @return array{code:int, body:string}
+     */
+    private function requestMultipart(string $url, array $post): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HEADER         => false,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_COOKIEJAR      => $this->cookieJar,
+            CURLOPT_COOKIEFILE     => $this->cookieJar,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $post,
+        ]);
+
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return ['code' => $code, 'body' => $body === false ? '' : $body];
     }
 
     private function hasSqlError(string $body): bool
