@@ -473,6 +473,10 @@ class AjaxEndpointTest
      * without a session it redirects with 303 to Route::_('index.php'), which
      * carries the current com_ajax query HTML-escaped. That redirect was the
      * loop the dev checker found with version 1.5.24. Comments are ignored.
+     *
+     * Only a static call on the Session class counts (short, qualified or
+     * fully qualified name, or an alias imported with "use ... as"), so an
+     * unrelated method of the same name does not trip the check.
      */
     private function testNoSessionRedirectingTokenCheck(): bool
     {
@@ -486,12 +490,39 @@ class AjaxEndpointTest
             return false;
         }
 
-        foreach ($tokens as $i => $token) {
-            if (is_array($token) && $token[0] === T_STRING && strcasecmp($token[1], 'checkToken') === 0) {
-                echo "FAIL (checkToken called on line {$token[2]})\n";
+        $nameTypes = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED];
+        $names     = ['session' => true];
+        $n         = count($tokens);
 
-                return false;
+        // Aliases of the Session class: use Joomla\CMS\Session\Session as Alias;
+        for ($i = 0; $i < $n - 3; $i++) {
+            if (is_array($tokens[$i]) && in_array($tokens[$i][0], $nameTypes, true)
+                && preg_match('/(^|\\\\)Session$/i', $tokens[$i][1])
+                && is_array($tokens[$i + 1]) && $tokens[$i + 1][0] === T_AS
+                && is_array($tokens[$i + 2]) && $tokens[$i + 2][0] === T_STRING
+            ) {
+                $names[strtolower($tokens[$i + 2][1])] = true;
             }
+        }
+
+        for ($i = 0; $i < $n - 3; $i++) {
+            if (!is_array($tokens[$i]) || !in_array($tokens[$i][0], $nameTypes, true)) {
+                continue;
+            }
+
+            $short = strtolower(substr((string) strrchr('\\' . $tokens[$i][1], '\\'), 1));
+
+            if (!isset($names[$short])
+                || !is_array($tokens[$i + 1]) || $tokens[$i + 1][0] !== T_DOUBLE_COLON
+                || !is_array($tokens[$i + 2]) || strcasecmp($tokens[$i + 2][1], 'checkToken') !== 0
+                || $tokens[$i + 3] !== '('
+            ) {
+                continue;
+            }
+
+            echo "FAIL (Session::checkToken() called on line {$tokens[$i][2]})\n";
+
+            return false;
         }
 
         echo "PASS\n";
@@ -517,9 +548,6 @@ class AjaxEndpointTest
             return false;
         }
 
-        $tokens   = array_values(array_filter($tokens, static function ($t): bool {
-            return !is_array($t) || $t[0] !== T_WHITESPACE;
-        }));
         $calls    = 0;
         $problems = [];
 
@@ -601,7 +629,9 @@ class AjaxEndpointTest
             return false;
         }
 
-        preg_match_all('/[\'"]([^\'"]*option=com_ajax[^\'"]*)[\'"]/', $source, $m);
+        // Only executable code counts: a commented-out URL must neither keep
+        // the check green nor fail it.
+        preg_match_all('/[\'"`]([^\'"`]*option=com_ajax[^\'"`]*)[\'"`]/', $this->jsWithoutComments($source), $m);
         $urls     = $m[1];
         $problems = [];
 
@@ -645,8 +675,88 @@ class AjaxEndpointTest
         }
 
         return array_values(array_filter(token_get_all($code), static function ($t): bool {
-            return !is_array($t) || !in_array($t[0], [T_COMMENT, T_DOC_COMMENT], true);
+            return !is_array($t) || !in_array($t[0], [T_COMMENT, T_DOC_COMMENT, T_WHITESPACE], true);
         }));
+    }
+
+    /**
+     * JavaScript source with every comment removed. String, template and
+     * regular expression literals are kept as they are, so a comment marker
+     * inside them does not start a comment.
+     */
+    private function jsWithoutComments(string $source): string
+    {
+        $out     = '';
+        $len     = strlen($source);
+        $lastSig = '';
+        $word    = '';
+
+        for ($i = 0; $i < $len; $i++) {
+            $c    = $source[$i];
+            $next = $source[$i + 1] ?? '';
+
+            if ($c === '/' && $next === '/') {
+                $end = strpos($source, "\n", $i);
+                $i   = ($end === false ? $len : $end) - 1;
+
+                continue;
+            }
+
+            if ($c === '/' && $next === '*') {
+                $end = strpos($source, '*/', $i + 2);
+                $i   = ($end === false ? $len : $end + 2) - 1;
+                $out .= ' ';
+
+                continue;
+            }
+
+            $isRegex = $c === '/'
+                && ($lastSig === '' || strpos('(,=:[!&|?{};+-*%<>~^', $lastSig) !== false
+                    || in_array($word, ['return', 'typeof', 'case', 'in', 'of'], true));
+
+            if ($c === '"' || $c === "'" || $c === '`' || $isRegex) {
+                $start   = $i;
+                $inClass = false;
+
+                for ($i++; $i < $len; $i++) {
+                    if ($source[$i] === '\\') {
+                        $i++;
+                        continue;
+                    }
+
+                    if ($isRegex && $source[$i] === '[') {
+                        $inClass = true;
+                    } elseif ($isRegex && $source[$i] === ']') {
+                        $inClass = false;
+                    } elseif ($source[$i] === $c && !$inClass) {
+                        break;
+                    }
+                }
+
+                $out    .= substr($source, $start, $i - $start + 1);
+                $lastSig = $c;
+                $word    = '';
+
+                continue;
+            }
+
+            $isIdent = ctype_alnum($c) || $c === '_' || $c === '$';
+            $prevRaw = $out === '' ? '' : substr($out, -1);
+            $out    .= $c;
+
+            if ($isIdent) {
+                // Continue the word only when it is not separated by whitespace.
+                $word = ($prevRaw !== '' && (ctype_alnum($prevRaw) || $prevRaw === '_' || $prevRaw === '$')) ? $word . $c : $c;
+            } elseif (!ctype_space($c)) {
+                $word = '';
+            }
+
+            if (!ctype_space($c)) {
+                $lastSig = $c;
+            }
+        }
+
+        return $out;
     }
 
     /**
