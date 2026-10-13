@@ -5,7 +5,7 @@ Nutze in diesem Repository die Vorgaben aus `/AGENTS.md` (Repo-Root) als maßgeb
 Repo-spezifische Skills liegen unter `.claude/skills/` und gelten auch für Copilot. Bei passendem Thema jeweils das `SKILL.md` im passenden Skill-Ordner lesen:
 - `.claude/skills/joomla-extensions/` — Entwicklung, Tests, Releases, CI/CD
 - `.claude/skills/privacy-plugin/` — plg_privacy_j2commerce Domain-Wissen
-- `.claude/skills/dmarc-reports/` — com_dmarcreports Domain-Wissen
+- `.claude/skills/dmarc-reports/` — com_dmarcreports und mod_dmarcreports Domain-Wissen
 
 Commit-Identität:
 - Entwickler committen unter ihrer **eigenen** Identität (eigener Account, eigene GitHub-No-Reply-Adresse; signiert, falls ein Schlüssel vorhanden ist).

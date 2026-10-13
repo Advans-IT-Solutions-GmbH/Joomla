@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="module" client="administrator" method="upgrade">
+    <name>MOD_DMARCREPORTS</name>
+    <element>mod_dmarcreports</element>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-08</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <authorEmail>info@advans.ch</authorEmail>
+    <authorUrl>https://advans.ch</authorUrl>
+    <version>1.0.0</version>
+    <description>MOD_DMARCREPORTS_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+
+    <namespace path="src">Advans\Module\DmarcReports</namespace>
+    <scriptfile>script.php</scriptfile>
+
+    <files module="mod_dmarcreports">
+        <folder>services</folder>
+        <folder>src</folder>
+        <folder>tmpl</folder>
+        <filename>index.html</filename>
+        <filename>LICENSE.txt</filename>
+    </files>
+
+    <languages>
+        <language tag="en-GB">language/en-GB/mod_dmarcreports.ini</language>
+        <language tag="en-GB">language/en-GB/mod_dmarcreports.sys.ini</language>
+        <language tag="de-DE">language/de-DE/mod_dmarcreports.ini</language>
+        <language tag="de-DE">language/de-DE/mod_dmarcreports.sys.ini</language>
+        <language tag="fr-FR">language/fr-FR/mod_dmarcreports.ini</language>
+        <language tag="fr-FR">language/fr-FR/mod_dmarcreports.sys.ini</language>
+    </languages>
+
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="show_summary"
+                    type="radio"
+                    layout="joomla.form.field.radio.switcher"
+                    label="MOD_DMARCREPORTS_FIELD_SHOW_SUMMARY_LABEL"
+                    description="MOD_DMARCREPORTS_FIELD_SHOW_SUMMARY_DESC"
+                    default="1"
+                >
+                    <option value="0">JNO</option>
+                    <option value="1">JYES</option>
+                </field>
+                <field
+                    name="action_limit"
+                    type="number"
+                    label="MOD_DMARCREPORTS_FIELD_ACTION_LIMIT_LABEL"
+                    description="MOD_DMARCREPORTS_FIELD_ACTION_LIMIT_DESC"
+                    default="5"
+                    min="0"
+                    max="20"
+                    validate="number"
+                />
+            </fieldset>
+            <fieldset name="advanced">
+                <field
+                    name="layout"
+                    type="modulelayout"
+                    label="JFIELD_ALT_LAYOUT_LABEL"
+                />
+                <field
+                    name="moduleclass_sfx"
+                    type="textarea"
+                    label="COM_MODULES_FIELD_MODULECLASS_SFX_LABEL"
+                    rows="3"
+                    validate="CssIdentifier"
+                />
+            </fieldset>
+        </fields>
+    </config>
+
+    <updateservers>
+        <server type="extension" priority="1" name="DMARC Reports Dashboard Module Updates">
+            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/mod_dmarcreports/updates/update.xml
+        </server>
+    </updateservers>
+</extension>

@@ -92,6 +92,7 @@ Generische Extensions in diesem Repository:
 - `plg_ajax_joomlaajaxforms`
 - `plg_osmap_j2commerce`
 - `com_dmarcreports`
+- `mod_dmarcreports`
 - J2Commerce-Extensions
 
 Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
