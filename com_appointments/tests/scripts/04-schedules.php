@@ -91,6 +91,10 @@ class ScheduleAdminTest
             return $this->column($scheduleId, 'timezone') === 'Europe/Zurich';
         });
 
+        $this->test('An administrator with core.edit.state may create a published schedule', function () use ($scheduleId) {
+            return (int) $this->column($scheduleId, 'published') === 1;
+        });
+
         $this->test('The weekly interval was stored', function () use ($scheduleId) {
             $row = $this->rule($scheduleId, 'weekday IS NOT NULL');
 
@@ -175,6 +179,10 @@ class ScheduleAdminTest
                 && $this->ruleCount($scheduleId) === 2;
         });
 
+        $this->post('schedule.cancel', $this->tokenFromEditForm($scheduleId) ?? $token, [
+            'jform[id]' => (string) $scheduleId,
+        ]);
+
         // --- The edit view is behind core.edit, whatever its spelling -------
         // Reaching view=schedule directly would show and save a stored
         // schedule without the task controllers' permission checks, so
@@ -184,7 +192,7 @@ class ScheduleAdminTest
         // holding down shift. This is the only test of that guard, so it also
         // covers the guard itself and not only the spelling.
         try {
-            $operator = $this->createOperatorWithoutEditPermission();
+            $operator = $this->createOperatorWithoutStatePermission();
 
             if ($operator === null) {
                 echo "✗ Could not create an operator without the edit permission\n";
@@ -211,6 +219,65 @@ class ScheduleAdminTest
                         }
                     );
                 }
+
+                foreach (['omitted', 'forged'] as $submission) {
+                    $this->test(
+                        'A creator without core.edit.state creates an unpublished schedule with a ' . $submission . ' state',
+                        function () use ($submission) {
+                            $token = $this->tokenFromNewForm();
+
+                            if ($token === null) {
+                                return false;
+                            }
+
+                            $fields = $this->validFields();
+                            $title  = self::BASE_TITLE . '-operator-' . $submission;
+                            $fields['jform[title]'] = $title;
+
+                            if ($submission === 'omitted') {
+                                unset($fields['jform[published]']);
+                            }
+
+                            $this->post('schedule.save', $token, $fields);
+                            $row = $this->scheduleByTitle($title);
+
+                            return $row !== null
+                                && (int) $row['published'] === 0
+                                && $this->ruleCount((int) $row['id']) === 2;
+                        }
+                    );
+                }
+            }
+        } finally {
+            $this->removeOperator();
+            $this->login();
+        }
+
+        // Editing content must still work without permission to change state.
+        try {
+            $operator = $this->createOperatorWithoutStatePermission(true);
+
+            if ($operator === null) {
+                echo "✗ Could not create an operator without the state permission\n";
+                $this->failed++;
+            } else {
+                $this->test('An editor without core.edit.state preserves the existing published state', function () use ($scheduleId) {
+                    $token = $this->tokenFromEditForm($scheduleId);
+
+                    if ($token === null) {
+                        return false;
+                    }
+
+                    $fields = $this->validFields();
+                    $fields['jform[id]']        = (string) $scheduleId;
+                    $fields['jform[timezone]']  = 'UTC';
+                    $fields['jform[published]'] = '0';
+                    $this->post('schedule.save', $token, $fields);
+
+                    return $this->column($scheduleId, 'timezone') === 'UTC'
+                        && (int) $this->column($scheduleId, 'published') === 1
+                        && $this->ruleCount($scheduleId) === 2;
+                });
             }
         } finally {
             $this->removeOperator();
@@ -241,17 +308,18 @@ class ScheduleAdminTest
 
     /**
      * An administrator account that may manage the component and create a
-     * schedule, but may not edit one, logged in and ready to make requests.
+     * schedule, but may not change its state, logged in and ready to make requests.
      *
      * It is put into Joomla's own Manager group, which may log into the
      * administrator, and the component's asset rules grant that group
-     * core.manage and core.create while denying core.edit. The row is built
+     * core.manage and core.create while denying core.edit.state. Editing is
+     * denied unless requested for the state-preservation test. The row is built
      * from the live column list rather than a fixed one, so the suite does not
      * break on a Joomla version that adds or drops a user column.
      *
      * @return  string|null  The user name, or null when it could not be set up.
      */
-    private function createOperatorWithoutEditPermission(): ?string
+    private function createOperatorWithoutStatePermission(bool $allowEdit = false): ?string
     {
         $groups    = "{$this->dbPrefix}usergroups";
         $result    = $this->db->query("SELECT id FROM {$groups} WHERE title = 'Manager' LIMIT 1");
@@ -342,9 +410,10 @@ class ScheduleAdminTest
         $rules               = \is_array($rules) ? $rules : [];
         $key                 = (string) $this->operatorGroup;
 
-        $rules['core.manage'][$key] = 1;
-        $rules['core.create'][$key] = 1;
-        $rules['core.edit'][$key]   = 0;
+        $rules['core.manage'][$key]     = 1;
+        $rules['core.create'][$key]     = 1;
+        $rules['core.edit'][$key]       = $allowEdit ? 1 : 0;
+        $rules['core.edit.state'][$key] = 0;
 
         $encoded = $this->db->real_escape_string((string) json_encode($rules));
         $this->db->query("UPDATE {$assets} SET rules = '{$encoded}' WHERE id = {$this->assetId}");
@@ -458,6 +527,20 @@ class ScheduleAdminTest
         ];
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function scheduleByTitle(string $title)
+    {
+        $table  = "{$this->dbPrefix}appointments_schedules";
+        $needle = $this->db->real_escape_string($title);
+        $result = $this->db->query(
+            "SELECT id, published FROM {$table} WHERE title = '{$needle}' ORDER BY id DESC LIMIT 1"
+        );
+
+        return $result ? $result->fetch_assoc() : null;
+    }
+
     private function fixtureId(): int
     {
         $table = "{$this->dbPrefix}appointments_schedules";
@@ -535,14 +618,17 @@ class ScheduleAdminTest
         $rules = "{$this->dbPrefix}appointments_schedule_rules";
         $title = $this->db->real_escape_string(self::BASE_TITLE);
 
-        $result = $this->db->query("SELECT id FROM {$schedules} WHERE title = '{$title}'");
+        $operatorOmitted = $this->db->real_escape_string(self::BASE_TITLE . '-operator-omitted');
+        $operatorForged  = $this->db->real_escape_string(self::BASE_TITLE . '-operator-forged');
+        $titles = "'{$title}', '{$operatorOmitted}', '{$operatorForged}'";
+        $result = $this->db->query("SELECT id FROM {$schedules} WHERE title IN ({$titles})");
 
         while ($result && ($row = $result->fetch_assoc())) {
             $id = (int) $row['id'];
             $this->db->query("DELETE FROM {$rules} WHERE schedule_id = {$id}");
         }
 
-        $this->db->query("DELETE FROM {$schedules} WHERE title = '{$title}'");
+        $this->db->query("DELETE FROM {$schedules} WHERE title IN ({$titles})");
     }
 
     private function login(): bool

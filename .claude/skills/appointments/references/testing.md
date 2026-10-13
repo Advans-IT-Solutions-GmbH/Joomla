@@ -16,6 +16,8 @@ com_appointments/tests/Unit/
 ├── AvailabilityWindowTest.php
 ├── ScheduleResolverTest.php
 ├── SlotEngineTest.php            # the largest suite by far
+├── SlotRulesTest.php
+├── UtcTimestampTest.php
 ├── IcsWriterTest.php
 ├── SignedLinkTest.php
 ├── FeedTokenTest.php
@@ -124,6 +126,15 @@ empty table, which is the empty-state branch, and once with four seeded event ty
 and three that each have to be filtered out for a different reason, namely unpublished, an access
 level a guest does not hold, and a different content language. The visible one carries `<`, `&` and
 `"` in its title, so the layout's escaping is asserted and not only the model's filters.
+
+### The schedule permission assertions
+
+`04-schedules.php` submits the real administrator form as both an administrator and a restricted
+operator. A creator without `core.edit.state` must create an unpublished schedule whether the
+request omits `published` or tries to set it to `1`; the database's default must not publish it.
+An editor without that permission must still be able to change the schedule's content while its
+existing publication state stays unchanged. An administrator with the permission is the positive
+control and can create a published schedule.
 
 ### The mail assertion
 

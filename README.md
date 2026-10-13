@@ -80,7 +80,7 @@ Local test prerequisites and commands: [`.claude/skills/joomla-extensions/refere
 
 ## Languages
 
-All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for three extensions, one manifest line per file.
+All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for extensions using `<languages>`, one manifest line per file.
 
 To add a language:
 
@@ -154,4 +154,3 @@ CHE-316.407.165
 https://advans.ch
 
 Copyright (C) 2026 Advans IT Solutions GmbH
-

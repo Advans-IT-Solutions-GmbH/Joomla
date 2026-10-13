@@ -131,6 +131,13 @@ class ScheduleModel extends AdminModel
      */
     public function save($data)
     {
+        // The form drops published without core.edit.state, but the column
+        // defaults to 1. New records must not inherit that published state;
+        // existing records keep their state when the field is absent.
+        if ((int) ($data['id'] ?? 0) === 0 && !$this->canEditState((object) $data)) {
+            $data['published'] = 0;
+        }
+
         $weekly    = (array) ($data['weekly_rules'] ?? []);
         $overrides = (array) ($data['date_overrides'] ?? []);
 
