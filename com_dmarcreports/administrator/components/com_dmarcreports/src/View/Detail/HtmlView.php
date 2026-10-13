@@ -29,6 +29,9 @@ class HtmlView extends BaseHtmlView
     /** @var array<string, mixed> */
     protected $dns = [];
 
+    /** @var array<string, mixed> */
+    protected $mtasts = [];
+
     /** @var array<int, array<string, mixed>> */
     protected $actions = [];
 
@@ -45,7 +48,8 @@ class HtmlView extends BaseHtmlView
 
         if ($this->metrics !== null) {
             $this->dns     = $model->getDnsDiagnostics($this->metrics);
-            $this->actions = $model->getActions($this->metrics, $this->dns);
+            $this->mtasts  = $model->getMtaStsDiagnostics($this->metrics);
+            $this->actions = $model->getActions($this->metrics, $this->dns, $this->mtasts);
         }
 
         ToolbarHelper::title(Text::_('COM_DMARCREPORTS_DETAIL_TITLE'), 'search');

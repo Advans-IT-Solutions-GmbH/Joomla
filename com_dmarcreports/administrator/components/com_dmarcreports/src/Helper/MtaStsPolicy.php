@@ -140,7 +140,7 @@ final class MtaStsPolicy
      * @param   string    $domain  The receiving domain (canonical, no trailing dot).
      *
      * @return  array{
-     *     enabled:bool, mode:string, max_age:int, mx:string[],
+     *     enabled:bool, domain:string, mode:string, max_age:int, mx:string[],
      *     body:string, id:string,
      *     policy_host:string, well_known_url:string,
      *     sts_record_host:string, sts_record:string,
@@ -163,6 +163,7 @@ final class MtaStsPolicy
 
         return [
             'enabled'            => $enabled,
+            'domain'             => $domain,
             'mode'               => $mode,
             'max_age'            => max(86400, min(31557600, $maxAge)),
             'mx'                 => $mx,
