@@ -399,6 +399,60 @@ final class SlotEngineTest extends TestCase
         $this->assertSame('2026-10-25 02:00', $slots[2]->format('Y-m-d H:i'));
     }
 
+    public function testTheGridKeepsItsPhaseAcrossTheAutumnTransition(): void
+    {
+        // A step that does not divide an hour makes the phase visible. The grid
+        // starts at 01:00 local, and after the repeated hour is skipped it has
+        // to continue on the same phase rather than restarting at the
+        // transition.
+        $engine = $this->engine(
+            [['weekday' => 7, 'start_time' => '01:00', 'end_time' => '05:00']],
+            new SlotRules(40, 40)
+        );
+
+        $slots = $this->asLocal($engine->findSlots(
+            $this->utc('2026-10-24 00:00'),
+            $this->utc('2026-10-24 00:00'),
+            $this->utc('2026-10-26 00:00')
+        ));
+
+        $this->assertSame(
+            [
+                '2026-10-25 01:00',
+                '2026-10-25 01:40',
+                '2026-10-25 02:20',
+                // The repeated hour is skipped, and the next start is still on
+                // the twenty-minute phase the rule began with.
+                '2026-10-25 03:20',
+                '2026-10-25 04:00',
+            ],
+            $slots
+        );
+    }
+
+    public function testTheGridKeepsItsPhaseNextToAGovernedDay(): void
+    {
+        // The Tuesday night rule reaches into a closed Wednesday. Cutting the
+        // window would be the easy answer and would move the grid; the engine
+        // instead removes the closed day as an unavailable period, so the
+        // offered times stay on the rule's own phase.
+        $engine = $this->engine(
+            [['weekday' => 2, 'start_time' => '22:00', 'end_time' => '02:00']],
+            new SlotRules(50, 50),
+            [['specific_date' => '2026-06-03', 'start_time' => '00:00', 'end_time' => '00:00', 'is_unavailable' => 1]]
+        );
+
+        $slots = $this->asLocal($engine->findSlots(
+            $this->utc('2026-06-02 00:00'),
+            $this->utc('2026-06-02 00:00'),
+            $this->utc('2026-06-04 00:00')
+        ));
+
+        // 22:00 and 22:50 fit before midnight; 23:40 would run into the closed
+        // Wednesday and is dropped.
+        $this->assertSame(['2026-06-02 22:00', '2026-06-02 22:50'], $slots);
+    }
+
     public function testADateSpecificOverrideReplacesTheWeekdayRules(): void
     {
         $engine = $this->engine(

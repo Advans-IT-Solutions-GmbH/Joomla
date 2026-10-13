@@ -9,6 +9,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Table;
 
+use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Table;
@@ -37,8 +38,11 @@ class BlockedTable extends Table
             $this->user_id = (int) Factory::getApplication()->getIdentity()->id;
         }
 
-        $start = $this->toUtc((string) $this->start_utc);
-        $end   = $this->toUtc((string) $this->end_utc);
+        // Strictly, through the shared helper: an impossible date such as
+        // 2026-02-31 and relative text such as "tomorrow" are refused rather
+        // than silently turned into some other instant.
+        $start = UtcTimestamp::parse((string) $this->start_utc);
+        $end   = UtcTimestamp::parse((string) $this->end_utc);
 
         if ($start === null || $end === null) {
             $this->setError(Text::_('COM_APPOINTMENTS_BLOCKED_ERROR_NO_PERIOD'));
@@ -52,8 +56,8 @@ class BlockedTable extends Table
             return false;
         }
 
-        $this->start_utc = $start->format('Y-m-d H:i:s');
-        $this->end_utc   = $end->format('Y-m-d H:i:s');
+        $this->start_utc = UtcTimestamp::toSql($start);
+        $this->end_utc   = UtcTimestamp::toSql($end);
 
         return true;
     }
@@ -61,30 +65,9 @@ class BlockedTable extends Table
     public function store($updateNulls = false): bool
     {
         if (!$this->id) {
-            $this->created_utc = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+            $this->created_utc = UtcTimestamp::toSql(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
         }
 
         return parent::store($updateNulls);
-    }
-
-    /**
-     * Read a stored or submitted timestamp as UTC.
-     *
-     * The form field hands over UTC already, so this only has to reject what is
-     * not a timestamp at all, including the zero date a database can hold.
-     */
-    private function toUtc(string $value): ?\DateTimeImmutable
-    {
-        $value = trim($value);
-
-        if ($value === '' || str_starts_with($value, '0000-00-00')) {
-            return null;
-        }
-
-        try {
-            return new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
-        } catch (\Exception $e) {
-            return null;
-        }
     }
 }

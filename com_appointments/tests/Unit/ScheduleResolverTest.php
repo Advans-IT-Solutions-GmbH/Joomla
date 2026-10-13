@@ -64,6 +64,25 @@ final class ScheduleResolverTest extends TestCase
         return (new ScheduleResolver(self::ZONE, $weekly, $overrides))->windowsForDate($date);
     }
 
+    /**
+     * The windows and the periods the schedule makes unavailable, as the slot
+     * engine receives them: whole windows plus what has to be taken out of
+     * them.
+     *
+     * @return array{0:string[], 1:string[]}
+     */
+    private function resolveRange(ScheduleResolver $resolver, string $fromUtc, string $toUtc): array
+    {
+        $utc  = new \DateTimeZone('UTC');
+        $from = new \DateTimeImmutable($fromUtc, $utc);
+        $to   = new \DateTimeImmutable($toUtc, $utc);
+
+        return [
+            $this->asStrings($resolver->resolve($from, $to)),
+            $this->asStrings($resolver->unavailablePeriods($from, $to)),
+        ];
+    }
+
     public function testAnUnknownTimeZoneIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -198,24 +217,19 @@ final class ScheduleResolverTest extends TestCase
         $this->assertSame(['03:00 CEST'], $this->localHours($windows));
     }
 
-    public function testAutumnBackOffersTheRepeatedHourOnce(): void
+    public function testAutumnBackReportsTheRepeatedHourAsUnavailable(): void
     {
-        $windows = $this->resolveDate('2026-10-25', [
+        $resolver = new ScheduleResolver(self::ZONE, [
             ['weekday' => 7, 'start_time' => '01:00', 'end_time' => '05:00'],
         ]);
 
-        // Four nominal hours, five real ones, with the second pass over
-        // 02:00 to 03:00 removed.
-        $this->assertSame(
-            ['2026-10-24 23:00-2026-10-25 01:00', '2026-10-25 02:00-2026-10-25 04:00'],
-            $this->asStrings($windows)
-        );
+        [$windows, $unavailable] = $this->resolveRange($resolver, '2026-10-24 00:00', '2026-10-26 00:00');
 
-        $hours = $this->localHours($windows);
-
-        $this->assertSame(['01:00 CEST', '02:00 CEST', '03:00 CET', '04:00 CET'], $hours);
-        // The wall-clock hour 02:00 appears exactly once.
-        $this->assertSame(1, \count(array_filter($hours, static fn (string $h): bool => str_starts_with($h, '02:00'))));
+        // The window stays whole, four nominal hours and five real ones, so the
+        // slot grid keeps the phase the rule began with. The second pass over
+        // 02:00 to 03:00 is reported separately and removed by the engine.
+        $this->assertSame(['2026-10-24 23:00-2026-10-25 04:00'], $windows);
+        $this->assertSame(['2026-10-25 01:00-2026-10-25 02:00'], $unavailable);
     }
 
     public function testAutumnBackReadsAnAmbiguousStartAsTheFirstOccurrence(): void
@@ -225,12 +239,8 @@ final class ScheduleResolverTest extends TestCase
         ]);
 
         // 02:30 happened twice. PHP resolves it to the second pass, 01:30 UTC;
-        // the component uses the first, 00:30 UTC, and the second pass is then
-        // removed as usual.
-        $this->assertSame(
-            ['2026-10-25 00:30-2026-10-25 01:00', '2026-10-25 02:00-2026-10-25 04:00'],
-            $this->asStrings($windows)
-        );
+        // the component uses the first, 00:30 UTC.
+        $this->assertSame(['2026-10-25 00:30-2026-10-25 04:00'], $this->asStrings($windows));
         $this->assertSame(
             '02:30 CEST',
             $windows[0]->getStart()->setTimezone(new \DateTimeZone(self::ZONE))->format('H:i T')
@@ -277,7 +287,7 @@ final class ScheduleResolverTest extends TestCase
         $this->assertSame([], $windows);
     }
 
-    public function testAClosedDateAlsoSuppressesTheSpilloverFromThePreviousNight(): void
+    public function testAClosedDateIsReportedAsUnavailableForItsWholeDay(): void
     {
         $resolver = new ScheduleResolver(
             self::ZONE,
@@ -287,18 +297,15 @@ final class ScheduleResolverTest extends TestCase
             [['specific_date' => '2026-06-03', 'start_time' => '00:00', 'end_time' => '00:00', 'is_unavailable' => 1]]
         );
 
-        $utc     = new \DateTimeZone('UTC');
-        $windows = $resolver->resolve(
-            new \DateTimeImmutable('2026-06-02 00:00', $utc),
-            new \DateTimeImmutable('2026-06-04 00:00', $utc)
-        );
+        [$windows, $unavailable] = $this->resolveRange($resolver, '2026-06-02 00:00', '2026-06-04 00:00');
 
-        // Only the part of the night that lies on Tuesday survives: 22:00 to
-        // midnight local, that is 20:00 to 22:00 UTC.
-        $this->assertSame(['2026-06-02 20:00-2026-06-02 22:00'], $this->asStrings($windows));
+        // The window is whole, and the closed Wednesday is reported as a period
+        // to remove: local midnight to local midnight, 22:00 UTC to 22:00 UTC.
+        $this->assertSame(['2026-06-02 20:00-2026-06-03 00:00'], $windows);
+        $this->assertSame(['2026-06-02 22:00-2026-06-03 22:00'], $unavailable);
     }
 
-    public function testADateWithItsOwnTimesAlsoReplacesTheSpilloverFromThePreviousNight(): void
+    public function testADateWithItsOwnTimesReportsTheRestOfThatDayAsUnavailable(): void
     {
         $resolver = new ScheduleResolver(
             self::ZONE,
@@ -308,15 +315,16 @@ final class ScheduleResolverTest extends TestCase
             [['specific_date' => '2026-06-03', 'start_time' => '09:00', 'end_time' => '10:00']]
         );
 
-        $utc     = new \DateTimeZone('UTC');
-        $windows = $resolver->resolve(
-            new \DateTimeImmutable('2026-06-02 00:00', $utc),
-            new \DateTimeImmutable('2026-06-04 00:00', $utc)
-        );
+        [$windows, $unavailable] = $this->resolveRange($resolver, '2026-06-02 00:00', '2026-06-04 00:00');
 
         $this->assertSame(
-            ['2026-06-02 20:00-2026-06-02 22:00', '2026-06-03 07:00-2026-06-03 08:00'],
-            $this->asStrings($windows)
+            ['2026-06-02 20:00-2026-06-03 00:00', '2026-06-03 07:00-2026-06-03 08:00'],
+            $windows
+        );
+        // Everything of Wednesday its own single interval does not cover.
+        $this->assertSame(
+            ['2026-06-02 22:00-2026-06-03 07:00', '2026-06-03 08:00-2026-06-03 22:00'],
+            $unavailable
         );
     }
 
@@ -328,15 +336,13 @@ final class ScheduleResolverTest extends TestCase
             [['specific_date' => '2026-06-02', 'start_time' => '22:00', 'end_time' => '02:00']]
         );
 
-        $utc     = new \DateTimeZone('UTC');
-        $windows = $resolver->resolve(
-            new \DateTimeImmutable('2026-06-02 00:00', $utc),
-            new \DateTimeImmutable('2026-06-04 00:00', $utc)
-        );
+        [$windows, $unavailable] = $this->resolveRange($resolver, '2026-06-02 00:00', '2026-06-04 00:00');
 
-        // The spillover belongs to the date that governs it, so it survives in
-        // full: 22:00 Tuesday to 02:00 Wednesday local.
-        $this->assertSame(['2026-06-02 20:00-2026-06-03 00:00'], $this->asStrings($windows));
+        // The spillover belongs to the date that governs it, so the window runs
+        // from 22:00 Tuesday to 02:00 Wednesday local, and the part of Tuesday
+        // before it is what the override takes away.
+        $this->assertSame(['2026-06-02 20:00-2026-06-03 00:00'], $windows);
+        $this->assertSame(['2026-06-01 22:00-2026-06-02 20:00'], $unavailable);
     }
 
     public function testResolveIncludesAWindowThatStartedOnThePreviousDay(): void

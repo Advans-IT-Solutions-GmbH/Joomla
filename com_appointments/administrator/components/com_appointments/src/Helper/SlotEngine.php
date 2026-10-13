@@ -28,7 +28,10 @@ defined('_JEXEC') or die;
  *  2. Everything already taken is removed. The caller hands those periods over
  *     as they really occupy the day: an absence as it stands, and a booking
  *     widened by the buffers of its own event type, because a host can serve
- *     several event types with different buffers.
+ *     several event types with different buffers. The periods the schedule
+ *     itself makes unavailable, the second pass over a repeated hour and the
+ *     uncovered part of a governed day, are added here from the resolver and
+ *     removed in exactly the same way.
  *  3. Each window is walked on the slot-step grid, anchored to the window start
  *     and not to the pieces a booking may have cut it into, so the offered times
  *     stay on the same grid all day.
@@ -104,7 +107,13 @@ final class SlotEngine
             return [];
         }
 
-        $busy = AvailabilityWindow::merge($busy);
+        // What the schedule itself makes unavailable is removed the same way a
+        // booking is, rather than being cut out of the windows: that keeps the
+        // start of a window the start of its rule, so the grid below does not
+        // change phase after a clock change or next to a governed day.
+        $busy = AvailabilityWindow::merge(
+            array_merge($busy, $this->resolver->unavailablePeriods($range->getStart(), $range->getEnd()))
+        );
         $slots = [];
 
         foreach ($this->resolver->resolve($range->getStart(), $range->getEnd()) as $window) {

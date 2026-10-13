@@ -148,59 +148,12 @@ final class ScheduleResolver
      */
     public function resolve(\DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc): array
     {
-        $range = new AvailabilityWindow($fromUtc, $toUtc);
-        $dates = $this->localDatesFor($range);
-
-        // A date-specific entry replaces the availability of its date, and a
-        // closed date removes it. That has to hold for time an interval of the
-        // *previous* date spills into as well: a Monday 22:00 to 02:00 rule must
-        // not keep Tuesday 00:00 to 02:00 open when Tuesday is closed or has its
-        // own times. The days those entries govern are therefore collected
-        // first, and each window is then cut back out of every governed day it
-        // does not belong to.
-        $governed = [];
-
-        foreach ($dates as $date) {
-            if (!isset($this->closedDates[$date]) && !isset($this->overrides[$date])) {
-                continue;
-            }
-
-            $day = $this->localDayWindow($date);
-
-            if ($day !== null) {
-                $governed[$date] = $day;
-            }
-        }
-
+        $range   = new AvailabilityWindow($fromUtc, $toUtc);
         $windows = [];
 
-        foreach ($dates as $date) {
+        foreach ($this->localDatesFor($range) as $date) {
             foreach ($this->windowsForDate($date) as $window) {
-                $pieces = [$window];
-
-                foreach ($governed as $governedDate => $day) {
-                    if ($governedDate === $date) {
-                        continue;
-                    }
-
-                    $next = [];
-
-                    foreach ($pieces as $piece) {
-                        foreach ($piece->subtract($day) as $rest) {
-                            $next[] = $rest;
-                        }
-                    }
-
-                    $pieces = $next;
-
-                    if ($pieces === []) {
-                        break;
-                    }
-                }
-
-                foreach ($pieces as $piece) {
-                    $windows[] = $piece;
-                }
+                $windows[] = $window;
             }
         }
 
@@ -209,6 +162,71 @@ final class ScheduleResolver
                 AvailabilityWindow::merge($windows),
                 static function (AvailabilityWindow $window) use ($range): bool {
                     return $window->overlaps($range);
+                }
+            )
+        );
+    }
+
+    /**
+     * The periods inside the range that the schedule itself makes unavailable.
+     *
+     * These are **not** cut out of the windows `resolve()` returns, and that is
+     * the whole point. The slot engine anchors its grid to the start of a
+     * window, so cutting a window in two would restart the grid at the second
+     * piece: with a 40-minute step, a 01:00 to 05:00 rule would offer 03:00,
+     * 03:40 and 04:20 after a clock change instead of staying on the phase the
+     * rule began with. Handing these periods to the engine as something to
+     * remove keeps the window, and therefore the grid, intact — exactly the way
+     * an existing booking is handled.
+     *
+     * Two kinds of period are reported:
+     *
+     * - **The second pass over a repeated hour.** On the day the clocks go back,
+     *   one hour of local time happens twice. Removing its second occurrence is
+     *   what makes that hour bookable once, so no booking can be made at an
+     *   ambiguous time.
+     * - **The part of a governed day its own rules do not cover.** A
+     *   date-specific entry replaces the availability of its date and a closed
+     *   date removes it, and that has to hold for time an interval of the
+     *   previous date spills into as well: a Monday 22:00 to 02:00 rule must not
+     *   keep Tuesday 00:00 to 02:00 open when Tuesday is closed or carries its
+     *   own times.
+     *
+     * @return  AvailabilityWindow[]  Merged and ordered.
+     */
+    public function unavailablePeriods(\DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc): array
+    {
+        $range   = new AvailabilityWindow($fromUtc, $toUtc);
+        $periods = [];
+
+        foreach ($this->localDatesFor($range) as $date) {
+            $repeated = $this->repeatedHour($date);
+
+            if ($repeated !== null) {
+                $periods[] = $repeated;
+            }
+
+            if (!isset($this->closedDates[$date]) && !isset($this->overrides[$date])) {
+                continue;
+            }
+
+            $day = $this->localDayWindow($date);
+
+            if ($day === null) {
+                continue;
+            }
+
+            // Everything of that day its own rules do not cover.
+            foreach ($day->subtractAll($this->windowsForDate($date)) as $piece) {
+                $periods[] = $piece;
+            }
+        }
+
+        return array_values(
+            array_filter(
+                AvailabilityWindow::merge($periods),
+                static function (AvailabilityWindow $period) use ($range): bool {
+                    return $period->overlaps($range);
                 }
             )
         );
@@ -259,29 +277,20 @@ final class ScheduleResolver
             return [];
         }
 
-        $repeated = $this->repeatedHour($date);
-        $windows  = [];
+        $windows = [];
 
         foreach ($rules as $rule) {
             $window = $this->ruleToWindow($date, $rule['start'], $rule['end']);
 
-            if ($window === null) {
-                continue;
+            if ($window !== null) {
+                $windows[] = $window;
             }
-
-            // The hour that happens twice is offered once: its second
-            // occurrence is removed from the window.
-            if ($repeated !== null) {
-                foreach ($window->subtract($repeated) as $piece) {
-                    $windows[] = $piece;
-                }
-
-                continue;
-            }
-
-            $windows[] = $window;
         }
 
+        // Whole windows, uncut. What a clock change or a governed day takes out
+        // of them is reported by unavailablePeriods() instead, so the start of
+        // a window stays the start of its rule and the slot grid keeps its
+        // phase.
         return AvailabilityWindow::merge($windows);
     }
 

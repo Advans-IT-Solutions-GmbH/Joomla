@@ -286,6 +286,13 @@ class ScheduleModel extends AdminModel
             ];
         }
 
+        // Per date: whether it carries a closed row, and whether it carries an
+        // open interval. A date that carries both is refused below, because the
+        // resolver lets the closed row win and the operator's intervals would be
+        // stored and then silently ignored.
+        $closedDates = [];
+        $openDates   = [];
+
         foreach ($overrides as $rule) {
             $rule = (array) $rule;
             $date = trim((string) ($rule['specific_date'] ?? ''));
@@ -316,6 +323,8 @@ class ScheduleModel extends AdminModel
             $closed = !empty($rule['is_unavailable']);
 
             if ($closed) {
+                $closedDates[$date] = true;
+
                 // A closed day needs no times, and storing one would suggest
                 // the day is partly open.
                 $rows[] = [
@@ -335,6 +344,8 @@ class ScheduleModel extends AdminModel
                 return null;
             }
 
+            $openDates[$date] = true;
+
             $rows[] = [
                 'weekday'        => null,
                 'specific_date'  => $date,
@@ -342,6 +353,18 @@ class ScheduleModel extends AdminModel
                 'end_time'       => $times[1],
                 'is_unavailable' => 0,
             ];
+        }
+
+        // Several open intervals on one date are fine, a morning and an
+        // afternoon for instance. A closed row next to them is not: the
+        // resolver closes the day and the intervals would be stored and then
+        // never used, so the save would quietly throw availability away.
+        foreach (array_keys($closedDates) as $date) {
+            if (isset($openDates[$date])) {
+                $this->setError(Text::sprintf('COM_APPOINTMENTS_SCHEDULE_ERROR_MIXED_DATE', $date));
+
+                return null;
+            }
         }
 
         return $rows;
