@@ -12,6 +12,14 @@
 // exercised without a running Joomla.
 defined('_JEXEC') or define('_JEXEC', 1);
 
+// Composer autoloader so third-party dev dependencies (e.g. joomla/registry,
+// used by the enabled-path tests) are available.
+$autoload = dirname(__DIR__) . '/vendor/autoload.php';
+
+if (is_file($autoload)) {
+    require_once $autoload;
+}
+
 require_once dirname(__DIR__) . '/src/Helper/DmarcReportsHelper.php';
 
 // A light-weight ActionPresenter stub in the component namespace so the enabled
