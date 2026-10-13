@@ -14,7 +14,7 @@ Commit scope is `appointments` throughout.
   that renders an empty state.
 - `sql/install.mysql.utf8.sql` with the full schema from `references/data-model.md`, and the
   matching uninstall file.
-- The install secret generated in `script.php`.
+- `KeyProvider`, the pure class every signing key is derived from, with its unit suite.
 
 **Done when:** the package builds, installs on Joomla 5.4 and on Joomla 6, shows an empty
 dashboard, uninstalls cleanly and leaves no table behind.

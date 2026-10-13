@@ -63,7 +63,7 @@ Settings:
 
 Room naming is the security control, because an unauthenticated Jitsi room is open to anyone who
 guesses its name. The default pattern must therefore produce a name with at least 16 characters of
-entropy derived from the booking `uid` through an HMAC with the install secret — never the plain
+entropy derived from the booking `uid` through an HMAC with a `KeyProvider` key — never the plain
 `uid`, never a readable sequence, never the invitee's name.
 
 With JWT authentication the component signs a token per participant: a guest token that is valid
@@ -124,7 +124,7 @@ the stored values are erased.
 ## Tests
 
 - The Jitsi room name is deterministic for a booking, has the configured entropy, and is not
-  derivable from the `uid` without the install secret.
+  derivable from the `uid` without the key.
 - A JWT is accepted by a reference verification with the configured secret, carries the right room,
   and is rejected before its validity window.
 - The fixed-room provider returns the same URL for two bookings, and the administrator interface

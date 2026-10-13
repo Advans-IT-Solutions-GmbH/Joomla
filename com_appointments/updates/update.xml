@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<updates>
+    <update>
+        <name>Appointments</name>
+        <description>Self-hosted appointment scheduling for Joomla</description>
+        <element>com_appointments</element>
+        <type>component</type>
+        <version>1.0.0</version>
+        <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments</infourl>
+        <downloads>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v1.0.0/com_appointments_1.0.0.zip</downloadurl>
+        </downloads>
+        <tags>
+            <tag>stable</tag>
+        </tags>
+        <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+        <php_minimum>8.1</php_minimum>
+    </update>
+</updates>

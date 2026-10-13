@@ -12,6 +12,7 @@ same way `com_dmarcreports` tests its parser.
 
 ```
 com_appointments/tests/Unit/
+├── KeyProviderTest.php
 ├── AvailabilityWindowTest.php
 ├── ScheduleResolverTest.php
 ├── SlotEngineTest.php            # the largest suite by far

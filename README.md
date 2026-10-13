@@ -8,6 +8,7 @@ Extensions for [Joomla](https://github.com/joomla/joomla-cms) and [J2Commerce](h
 Joomla/
 ├── plg_ajax_joomlaajaxforms/ # Joomla AJAX Forms Plugin
 ├── com_dmarcreports/         # DMARC Reports Component
+├── com_appointments/         # Appointments Component
 ├── j2commerce/               # J2Commerce Extensions
 │   ├── com_j2commerce_importexport/
 │   ├── com_j2store_cleanup/
@@ -26,6 +27,7 @@ Joomla/
 |-----------|-------------|--------|
 | [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 | [DMARC Reports](com_dmarcreports/) | Administrator component that ingests and analyses RFC 7489 DMARC aggregate reports (IMAP and file upload) across multiple domains, with an actionable rollout dashboard and CSV export | 5.4 – 6.x |
+| [Appointments](com_appointments/) | Self-hosted appointment scheduling: bookable time slots, a public booking page, iCalendar attachments on every notification and calendar subscription feeds, with no third-party service involved | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
@@ -45,6 +47,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 |----------|-----------|---------|
 | `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**`, the shared files below, own workflow file |
 | `dmarc-reports.yml` | DMARC Reports | `com_dmarcreports/**`, the shared files below, own workflow file |
+| `appointments.yml` | Appointments | `com_appointments/**`, the shared files below, own workflow file |
 | `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
 | `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, the shared files below, own workflow file |
 | `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**`, the shared files below, own workflow file |
@@ -55,11 +58,11 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 
 | File under `shared/` | Starts |
 |---|---|
-| `build/build.sh`, `build/verify-package.sh` | all seven (every `build.sh` is a wrapper) |
-| `tests/run-tests.sh` | all seven (every `tests/run-tests.sh` is a wrapper) |
-| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | all seven (job `Language Files`) |
-| `tests/scripts/shared-test-helpers.php` | all seven (loaded by the shared suites) |
-| `tests/scripts/shared-install-messages.php` | all seven (in every `test.env`) |
+| `build/build.sh`, `build/verify-package.sh` | all eight (every `build.sh` is a wrapper) |
+| `tests/run-tests.sh` | all eight (every `tests/run-tests.sh` is a wrapper) |
+| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | all eight (job `Language Files`) |
+| `tests/scripts/shared-test-helpers.php` | all eight (loaded by the shared suites) |
+| `tests/scripts/shared-install-messages.php` | all eight (in every `test.env`) |
 | `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
@@ -79,7 +82,7 @@ All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is writt
 To add a language:
 
 1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
-2. Import/Export, Cleanup, DMARC Reports and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. The other extensions load their whole `language/` folder.
+2. Import/Export, Cleanup, DMARC Reports, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.
 3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension.
 4. Add the tag where tests name the languages explicitly (installer-messages suite, `de-DE, en-GB, fr-FR` loops).
 
@@ -117,6 +120,7 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 |----------|-------------|
 | `release-joomla-ajax-forms.yml` | `ajaxforms-v*` |
 | `release-dmarcreports.yml` | `dmarcreports-v*` |
+| `release-appointments.yml` | `appointments-v*` |
 | `release-importexport.yml` | `importexport-v*` |
 | `release-cleanup.yml` | `cleanup-v*` |
 | `release-productcompare.yml` | `productcompare-v*` |

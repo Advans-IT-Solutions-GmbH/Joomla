@@ -96,6 +96,7 @@ engine is where the bugs will be, and it has to be testable in isolation.
 | `ScheduleResolver` | Turn a weekly schedule plus date-specific overrides into concrete windows for a date range, in the schedule's time zone, applying DST correctly. |
 | `BookingGuard` | Re-validate a slot at submission time inside a transaction: still in the future, still within the horizon, still free, still within the daily and weekly caps. |
 | `IcsWriter` | Build RFC 5545 output for a booking and for a feed. See `references/calendar-and-ics.md`. |
+| `KeyProvider` | Derive one signing key per purpose from the Joomla site secret. See `references/data-model.md`, section "Signing keys". |
 | `FeedToken` | Create, verify and rotate the per-feed token; constant-time comparison. |
 | `SignedLink` | Create and verify the reschedule and cancel links. |
 | `MailComposer` | Render a template with booking placeholders, in the recipient's language, and attach the ICS. |
@@ -131,7 +132,8 @@ not in PHP:
 
 - Every state-changing request validates `Session::checkToken()`. The public booking form included.
 - Reschedule and cancel links carry an HMAC over booking id, action and the booking's current
-  `modified` timestamp, keyed by a secret generated at install. Changing the booking invalidates
+  `modified` timestamp, keyed by `KeyProvider` (see `references/data-model.md`, section "Signing
+  keys"). Changing the booking invalidates
   older links automatically.
 - Feed URLs carry a 32-byte random token, compared in constant time, rotatable per feed from the
   administrator interface. A rotated token invalidates the old URL immediately.
