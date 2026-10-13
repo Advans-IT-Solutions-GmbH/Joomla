@@ -41,6 +41,14 @@ final class ReportArchive
     private const MAX_DOCUMENTS = 256;
 
     /**
+     * Largest number of entries examined in a single archive. A zip can stay
+     * within the byte and document limits while packing hundreds of thousands
+     * of empty or non-XML entries; capping the entry count keeps mailbox
+     * ingestion from spending unbounded time scanning a hostile archive.
+     */
+    private const MAX_ENTRIES = 4096;
+
+    /**
      * Extract every XML document contained in a raw attachment payload.
      *
      * @param   string  $payload   The raw bytes of the attachment.
@@ -150,6 +158,15 @@ final class ReportArchive
             $zip = new \ZipArchive();
 
             if ($zip->open($tmp) !== true) {
+                return [];
+            }
+
+            // Reject an archive with an implausible number of entries before
+            // iterating: without this a zip within the byte and document limits
+            // could still force hundreds of thousands of statIndex() calls.
+            if ($zip->numFiles > self::MAX_ENTRIES) {
+                $zip->close();
+
                 return [];
             }
 

@@ -119,6 +119,30 @@ class ReportArchiveTest extends TestCase
         $this->assertLessThanOrEqual(256, \count($documents));
     }
 
+    public function testZipWithTooManyEntriesIsRejected(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+
+        // Pack more entries than the per-archive entry cap (4096) with tiny
+        // non-XML files, so the archive stays within the byte and document
+        // limits but would force an unbounded number of statIndex() calls.
+        for ($i = 0; $i < 4100; $i++) {
+            $zip->addFromString('noise-' . $i . '.txt', 'x');
+        }
+
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $this->assertSame([], ReportArchive::extract($payload, 'flood.zip'));
+    }
+
     public function testDetectsGzipByMagicBytesDespiteWrongName(): void
     {
         if (!\function_exists('gzencode')) {

@@ -15,6 +15,7 @@ use Joomla\CMS\Router\Route;
 defined('_JEXEC') or die;
 
 $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest', 'com_dmarcreports');
+$canEdit   = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com_dmarcreports');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=sources'); ?>" method="post" name="adminForm" id="adminForm">
     <div class="row">
@@ -41,9 +42,13 @@ $canIngest = Factory::getApplication()->getIdentity()->authorise('dmarc.ingest',
                             <tr>
                                 <td class="text-center"><?php echo HTMLHelper::_('grid.id', $i, $item->id); ?></td>
                                 <td>
-                                    <a href="<?php echo Route::_('index.php?option=com_dmarcreports&task=source.edit&id=' . (int) $item->id); ?>">
+                                    <?php if ($canEdit) : ?>
+                                        <a href="<?php echo Route::_('index.php?option=com_dmarcreports&task=source.edit&id=' . (int) $item->id); ?>">
+                                            <?php echo htmlspecialchars((string) $item->name); ?>
+                                        </a>
+                                    <?php else : ?>
                                         <?php echo htmlspecialchars((string) $item->name); ?>
-                                    </a>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?php echo htmlspecialchars((string) $item->host); ?></td>
                                 <td><?php echo htmlspecialchars((string) ($item->domain ?? '')); ?></td>

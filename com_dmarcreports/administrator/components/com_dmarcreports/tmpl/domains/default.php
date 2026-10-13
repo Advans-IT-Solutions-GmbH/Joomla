@@ -7,11 +7,14 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
+
+$canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com_dmarcreports');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=domains'); ?>" method="post" name="adminForm" id="adminForm">
     <div class="row">
@@ -41,9 +44,13 @@ defined('_JEXEC') or die;
                                     <?php echo HTMLHelper::_('grid.id', $i, $item->id); ?>
                                 </td>
                                 <td>
-                                    <a href="<?php echo Route::_('index.php?option=com_dmarcreports&task=domain.edit&id=' . (int) $item->id); ?>">
+                                    <?php if ($canEdit) : ?>
+                                        <a href="<?php echo Route::_('index.php?option=com_dmarcreports&task=domain.edit&id=' . (int) $item->id); ?>">
+                                            <?php echo htmlspecialchars((string) $item->domain); ?>
+                                        </a>
+                                    <?php else : ?>
                                         <?php echo htmlspecialchars((string) $item->domain); ?>
-                                    </a>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?php echo htmlspecialchars((string) $item->title); ?></td>
                                 <td class="text-center">p=<?php echo htmlspecialchars((string) $item->expected_policy); ?></td>
