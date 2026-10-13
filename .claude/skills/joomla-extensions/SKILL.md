@@ -37,6 +37,7 @@ Advans-IT-Solutions-GmbH/Joomla
 ├── plg_ajax_joomlaajaxforms/       # Joomla AJAX Forms plugin
 ├── com_dmarcreports/               # DMARC aggregate-report analysis component
 ├── mod_dmarcreports/               # DMARC dashboard admin module (reads com_dmarcreports)
+├── com_appointments/               # Self-hosted appointment scheduling component
 ├── shared/
 │   ├── build/build.sh              # Shared packager (per-extension build.sh delegates here)
 │   └── tests/                      # Shared test infrastructure

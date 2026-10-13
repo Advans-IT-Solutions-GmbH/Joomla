@@ -87,6 +87,9 @@ cp *.zip tests/extension.zip
 
 `cp *.zip` expects exactly one ZIP in the extension directory; delete ZIPs from earlier builds first.
 
+The two components outside `j2commerce/` (`com_dmarcreports`, `com_appointments`) use no shop, so
+the same commands run from their own directory and no `j2commerce6.zip` is needed for either lane.
+
 **AJAX Forms** uses three test directories. Run from the repository root (the `tests-j2c4/` and
 `tests-j2c6/` images are built with the repository root as build context, as in
 `joomla-ajax-forms.yml`):
@@ -167,6 +170,8 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
 | DMARC Reports | `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all` |
 | DMARC Reports Dashboard Module | `CONTAINER_NAME=mod_dmarcreports_j6_test ./run-tests.sh all` |
+| Appointments | `CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all` |
+| Appointments MariaDB (`docker-compose.mariadb.yml`, schema-sensitive suites only) | `CONTAINER_NAME=com_appointments_mariadb_test ./run-tests.sh structure` |
 | AJAX Forms | `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all` |
 | AJAX Forms `tests-j2c4/`, `tests-j2c6/` | `./run-tests.sh all` (own `test.env` with the right container) |
 
@@ -248,7 +253,7 @@ Notable test details:
   `.github/scripts/check-sql-alignment.php`), and manually (`workflow_dispatch`).
 - **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
-  `shared-install-messages.php` are used by all eight extensions and start all eight.
+  `shared-install-messages.php` are used by all nine extensions and start all nine.
   `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
   are used only by AJAX Forms, OSMap and Privacy (update lane and production-like lane) and start
   only those three. `shared/tests/Dockerfile.template`, `shared/tests/scripts/docker-entrypoint.sh`
@@ -295,12 +300,14 @@ Notable test details:
     `tests/docker-compose.production.yml`; AJAX Forms via `tests-j2c6/Dockerfile` built with
     `--build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
     Runs all suites (`./run-tests.sh all`; OSMap runs each suite by name without the SEF-only `sitemap-http-sef`), then `shared-deprecations.php`.
-- **Latest shop releases:** every `Build & Test` workflow starts with the job `Resolve Shop Releases`
-  (composite action `.github/actions/resolve-shops`); the lane jobs `need` it and build J2Commerce 6
-  from its `j2c6_ref` with `build_package.php --no-minify` and the Joomla 5 images with its
-  `j2store_url`/`j2store_sha256` (see "Shop Releases Under Test" above). The action and
-  `.github/scripts/check-sql-alignment.php` are in the `push`/`pull_request` paths of every
-  `Build & Test` workflow, so a change to them runs all six.
+- **Latest shop releases:** every `Build & Test` workflow of a shop extension starts with the job
+  `Resolve Shop Releases` (composite action `.github/actions/resolve-shops`); the lane jobs `need` it
+  and build J2Commerce 6 from its `j2c6_ref` with `build_package.php --no-minify` and the Joomla 5
+  images with its `j2store_url`/`j2store_sha256` (see "Shop Releases Under Test" above). The action
+  and `.github/scripts/check-sql-alignment.php` are in the `push`/`pull_request` paths of those
+  workflows, so a change to them runs all of them. The two shop-free components
+  (`com_dmarcreports`, `com_appointments`) install no shop, so they neither resolve shop releases nor
+  watch those paths.
 - **Required check:** only `collect-results.yml` produces the required status check
   `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every
   workflow, matches them against the files changed by the pull request, waits for those workflow runs

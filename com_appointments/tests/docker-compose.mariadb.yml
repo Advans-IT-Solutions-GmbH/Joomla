@@ -1,0 +1,56 @@
+# MariaDB lane. The component advertises MySQL or MariaDB, and the booking
+# table relies on an indexed STORED generated column that was chosen precisely
+# because the two engines disagree about indexing a VIRTUAL one. Running the
+# schema on MySQL alone would leave that claim untested, so this lane executes
+# the schema-sensitive suites against MariaDB 10.6, the oldest release the
+# supported Joomla versions accept, on the newest Joomla 6 image.
+services:
+  joomla:
+    build:
+      context: .
+      dockerfile: Dockerfile.joomla6
+    container_name: com_appointments_mariadb_test
+    ports:
+      - "8082:80"
+    environment:
+      JOOMLA_DB_HOST: mysql
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: joomla_pass
+      JOOMLA_DB_NAME: joomla_db
+      JOOMLA_SITE_NAME: "Test Site MariaDB"
+      JOOMLA_ADMIN_USER: admin
+      JOOMLA_ADMIN_USERNAME: admin
+      JOOMLA_ADMIN_PASSWORD: Admin123456789!@#
+      JOOMLA_ADMIN_EMAIL: admin@test.local
+    volumes:
+      - joomla_mariadb_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # The service keeps the name `mysql` so the image's own entry point and the
+  # JOOMLA_DB_HOST above need no change; only the image behind it differs.
+  mysql:
+    image: mariadb:10.6
+    container_name: com_appointments_mariadb_test_mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: root_pass
+      MARIADB_DATABASE: joomla_db
+      MARIADB_USER: joomla
+      MARIADB_PASSWORD: joomla_pass
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-proot_pass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  joomla_mariadb_data:
+  mariadb_data:

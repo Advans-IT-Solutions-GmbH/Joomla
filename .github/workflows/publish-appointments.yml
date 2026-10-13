@@ -1,0 +1,141 @@
+name: Publish - Appointments
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'com_appointments/**'
+
+jobs:
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.event.head_commit.message, 'release: appointments v')"
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          XML_FILE="com_appointments/com_appointments.xml"
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
+          echo "new=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Build extension
+        run: |
+          cd com_appointments
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Find package file
+        id: package
+        run: |
+          cd com_appointments
+          PACKAGE=$(ls -1 com_appointments_*.zip | head -1)
+          echo "file=$PACKAGE" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="appointments-v${VERSION}"
+          if [ -n "$(git ls-remote --tags origin "refs/tags/${TAG}")" ]; then
+            echo "::notice::Tag ${TAG} already exists on origin; treating as already published and skipping retag."
+            exit 0
+          fi
+          git tag -a "${TAG}" -m "Release appointments v${VERSION}"
+          git push origin "${TAG}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag -l "appointments-v*" --sort=-v:refname | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          else
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- com_appointments/ | grep -v '\[skip ci\]' | grep -v '^- release:' | head -20)
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="- Bug fixes and improvements"
+            fi
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: appointments-v${{ steps.version.outputs.new }}
+          # Stage-neutral on purpose. The component is built in stages, so this
+          # text must not promise a feature set: whatever is implemented at the
+          # time of a release is listed in the component's own README, and the
+          # changelog below says what this version changed.
+          NOTES: |
+            ## Appointments Component v${{ steps.version.outputs.new }}
+
+            Self-hosted appointment scheduling for Joomla. Everything runs on
+            your own server and no third-party scheduling service is contacted.
+
+            The component is being built in stages. For the features this
+            version actually ships, see the "What is implemented so far"
+            section of its
+            [README](https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments#readme).
+
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Installation
+            1. Download `${{ steps.package.outputs.file }}`
+            2. Install via Joomla Extension Manager
+            3. Access via Components → Appointments
+
+            ### Requirements
+            - Joomla 5.4 or later (5.4.x, 6.x)
+            - PHP 8.1 or higher
+            - MySQL or MariaDB
+
+            ### License
+            GNU General Public License version 3 or later (GPL-3.0-or-later)
+        run: |
+          shopt -s nullglob
+          FILES=(com_appointments/${{ steps.package.outputs.file }})
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "Appointments v${{ steps.version.outputs.new }}" \
+            --notes "$NOTES" \
+            --latest \
+            "${FILES[@]}"
+
+      - name: Delete previous releases
+        run: |
+          TAG_PREFIX="appointments-v"
+          CURRENT_TAG="appointments-v${{ steps.version.outputs.new }}"
+          for tag in $(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${CURRENT_TAG}$"); do
+            release_id=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+            if [ -n "$release_id" ] && [ "$release_id" != "None" ]; then
+              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
+              echo "Deleted release $tag (id: $release_id)"
+            fi
+            git push origin --delete "$tag" 2>/dev/null || true
+            echo "Deleted tag $tag"
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: com_appointments/${{ steps.package.outputs.file }}

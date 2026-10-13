@@ -12,6 +12,7 @@
 | AJAX Forms | `plg_ajax_joomlaajaxforms/` | plugin (ajax) | Joomla AJAX form handler |
 | DMARC Reports | `com_dmarcreports/` | component | DMARC aggregate-report analysis (multi-domain, IMAP/file ingestion, action dashboard) |
 | DMARC Reports Dashboard Module | `mod_dmarcreports/` | module (administrator) | Backend cpanel module showing the DMARC multi-domain summary and top Action Center items; reads `com_dmarcreports` |
+| Appointments | `com_appointments/` | component | Self-hosted appointment scheduling (administrator and site part, booking pages, iCalendar, calendar feeds) |
 
 ## Shared Infrastructure
 
@@ -43,6 +44,15 @@ plg_*/
     ├── docker-compose.yml
     └── integration/          # (where present)
 ```
+
+## Components
+
+Components deviate from the plugin layout above: their code lives under
+`administrator/components/<com>/` and, where the extension has a public face, additionally under
+`components/<com>/`. `com_dmarcreports` is administrator-only. `com_appointments` ships both parts,
+so it declares two `<files>` blocks (and therefore two `LICENSE.txt` files, one per part), a
+`<media>` block for its own assets, and site language files in `language/` next to the
+administrator ones in `administrator/language/`.
 
 ## update.xml Requirements
 
@@ -97,3 +107,6 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `moddmarcreports.yml` | push/PR to `main` (`mod_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-moddmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-moddmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `appointments.yml` | push/PR to `main` (`com_appointments/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
+| `release-appointments.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
+| `publish-appointments.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
