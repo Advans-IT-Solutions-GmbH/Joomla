@@ -1,0 +1,80 @@
+<?php
+/**
+ * Structure tests for the DMARC Reports component: the database schema and the
+ * key source files shipped in the installed package.
+ */
+
+class StructureTest
+{
+    private $db;
+    private $passed = 0;
+    private $failed = 0;
+    private $dbPrefix;
+    private $base = '/var/www/html/administrator/components/com_dmarcreports';
+
+    public function __construct()
+    {
+        require '/var/www/html/configuration.php';
+        $config = new JConfig();
+        $this->dbPrefix = $config->dbprefix;
+        $this->db = new mysqli($config->host, $config->user, $config->password, $config->db);
+    }
+
+    public function run(): bool
+    {
+        echo "=== Structure Tests ===\n\n";
+
+        foreach (['domains', 'sources', 'reports', 'records', 'actions'] as $table) {
+            $this->test("Table #__dmarc_{$table} exists", function () use ($table) {
+                $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}dmarc_{$table}'");
+                return $result && $result->num_rows === 1;
+            });
+        }
+
+        $this->test('Reports table enforces a UNIQUE report_hash (idempotency)', function () {
+            $result = $this->db->query("SHOW INDEX FROM {$this->dbPrefix}dmarc_reports WHERE Column_name = 'report_hash' AND Non_unique = 0");
+            return $result && $result->num_rows > 0;
+        });
+
+        $this->test('Sources table stores the encrypted password column', function () {
+            $result = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}dmarc_sources LIKE 'password_enc'");
+            return $result && $result->num_rows === 1;
+        });
+
+        $files = [
+            'DmarcParser helper'   => $this->base . '/src/Helper/DmarcParser.php',
+            'ReportArchive helper' => $this->base . '/src/Helper/ReportArchive.php',
+            'MimeMessage helper'   => $this->base . '/src/Helper/MimeMessage.php',
+            'ActionCenter helper'  => $this->base . '/src/Helper/ActionCenter.php',
+            'DnsDiagnostics helper' => $this->base . '/src/Helper/DnsDiagnostics.php',
+            'Dashboard view'       => $this->base . '/src/View/Dashboard/HtmlView.php',
+            'Install SQL'          => $this->base . '/sql/install.mysql.utf8.sql',
+            'Uninstall SQL'        => $this->base . '/sql/uninstall.mysql.utf8.sql',
+            'LICENSE.txt'          => $this->base . '/LICENSE.txt',
+        ];
+
+        foreach ($files as $label => $path) {
+            $this->test("{$label} is installed", function () use ($path) {
+                return file_exists($path);
+            });
+        }
+
+        echo "\n=== Structure Test Summary ===\n";
+        echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
+        return $this->failed === 0;
+    }
+
+    private function test(string $name, callable $fn): void
+    {
+        try {
+            if ($fn()) { echo "✓ {$name}\n"; $this->passed++; }
+            else { echo "✗ {$name}\n"; $this->failed++; }
+        } catch (\Exception $e) {
+            echo "✗ {$name} - Error: {$e->getMessage()}\n";
+            $this->failed++;
+        }
+    }
+}
+
+$test = new StructureTest();
+exit($test->run() ? 0 : 1);

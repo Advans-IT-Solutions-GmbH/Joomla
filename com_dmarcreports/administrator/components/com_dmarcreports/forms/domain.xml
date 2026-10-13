@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<form>
+    <fieldset name="details">
+        <field name="id" type="hidden" />
+
+        <field
+            name="domain"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_DOMAIN_LABEL"
+            description="COM_DMARCREPORTS_FIELD_DOMAIN_DESC"
+            required="true"
+            filter="string"
+            size="40" />
+
+        <field
+            name="title"
+            type="text"
+            label="COM_DMARCREPORTS_FIELD_TITLE_LABEL"
+            description="COM_DMARCREPORTS_FIELD_TITLE_DESC"
+            filter="string"
+            size="40" />
+
+        <field
+            name="expected_policy"
+            type="list"
+            label="COM_DMARCREPORTS_FIELD_EXPECTED_POLICY_LABEL"
+            description="COM_DMARCREPORTS_FIELD_EXPECTED_POLICY_DESC"
+            validate="options"
+            default="reject">
+            <option value="none">COM_DMARCREPORTS_POLICY_NONE</option>
+            <option value="quarantine">COM_DMARCREPORTS_POLICY_QUARANTINE</option>
+            <option value="reject">COM_DMARCREPORTS_POLICY_REJECT</option>
+        </field>
+
+        <field
+            name="notes"
+            type="textarea"
+            label="COM_DMARCREPORTS_FIELD_NOTES_LABEL"
+            description="COM_DMARCREPORTS_FIELD_NOTES_DESC"
+            filter="string"
+            rows="4"
+            cols="50" />
+    </fieldset>
+
+    <fieldset name="state">
+        <field
+            name="published"
+            type="list"
+            label="JSTATUS"
+            default="1">
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+    </fieldset>
+</form>

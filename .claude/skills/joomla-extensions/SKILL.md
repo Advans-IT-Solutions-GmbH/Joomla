@@ -35,6 +35,7 @@ Advans-IT-Solutions-GmbH/Joomla
 │   ├── plg_osmap_j2commerce/           # OSMap sitemap plugin
 │   └── com_j2store_cleanup/            # J2Store cleanup component
 ├── plg_ajax_joomlaajaxforms/       # Joomla AJAX Forms plugin
+├── com_dmarcreports/               # DMARC aggregate-report analysis component
 ├── shared/
 │   ├── build/build.sh              # Shared packager (per-extension build.sh delegates here)
 │   └── tests/                      # Shared test infrastructure

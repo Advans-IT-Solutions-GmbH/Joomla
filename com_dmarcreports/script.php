@@ -1,0 +1,243 @@
+<?php
+/**
+ * Installer script for com_dmarcreports.
+ *
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+defined('_JEXEC') or die;
+
+use Joomla\CMS\Factory;
+use Joomla\CMS\Installer\InstallerScript;
+use Joomla\CMS\Language\Text;
+use Joomla\Database\DatabaseInterface;
+use Joomla\Database\ParameterType;
+
+class Com_dmarcreportsInstallerScript extends InstallerScript
+{
+    protected $minimumJoomla = '5.4';
+    protected $minimumPhp = '8.1';
+
+    /**
+     * Hard requirement checks before the files are copied. The component ships
+     * a native PHP DMARC pipeline, so the XML and string functions it relies on
+     * must be present; anything optional (archive decompression) is reported by
+     * the re-runnable System Check in the backend, never blocking the install.
+     *
+     * @param   string  $type    install|update|discover_install
+     * @param   mixed   $parent  The installer parent.
+     *
+     * @return  bool
+     */
+    public function preflight($type, $parent)
+    {
+        if (!parent::preflight($type, $parent)) {
+            return false;
+        }
+
+        $missing = [];
+
+        foreach (['simplexml', 'libxml', 'mbstring', 'openssl'] as $extension) {
+            if (!\extension_loaded($extension)) {
+                $missing[] = $extension;
+            }
+        }
+
+        if ($missing !== []) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('COM_DMARCREPORTS_INSTALL_MISSING_EXTENSIONS', implode(', ', $missing)),
+                'error'
+            );
+
+            return false;
+        }
+
+        // The component ships its schema for the MySQL/MariaDB driver only. On a
+        // fresh install against any other database server the tables cannot be
+        // created and every backend query would fail, so refuse the install with
+        // a clear message instead of leaving a half-installed component. An
+        // update keeps whatever driver the existing tables were created on.
+        if ($type === 'install' || $type === 'discover_install') {
+            $db         = Factory::getContainer()->get(DatabaseInterface::class);
+            $serverType = method_exists($db, 'getServerType') ? $db->getServerType() : 'mysql';
+
+            if ($serverType !== 'mysql') {
+                Factory::getApplication()->enqueueMessage(
+                    Text::sprintf('COM_DMARCREPORTS_INSTALL_UNSUPPORTED_DB', $serverType),
+                    'error'
+                );
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function postflight($type, $parent)
+    {
+        if ($type !== 'install' && $type !== 'update') {
+            return true;
+        }
+
+        $this->ensureUpdateSite();
+
+        $app  = Factory::getApplication();
+        $lang = $app->getLanguage();
+        $lang->load('com_dmarcreports', JPATH_ADMINISTRATOR);
+
+        // An update only gets a short confirmation; the first installation shows
+        // where to find the component and how to begin.
+        if ($type === 'update') {
+            $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
+            $version  = $manifest instanceof \SimpleXMLElement ? (string) $manifest->version : '';
+
+            $app->enqueueMessage(
+                Text::sprintf('COM_DMARCREPORTS_POSTINSTALL_UPDATED', htmlspecialchars($version)),
+                'message'
+            );
+
+            return true;
+        }
+
+        $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid;background:#eff6ff;border-color:#2563eb';
+
+        $message  = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:860px">';
+        $message .= '<h2 style="margin-bottom:16px">' . Text::_('COM_DMARCREPORTS_POSTINSTALL_TITLE') . '</h2>';
+        $message .= '<div style="' . $sBox . '">';
+        $message .= '<p>' . Text::_('COM_DMARCREPORTS_POSTINSTALL_DESC') . '</p>';
+        $message .= '</div>';
+        $message .= '<p style="margin-top:12px;color:#6b7280;font-size:13px">' . Text::_('COM_DMARCREPORTS_POSTINSTALL_DOCS') . '</p>';
+        $message .= '</div>';
+
+        $app->enqueueMessage($message, 'message');
+
+        return true;
+    }
+
+    private function ensureUpdateSite(): void
+    {
+        $db        = Factory::getContainer()->get(DatabaseInterface::class);
+        $updateUrl = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_dmarcreports/updates/update.xml';
+        $element   = 'com_dmarcreports';
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('extension_id'))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('element') . ' = :element')
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->bind(':element', $element);
+        $db->setQuery($query);
+        $extensionId = (int) $db->loadResult();
+
+        if (!$extensionId) {
+            return;
+        }
+
+        $this->removeLegacyUpdateSites($db, $extensionId);
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('update_site_id'))
+            ->from($db->quoteName('#__update_sites'))
+            ->where($db->quoteName('location') . ' = :url')
+            ->bind(':url', $updateUrl);
+        $db->setQuery($query);
+        $siteId = (int) $db->loadResult();
+
+        if ($siteId) {
+            $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query);
+
+            if (!(int) $db->loadResult()) {
+                $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites_extensions'))
+                    ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
+                    ->values(':siteId, :extId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
+                $db->setQuery($query);
+                $db->execute();
+            }
+
+            return;
+        }
+
+        $name  = 'DMARC Reports Updates';
+        $sType = 'extension';
+        $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites'))
+            ->columns([$db->quoteName('name'), $db->quoteName('type'), $db->quoteName('location'), $db->quoteName('enabled')])
+            ->values(':name, :type, :url, 1')
+            ->bind(':name', $name)->bind(':type', $sType)->bind(':url', $updateUrl);
+        $db->setQuery($query);
+        $db->execute();
+        $siteId = (int) $db->insertid();
+
+        $query = $this->createDbQuery($db)->insert($db->quoteName('#__update_sites_extensions'))
+            ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
+            ->values(':siteId, :extId')
+            ->bind(':siteId', $siteId, ParameterType::INTEGER)->bind(':extId', $extensionId, ParameterType::INTEGER);
+        $db->setQuery($query);
+        $db->execute();
+    }
+
+    /**
+     * Remove update sites of this extension that still point to the repository's
+     * former organisation name, so Joomla stops querying the stale URL.
+     */
+    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
+    {
+        $legacyPattern = '%/advansit/Joomla/%';
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('s.update_site_id'))
+            ->from($db->quoteName('#__update_sites', 's'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__update_sites_extensions', 'map'),
+                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
+            )
+            ->where($db->quoteName('map.extension_id') . ' = :extId')
+            ->where($db->quoteName('s.location') . ' LIKE :legacy')
+            ->bind(':extId', $extensionId, ParameterType::INTEGER)
+            ->bind(':legacy', $legacyPattern);
+        $siteIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+
+        foreach ($siteIds as $siteId) {
+            $query = $this->createDbQuery($db)
+                ->delete($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->where($db->quoteName('extension_id') . ' = :extId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER)
+                ->bind(':extId', $extensionId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__update_sites_extensions'))
+                ->where($db->quoteName('update_site_id') . ' = :siteId')
+                ->bind(':siteId', $siteId, ParameterType::INTEGER);
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                continue;
+            }
+
+            foreach (['#__updates', '#__update_sites'] as $table) {
+                $query = $this->createDbQuery($db)
+                    ->delete($db->quoteName($table))
+                    ->where($db->quoteName('update_site_id') . ' = :siteId')
+                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+            }
+        }
+    }
+
+    /**
+     * Creates a query object compatible with Joomla 5 (getQuery) and 6 (createQuery).
+     */
+    private function createDbQuery(DatabaseInterface $db): \Joomla\Database\QueryInterface
+    {
+        return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+}
