@@ -55,6 +55,27 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
 
+        if ($type === 'update') {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__appointments_eventtypes', 'e'))
+                ->leftJoin(
+                    $db->quoteName('#__appointments_schedules', 's')
+                    . ' ON ' . $db->quoteName('s.id') . ' = ' . $db->quoteName('e.schedule_id')
+                )
+                ->where($db->quoteName('s.id') . ' IS NULL');
+
+            if ((int) $db->setQuery($query)->loadResult() > 0) {
+                Factory::getApplication()->enqueueMessage(
+                    Text::_('COM_APPOINTMENTS_INSTALL_ORPHAN_SCHEDULES'),
+                    'error'
+                );
+
+                return false;
+            }
+        }
+
         return true;
     }
 

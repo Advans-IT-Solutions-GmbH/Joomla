@@ -14,3 +14,9 @@ defined('_JEXEC') or define('_JEXEC', 1);
 $helperDir = dirname(__DIR__) . '/administrator/components/com_appointments/src/Helper';
 
 require_once $helperDir . '/KeyProvider.php';
+require_once $helperDir . '/UtcTimestamp.php';
+require_once $helperDir . '/AvailabilityWindow.php';
+require_once $helperDir . '/ScheduleResolver.php';
+require_once $helperDir . '/SlotRules.php';
+require_once $helperDir . '/BusyPeriod.php';
+require_once $helperDir . '/SlotEngine.php';

@@ -16,6 +16,8 @@ com_appointments/tests/Unit/
 ├── AvailabilityWindowTest.php
 ├── ScheduleResolverTest.php
 ├── SlotEngineTest.php            # the largest suite by far
+├── SlotRulesTest.php
+├── UtcTimestampTest.php
 ├── IcsWriterTest.php
 ├── SignedLinkTest.php
 ├── FeedTokenTest.php
@@ -75,14 +77,16 @@ com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, no signing secret stored
 ├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
 ├── 03-site-page.php         # the public pages really render over HTTP, empty and with seeded rows
-├── 04-eventtypes.php        # CRUD, ACL, feed token generated and unique
-├── 05-slots.php             # the site slot endpoint returns what the engine returns
-├── 06-booking.php           # end-to-end booking, both concurrency cases
-├── 06-mail.php              # every e-mail carries a text/calendar part
-├── 07-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
-├── 08-erasure.php           # the three deletion paths and the audit table
-├── 09-feed.php              # token, 304, rotation, 404 on a wrong token
-├── 10-conference.php        # link in mail, ICS and page; provider failure handled
+├── 04-schedules.php         # a schedule is really submitted, stored, reloaded and validated
+├── 05-blocked.php           # a blocked period is submitted from a non-UTC zone, stored as UTC, and the clock-change refusals hold
+├── 06-eventtypes.php        # CRUD, ACL, feed token generated and unique
+├── 07-slots.php             # the site slot endpoint returns what the engine returns
+├── 08-booking.php           # end-to-end booking, both concurrency cases
+├── 09-mail.php              # every e-mail carries a text/calendar part
+├── 10-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
+├── 11-erasure.php           # the three deletion paths and the audit table
+├── 12-feed.php              # token, 304, rotation, 404 on a wrong token
+├── 13-conference.php        # link in mail, ICS and page; provider failure handled
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 
@@ -123,9 +127,45 @@ and three that each have to be filtered out for a different reason, namely unpub
 level a guest does not hold, and a different content language. The visible one carries `<`, `&` and
 `"` in its title, so the layout's escaping is asserted and not only the model's filters.
 
+### The schedule permission assertions
+
+`04-schedules.php` submits the real administrator form as both an administrator and a restricted
+operator. A creator without `core.edit.state` must create an unpublished schedule whether the
+request omits `published` or tries to set it to `1`; the database's default must not publish it.
+An editor without that permission must still be able to change the schedule's content while its
+existing publication state stays unchanged. An administrator with the permission is the positive
+control and can create a published schedule.
+Direct edit views, including mixed-case names, must also refuse an existing record until the edit
+task has checked it out for that session. Direct save and cancel POSTs require the same held edit ID, before
+any raw blocked-period validation or form-state mutation. The edit task must not acquire another
+operator's checkout. The schedule suite also submits the fields rendered by an unchanged edit form
+containing a closed day, and verifies successful save and checkout release, not merely unchanged
+database rows after a possible validation failure.
+Both administration suites also request list ordering by the ambiguous bare `id` and by the
+qualified table alias, and require the stored fixture to render without a joined-query failure.
+Pure-helper regressions cover both supported calendar-date edges, synthetic adjacent dates,
+overnight windows on the maximum date, and fixed horizons supplied as non-UTC instants.
+Rolling-horizon tests include Apia's skipped date and Havana's repeated midnight, using the
+resolver's convention for the exclusive boundary.
+An overlapping weekly or date-specific overnight rule must not add its grid to the following
+date's override. Tests compare wide and narrow queries, retain meetings starting before midnight,
+and cover override grid phases across repeated time.
+The schedule form explicitly includes Joomla's translated UTC option; HTTP assertions verify the
+site-zone default and the unchanged save of an existing UTC schedule from rendered fields.
+The structure suite verifies the mandatory schedule foreign key, the legacy schema migration and
+two-connection assignment/deletion races on both MySQL and MariaDB. Installation asserts the
+registered schema baseline, so later migrations are not silently skipped.
+
+### The blocked-period redisplay assertions
+
+`05-blocked.php` checks the actual input values, not only the error message, after an impossible
+date and each DST refusal. Both bounds must remain exactly as submitted. A corrected submission
+must update the same row using the normal UTC conversion, and a subsequent edit must display it in
+the operator's zone again.
+
 ### The mail assertion
 
-`06-mail.php` is the test that enforces a stated constraint of the project. It must not check one
+`09-mail.php` is the test that enforces a stated constraint of the project. It must not check one
 happy path; it must enumerate every e-mail-sending code path and assert a `text/calendar` part on
 each. Implement it by capturing outgoing mail in the test environment, not by inspecting the
 composer's return value, so a path that bypasses `MailComposer` is caught too.

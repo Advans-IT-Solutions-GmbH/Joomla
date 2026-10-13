@@ -289,14 +289,73 @@ class StructureTest
             return $columns === $expected;
         });
 
+        $this->test('A schedule rule is either weekly or date-specific', function () {
+            // The same table carries both shapes: a weekly row has a weekday
+            // and no date, a date-specific row has a date and no weekday. Both
+            // columns are therefore nullable, and a schema change that made
+            // either of them NOT NULL would break one of the two shapes.
+            $rules = "{$this->dbPrefix}appointments_schedule_rules";
+            $schedules = "{$this->dbPrefix}appointments_schedules";
+            $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+
+            $this->db->query("DELETE FROM {$schedules} WHERE title = 'structure-fixture'");
+            $this->db->query(
+                "INSERT INTO {$schedules} (title, timezone, owner_user_id, published, created_utc, modified_utc)"
+                . " VALUES ('structure-fixture', 'Europe/Zurich', 0, 1, '{$now}', '{$now}')"
+            );
+            $scheduleId = (int) $this->db->insert_id;
+
+            try {
+                $weekly = $this->db->query(
+                    "INSERT INTO {$rules} (schedule_id, weekday, specific_date, start_time, end_time)"
+                    . " VALUES ({$scheduleId}, 2, NULL, '10:00:00', '12:00:00')"
+                );
+                $override = $this->db->query(
+                    "INSERT INTO {$rules} (schedule_id, weekday, specific_date, start_time, end_time, is_unavailable)"
+                    . " VALUES ({$scheduleId}, NULL, '2026-12-24', '00:00:00', '00:00:00', 1)"
+                );
+
+                $result = $this->db->query(
+                    "SELECT COUNT(*) AS total, SUM(is_unavailable) AS closed FROM {$rules}"
+                    . " WHERE schedule_id = {$scheduleId}"
+                );
+                $row = $result ? $result->fetch_assoc() : null;
+
+                $stored = $row && (int) $row['total'] === 2 && (int) $row['closed'] === 1;
+            } finally {
+                $this->db->query("DELETE FROM {$rules} WHERE schedule_id = {$scheduleId}");
+                $this->db->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}");
+            }
+
+            return $weekly && $override && $stored;
+        });
+
+        $this->testScheduleReferences();
+        $this->testScheduleMigration();
+
         $files = [
             'Administrator provider'  => $this->admin . '/services/provider.php',
             'Component class'         => $this->admin . '/src/Extension/AppointmentsComponent.php',
             'KeyProvider helper'      => $this->admin . '/src/Helper/KeyProvider.php',
+            'AvailabilityWindow'      => $this->admin . '/src/Helper/AvailabilityWindow.php',
+            'ScheduleResolver'        => $this->admin . '/src/Helper/ScheduleResolver.php',
+            'SlotEngine'              => $this->admin . '/src/Helper/SlotEngine.php',
+            'SlotRules'               => $this->admin . '/src/Helper/SlotRules.php',
+            'Schedule table'          => $this->admin . '/src/Table/ScheduleTable.php',
+            'Blocked table'           => $this->admin . '/src/Table/BlockedTable.php',
+            'Schedule form'           => $this->admin . '/forms/schedule.xml',
+            'Schedule rule form'      => $this->admin . '/forms/schedulerule.xml',
+            'Schedule override form'  => $this->admin . '/forms/scheduleoverride.xml',
+            'Blocked period form'     => $this->admin . '/forms/blockedperiod.xml',
+            'Schedules layout'        => $this->admin . '/tmpl/schedules/default.php',
+            'Schedule layout'         => $this->admin . '/tmpl/schedule/edit.php',
+            'Blocked periods layout'  => $this->admin . '/tmpl/blockeds/default.php',
+            'Blocked period layout'   => $this->admin . '/tmpl/blocked/edit.php',
             'Dashboard view'          => $this->admin . '/src/View/Dashboard/HtmlView.php',
             'Dashboard layout'        => $this->admin . '/tmpl/dashboard/default.php',
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
+            'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',
@@ -311,9 +370,260 @@ class StructureTest
             });
         }
 
+        $this->testCalendarFields();
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    private function connection(): \mysqli
+    {
+        $config = new \JConfig();
+        $db = new \mysqli($config->host, $config->user, $config->password, $config->db);
+        $db->query('SET SESSION innodb_lock_wait_timeout = 5');
+
+        return $db;
+    }
+
+    private function refused(callable $operation, int $code): bool
+    {
+        try {
+            $operation();
+        } catch (\mysqli_sql_exception $e) {
+            if ($e->getCode() === $code) {
+                return true;
+            }
+
+            throw $e;
+        }
+
+        return false;
+    }
+
+    private function waiting(\mysqli $db): bool
+    {
+        $read = [$db];
+        $error = [$db];
+        $reject = [];
+
+        return \mysqli::poll($read, $error, $reject, 0, 200000) === 0;
+    }
+
+    private function testScheduleReferences(): void
+    {
+        $schedules = "{$this->dbPrefix}appointments_schedules";
+        $events = "{$this->dbPrefix}appointments_eventtypes";
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $this->db->query(
+            "INSERT INTO {$schedules} (title, created_utc, modified_utc)"
+            . " VALUES ('structure-reference', '{$now}', '{$now}')"
+        );
+        $scheduleId = (int) $this->db->insert_id;
+        $insert = "INSERT INTO {$events} (title, alias, schedule_id, feed_token, created_utc, modified_utc)"
+            . " VALUES ('structure-reference', 'structure-reference', {$scheduleId},"
+            . " '" . str_repeat('c', 64) . "', '{$now}', '{$now}')";
+
+        try {
+            $this->test('Event types require an explicit existing schedule', function () use ($events, $insert, $scheduleId) {
+                $column = $this->db->query("SHOW COLUMNS FROM {$events} LIKE 'schedule_id'")->fetch_assoc();
+                $zeroRefused = $this->refused(
+                    fn () => $this->db->query(str_replace(", {$scheduleId},", ', 0,', $insert)),
+                    1452
+                );
+
+                return $column['Null'] === 'NO' && $column['Default'] === null && $zeroRefused;
+            });
+
+            $this->test('An assignment committed first prevents concurrent deletion', function () use ($schedules, $events, $insert, $scheduleId) {
+                $other = $this->connection();
+
+                try {
+                    $this->db->begin_transaction();
+                    $this->db->query($insert);
+                    $other->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}", MYSQLI_ASYNC);
+                    $waited = $this->waiting($other);
+                    $this->db->commit();
+                    $refused = $this->refused(fn () => $other->reap_async_query(), 1451);
+                    $present = $this->db->query("SELECT id FROM {$schedules} WHERE id = {$scheduleId}")->num_rows === 1;
+
+                    return $waited && $refused && $present;
+                } finally {
+                    $this->db->rollback();
+                    $other->close();
+                    $this->db->query("DELETE FROM {$events} WHERE schedule_id = {$scheduleId}");
+                }
+            });
+
+            foreach (['insert', 'reassignment'] as $operation) {
+                $this->test("Deletion committed first refuses a waiting {$operation}", function () use ($schedules, $events, $insert, $scheduleId, $operation) {
+                    $other = $this->connection();
+                    $this->db->query(
+                        "INSERT INTO {$schedules} (title, created_utc, modified_utc)"
+                        . " SELECT title, created_utc, modified_utc FROM {$schedules} WHERE id = {$scheduleId}"
+                    );
+                    $deletedId = (int) $this->db->insert_id;
+
+                    try {
+                        if ($operation === 'reassignment') {
+                            $this->db->query($insert);
+                            $sql = "UPDATE {$events} SET schedule_id = {$deletedId} WHERE schedule_id = {$scheduleId}";
+                        } else {
+                            $sql = str_replace(", {$scheduleId},", ", {$deletedId},", $insert);
+                        }
+
+                        $this->db->begin_transaction();
+                        $this->db->query("SELECT id FROM {$schedules} WHERE id = {$deletedId} FOR UPDATE");
+                        $this->db->query("DELETE FROM {$schedules} WHERE id = {$deletedId}");
+                        $other->query($sql, MYSQLI_ASYNC);
+                        $waited = $this->waiting($other);
+                        $this->db->commit();
+                        $refused = $this->refused(fn () => $other->reap_async_query(), 1452);
+                        $orphans = $this->db->query(
+                            "SELECT id FROM {$events} WHERE schedule_id = {$deletedId}"
+                        )->num_rows;
+
+                        return $waited && $refused && $orphans === 0;
+                    } finally {
+                        $this->db->rollback();
+                        $other->close();
+                        $this->db->query("DELETE FROM {$events} WHERE schedule_id IN ({$scheduleId}, {$deletedId})");
+                        $this->db->query("DELETE FROM {$schedules} WHERE id = {$deletedId}");
+                    }
+                });
+            }
+        } finally {
+            $this->db->query("DELETE FROM {$events} WHERE schedule_id = {$scheduleId}");
+            $this->db->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}");
+        }
+    }
+
+    private function testScheduleMigration(): void
+    {
+        $schedules = "{$this->dbPrefix}appointments_upgrade_test_schedules";
+        $events = "{$this->dbPrefix}appointments_upgrade_test_eventtypes";
+        $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.0.0.sql');
+
+        if ($migration === false) {
+            $this->test('Schema migration can be read', static fn () => false);
+
+            return;
+        }
+
+        $sql = str_replace(
+            '#__appointments_',
+            $this->dbPrefix . 'appointments_upgrade_test_',
+            preg_replace('/^--.*$/m', '', $migration)
+        );
+
+        foreach ([false, true] as $orphaned) {
+            $this->test(
+                $orphaned ? 'Legacy orphan references prevent migration without data loss' : 'Legacy schema migration preserves valid event types and enforces references',
+                function () use ($schedules, $events, $sql, $orphaned) {
+                    try {
+                        // CREATE LIKE deliberately does not copy foreign keys.
+                        $this->db->query("CREATE TABLE {$schedules} LIKE {$this->dbPrefix}appointments_schedules");
+                        $this->db->query("CREATE TABLE {$events} LIKE {$this->dbPrefix}appointments_eventtypes");
+                        $this->db->query("ALTER TABLE {$events} ALTER COLUMN schedule_id SET DEFAULT 0");
+                        $this->db->query(
+                            "INSERT INTO {$schedules} (id, title, created_utc, modified_utc)"
+                            . " VALUES (1, 'legacy-reference', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                        );
+                        $scheduleId = $orphaned ? 0 : 1;
+                        $this->db->query(
+                            "INSERT INTO {$events} (id, alias, schedule_id, feed_token, created_utc, modified_utc)"
+                            . " VALUES (1, 'legacy-reference', {$scheduleId}, '" . str_repeat('d', 64)
+                            . "', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                        );
+
+                        if ($orphaned) {
+                            $enforced = $this->refused(fn () => $this->db->query($sql), 1452);
+                        } else {
+                            $this->db->query($sql);
+                            $enforced = $this->refused(
+                                fn () => $this->db->query("DELETE FROM {$schedules} WHERE id = 1"),
+                                1451
+                            );
+                        }
+
+                        $row = $this->db->query("SELECT id, schedule_id FROM {$events}")->fetch_assoc();
+
+                        return $enforced && (int) $row['id'] === 1 && (int) $row['schedule_id'] === $scheduleId;
+                    } finally {
+                        $this->db->query("DROP TABLE IF EXISTS {$events}");
+                        $this->db->query("DROP TABLE IF EXISTS {$schedules}");
+                    }
+                }
+            );
+        }
+    }
+
+    /**
+     * Every calendar field in the component, checked for the two defaults of
+     * Joomla's calendar field that are traps rather than conveniences.
+     *
+     * - **No translated submit format.** With `translateformat="true"` the
+     *   field submits the active language's `DATE_FORMAT_FILTER_DATETIME`, so
+     *   the same form sends 2026-06-02 14:00:00 in English and 02.06.2026
+     *   14:00:00 in German. Code that has to read the submitted text before
+     *   Joomla converts it, to refuse an impossible date or a local time the
+     *   clock change skips, cannot do that against a format that changes with
+     *   the reader.
+     * - **An explicit filter.** When the attribute is missing, the field
+     *   defaults its *display* filter to `user_utc` while its output filter
+     *   stays unset, so a stored bare date is converted on the way out and not
+     *   on the way back in. For an operator west of UTC that moves the date one
+     *   day earlier on every round trip.
+     *
+     * The test covers the forms as a set rather than the two fields this stage
+     * happens to have, so a field added later is covered without anybody
+     * remembering this.
+     */
+    private function testCalendarFields(): void
+    {
+        $forms = glob($this->admin . '/forms/*.xml') ?: [];
+
+        $this->test('There are calendar fields to check at all', function () use ($forms) {
+            return $forms !== [];
+        });
+
+        $checked = 0;
+
+        foreach ($forms as $form) {
+            $xml = simplexml_load_file($form);
+
+            if ($xml === false) {
+                $this->test(basename($form) . ' is readable XML', function () {
+                    return false;
+                });
+
+                continue;
+            }
+
+            foreach ($xml->xpath('//field[@type="calendar"]') ?: [] as $field) {
+                $checked++;
+                $name      = (string) $field['name'];
+                $where     = basename($form) . ':' . $name;
+                $translate = strtolower((string) $field['translateformat']);
+                $filter    = strtolower((string) $field['filter']);
+
+                $this->test($where . ' does not submit a translated format', function () use ($translate) {
+                    return $translate === '' || $translate === 'false' || $translate === '0';
+                });
+
+                $this->test($where . ' names its filter explicitly', function () use ($filter) {
+                    return $filter !== '';
+                });
+
+                $this->test($where . ' declares the format it submits', function () use ($field) {
+                    return (string) $field['format'] !== '';
+                });
+            }
+        }
+
+        $this->test('Every calendar field was checked', function () use ($checked) {
+            return $checked >= 3;
+        });
     }
 
     private function test(string $name, callable $fn): void
