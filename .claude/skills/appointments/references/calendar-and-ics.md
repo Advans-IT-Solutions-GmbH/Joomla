@@ -26,6 +26,9 @@ It returns the start times, in UTC, that are bookable. The algorithm:
 6. Drop every start outside the horizon. The horizon is counted in calendar days in the schedule's
    time zone: with `horizon_days = 30`, the last bookable day is the 30th day after today, through
    its end of day.
+   Count Gregorian dates independently of the zone, including a wholly skipped date. Resolve the
+   exclusive midnight after the last date through the resolver's forward-gap/first-occurrence
+   convention; never normalize the last date first and accidentally extend the horizon.
 7. Drop days that have reached `max_per_day`, and weeks that have reached `max_per_week`. The week
    starts on Monday, in the schedule's time zone.
 

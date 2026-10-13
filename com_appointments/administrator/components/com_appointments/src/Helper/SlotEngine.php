@@ -185,16 +185,15 @@ final class SlotEngine
             // Calendar days in the schedule's zone, not periods of 24 hours:
             // with a horizon of 30 days the last bookable day is the 30th day
             // after today, and it is bookable through its end.
-            $zone      = $this->resolver->getTimezone();
-            $localDay  = $now->setTimezone($zone)->format('Y-m-d');
-            $lastDay   = (new \DateTimeImmutable($localDay . ' 12:00:00', $zone))
-                ->modify('+' . $this->rules->getHorizonDays() . ' days')
-                ->format('Y-m-d');
-            // Local midnight after the last bookable day, exclusive.
-            $horizonEnd = (new \DateTimeImmutable($lastDay . ' 12:00:00', $zone))
-                ->modify('+1 day')
-                ->setTime(0, 0)
-                ->setTimezone(new \DateTimeZone('UTC'));
+            $localDay = $now->setTimezone($this->resolver->getTimezone());
+            $calendar = $now
+                ->setDate((int) $localDay->format('Y'), (int) $localDay->format('m'), (int) $localDay->format('d'))
+                ->setTime(0, 0);
+            // Advance Gregorian dates before resolving the exclusive boundary;
+            // arithmetic in the schedule zone would skip a nonexistent date.
+            $horizonEnd = $this->resolver->localToUtc(
+                $calendar->modify('+' . ($this->rules->getHorizonDays() + 1) . ' days')
+            );
 
             if ($horizonEnd < $end) {
                 $end = $horizonEnd;

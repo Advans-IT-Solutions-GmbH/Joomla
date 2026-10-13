@@ -149,6 +149,14 @@ class BlockedAdminTest
                 });
             }
 
+            $this->test('A direct blocked cancellation requires a held edit ID', function () use ($row, $token) {
+                $this->post('blocked.cancel', $token, ['jform[id]' => (string) $row['id']]);
+                $stored = $this->fixture();
+
+                return $this->lastStatus === 403 && $stored !== null
+                    && (int) $stored['checked_out'] === (int) $row['checked_out'];
+            });
+
             $this->test('The form shows the period in the local zone again', function () use ($row) {
                 $html = $this->get(
                     '/administrator/index.php?option=com_appointments&task=blocked.edit&id=' . (int) $row['id']
@@ -158,7 +166,7 @@ class BlockedAdminTest
             });
 
             // --- Deletion ------------------------------------------------------
-            // Done here, on a record that no edit attempt has checked out yet.
+            // Release the checkout acquired by the edit task before deletion.
             $id = (int) $row['id'];
             $this->post('blocked.cancel', $token, ['jform[id]' => (string) $id]);
             $listToken = $this->tokenIn(

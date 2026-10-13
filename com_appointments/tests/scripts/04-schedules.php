@@ -328,6 +328,20 @@ class ScheduleAdminTest
                         && (int) $this->column($scheduleId, 'checked_out') === $lock;
                 });
 
+                $this->test('A direct cancellation cannot release another editor checkout', function () use ($scheduleId) {
+                    $token = $this->tokenFromListForm();
+                    $lock  = (int) $this->column($scheduleId, 'checked_out');
+
+                    if ($token === null || $lock === 0) {
+                        return false;
+                    }
+
+                    $this->post('schedule.cancel', $token, ['jform[id]' => (string) $scheduleId]);
+
+                    return $this->lastStatus === 403
+                        && (int) $this->column($scheduleId, 'checked_out') === $lock;
+                });
+
                 foreach (['schedule', 'Schedule', 'SCHEDULE'] as $spelling) {
                     $this->test('An editor cannot bypass checkout through view=' . $spelling, function () use ($spelling, $scheduleId) {
                         [, $status] = $this->statusOf(
@@ -347,7 +361,7 @@ class ScheduleAdminTest
                 });
 
                 $this->login();
-                $this->post('schedule.cancel', $this->tokenFromListForm() ?? '', [
+                $this->post('schedule.cancel', $this->tokenFromEditForm($scheduleId) ?? '', [
                     'jform[id]' => (string) $scheduleId,
                 ]);
                 $this->loginAs(self::OPERATOR, self::OPERATOR_PASSWORD);

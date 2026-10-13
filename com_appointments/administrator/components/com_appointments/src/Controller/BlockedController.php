@@ -57,7 +57,7 @@ class BlockedController extends EditController
     {
         // Early timestamp refusals must not bypass the token or held-edit
         // checks, or write an unheld record's payload into form state.
-        if (!$this->checkSaveRequest($key, $urlVar)) {
+        if (!$this->checkEditRequest($key, $urlVar)) {
             return false;
         }
 

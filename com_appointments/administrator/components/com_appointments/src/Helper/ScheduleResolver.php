@@ -393,7 +393,7 @@ final class ScheduleResolver
      * case and is refused rather than converted by convention, which is what
      * `UtcTimestamp::localInstants()` is for.
      */
-    private function localToUtc(\DateTimeImmutable $nominal): \DateTimeImmutable
+    public function localToUtc(\DateTimeImmutable $nominal): \DateTimeImmutable
     {
         $instants = UtcTimestamp::localInstants($nominal, $this->zone);
 

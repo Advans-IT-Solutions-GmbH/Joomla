@@ -136,7 +136,7 @@ An editor without that permission must still be able to change the schedule's co
 existing publication state stays unchanged. An administrator with the permission is the positive
 control and can create a published schedule.
 Direct edit views, including mixed-case names, must also refuse an existing record until the edit
-task has checked it out for that session. Direct save POSTs require the same held edit ID, before
+task has checked it out for that session. Direct save and cancel POSTs require the same held edit ID, before
 any raw blocked-period validation or form-state mutation. The edit task must not acquire another
 operator's checkout. The schedule suite also submits the fields rendered by an unchanged edit form
 containing a closed day, and verifies successful save and checkout release, not merely unchanged
@@ -145,6 +145,8 @@ Both administration suites also request list ordering by the ambiguous bare `id`
 qualified table alias, and require the stored fixture to render without a joined-query failure.
 Pure-helper regressions cover both supported calendar-date edges, synthetic adjacent dates,
 overnight windows on the maximum date, and fixed horizons supplied as non-UTC instants.
+Rolling-horizon tests include Apia's skipped date and Havana's repeated midnight, using the
+resolver's convention for the exclusive boundary.
 The schedule form explicitly includes Joomla's translated UTC option; HTTP assertions verify the
 site-zone default and the unchanged save of an existing UTC schedule from rendered fields.
 

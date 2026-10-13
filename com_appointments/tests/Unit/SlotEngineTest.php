@@ -360,6 +360,59 @@ final class SlotEngineTest extends TestCase
         $this->assertSame('2026-07-02 10:00', end($slots));
     }
 
+    public function testRollingHorizonsCountGregorianDatesIncludingASkippedDate(): void
+    {
+        $zone   = new \DateTimeZone('Pacific/Apia');
+        $weekly = [];
+
+        for ($day = 1; $day <= 7; $day++) {
+            $weekly[] = ['weekday' => $day, 'start_time' => '10:00', 'end_time' => '11:00'];
+        }
+
+        $expected = ['2011-12-29 10:00', '2011-12-29 10:30'];
+
+        foreach ([1, 2, 3] as $days) {
+            if ($days === 2) {
+                array_push($expected, '2011-12-31 10:00', '2011-12-31 10:30');
+            } elseif ($days === 3) {
+                array_push($expected, '2012-01-01 10:00', '2012-01-01 10:30');
+            }
+
+            $engine = new SlotEngine(new ScheduleResolver('Pacific/Apia', $weekly), new SlotRules(30, 30, 0, 0, 0, $days));
+            $slots = $engine->findSlots(
+                $this->utc('2011-12-29 10:00'),
+                $this->utc('2011-12-29 10:00'),
+                $this->utc('2012-01-02 12:00')
+            );
+
+            $this->assertSame($expected, array_map(
+                static fn (\DateTimeImmutable $slot): string => $slot->setTimezone($zone)->format('Y-m-d H:i'),
+                $slots
+            ));
+        }
+    }
+
+    public function testRollingHorizonUsesTheFirstOccurrenceOfARepeatedMidnight(): void
+    {
+        $zone   = new \DateTimeZone('America/Havana');
+        $engine = new SlotEngine(new ScheduleResolver('America/Havana', [
+            ['weekday' => 6, 'start_time' => '22:00', 'end_time' => '02:00'],
+        ]), new SlotRules(30, 30, 0, 0, 0, 1));
+        $slots = $engine->findSlots(
+            $this->utc('2026-10-30 04:00'),
+            $this->utc('2026-10-30 04:00'),
+            $this->utc('2026-11-02 12:00')
+        );
+
+        $this->assertSame(
+            ['2026-10-31 22:00', '2026-10-31 22:30', '2026-10-31 23:00', '2026-10-31 23:30'],
+            array_map(
+                static fn (\DateTimeImmutable $slot): string => $slot->setTimezone($zone)->format('Y-m-d H:i'),
+                $slots
+            )
+        );
+    }
+
     public function testFixedHorizonBoundsMayCarryAnyTimeZone(): void
     {
         $zone = new \DateTimeZone(self::ZONE);
