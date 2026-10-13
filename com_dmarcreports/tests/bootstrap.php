@@ -16,6 +16,7 @@ $helperDir = dirname(__DIR__) . '/administrator/components/com_dmarcreports/src/
 require_once $helperDir . '/DomainName.php';
 require_once $helperDir . '/DmarcParser.php';
 require_once $helperDir . '/ReportArchive.php';
+require_once $helperDir . '/TlsReportArchive.php';
 require_once $helperDir . '/MimeMessage.php';
 require_once $helperDir . '/ImapException.php';
 require_once $helperDir . '/ImapClient.php';
