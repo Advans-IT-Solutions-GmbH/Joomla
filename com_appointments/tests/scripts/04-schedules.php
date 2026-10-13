@@ -29,6 +29,7 @@ class ScheduleAdminTest
     private $baseUrl;
     private $cookieJar = '/tmp/suite-schedules-cookies.txt';
     private $lastStatus = 0;
+    private $siteTimezone = 'UTC';
     private $adminId = 0;
     private $originalParams = '';
     private $operatorId = 0;
@@ -42,6 +43,7 @@ class ScheduleAdminTest
     {
         require '/var/www/html/configuration.php';
         $config = new JConfig();
+        $this->siteTimezone = $config->offset ?? 'UTC';
         $this->dbPrefix = $config->dbprefix;
         $this->db = new mysqli($config->host, $config->user, $config->password, $config->db);
         $this->baseUrl = rtrim(getenv('SCHEDULES_BASE_URL') ?: 'http://localhost', '/');
@@ -73,6 +75,14 @@ class ScheduleAdminTest
 
         echo "✓ The new-schedule form renders and carries a token\n";
         $this->passed++;
+
+        $this->test('The time zone selector includes UTC and retains the site default', function () {
+            $html = $this->get('/administrator/index.php?option=com_appointments&view=schedule');
+            $fields = $this->fieldsFromEditForm($html);
+
+            return preg_match('/<option\b[^>]*\bvalue="UTC"/', $html) === 1
+                && ($fields['jform[timezone]'] ?? null) === $this->siteTimezone;
+        });
 
         // --- A valid schedule with both kinds of interval -------------------
         $this->post('schedule.save', $token, $this->validFields());
@@ -358,6 +368,24 @@ class ScheduleAdminTest
                     return $this->column($scheduleId, 'timezone') === 'UTC'
                         && (int) $this->column($scheduleId, 'published') === 1
                         && $this->ruleCount($scheduleId) === 2;
+                });
+
+                $this->test('An existing UTC schedule saves its rendered UTC selection unchanged', function () use ($scheduleId) {
+                    $html = $this->get(
+                        '/administrator/index.php?option=com_appointments&task=schedule.edit&id=' . $scheduleId
+                    );
+                    $token  = $this->tokenIn($html);
+                    $fields = $this->fieldsFromEditForm($html);
+
+                    if ($token === null || ($fields['jform[timezone]'] ?? null) !== 'UTC') {
+                        return false;
+                    }
+
+                    $this->post('schedule.save', $token, $fields);
+
+                    return $this->lastStatus === 200
+                        && $this->column($scheduleId, 'timezone') === 'UTC'
+                        && (int) $this->column($scheduleId, 'checked_out') === 0;
                 });
             }
         } finally {

@@ -145,6 +145,8 @@ Both administration suites also request list ordering by the ambiguous bare `id`
 qualified table alias, and require the stored fixture to render without a joined-query failure.
 Pure-helper regressions cover both supported calendar-date edges, synthetic adjacent dates,
 overnight windows on the maximum date, and fixed horizons supplied as non-UTC instants.
+The schedule form explicitly includes Joomla's translated UTC option; HTTP assertions verify the
+site-zone default and the unchanged save of an existing UTC schedule from rendered fields.
 
 ### The blocked-period redisplay assertions
 

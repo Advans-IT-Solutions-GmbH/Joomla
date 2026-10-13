@@ -25,7 +25,9 @@
             label="COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE"
             description="COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE_DESC"
             required="true"
-        />
+        >
+            <option value="UTC">JLIB_FORM_VALUE_TIMEZONE_UTC</option>
+        </field>
 
         <field
             name="owner_user_id"
