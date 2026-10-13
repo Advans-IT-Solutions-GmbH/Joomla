@@ -420,8 +420,13 @@ class AjaxEndpointTest
                 $problems[] = "Location carries an HTML-escaped ampersand: $location";
             }
 
+            // Only the language filter may redirect, and it answers with 301 or
+            // 302. A 303 is the redirect of Session::checkToken(); any other
+            // status (307, 308, ...) is no language redirect either.
             if ($status === 303) {
                 $problems[] = "HTTP 303 (the redirect of Session::checkToken()): $location";
+            } elseif ($status !== 301 && $status !== 302) {
+                $problems[] = "HTTP $status is not the language redirect (301/302): $location";
             }
 
             parse_str((string) parse_url($location, PHP_URL_QUERY), $vars);
@@ -497,29 +502,11 @@ class AjaxEndpointTest
             return false;
         }
 
-        $nameTypes = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED];
-        $names     = ['session' => true];
-        $n         = count($tokens);
-
-        // Aliases of the Session class: use Joomla\CMS\Session\Session as Alias;
-        for ($i = 0; $i < $n - 3; $i++) {
-            if (is_array($tokens[$i]) && in_array($tokens[$i][0], $nameTypes, true)
-                && preg_match('/(^|\\\\)Session$/i', $tokens[$i][1])
-                && is_array($tokens[$i + 1]) && $tokens[$i + 1][0] === T_AS
-                && is_array($tokens[$i + 2]) && $tokens[$i + 2][0] === T_STRING
-            ) {
-                $names[strtolower($tokens[$i + 2][1])] = true;
-            }
-        }
+        $names = $this->classNames($tokens, 'Session');
+        $n     = count($tokens);
 
         for ($i = 0; $i < $n - 3; $i++) {
-            if (!is_array($tokens[$i]) || !in_array($tokens[$i][0], $nameTypes, true)) {
-                continue;
-            }
-
-            $short = strtolower(substr((string) strrchr('\\' . $tokens[$i][1], '\\'), 1));
-
-            if (!isset($names[$short])
+            if (!$this->namesClass($tokens[$i], $names)
                 || !is_array($tokens[$i + 1]) || $tokens[$i + 1][0] !== T_DOUBLE_COLON
                 || !is_array($tokens[$i + 2]) || strcasecmp($tokens[$i + 2][1], 'checkToken') !== 0
                 || $tokens[$i + 3] !== '('
@@ -542,6 +529,10 @@ class AjaxEndpointTest
      * (redirect after login and MFA) or in a stored return URL, never in HTML.
      * Each Route::_() call must therefore pass xhtml=false, otherwise the
      * script receives &amp; instead of & and the query breaks.
+     *
+     * Route::link() is not part of this check: the plugin uses it only for the
+     * links in its mails (routedLink()), where xhtml follows the mail part, on
+     * for the HTML body and off for the plain text body.
      */
     private function testRoutedUrlsAreRaw(): bool
     {
@@ -557,18 +548,21 @@ class AjaxEndpointTest
 
         $calls    = 0;
         $problems = [];
+        $names    = $this->classNames($tokens, 'Route');
+
+        // Position of the xhtml argument: Route::_($url, $xhtml, ...).
+        $xhtmlArg = ['_' => 1];
 
         for ($i = 0, $n = count($tokens); $i < $n - 3; $i++) {
-            $isRoute = is_array($tokens[$i]) && in_array($tokens[$i][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
-                && preg_match('/(^|\\\\)Route$/', $tokens[$i][1]);
-
-            if (!$isRoute
+            if (!$this->namesClass($tokens[$i], $names)
                 || !is_array($tokens[$i + 1]) || $tokens[$i + 1][0] !== T_DOUBLE_COLON
-                || !is_array($tokens[$i + 2]) || $tokens[$i + 2][1] !== '_'
+                || !is_array($tokens[$i + 2]) || !isset($xhtmlArg[strtolower($tokens[$i + 2][1])])
                 || $tokens[$i + 3] !== '('
             ) {
                 continue;
             }
+
+            $position = $xhtmlArg[strtolower($tokens[$i + 2][1])];
 
             $calls++;
             $line  = $tokens[$i][2];
@@ -596,7 +590,12 @@ class AjaxEndpointTest
                 $args[count($args) - 1] .= $text;
             }
 
-            if (strtolower(trim($args[1] ?? '')) !== 'false') {
+            // Named argument (xhtml: false) anywhere, otherwise the positional one.
+            $args  = array_map(static fn ($a) => strtolower(trim($a)), $args);
+            $named = array_values(array_filter($args, static fn ($a) => str_starts_with($a, 'xhtml:')));
+            $xhtml = $named !== [] ? substr($named[0], 6) : ($args[$position] ?? '');
+
+            if ($xhtml !== 'false') {
                 $problems[] = "line $line";
             }
         }
@@ -711,6 +710,45 @@ class AjaxEndpointTest
         echo "FAIL (" . implode('; ', $problems) . ")\n";
 
         return false;
+    }
+
+    /**
+     * Lower-case short names under which the plugin can refer to a class: its
+     * own short name and every alias imported with "use ...\Class as Alias".
+     *
+     * @return array<string, true>
+     */
+    private function classNames(array $tokens, string $class): array
+    {
+        $names = [strtolower($class) => true];
+
+        for ($i = 0, $n = count($tokens); $i < $n - 2; $i++) {
+            if (is_array($tokens[$i])
+                && in_array($tokens[$i][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+                && preg_match('/(^|\\\\)' . preg_quote($class, '/') . '$/i', $tokens[$i][1])
+                && is_array($tokens[$i + 1]) && $tokens[$i + 1][0] === T_AS
+                && is_array($tokens[$i + 2]) && $tokens[$i + 2][0] === T_STRING
+            ) {
+                $names[strtolower($tokens[$i + 2][1])] = true;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Whether a token is a class name (short, qualified or fully qualified)
+     * whose last part is one of $names.
+     *
+     * @param  array<string, true>  $names
+     */
+    private function namesClass($token, array $names): bool
+    {
+        if (!is_array($token) || !in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            return false;
+        }
+
+        return isset($names[strtolower(substr((string) strrchr('\\' . $token[1], '\\'), 1))]);
     }
 
     /**
