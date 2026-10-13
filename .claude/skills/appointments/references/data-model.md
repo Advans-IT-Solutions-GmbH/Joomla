@@ -112,6 +112,8 @@ Index `(user_id, start_utc, end_utc)`.
 | `conference_provider` | `VARCHAR(64) NULL` | |
 | `conference_url` | `TEXT NULL` | |
 | `conference_room` | `VARCHAR(255) NULL` | identifier for teardown |
+| `conference_state` | `VARCHAR(16) NULL` | null = no conference, `ok`, `failed` |
+| `conference_error` | `VARCHAR(255) NULL` | the short diagnostic shown next to the retry action; never a credential, a token or a URL |
 | `cancel_reason` | `TEXT NULL` | |
 | `rescheduled_from_id` | `INT UNSIGNED NULL` | chain to the previous booking |
 | `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
@@ -123,9 +125,14 @@ Indexes:
 - Unique `uid`.
 - **Unique `(eventtype_id, start_utc, state_active)`** where `state_active` is a generated column
   that is `1` for `state IN (0,1)` and `NULL` otherwise. MySQL and MariaDB ignore `NULL` in a unique
-  index, so cancelled bookings do not block the slot while active ones do. This is the concurrency
-  guarantee from `references/architecture.md`; do not replace it with a PHP-side check.
-- Index `(host_user_id, start_utc)`, index `(invitee_email)`, index `(state, start_utc)`.
+  index, so cancelled bookings do not block the slot while active ones do. The column is `STORED`,
+  not `VIRTUAL`, because support for indexing a virtual generated column differs between MySQL and
+  MariaDB versions. This index covers the identical slot of one event type and nothing else: do not
+  replace it with a PHP-side check, and do not present it as the whole concurrency guarantee.
+  Overlapping intervals and the per-host caps are held by the lock described in
+  `references/architecture.md`, section "Concurrency".
+- Index `(host_user_id, start_utc)`, index `(invitee_email)`, index `(state, start_utc)`. The first
+  one is what the overlap check inside the locked transaction reads.
 
 ## `#__appointments_fields`
 

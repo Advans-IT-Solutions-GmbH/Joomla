@@ -23,7 +23,7 @@ Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` 
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).
 - `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center).
-- `appointments` — Entwicklungsplan und Domänenwissen zu `com_appointments` (selbstgehostete Terminbuchung als Calendly-Ersatz: Slot-Engine, iCalendar, Kalender-Feeds, Videokonferenz-Adapter, Löschwege). Die Komponente entsteht stufenweise; der Skill ist der verbindliche Plan und nennt den Stand je Stufe.
+- `appointments` — Entwicklungsplan und Domänenwissen zu `com_appointments` (selbstgehostete Terminbuchung als Ersatz für einen gehosteten Buchungsdienst: Slot-Engine, iCalendar, Kalender-Feeds, Videokonferenz-Adapter, Löschwege). Die Komponente entsteht stufenweise; der Skill ist der verbindliche Plan und nennt den Stand je Stufe.
 
 ## Architektur / Das große Bild
 

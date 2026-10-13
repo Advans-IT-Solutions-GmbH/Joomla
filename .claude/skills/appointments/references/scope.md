@@ -1,24 +1,24 @@
 # Scope
 
-## Where the requirements come from
+## How the scope was chosen
 
-The component replaces a hosted scheduling service for the first deployment. The feature list below
-was derived from a direct inspection of that service's public booking page and its administrative
-interface on 13 October 2026, plus its published documentation. Two findings shaped the scope more
-than anything else:
+The component replaces a hosted scheduling service for a single-host operator. Two design
+judgements shaped the scope more than anything else:
 
-1. **No external calendar was connected.** The hosted service offered Google, Outlook and Exchange
-   connections and none of them was in use. It therefore never checked an external calendar for
-   conflicts. A self-hosted component that owns its own calendar loses no capability that was
-   actually in use.
-2. **The paid tiers were not in use.** Workflows, routing forms, payment collection, team
-   scheduling, meeting polls and managed round-robin assignment were all unavailable on the plan in
-   use. They are not part of version 1.
+1. **The component owns its calendar.** A hosted service can connect to Google, Outlook or
+   Exchange, but a scheduling component that computes availability from its own rules, its own
+   bookings and its own blocked periods needs no such connection. Reading an external calendar is a
+   later, opt-in extension, not a prerequisite, and leaving it out is what makes the component work
+   on a server without outbound internet access.
+2. **Only the features of a single-host plan are in version 1.** Team scheduling, round robin,
+   routing forms, payment collection, meeting polls and approval workflows beyond a simple host
+   approval belong to the paid tiers of hosted services and to later versions here.
 
-## Reference configuration
+## Acceptance scenario
 
-The first deployment must be reproducible with component settings alone. For the record, the
-configuration that has to be expressible is:
+Version 1 is accepted when the following scenario can be set up through the administrator interface
+alone, with no file edit and no database change. It is a synthetic test case for the settings that
+have to exist, not a configuration anyone has to use:
 
 | Property | Value |
 |---|---|
@@ -26,14 +26,13 @@ configuration that has to be expressible is:
 | Duration | 20 minutes |
 | Slot step | 30 minutes |
 | Location type | telephone — the host calls the invitee on the number given at booking |
-| Weekly availability | Tue 14:00–17:00, Wed 10:00–12:00, Thu 14:00–17:00 |
-| Time zone | Europe/Zurich, invitee may switch the displayed zone |
+| Weekly availability | three windows on three weekdays, two of them in the afternoon |
+| Time zone | one IANA zone for the schedule, invitee may switch the displayed zone |
 | Booking horizon | 30 calendar days ahead, rolling |
-| Booking form | name*, e-mail*, additional guests, phone* (country selector, default CH), company*, role*, one free-text question, one short-answer question |
+| Booking form | name*, e-mail*, additional guests, telephone* with a country selector, two short-answer fields*, one free-text field |
 | Confirmation | e-mail to invitee and host, calendar entry attached |
 
-`*` = required. This is a reference, not a hardcoded default: every one of these values is a
-setting.
+`*` = required. Every one of these values is a setting, never a default compiled into the code.
 
 ## In scope for version 1
 
@@ -124,12 +123,12 @@ These are recorded so that they are not silently added. Each is a candidate for 
 
 | Not in version 1 | Why |
 |---|---|
-| Reading an external calendar (Microsoft Graph, Google, CalDAV, ICS subscription) for conflicts | The component owns the calendar. Was not in use in the service being replaced. |
-| Payment collection | Not in use. Belongs to a shop component, not here. |
+| Reading an external calendar (Microsoft Graph, Google, CalDAV, ICS subscription) for conflicts | The component owns the calendar, and every one of these needs an outbound connection the self-hosted constraint rules out. |
+| Payment collection | Belongs to a shop component, not here. |
 | Round robin, collective and group events | Single-host scheduling is the requirement. |
-| Routing forms | Not in use. |
+| Routing forms | A separate problem: form logic, not scheduling. |
 | SMS reminders | Requires an external gateway, which contradicts the self-hosted constraint. |
-| Meeting polls | Not in use. |
+| Meeting polls | A different interaction model with its own data and its own pages. |
 | An embeddable widget for third-party sites | A Joomla menu item covers the requirement. |
 | Analytics beyond the dashboard counts | Not required, and a privacy liability. |
 
@@ -139,6 +138,6 @@ These are recorded so that they are not silently added. Each is a candidate for 
   README.
 - `php shared/tests/requirements-check.php com_appointments` passes.
 - The CI workflow for the component is green on both lanes, Joomla 5.4 and Joomla 6.
-- The reference configuration above can be reproduced through the administrator interface alone,
-  with no file edit and no database change.
+- The acceptance scenario above can be reproduced through the administrator interface alone, with
+  no file edit and no database change.
 - The repository's Copilot review definition of done in `AGENTS.md` is met.

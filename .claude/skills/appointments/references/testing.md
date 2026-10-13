@@ -65,11 +65,12 @@ No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape o
 
 ```
 com_appointments/tests/scripts/
-├── 01-installation.php      # tables created, task plugin registered, secret generated
+├── 01-installation.php      # tables created, task plugin registered, no signing secret stored
 ├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
-├── 03-eventtypes.php        # CRUD, ACL, feed token generated and unique
-├── 04-slots.php             # the site slot endpoint returns what the engine returns
-├── 05-booking.php           # end-to-end booking, including the concurrency case
+├── 03-site-page.php         # the public pages really render over HTTP, on both lanes
+├── 04-eventtypes.php        # CRUD, ACL, feed token generated and unique
+├── 05-slots.php             # the site slot endpoint returns what the engine returns
+├── 06-booking.php           # end-to-end booking, both concurrency cases
 ├── 06-mail.php              # every e-mail carries a text/calendar part
 ├── 07-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
 ├── 08-erasure.php           # the three deletion paths and the audit table

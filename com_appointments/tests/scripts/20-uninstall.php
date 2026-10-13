@@ -91,6 +91,16 @@ class UninstallTest
             return $row && (int) $row['cnt'] === 0;
         });
 
+        $this->test('Administrator menu entry removed', function () {
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}menu"
+                . " WHERE link LIKE '%com_appointments%' AND client_id = 1"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['cnt'] === 0;
+        });
+
         echo "\n=== Uninstall Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

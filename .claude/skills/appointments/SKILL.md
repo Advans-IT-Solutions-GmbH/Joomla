@@ -1,12 +1,11 @@
 ---
 name: appointments
-description: Development plan and domain knowledge for com_appointments, the self-hosted Joomla scheduling component that replaces Calendly. Use when implementing, reviewing or releasing com_appointments, its booking flow, availability engine, calendar feeds, e-mail delivery or video-conferencing links.
+description: Development plan and domain knowledge for com_appointments, the self-hosted Joomla scheduling component that replaces a hosted scheduling service. Use when implementing, reviewing or releasing com_appointments, its booking flow, availability engine, calendar feeds, e-mail delivery or video-conferencing links.
 triggers:
   - appointments
   - com_appointments
   - booking
   - scheduling
-  - calendly
   - availability
   - time slot
   - ICS
@@ -59,8 +58,9 @@ preference — see `references/architecture.md`, section "Self-hosted by design"
 5. **Joomla 5.4 and 6, like every other extension in this repository.** No platform special case,
    no change to the shared infrastructure. See `references/architecture.md`, section "Platform".
 6. **GPL-3.0-or-later**, published in this public repository, usable by any Joomla operator. No
-   hardcoded reference to the first deployment's domain, branding, texts or server names. Anything
-   site-specific is a component parameter or a per-event-type field.
+   hardcoded reference to any particular installation's domain, branding, texts or server names.
+   Anything site-specific is a component parameter or a per-event-type field. The same rule applies
+   to these files: they describe the component, never a deployment of it.
 
 ## Where to start
 

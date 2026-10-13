@@ -47,8 +47,9 @@ touching the component.
 
 ### 1. Self-hosted Jitsi Meet — the primary path
 
-This is the provider the first deployment uses, against the operator's own hardened Jitsi
-installation. It needs no API: a Jitsi room exists the moment someone opens its URL.
+The primary path, pointed at an operator's own Jitsi installation. It needs no API: a Jitsi room
+exists the moment someone opens its URL, which is what makes it the only provider that fits the
+self-hosted constraint without an exception.
 
 Settings:
 
@@ -109,7 +110,10 @@ A provider that cannot produce a link must never lose the booking.
 - The booking is saved first. The conference link is attached afterwards, in the same request.
 - If link creation fails, the booking stays confirmed, the e-mail is sent with the location text
   instead of a link, and the administrator sees the booking flagged as "conference link missing"
-  with the reason.
+  with the reason. The flag and the reason are persisted in `conference_state` (`failed`) and
+  `conference_error` of `#__appointments_bookings`, so the diagnostic survives the request that
+  produced it. `conference_error` carries a short message only, never a credential, a token or a
+  URL, because it is shown in a list view.
 - A retry action exists in the administrator interface, and it sends an updated calendar entry with
   a raised `SEQUENCE` when it succeeds.
 - A provider that contacts a remote host gets a hard timeout of five seconds and exactly one retry.
@@ -129,6 +133,8 @@ the stored values are erased.
   and is rejected before its validity window.
 - The fixed-room provider returns the same URL for two bookings, and the administrator interface
   shows the collision warning.
+- A forced provider failure leaves the booking confirmed with `conference_state = 'failed'` and a
+  readable `conference_error`, and that message contains no credential, token or URL.
 - A failing provider leaves the booking confirmed, sets the flag, and the e-mail still goes out with
   the ICS attached.
 - `MeetingRequest` carries no personal data: a test asserts its property set.

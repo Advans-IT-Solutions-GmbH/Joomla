@@ -117,9 +117,16 @@ class InstallationTest
         });
 
         $this->test('No signing secret is stored in the component parameters', function () {
-            // The component derives every key from the Joomla site secret, so
-            // nothing secret is ever written to the database, printed into the
-            // Options screen or lost when that screen is saved.
+            // The component derives every signing key from the Joomla site
+            // secret, so no signing key is ever written to the database, printed
+            // into the Options screen or lost when that screen is saved.
+            //
+            // Only the parameter names that would reintroduce a stored signing
+            // key are rejected. A substring search for "secret" would be wrong:
+            // an operator's Jitsi JWT secret is a legitimate provider setting
+            // and belongs in the component parameters.
+            $forbidden = ['install_secret', 'signing_secret', 'link_secret', 'hmac_secret', 'secret'];
+
             $result = $this->db->query("SELECT params FROM {$this->dbPrefix}extensions WHERE element = 'com_appointments'");
             $row = $result ? $result->fetch_assoc() : null;
 
@@ -127,7 +134,23 @@ class InstallationTest
                 return false;
             }
 
-            return stripos((string) $row['params'], 'secret') === false;
+            $params = json_decode((string) $row['params'], true);
+
+            if (!\is_array($params)) {
+                // No parameters at all is the expected state after a fresh
+                // install and satisfies the assertion.
+                return true;
+            }
+
+            foreach ($forbidden as $name) {
+                if (\array_key_exists($name, $params)) {
+                    echo "    found forbidden parameter: {$name}\n";
+
+                    return false;
+                }
+            }
+
+            return true;
         });
 
         echo "\n=== Installation Test Summary ===\n";

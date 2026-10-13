@@ -37,8 +37,8 @@ window crossing midnight. No database is touched by any engine test.
 - Custom fields CRUD per event type.
 - Front-end menu item types for the list and for a single event type.
 
-**Done when:** the reference configuration in `references/scope.md` can be entered entirely through
-the administrator interface.
+**Done when:** the acceptance scenario in `references/scope.md` can be entered entirely through the
+administrator interface.
 
 ## Stage 4 — public booking page
 
@@ -53,12 +53,17 @@ list, with and without JavaScript.
 
 ## Stage 5 — booking integrity
 
-- `BookingGuard`, the transaction, the unique index behaviour, the friendly "just taken" response.
+- `BookingGuard`, the transaction with the row-level lock on the host, the unique index behaviour,
+  the friendly "just taken" response. Both collisions from `references/architecture.md`, section
+  "Concurrency", are covered: the identical slot by the index, overlapping intervals and the
+  per-host caps by the lock.
 - Approval workflow for event types that require it.
 - Rate limiting on the public endpoints.
 
-**Done when:** a concurrency test fires two simultaneous submissions for one slot and exactly one
-succeeds, with the other receiving the friendly message and a reloaded slot list.
+**Done when:** two concurrency tests pass. The first fires two simultaneous submissions for the
+identical slot, the second fires two simultaneous submissions for two different but overlapping
+slots of the same host, across two event types. In both cases exactly one succeeds and the other
+receives the friendly message and a reloaded slot list.
 
 ## Stage 6 — iCalendar and e-mail
 
@@ -98,7 +103,8 @@ invalidates the old URL immediately, and the retention task is proved idempotent
 
 **Done when:** a booking of a `conference` event type carries a working link in the e-mail, the
 calendar entry and the confirmation page, and a forced provider failure leaves the booking intact
-with the flag set.
+with `conference_state = 'failed'` and a readable `conference_error` that contains no credential,
+token or URL.
 
 ## Stage 10 — privacy sub-plugin, administration polish, documentation
 

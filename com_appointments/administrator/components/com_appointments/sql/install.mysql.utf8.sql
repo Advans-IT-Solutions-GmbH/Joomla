@@ -126,13 +126,24 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- `created_ip` exists for the anti-bot timing check only and is erased together
 -- with the rest of the personal data.
 --
+-- `conference_state` is NULL for an event type without a conference, `ok` once
+-- a link exists and `failed` when the provider could not produce one.
+-- `conference_error` holds the short diagnostic the administrator sees next to
+-- the retry action; it never holds a credential, a token or a URL, because the
+-- reason has to be readable in a list view without leaking anything.
+--
 -- `state_active` is a generated column that is 1 while the booking holds its
 -- slot and NULL otherwise. MySQL and MariaDB ignore NULL in a unique index, so
--- a cancelled booking frees the slot again while an active one blocks it. The
--- unique index over (eventtype_id, start_utc, state_active) is therefore the
--- concurrency guarantee of this component: of two simultaneous submissions for
--- one slot, the second fails in the database. Do not replace it with a check in
--- PHP.
+-- a cancelled booking frees the slot again while an active one blocks it. Of
+-- two simultaneous submissions for the identical slot of one event type, the
+-- second therefore fails in the database and not in PHP. Do not replace it with
+-- a check in PHP.
+--
+-- This index covers the identical slot and nothing more. Two overlapping
+-- bookings have two different start times, and one host can serve several event
+-- types, so overlaps and the per-host caps are held by a row-level lock on the
+-- host inside the booking transaction, not here. See the component architecture,
+-- section Concurrency.
 --
 -- The column is STORED and not VIRTUAL on purpose: both servers index a stored
 -- generated column, while support for indexing a virtual one differs between
@@ -159,6 +170,8 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `conference_provider` VARCHAR(64) DEFAULT NULL,
     `conference_url` TEXT,
     `conference_room` VARCHAR(255) DEFAULT NULL,
+    `conference_state` VARCHAR(16) DEFAULT NULL,
+    `conference_error` VARCHAR(255) DEFAULT NULL,
     `cancel_reason` TEXT,
     `rescheduled_from_id` INT UNSIGNED DEFAULT NULL,
     `reminder_sent_utc` JSON DEFAULT NULL,

@@ -94,11 +94,11 @@ engine is where the bugs will be, and it has to be testable in isolation.
 | `SlotEngine` | Given a schedule, overrides, blocked periods, existing bookings, event-type rules and a date range, return the bookable start times. Pure function of its inputs. No database access. |
 | `AvailabilityWindow` | A half-open interval `[start, end)` in UTC, with the operations the engine needs: overlap, subtract, merge. |
 | `ScheduleResolver` | Turn a weekly schedule plus date-specific overrides into concrete windows for a date range, in the schedule's time zone, applying DST correctly. |
-| `BookingGuard` | Re-validate a slot at submission time inside a transaction: still in the future, still within the horizon, still free, still within the daily and weekly caps. |
+| `BookingGuard` | Re-validate a slot at submission time inside the locked transaction: still in the future, still within the horizon and the minimum notice, no overlap with another booking of any event type of the same host once buffers are applied, still within the daily and weekly caps. See "Concurrency". |
 | `IcsWriter` | Build RFC 5545 output for a booking and for a feed. See `references/calendar-and-ics.md`. |
 | `KeyProvider` | Derive one signing key per purpose from the Joomla site secret. See `references/data-model.md`, section "Signing keys". |
 | `FeedToken` | Create, verify and rotate the per-feed token; constant-time comparison. |
-| `SignedLink` | Create and verify the reschedule and cancel links. |
+| `SignedLink` | Create and verify the reschedule, cancel and erasure links. The action is part of the signature, so a cancel link is rejected for an erasure. |
 | `MailComposer` | Render a template with booking placeholders, in the recipient's language, and attach the ICS. |
 | `ConferenceManager` | Resolve the configured provider and ask it for a link. See `references/conferencing.md`. |
 
@@ -119,22 +119,43 @@ This is the second place bugs will come from. The rules are absolute:
 
 ## Concurrency
 
-Two visitors can submit the same slot at the same moment. The guarantee is at the database level,
-not in PHP:
+Two visitors can submit at the same moment. There are two different collisions, and they need two
+different mechanisms. Stating only the first one would be a false guarantee.
 
-- A unique index on `(eventtype_id, start_utc)` for confirmed and pending bookings, so the second
-  insert fails.
-- The insert happens inside a transaction that first re-checks availability through `BookingGuard`.
+**The identical slot of one event type** is held by the database:
+
+- A unique index on `(eventtype_id, start_utc, state_active)`, where `state_active` is a generated
+  column that is `1` for `state IN (0,1)` and `NULL` otherwise. Both servers ignore `NULL` in a
+  unique index, so a cancelled or rescheduled-away booking frees the slot again while a pending or
+  confirmed one blocks it. The second insert fails in the database, with no help from PHP.
 - A failed unique insert is caught and presented as "this time was just taken", with the slot list
   reloaded. It is never presented as a server error.
+
+**Overlapping intervals**, which the unique index cannot see, are held by a lock. They arise as
+soon as the duration exceeds the slot step, as soon as a buffer is configured, and whenever one
+host serves more than one event type: two different `start_utc` values, or two different event
+types, can still describe meetings that overlap or that break the daily or weekly cap.
+
+- Every booking insert runs inside a transaction that first takes a row-level lock on the host, by
+  selecting the host's schedule row `FOR UPDATE`. Two submissions for the same host are therefore
+  serialised, and the second one sees the first one's booking.
+- Inside that transaction `BookingGuard` re-validates the slot against the engine: still in the
+  future, still within the horizon and the minimum notice, no overlap with another booking of any
+  event type of this host once buffers are applied, and still within the daily and weekly caps.
+- A booking that fails the guard gets the same friendly response as a lost unique insert.
+
+The lock is per host, not global, so two hosts never wait for each other. Stage 5 implements it and
+its concurrency test fires two simultaneous submissions for one slot and, separately, two
+simultaneous submissions for two overlapping slots of one host.
 
 ## Security
 
 - Every state-changing request validates `Session::checkToken()`. The public booking form included.
-- Reschedule and cancel links carry an HMAC over booking id, action and the booking's current
-  `modified` timestamp, keyed by `KeyProvider` (see `references/data-model.md`, section "Signing
-  keys"). Changing the booking invalidates
-  older links automatically.
+- The reschedule, cancel **and erasure** links carry an HMAC over booking id, action and the
+  booking's current `modified` timestamp, keyed by `KeyProvider` (see `references/data-model.md`,
+  section "Signing keys"). All three actions use the same contract, so the deletion link is never
+  built with a separate or weaker mechanism. Changing the booking invalidates older links
+  automatically, and a link for one action is rejected for another.
 - Feed URLs carry a 32-byte random token, compared in constant time, rotatable per feed from the
   administrator interface. A rotated token invalidates the old URL immediately.
 - All output escaped. All queries through `quoteName()` and `quote()` or bound parameters.
@@ -142,7 +163,7 @@ not in PHP:
 - Rate limiting on the public booking endpoint and on the feed endpoint, counted per IP in a small
   table with a short retention, so a blocked feed URL cannot be brute forced.
 
-## What the first deployment adds on top
+## What an installation adds on top
 
 Nothing in the component. Site-specific text, branding, the conference server address and the
 schedule are all settings. If something cannot be expressed as a setting, that is a defect in the
