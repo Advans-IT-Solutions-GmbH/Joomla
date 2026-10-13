@@ -1895,6 +1895,20 @@ PHP
                 $limiter->reserve($windowed, $t0 + 100 + 2 * $class::WINDOW) === true
                 && $limiter->exceeds($windowed, $t0 + 100 + 2 * $class::WINDOW) === false);
 
+            // A release after a window rollover: the success was reserved at the end of a window,
+            // another attempt started a new window before the release ran. The release must not
+            // take the attempt of the new window.
+            $rollover = ['email' => 'rollover-' . $suffix . '@example.com'];
+            $limiter->reserve($rollover, $t0 + 300);
+            $limiter->reserve($rollover, $t0 + 300 + $class::WINDOW - 1);
+            $limiter->reserve($rollover, $t0 + 300 + $class::WINDOW + 1);
+            $limiter->release($rollover, $t0 + 300 + $class::WINDOW - 1);
+            $left = $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('failures') . ' FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts')
+                . ' WHERE ' . $this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($limiter->hash('email', $rollover['email']))
+            )->loadResult();
+            $this->test('Release after a window rollover leaves the attempt of the new window counted', (string) $left === '1', var_export($left, true));
+
             $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
             $limiter->purgeExpired($t0 + 3 * $class::WINDOW);
             $left = (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadResult();

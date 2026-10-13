@@ -131,10 +131,12 @@ final class ConfirmAttempts
      * failed attempts, so customers who confirm correctly from one shared network (an office, a
      * mobile carrier) do not use up its IP limit. A count that reaches zero removes its row, so
      * the next attempt starts a new window with itself and no window starts with an attempt that
-     * was given back. Each subject in one transaction (see transaction()); a window that ended in
-     * between is left alone.
+     * was given back. Each subject in one transaction (see transaction()). Only the window the
+     * attempt was counted in is changed: $now must be the time passed to reserve(), and a window
+     * that ended since then, or a new window that another attempt started after it, is left alone.
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
+     * @param   int|null               $now       Time of the reservation (reserve())
      */
     public function release(array $subjects, ?int $now = null): void
     {
@@ -159,7 +161,10 @@ final class ConfirmAttempts
                         ->set($this->db->quoteName('failures') . ' = ' . $this->db->quoteName('failures') . ' - 1')
                         ->where($subject)
                         ->where($this->db->quoteName('failures') . ' > 0')
+                        // The window that was running at the reservation: started before or with it
+                        // (a window started by a later attempt begins after it) and not ended at it.
                         ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW)))
+                        ->where($this->db->quoteName('window_start') . ' <= ' . $this->db->quote(gmdate('Y-m-d H:i:s', $now)))
                 )->execute();
 
                 $this->db->setQuery(

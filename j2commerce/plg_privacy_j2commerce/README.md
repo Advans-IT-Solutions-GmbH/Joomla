@@ -1267,6 +1267,8 @@ Order as in `tests/test.env`:
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 15. **Uninstall** — clean removal from database and filesystem
 
+Besides the two Joomla lanes (both on MySQL), the job **Attempt Limiter** runs `tests/scripts/limiter-db.php` outside Joomla against PostgreSQL and MySQL with `joomla/database` 3 (Joomla 5) and 4 (Joomla 6): the install, update and uninstall SQL of `#__privacy_j2commerce_attempts` and the attempt limiter of the confirmation page (limits per address and per IP address, windows, given-back successes, a release after a window rollover, purge) including genuinely parallel requests from separate processes.
+
 ### Running Tests Locally
 
 Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves (listed in the summary of the job `Resolve Shop Releases`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
