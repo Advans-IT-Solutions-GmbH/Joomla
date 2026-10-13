@@ -1671,6 +1671,83 @@ class DataIsolationTest
      * sessions, per client IP address, the window ends, and a used-up limit of one address does
      * not block the right code of another. Only hashes are stored.
      */
+    /**
+     * Genuinely overlapping requests: separate PHP processes, each with its own database
+     * connection, start their reservation at the same moment for the same address and client.
+     * Exactly the limit of attempts must be admitted, never more and never fewer.
+     */
+    private function testParallelReservations(string $class, string $suffix, int $now): void
+    {
+        $worker = sys_get_temp_dir() . '/privacy-attempt-worker-' . $suffix . '.php';
+        file_put_contents($worker, <<<'PHP'
+<?php
+define('_JEXEC', 1);
+define('JPATH_BASE', '/var/www/html');
+require_once JPATH_BASE . '/includes/defines.php';
+$_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
+$_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+require_once JPATH_BASE . '/includes/framework.php';
+require_once JPATH_BASE . '/plugins/privacy/j2commerce/src/Security/ConfirmAttempts.php';
+
+[, $start, $email, $ip, $now] = $argv;
+$db = \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+$db->connect();
+$limiter = new \Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts($db, 'guest-request-test-secret');
+
+// The worker is ready before the common start (otherwise it would not overlap with the others).
+$ready = microtime(true) < (float) $start;
+
+while (microtime(true) < (float) $start) {
+    usleep(500);
+}
+
+echo "\nRESULT:" . ($limiter->reserve(['email' => $email, 'ip' => $ip], (int) $now) ? '1' : '0') . ($ready ? 'r' : 'l') . "\n";
+PHP
+        );
+
+        $email     = 'parallel-' . $suffix . '@example.com';
+        $start     = sprintf('%.3F', microtime(true) + 5.0);
+        $processes = [];
+
+        for ($i = 0; $i < $class::MAX_EMAIL_FAILURES + 5; $i++) {
+            $pipes   = [];
+            $process = proc_open([PHP_BINARY, $worker, $start, $email, 'client-p', (string) $now], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+
+            if (!\is_resource($process)) {
+                $this->test('Parallel requests: worker process started', false);
+                @unlink($worker);
+
+                return;
+            }
+
+            $processes[] = [$process, $pipes];
+        }
+
+        $results = [];
+        $errors  = [];
+
+        foreach ($processes as [$process, $pipes]) {
+            $output    = (string) stream_get_contents($pipes[1]);
+            $error     = trim((string) stream_get_contents($pipes[2]));
+            $results[] = preg_match('/^RESULT:([01][rl])$/m', $output, $match) ? $match[1] : '';
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+
+            if (proc_close($process) !== 0 || $results[\array_key_last($results)] === '') {
+                $errors[] = trim($output . ' ' . $error);
+            }
+        }
+
+        @unlink($worker);
+
+        $this->test('Parallel requests: every worker was ready before the common start and finished cleanly',
+            $errors === [] && count(array_filter($results, static fn ($r): bool => \strlen($r) === 2 && $r[1] === 'r')) === \count($results),
+            implode(' ', $results) . ' ' . implode(' | ', $errors));
+        $this->test('Parallel requests: exactly the limit of attempts is admitted',
+            count(array_filter($results, static fn ($r): bool => ($r[0] ?? '') === '1')) === $class::MAX_EMAIL_FAILURES
+            && count(array_filter($results, static fn ($r): bool => ($r[0] ?? '') === '0')) === 5, implode(' ', $results));
+    }
+
     private function testConfirmAttemptLimits(): void
     {
         echo "\n--- Confirmation attempt limits across sessions (per address, per IP) ---\n";
@@ -1771,15 +1848,16 @@ class DataIsolationTest
 
             $limiter = new $class($this->db, 'guest-request-test-secret');
 
-            // Parallel requests: all of them reserve before any has finished its code check.
-            $parallel = ['email' => 'parallel-' . $suffix . '@example.com', 'ip' => 'client-p'];
-            $admitted = 0;
+            // Requests one after the other: exactly the limit of attempts is admitted.
+            $sequential = ['email' => 'sequential-' . $suffix . '@example.com', 'ip' => 'client-s'];
+            $admitted   = 0;
 
             for ($i = 0; $i < $class::MAX_EMAIL_FAILURES + 3; $i++) {
-                $admitted += $limiter->reserve($parallel, $t0 + 40) ? 1 : 0;
+                $admitted += $limiter->reserve($sequential, $t0 + 40) ? 1 : 0;
             }
 
-            $this->test('Parallel requests: exactly the limit of attempts is admitted', $admitted === $class::MAX_EMAIL_FAILURES, (string) $admitted);
+            $this->test('Sequential requests: exactly the limit of attempts is admitted', $admitted === $class::MAX_EMAIL_FAILURES, (string) $admitted);
+            $this->testParallelReservations($class, $suffix, $t0 + 45);
             // A window starts with its first counted attempt and is never reused by a later one:
             // an attempt at the start, more at its end, the next window after it.
             $windowed = ['email' => 'windowed-' . $suffix . '@example.com', 'ip' => 'client-w'];

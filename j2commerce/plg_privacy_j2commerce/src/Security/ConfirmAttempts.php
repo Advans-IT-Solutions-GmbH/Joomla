@@ -18,9 +18,9 @@ use Joomla\Database\DatabaseInterface;
  * and per client IP address, so a new session does not start from zero.
  *
  * Only an HMAC-SHA256 of scope and value with the site secret is stored, never the address or
- * the IP address itself. A counter belongs to a window of WINDOW seconds from its first failure;
- * after it the next failure starts a new window. Rows of ended windows are removed on every
- * failure written and by the cleanup task (purgeExpired()).
+ * the IP address itself. A counter belongs to a window of WINDOW seconds from its first counted
+ * attempt; after it the next attempt starts a new window. Rows of ended windows are removed on
+ * every attempt counted and by the cleanup task (purgeExpired()).
  */
 final class ConfirmAttempts
 {
@@ -57,9 +57,10 @@ final class ConfirmAttempts
     }
 
     /**
-     * Admit an attempt: count it first (one atomic statement per subject, see increment()), then
-     * check the count, its own included, so parallel requests cannot all pass a check made before
-     * any of them is counted. The client IP address is counted and checked first: once it is over
+     * Admit an attempt: count it and read the count it produced, its own attempt included, in one
+     * step per subject (see countAttempt()). Parallel requests for a subject are serialised, so
+     * exactly the first attempts up to the limit are admitted, never more and never fewer. The
+     * client IP address is counted and checked first: once it is over
      * its limit, nothing else is written (no row for a new e-mail address, no purge), so a client
      * can create at most MAX_IP_FAILURES address rows per window. Every admitted attempt stays
      * counted, a successful one too (a customer confirms a request once): no count ever goes
@@ -73,25 +74,13 @@ final class ConfirmAttempts
         $ip    = (string) ($subjects['ip'] ?? '');
         $email = (string) ($subjects['email'] ?? '');
 
-        if ($ip !== '') {
-            $this->increment('ip', $ip, $now);
-
-            if ($this->count('ip', $ip, $now) > self::MAX_IP_FAILURES) {
-                return false;
-            }
+        if ($ip !== '' && $this->countAttempt('ip', $ip, $now) > self::MAX_IP_FAILURES) {
+            return false;
         }
 
         $this->purgeExpired($now);
 
-        if ($email !== '') {
-            $this->increment('email', $email, $now);
-
-            if ($this->count('email', $email, $now) > self::MAX_EMAIL_FAILURES) {
-                return false;
-            }
-        }
-
-        return true;
+        return $email === '' || $this->countAttempt('email', $email, $now) <= self::MAX_EMAIL_FAILURES;
     }
 
     /**
@@ -127,25 +116,55 @@ final class ConfirmAttempts
         $ip    = (string) ($subjects['ip'] ?? '');
         $email = (string) ($subjects['email'] ?? '');
 
-        if ($ip !== '') {
-            $this->increment('ip', $ip, $now);
-
-            if ($this->count('ip', $ip, $now) > self::MAX_IP_FAILURES) {
-                return;
-            }
+        if ($ip !== '' && $this->countAttempt('ip', $ip, $now) > self::MAX_IP_FAILURES) {
+            return;
         }
 
         $this->purgeExpired($now);
 
         if ($email !== '') {
-            $this->increment('email', $email, $now);
+            $this->countAttempt('email', $email, $now);
         }
     }
 
     /**
-     * Counted attempts of a subject in the current window.
+     * Count one attempt of a subject and return the count of the current window, this attempt
+     * included. Upsert and read run in one transaction: the upsert locks the row until the commit,
+     * so a parallel attempt for the same subject waits for it, and every attempt reads exactly the
+     * count it produced (the attempts of a window read 1, 2, 3 and so on, each number once).
+     * A transaction the database aborts (for example as a deadlock victim) counted nothing and is
+     * repeated, at most three times in all; then the error goes to the caller (which refuses).
      */
-    private function count(string $scope, string $value, int $now): int
+    private function countAttempt(string $scope, string $value, int $now): int
+    {
+        for ($try = 1; ; $try++) {
+            $this->db->transactionStart();
+
+            try {
+                $this->increment($scope, $value, $now);
+                $count = $this->count($scope, $value, $now, true);
+                $this->db->transactionCommit();
+
+                return $count;
+            } catch (\Throwable $e) {
+                try {
+                    $this->db->transactionRollback();
+                } catch (\Throwable $ignored) {
+                    // The database already ended the transaction.
+                }
+
+                if ($try >= 3) {
+                    throw $e;
+                }
+            }
+        }
+    }
+
+    /**
+     * Counted attempts of a subject in the current window; $lock reads the row as locked by the
+     * running transaction (the latest version, never an older snapshot).
+     */
+    private function count(string $scope, string $value, int $now, bool $lock = false): int
     {
         $query = $this->createQuery()
             ->select($this->db->quoteName('failures'))
@@ -154,12 +173,13 @@ final class ConfirmAttempts
             ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
             ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW)));
 
-        return (int) $this->db->setQuery($query)->loadResult();
+        return (int) $this->db->setQuery($lock ? (string) $query . ' FOR UPDATE' : $query)->loadResult();
     }
 
     /**
      * Count one attempt of a subject with one atomic statement: a new window when the last one
-     * ended, else one more in it. Parallel attempts cannot overwrite each other.
+     * ended, else one more in it. Parallel attempts cannot overwrite each other. Called only
+     * inside the transaction of countAttempt().
      */
     private function increment(string $scope, string $value, int $now): void
     {
