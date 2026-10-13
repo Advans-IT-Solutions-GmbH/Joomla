@@ -11,7 +11,8 @@ blocked.
 
 > **Status: in development.** The component is being built in stages. This file grows with the
 > implemented feature set and will document every shipped setting before the first release. The
-> sections below describe what is implemented today.
+> sections below say what is implemented today and name what is still to come, so nothing here
+> should be read as a feature you can already use.
 
 ## Requirements
 
@@ -39,10 +40,14 @@ Joomla's extension update screen.
 
 ## Signing keys
 
-The component signs the links in its e-mails and hashes the IP addresses of its rate-limit counters.
-Every key is derived from the Joomla site secret of the installation, one key per purpose. No key is
-stored in the database, printed into a page, or written to a log, and no key changes when the
-component is updated, so links that are already in someone's mailbox keep working.
+Key derivation is implemented; the features that will use it are not. `KeyProvider` derives one key
+per purpose from the Joomla site secret of the installation, and the two purposes it defines are the
+signed links in the component's e-mails and the hashing of IP addresses in the rate-limit counters.
+Both of those arrive in later stages.
+
+The property that matters is already in place and covered by the unit suite: no key is stored in the
+database, printed into a page or written to a log, and no key changes when the component is updated,
+so a link that is already in someone's mailbox will keep working.
 
 ## Uninstalling
 

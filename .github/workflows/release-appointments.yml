@@ -99,6 +99,11 @@ jobs:
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
             com_appointments.xml
+          # The asset version is the cache buster of the component's own CSS and
+          # JavaScript. Without this, a browser keeps serving the stylesheet of
+          # the previous release after an update.
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/g" \
+            media/com_appointments/joomla.asset.json
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'
