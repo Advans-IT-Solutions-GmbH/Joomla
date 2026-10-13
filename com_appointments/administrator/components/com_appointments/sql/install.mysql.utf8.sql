@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `horizon_end_utc` DATETIME DEFAULT NULL,
     `max_per_day` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     `max_per_week` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-    `schedule_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `schedule_id` INT UNSIGNED NOT NULL,
     `host_user_id` INT UNSIGNED NOT NULL DEFAULT 0,
     `location_type` VARCHAR(32) NOT NULL DEFAULT 'custom_text',
     `location_text` TEXT,
@@ -128,7 +128,8 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     UNIQUE KEY `idx_alias` (`alias`),
     UNIQUE KEY `idx_feed_token` (`feed_token`),
     KEY `idx_published_access_language` (`published`, `access`, `language`),
-    KEY `idx_schedule` (`schedule_id`)
+    KEY `idx_schedule` (`schedule_id`),
+    FOREIGN KEY (`schedule_id`) REFERENCES `#__appointments_schedules` (`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --

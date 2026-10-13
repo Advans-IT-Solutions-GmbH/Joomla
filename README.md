@@ -29,7 +29,7 @@ Joomla/
 | [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 | [DMARC Reports](com_dmarcreports/) | Administrator component that ingests and analyses RFC 7489 DMARC aggregate reports (IMAP and file upload) across multiple domains, with an actionable rollout dashboard and CSV export | 5.4 – 6.x |
 | [DMARC Reports Dashboard Module](mod_dmarcreports/) | Administrator control-panel module that surfaces the DMARC Reports multi-domain summary and top Action Center items on the Joomla backend dashboard, linking into the component and degrading gracefully when it is absent | 5.4 – 6.x |
-| [Appointments](com_appointments/) | **In development.** Self-hosted appointment scheduling, built in stages. Available today: the component with its administrator and site part, the full database schema, a dashboard and a public list of bookable event types. Not yet implemented: the booking flow itself, iCalendar attachments, e-mail notifications, calendar subscription feeds and the conferencing links. See the component README for the current state | 5.4 – 6.x |
+| [Appointments](com_appointments/) | **In development.** Self-hosted appointment scheduling, built in stages. Available today: the component with its administrator and site part, the full database schema, a dashboard, a public list of bookable event types, schedules with weekly and date-specific availability, blocked periods, and the slot engine that turns all of it into bookable times. Not yet implemented: the booking form itself, iCalendar attachments, e-mail notifications, calendar subscription feeds and the conferencing links. See the component README for the current state | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
@@ -80,7 +80,7 @@ Local test prerequisites and commands: [`.claude/skills/joomla-extensions/refere
 
 ## Languages
 
-All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for three extensions, one manifest line per file.
+All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for extensions using `<languages>`, one manifest line per file.
 
 To add a language:
 
@@ -154,4 +154,3 @@ CHE-316.407.165
 https://advans.ch
 
 Copyright (C) 2026 Advans IT Solutions GmbH
-
