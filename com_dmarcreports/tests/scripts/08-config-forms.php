@@ -246,13 +246,13 @@ class ConfigFormsTest
         // file was refused, so each case asserts both the reason text and the
         // one-failure summary. Only this authenticated path exercises
         // ingest.upload end to end, so a regression in either is caught here.
-        $dashboard   = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&view=dashboard', [], true);
-        $this->token = $this->extractToken($dashboard['body']) ?: $this->token;
+        $sources     = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&view=sources', [], true);
+        $this->token = $this->extractToken($sources['body']) ?: $this->token;
 
-        $this->test('Dashboard view renders the manual upload form', function () use ($dashboard) {
-            return $dashboard['code'] === 200
-                && !$this->hasErrorMarker($dashboard['body'])
-                && strpos($dashboard['body'], 'report_file') !== false;
+        $this->test('Sources view renders the manual upload form', function () use ($sources) {
+            return $sources['code'] === 200
+                && !$this->hasErrorMarker($sources['body'])
+                && strpos($sources['body'], 'report_file') !== false;
         });
 
         $uploads = [
