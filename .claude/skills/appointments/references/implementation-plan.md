@@ -1,24 +1,9 @@
 # Implementation plan
 
-Eleven stages. Each stage ends with a commit that builds, installs and passes its own tests. The
+Ten stages. Each stage ends with a commit that builds, installs and passes its own tests. The
 component is never left in a state where it cannot be installed.
 
-Commit scope is `appointments` throughout, except stage 0 which touches shared infrastructure and
-uses the scope of the file it changes.
-
-## Stage 0 — platform override in the shared requirements check
-
-Before anything else, because nothing can pass CI without it.
-
-- Extend `shared/tests/requirements-check.php` with the per-extension override described in
-  `references/architecture.md`, section "Consequence for the shared requirements check".
-- Prove the existing extensions are unaffected: run the check for every extension directory before
-  and after, and compare the output.
-- Add `shared/tests/requirements-check.php` to the `pull_request.paths` of the new component
-  workflow, so `shared-path-coverage.yml` stays satisfied.
-
-**Done when:** the check passes for all existing extensions unchanged, and accepts a Joomla 6 only
-declaration for a directory that declares one.
+Commit scope is `appointments` throughout.
 
 ## Stage 1 — component skeleton
 
@@ -31,9 +16,9 @@ declaration for a directory that declares one.
   matching uninstall file.
 - The install secret generated in `script.php`.
 
-**Done when:** the package builds, installs on Joomla 6, shows an empty dashboard, uninstalls
-cleanly and leaves no table behind. `php shared/tests/requirements-check.php com_appointments`
-passes.
+**Done when:** the package builds, installs on Joomla 5.4 and on Joomla 6, shows an empty
+dashboard, uninstalls cleanly and leaves no table behind.
+`php shared/tests/requirements-check.php com_appointments` passes.
 
 ## Stage 2 — schedules and the slot engine
 
@@ -130,9 +115,9 @@ the Copilot definition of done in `AGENTS.md` is met.
 
 ## Order of pull requests
 
-One pull request per stage, or group stages 1 to 3 and 4 to 6 if the reviewer prefers fewer. Stage 0
-is always its own pull request, because it touches shared infrastructure that every other extension
-depends on.
+One pull request per stage, or group stages 1 to 3 and 4 to 6 if the reviewer prefers fewer. No
+stage touches shared infrastructure, so every pull request is confined to `com_appointments/`, the
+component's own workflow files and the instruction files listed below.
 
 Never merge your own pull request. Never edit `VERSION`, the manifest `<version>` or
 `updates/update.xml` by hand.

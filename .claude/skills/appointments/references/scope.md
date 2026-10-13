@@ -138,7 +138,7 @@ These are recorded so that they are not silently added. Each is a candidate for 
 - Every item under "In scope" is implemented, covered by a test and documented in the component
   README.
 - `php shared/tests/requirements-check.php com_appointments` passes.
-- The CI workflow for the component is green on Joomla 6.
+- The CI workflow for the component is green on both lanes, Joomla 5.4 and Joomla 6.
 - The reference configuration above can be reproduced through the administrator interface alone,
   with no file edit and no database change.
 - The repository's Copilot review definition of done in `AGENTS.md` is met.

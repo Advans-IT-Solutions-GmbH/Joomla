@@ -17,35 +17,20 @@ If a feature cannot be built without a third-party call, it does not go into ver
 
 ## Platform
 
-- **Joomla 6 only.** `script.php` declares `$minimumJoomla = '6.0'`, the manifest and
-  `updates/update.xml` declare `targetplatform` `6\.[0-9]`.
-- **PHP 8.2 minimum**, matching Joomla 6.
-- The database layer uses `$db->createQuery()` (Joomla 6). The Joomla 5 fallback described in
-  `.claude/skills/joomla-extensions/references/conventions.md` is not needed here and must not be
-  added — it would only be dead code.
+The component targets the same platform range as every other extension in this repository. It is
+not a special case, and the shared infrastructure is not touched for it.
 
-### Consequence for the shared requirements check
-
-`shared/tests/requirements-check.php` currently enforces one platform rule for every extension:
-`MIN_JOOMLA = '5.4'`, `MIN_PHP = '8.1'` and `targetplatform (5\.[4-9]|6\.[0-9])`. A Joomla 6 only
-component fails that check.
-
-The check must therefore gain a **per-extension override** before `com_appointments` can pass CI.
-Required properties of that change:
-
-- Default behaviour for every existing extension is unchanged: same constants, same failures.
-- The override is declared by the extension, not hardcoded in the checker as a list of names.
-  Put it in the extension's `build.env` (for example `MIN_JOOMLA="6.0"`, `MIN_PHP="8.2"`,
-  `TARGET_REGEX="(6\.[0-9])"`), which the checker already has to locate anyway.
-- The sample-version evaluation at the end of the checker runs against the extension's own regex:
-  for `com_appointments`, `6.0.0` and `6.1.3` must be accepted and `5.4.0`, `5.4.8` and `4.4.0`
-  rejected.
-- The release workflow's `targetplatform` is validated against the same source.
-- `shared-path-coverage.yml`: `shared/tests/requirements-check.php` is already watched by other
-  workflows, but the new component's workflow must list it too, because the component uses it.
-
-This change touches shared infrastructure used by every extension. It goes in its own commit, with
-its own test, and the existing extensions' checks are run to prove nothing moved.
+- **Joomla 5.4 and 6.** `script.php` declares `$minimumJoomla = '5.4'`, the manifest and
+  `updates/update.xml` declare `targetplatform` `(5\.[4-9]|6\.[0-9])`.
+- **PHP 8.1 minimum.** No language feature newer than PHP 8.1 is used.
+- The database layer switches at runtime:
+  `method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true)`, exactly as
+  `.claude/skills/joomla-extensions/references/conventions.md` prescribes. `createQuery()` is not
+  declared on `DatabaseInterface` in Joomla 5.4, and `getQuery(true)` is deprecated in Joomla 6, so
+  both branches are needed and the static deprecation scan only accepts `getQuery(true)` behind
+  this check.
+- `php shared/tests/requirements-check.php com_appointments` therefore passes with the repository's
+  standard constants, unchanged.
 
 ## Component layout
 
@@ -56,7 +41,7 @@ com_appointments/
 ├── README.md                      # user-facing documentation, English
 ├── LICENSE.txt                    # unmodified GPL-3.0 text, identical to the repository root
 ├── VERSION                        # release workflow owns this
-├── build.env                      # EXTENSION_NAME, VERSION, EXTENSION_TYPE, platform overrides
+├── build.env                      # EXTENSION_NAME, VERSION, EXTENSION_TYPE
 ├── build.sh                       # thin wrapper delegating to shared/build/build.sh
 ├── script.php                     # install / update / uninstall
 ├── com_appointments.xml           # manifest

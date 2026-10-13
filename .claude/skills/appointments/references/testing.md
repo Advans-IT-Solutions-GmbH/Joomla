@@ -52,15 +52,15 @@ is a defect in the test.
 | Date-specific override | replaces the weekday rules entirely |
 | `is_unavailable` date | the day yields nothing |
 
-## Integration — Docker against a real Joomla 6
+## Integration — Docker against a real Joomla
 
-The component is Joomla 6 only, so there is **one** stack, not two. `tests/Dockerfile` builds on
-`joomla:6-php8.4-apache`; there is no Joomla 5 lane and no `docker-compose.joomla6.yml`, because the
-default compose file already is the Joomla 6 one. Say so in `tests/test.env` as a comment, otherwise
-the next reader will look for the missing second lane.
+**Two lanes, exactly as every other extension.** `tests/Dockerfile` builds on
+`joomla:5.4-php8.3-apache` and is used by `docker-compose.yml`; `tests/Dockerfile.joomla6` builds on
+`joomla:6-php8.4-apache` and is used by `docker-compose.joomla6.yml`. Both tags are moving tags, so
+no Joomla patch version is pinned.
 
 No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape of
-`com_dmarcreports`, which is also J2Commerce-free.
+`com_dmarcreports`, which is also J2Commerce-free and has both lanes.
 
 ```
 com_appointments/tests/scripts/
@@ -77,13 +77,23 @@ com_appointments/tests/scripts/
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 
+Build the package once, then run either lane. `tests/test.env` names the Joomla 5 container, so the
+Joomla 6 lane gets its container name on the command line:
+
 ```bash
 cd com_appointments
 ./build.sh && mkdir -p tests && cp *.zip tests/extension.zip
 cd tests
+
+# Joomla 5.4 lane
 docker compose up -d
-CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all
+./run-tests.sh all
 docker compose down -v
+
+# Joomla 6 lane
+docker compose -f docker-compose.joomla6.yml up -d
+CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all
+docker compose -f docker-compose.joomla6.yml down -v
 ```
 
 CI sets `TEST_STRICT_SKIP=1`, so a skipped test fails. Reproduce that locally before pushing.
@@ -101,7 +111,7 @@ Three new files, mirroring the DMARC set:
 
 | File | Trigger | Purpose |
 |---|---|---|
-| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test |
+| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test, both lanes in the matrix |
 | `.github/workflows/release-appointments.yml` | `workflow_dispatch` | Stage 1: bump and open the release pull request |
 | `.github/workflows/publish-appointments.yml` | release pull request merged | Stage 2: package, tag, GitHub Release |
 
