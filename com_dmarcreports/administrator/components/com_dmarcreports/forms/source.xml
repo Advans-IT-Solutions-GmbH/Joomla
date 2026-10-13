@@ -72,6 +72,7 @@
             label="COM_DMARCREPORTS_FIELD_USERNAME_LABEL"
             description="COM_DMARCREPORTS_FIELD_USERNAME_DESC"
             filter="string"
+            required="true"
             autocomplete="off"
             size="40" />
 
@@ -91,6 +92,7 @@
             description="COM_DMARCREPORTS_FIELD_FOLDER_DESC"
             default="INBOX"
             filter="string"
+            required="true"
             size="40" />
     </fieldset>
 

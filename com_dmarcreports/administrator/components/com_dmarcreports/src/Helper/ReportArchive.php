@@ -68,6 +68,9 @@ final class ReportArchive
      *          compressed container but the PHP extension needed to decode it
      *          (zlib for gzip, zip for zip) is unavailable, so the caller can
      *          defer the message instead of dropping a still-valid report.
+     * @throws  ArchiveExtractionException  When a temporary scratch file needed
+     *          to read a zip container cannot be created or fully written, a
+     *          transient host failure the caller must retry rather than skip.
      */
     public static function extract(string $payload, string $filename = ''): array
     {
@@ -154,14 +157,28 @@ final class ReportArchive
         $tmp = tempnam(sys_get_temp_dir(), 'dmarc_zip_');
 
         if ($tmp === false) {
-            return [];
+            // A scratch file could not even be created. The payload may still be
+            // a valid report, so signal a transient failure rather than an empty
+            // result, letting the caller retry the same message on the next run.
+            throw new ArchiveExtractionException(
+                'Unable to create a temporary file to read a zip-compressed DMARC report.'
+            );
         }
 
         $documents = [];
         $total     = 0;
 
         try {
-            file_put_contents($tmp, $payload);
+            $written = file_put_contents($tmp, $payload);
+
+            if ($written === false || $written < \strlen($payload)) {
+                // The scratch file was not written in full, so ZipArchive would
+                // read a truncated archive and silently drop valid entries. Treat
+                // this as transient so the message is retried, not skipped.
+                throw new ArchiveExtractionException(
+                    'Unable to write a temporary file to read a zip-compressed DMARC report.'
+                );
+            }
 
             $zip = new \ZipArchive();
 

@@ -20,7 +20,7 @@ defined('_JEXEC') or die;
         <input type="hidden" name="view" value="detail">
         <label for="domain_id" class="form-label"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SELECT_DOMAIN'); ?></label>
         <div class="d-flex gap-2">
-            <select name="domain_id" id="domain_id" class="form-select" onchange="this.form.submit()">
+            <select name="domain_id" id="domain_id" class="form-select">
                 <option value="0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SELECT_PLACEHOLDER'); ?></option>
                 <?php foreach ($this->domains as $domain) : ?>
                     <option value="<?php echo (int) $domain->id; ?>"
@@ -29,6 +29,9 @@ defined('_JEXEC') or die;
                     </option>
                 <?php endforeach; ?>
             </select>
+            <button type="submit" class="btn btn-primary">
+                <?php echo Text::_('COM_DMARCREPORTS_DETAIL_SELECT_SUBMIT'); ?>
+            </button>
         </div>
     </form>
 

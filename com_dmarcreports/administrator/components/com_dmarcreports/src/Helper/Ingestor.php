@@ -109,6 +109,12 @@ final class Ingestor
                 // instead of marking a still-unread report processed and lost.
                 $retry = true;
                 continue;
+            } catch (ArchiveExtractionException) {
+                // A transient scratch-file failure prevented extraction. The
+                // payload may still hold a valid report, so retry the message on
+                // the next run rather than advancing past it and deleting it.
+                $retry = true;
+                continue;
             }
 
             $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
@@ -132,6 +138,9 @@ final class Ingestor
      * @throws  DecoderUnavailableException  When the file is a recognised
      *          compressed container but the PHP extension needed to decode it is
      *          not installed, so the caller can show a concrete requirement.
+     * @throws  ArchiveExtractionException  When a temporary scratch file needed
+     *          to read a zip container cannot be created or fully written, so the
+     *          caller can surface a transient failure instead of a silent skip.
      */
     public function ingestFile(string $path, string $filename, ?int $sourceId = null, int $forcedDomainId = 0): array
     {

@@ -270,8 +270,9 @@ final class ImapClient
      */
     private function advance(array $handled, array $touched, bool $delete): void
     {
-        // Messages kept in place are marked \Seen so the UNSEEN search skips
-        // them next time. When deleting, the ingested ones are removed instead.
+        // Mark processed messages \Seen as mailbox housekeeping only; the
+        // component-owned UID import cursor (not this flag) governs what a later
+        // run re-fetches. When deleting, the ingested ones are removed instead.
         $seen = $delete ? $touched : array_merge($handled, $touched);
 
         if ($seen !== []) {
@@ -312,7 +313,8 @@ final class ImapClient
         // Without UIDPLUS a plain EXPUNGE would remove every \Deleted message in
         // the mailbox, including those another client flagged. Flag the imported
         // messages \Deleted and \Seen and defer removal to the server or a
-        // manual expunge; \Seen keeps them out of the UNSEEN search meanwhile.
+        // manual expunge. The \Seen flag is only mailbox housekeeping; the UID
+        // import cursor prevents these messages being re-fetched meanwhile.
         $this->command(
             'UID STORE ' . $set . ' +FLAGS.SILENT (\\Deleted \\Seen)',
             'Unable to flag messages for deletion.'
