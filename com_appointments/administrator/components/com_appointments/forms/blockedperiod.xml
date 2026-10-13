@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A blocked period: time a host is not available, independent of any event
+    type.
+
+    Both bounds are instants, so the calendar fields translate the operator's
+    own time zone to UTC with `filter="user_utc"`. That is the opposite of the
+    date-specific schedule override, where a conversion would be wrong.
+-->
+<form>
+    <fieldset name="details">
+        <field
+            name="id"
+            type="number"
+            label="JGLOBAL_FIELD_ID_LABEL"
+            class="readonly"
+            readonly="true"
+            default="0"
+        />
+
+        <field
+            name="user_id"
+            type="user"
+            label="COM_APPOINTMENTS_BLOCKED_FIELD_USER"
+            description="COM_APPOINTMENTS_BLOCKED_FIELD_USER_DESC"
+            required="true"
+        />
+
+        <field
+            name="title"
+            type="text"
+            label="COM_APPOINTMENTS_BLOCKED_FIELD_TITLE"
+            description="COM_APPOINTMENTS_BLOCKED_FIELD_TITLE_DESC"
+            size="50"
+        />
+
+        <field
+            name="start_utc"
+            type="calendar"
+            label="COM_APPOINTMENTS_BLOCKED_FIELD_START"
+            required="true"
+            translateformat="true"
+            showtime="true"
+            filter="user_utc"
+        />
+
+        <field
+            name="end_utc"
+            type="calendar"
+            label="COM_APPOINTMENTS_BLOCKED_FIELD_END"
+            required="true"
+            translateformat="true"
+            showtime="true"
+            filter="user_utc"
+        />
+    </fieldset>
+</form>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    One interval of a weekly schedule. The times are local to the schedule's own
+    time zone, never UTC, which is why they are plain times of day and carry no
+    date and no offset.
+
+    An end that is not after the start means the interval continues past
+    midnight and stays one window, so 22:00 to 02:00 is a night shift and not a
+    mistake. The model validates both values server-side.
+-->
+<form>
+    <fieldset>
+        <field
+            name="weekday"
+            type="list"
+            label="COM_APPOINTMENTS_RULE_FIELD_WEEKDAY"
+            required="true"
+            validate="options"
+        >
+            <option value="1">COM_APPOINTMENTS_WEEKDAY_1</option>
+            <option value="2">COM_APPOINTMENTS_WEEKDAY_2</option>
+            <option value="3">COM_APPOINTMENTS_WEEKDAY_3</option>
+            <option value="4">COM_APPOINTMENTS_WEEKDAY_4</option>
+            <option value="5">COM_APPOINTMENTS_WEEKDAY_5</option>
+            <option value="6">COM_APPOINTMENTS_WEEKDAY_6</option>
+            <option value="7">COM_APPOINTMENTS_WEEKDAY_7</option>
+        </field>
+
+        <field
+            name="start_time"
+            type="text"
+            label="COM_APPOINTMENTS_RULE_FIELD_START"
+            hint="09:00"
+            size="6"
+            pattern="[0-9]{1,2}:[0-9]{2}"
+        />
+
+        <field
+            name="end_time"
+            type="text"
+            label="COM_APPOINTMENTS_RULE_FIELD_END"
+            hint="17:00"
+            size="6"
+            pattern="[0-9]{1,2}:[0-9]{2}"
+        />
+    </fieldset>
+</form>

@@ -51,6 +51,7 @@
     <administration>
         <menu link="option=com_appointments">COM_APPOINTMENTS</menu>
         <files folder="administrator/components/com_appointments">
+            <folder>forms</folder>
             <folder>services</folder>
             <folder>sql</folder>
             <folder>src</folder>

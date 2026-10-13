@@ -23,15 +23,48 @@ class DisplayController extends BaseController
 {
     protected $default_view = 'dashboard';
 
+    /**
+     * Views that render an editable record form. Reaching them directly through
+     * view=schedule or view=blocked would otherwise show and save stored data
+     * without the task controllers' permission checks, so they are authorised
+     * here before being dispatched.
+     *
+     * @var  string[]
+     */
+    private const EDIT_VIEWS = ['schedule', 'blocked'];
+
     public function display($cachable = false, $urlparams = [])
     {
+        $user = $this->app->getIdentity();
+
         // Every view of this component shows booking data: who booked what and
         // when, with the name, e-mail address and telephone number the invitee
         // gave. Hiding the administrator menu entry is not an authorisation
         // boundary, because option=com_appointments can be requested directly,
         // so reaching any view requires the component management permission.
-        if (!$this->app->getIdentity()->authorise('core.manage', 'com_appointments')) {
+        if (!$user->authorise('core.manage', 'com_appointments')) {
             throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        $view = $this->input->getCmd('view', $this->default_view);
+
+        if (\in_array($view, self::EDIT_VIEWS, true)) {
+            $id = $this->input->getInt('id', 0);
+
+            // An existing record exposes stored configuration, so reading it
+            // requires core.edit. Only a blank form may be reached with
+            // core.create alone; an OR over both would let a create-only user
+            // read records they may not edit.
+            $allowed = $id > 0
+                ? $user->authorise('core.edit', 'com_appointments')
+                : (
+                    $user->authorise('core.create', 'com_appointments')
+                    || $user->authorise('core.edit', 'com_appointments')
+                );
+
+            if (!$allowed) {
+                throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
         }
 
         return parent::display($cachable, $urlparams);

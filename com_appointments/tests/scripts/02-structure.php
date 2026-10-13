@@ -289,10 +289,65 @@ class StructureTest
             return $columns === $expected;
         });
 
+        $this->test('A schedule rule is either weekly or date-specific', function () {
+            // The same table carries both shapes: a weekly row has a weekday
+            // and no date, a date-specific row has a date and no weekday. Both
+            // columns are therefore nullable, and a schema change that made
+            // either of them NOT NULL would break one of the two shapes.
+            $rules = "{$this->dbPrefix}appointments_schedule_rules";
+            $schedules = "{$this->dbPrefix}appointments_schedules";
+            $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+
+            $this->db->query("DELETE FROM {$schedules} WHERE title = 'structure-fixture'");
+            $this->db->query(
+                "INSERT INTO {$schedules} (title, timezone, owner_user_id, published, created_utc, modified_utc)"
+                . " VALUES ('structure-fixture', 'Europe/Zurich', 0, 1, '{$now}', '{$now}')"
+            );
+            $scheduleId = (int) $this->db->insert_id;
+
+            try {
+                $weekly = $this->db->query(
+                    "INSERT INTO {$rules} (schedule_id, weekday, specific_date, start_time, end_time)"
+                    . " VALUES ({$scheduleId}, 2, NULL, '10:00:00', '12:00:00')"
+                );
+                $override = $this->db->query(
+                    "INSERT INTO {$rules} (schedule_id, weekday, specific_date, start_time, end_time, is_unavailable)"
+                    . " VALUES ({$scheduleId}, NULL, '2026-12-24', '00:00:00', '00:00:00', 1)"
+                );
+
+                $result = $this->db->query(
+                    "SELECT COUNT(*) AS total, SUM(is_unavailable) AS closed FROM {$rules}"
+                    . " WHERE schedule_id = {$scheduleId}"
+                );
+                $row = $result ? $result->fetch_assoc() : null;
+
+                $stored = $row && (int) $row['total'] === 2 && (int) $row['closed'] === 1;
+            } finally {
+                $this->db->query("DELETE FROM {$rules} WHERE schedule_id = {$scheduleId}");
+                $this->db->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}");
+            }
+
+            return $weekly && $override && $stored;
+        });
+
         $files = [
             'Administrator provider'  => $this->admin . '/services/provider.php',
             'Component class'         => $this->admin . '/src/Extension/AppointmentsComponent.php',
             'KeyProvider helper'      => $this->admin . '/src/Helper/KeyProvider.php',
+            'AvailabilityWindow'      => $this->admin . '/src/Helper/AvailabilityWindow.php',
+            'ScheduleResolver'        => $this->admin . '/src/Helper/ScheduleResolver.php',
+            'SlotEngine'              => $this->admin . '/src/Helper/SlotEngine.php',
+            'SlotRules'               => $this->admin . '/src/Helper/SlotRules.php',
+            'Schedule table'          => $this->admin . '/src/Table/ScheduleTable.php',
+            'Blocked table'           => $this->admin . '/src/Table/BlockedTable.php',
+            'Schedule form'           => $this->admin . '/forms/schedule.xml',
+            'Schedule rule form'      => $this->admin . '/forms/schedulerule.xml',
+            'Schedule override form'  => $this->admin . '/forms/scheduleoverride.xml',
+            'Blocked period form'     => $this->admin . '/forms/blockedperiod.xml',
+            'Schedules layout'        => $this->admin . '/tmpl/schedules/default.php',
+            'Schedule layout'         => $this->admin . '/tmpl/schedule/edit.php',
+            'Blocked periods layout'  => $this->admin . '/tmpl/blockeds/default.php',
+            'Blocked period layout'   => $this->admin . '/tmpl/blocked/edit.php',
             'Dashboard view'          => $this->admin . '/src/View/Dashboard/HtmlView.php',
             'Dashboard layout'        => $this->admin . '/tmpl/dashboard/default.php',
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',

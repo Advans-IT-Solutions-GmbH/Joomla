@@ -37,6 +37,20 @@ Joomla's extension update screen.
 - An administrator dashboard that shows the number of event types and bookings and an empty state
   while nothing is configured yet.
 - A public page that lists the bookable event types a visitor is allowed to see.
+- **Schedules.** A named weekly pattern with any number of intervals per weekday, in one time zone,
+  plus date-specific entries that replace the weekly times of a single date or close it entirely.
+  A schedule that an event type still uses cannot be deleted.
+- **Blocked periods.** Time a host is not available, independent of any event type. Entered in the
+  operator's own time zone and stored in universal time.
+- **The slot engine.** The calculation behind the booking page: it turns a schedule, its overrides,
+  the blocked periods and the existing bookings into the bookable start times, honouring duration,
+  slot step, buffers, minimum notice, booking horizon and the daily and weekly caps. It handles both
+  days a year on which the clocks change: a time that never happened is never offered, and an hour
+  that happens twice is offered once. The engine has no clock and no database of its own, which is
+  why all of that is covered by unit tests.
+
+Still to come: the public booking form itself, e-mail notifications with the calendar attachment,
+calendar subscription feeds, the reschedule, cancel and erasure links, and the conferencing links.
 
 ## Signing keys
 

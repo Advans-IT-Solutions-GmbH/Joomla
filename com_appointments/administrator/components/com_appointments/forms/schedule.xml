@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<form>
+    <fieldset name="details">
+        <field
+            name="id"
+            type="number"
+            label="JGLOBAL_FIELD_ID_LABEL"
+            class="readonly"
+            readonly="true"
+            default="0"
+        />
+
+        <field
+            name="title"
+            type="text"
+            label="COM_APPOINTMENTS_SCHEDULE_FIELD_TITLE"
+            description="COM_APPOINTMENTS_SCHEDULE_FIELD_TITLE_DESC"
+            required="true"
+            size="50"
+        />
+
+        <field
+            name="timezone"
+            type="timezone"
+            label="COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE"
+            description="COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE_DESC"
+            required="true"
+        />
+
+        <field
+            name="owner_user_id"
+            type="user"
+            label="COM_APPOINTMENTS_SCHEDULE_FIELD_OWNER"
+            description="COM_APPOINTMENTS_SCHEDULE_FIELD_OWNER_DESC"
+        />
+    </fieldset>
+
+    <fieldset name="weekly">
+        <field
+            name="weekly_rules"
+            type="subform"
+            multiple="true"
+            layout="joomla.form.field.subform.repeatable-table"
+            formsource="administrator/components/com_appointments/forms/schedulerule.xml"
+            label="COM_APPOINTMENTS_SCHEDULE_FIELD_WEEKLY"
+            description="COM_APPOINTMENTS_SCHEDULE_FIELD_WEEKLY_DESC"
+        />
+    </fieldset>
+
+    <fieldset name="overrides">
+        <field
+            name="date_overrides"
+            type="subform"
+            multiple="true"
+            layout="joomla.form.field.subform.repeatable-table"
+            formsource="administrator/components/com_appointments/forms/scheduleoverride.xml"
+            label="COM_APPOINTMENTS_SCHEDULE_FIELD_OVERRIDES"
+            description="COM_APPOINTMENTS_SCHEDULE_FIELD_OVERRIDES_DESC"
+        />
+    </fieldset>
+
+    <fieldset name="state">
+        <field
+            name="published"
+            type="list"
+            label="JSTATUS"
+            default="1"
+            validate="options"
+        >
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+    </fieldset>
+</form>
