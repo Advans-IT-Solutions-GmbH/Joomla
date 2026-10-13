@@ -101,6 +101,69 @@
         </field>
     </fieldset>
 
+    <fieldset name="mtasts" label="COM_DMARCREPORTS_CONFIG_MTASTS_FIELDSET">
+        <field
+            name="mtasts_enable"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_CONFIG_MTASTS_ENABLE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MTASTS_ENABLE_DESC"
+            default="0"
+            validate="options"
+        >
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <field
+            name="mtasts_mode"
+            type="list"
+            label="COM_DMARCREPORTS_CONFIG_MTASTS_MODE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MTASTS_MODE_DESC"
+            default="testing"
+            validate="options"
+            showon="mtasts_enable:1"
+        >
+            <option value="none">COM_DMARCREPORTS_CONFIG_MTASTS_MODE_NONE</option>
+            <option value="testing">COM_DMARCREPORTS_CONFIG_MTASTS_MODE_TESTING</option>
+            <option value="enforce">COM_DMARCREPORTS_CONFIG_MTASTS_MODE_ENFORCE</option>
+        </field>
+
+        <field
+            name="mtasts_mx"
+            type="textarea"
+            label="COM_DMARCREPORTS_CONFIG_MTASTS_MX_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MTASTS_MX_DESC"
+            rows="4"
+            cols="40"
+            filter="raw"
+            showon="mtasts_enable:1"
+        />
+
+        <field
+            name="mtasts_max_age"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MTASTS_MAX_AGE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MTASTS_MAX_AGE_DESC"
+            default="604800"
+            min="86400"
+            max="31557600"
+            step="86400"
+            validate="range"
+            filter="raw"
+            showon="mtasts_enable:1"
+        />
+
+        <field
+            name="tlsrpt_rua"
+            type="text"
+            label="COM_DMARCREPORTS_CONFIG_TLSRPT_RUA_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_TLSRPT_RUA_DESC"
+            filter="string"
+            showon="mtasts_enable:1"
+        />
+    </fieldset>
+
     <fieldset
         name="permissions"
         label="JCONFIG_PERMISSIONS_LABEL"
