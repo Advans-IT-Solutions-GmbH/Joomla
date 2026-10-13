@@ -47,24 +47,48 @@ final class SystemDnsResolver implements DnsResolverInterface
         // normal "no DMARC record" case; but mapping every false to an empty
         // answer would report a record as missing during an outage. Separate the
         // two conservatively: only conclude the record is genuinely absent when
-        // the resolver works AND the host's parent zone still answers. A missing
-        // record under a healthy parent is NXDOMAIN (a NODATA host returns an
-        // empty array above, not false), whereas a failure that also takes out
-        // the parent spans the whole domain and is treated as an ambiguous
-        // resolver error (null) rather than a missing record. A failure scoped
-        // to this exact name while its parent answers cannot be told apart from
-        // NXDOMAIN without the response code and is the residual limitation here.
+        // the resolver works AND an ancestor zone of the host still answers. A
+        // missing record under a healthy ancestor is NXDOMAIN (a NODATA host
+        // returns an empty array above, not false), whereas a failure that also
+        // takes out every ancestor spans the whole domain and is treated as an
+        // ambiguous resolver error (null) rather than a missing record. A failure
+        // scoped to this exact name while an ancestor answers cannot be told
+        // apart from NXDOMAIN without the response code and is the residual
+        // limitation here.
         if (!$this->resolverIsHealthy()) {
             return null;
         }
 
-        $parent = $this->parentZone($host);
-
-        if ($parent !== null && $this->zoneAnswers($parent)) {
+        if ($this->anyAncestorAnswers($host)) {
             return [];
         }
 
         return null;
+    }
+
+    /**
+     * Walk the ancestor zones of a host, from its immediate parent up to the
+     * registrable domain, and report whether any of them answers. A host such as
+     * "_dmarc.mail.example.org" may sit below several non-existent parents
+     * ("mail.example.org") above a healthy registrable domain ("example.org");
+     * probing only the immediate parent would misread that layout as a
+     * domain-wide outage and hide the intended "verify the organizational-domain
+     * policy" finding. A single answering ancestor proves the zone hierarchy is
+     * reachable, so a missing record below it is NXDOMAIN rather than a failure.
+     */
+    private function anyAncestorAnswers(string $host): bool
+    {
+        $parent = $this->parentZone($host);
+
+        while ($parent !== null) {
+            if ($this->zoneAnswers($parent)) {
+                return true;
+            }
+
+            $parent = $this->parentZone($parent);
+        }
+
+        return false;
     }
 
     /**

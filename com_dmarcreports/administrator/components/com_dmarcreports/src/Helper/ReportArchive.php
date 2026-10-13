@@ -206,17 +206,25 @@ final class ReportArchive
                     continue;
                 }
 
-                // Bound the cumulative uncompressed size across all entries, so a
-                // zip packing many small-but-numerous files cannot exhaust memory.
-                $total += (int) $entry['size'];
-
-                if ($total > self::MAX_TOTAL_BYTES) {
-                    break;
-                }
-
+                // Only XML entries are ever read into memory, so only they may
+                // consume the cumulative budget. Charging a large README or
+                // signature file that is never materialised would let it push the
+                // running total past the limit and abandon a valid report that
+                // sits behind it in the archive.
                 if (!str_ends_with(strtolower($entry['name']), '.xml')) {
                     continue;
                 }
+
+                // Bound the cumulative uncompressed size across the XML reports
+                // that are actually extracted, so a zip packing many small report
+                // files cannot exhaust memory. Skip — rather than stop at — an XML
+                // entry that would overflow the budget, so a later, smaller report
+                // in the same archive can still be processed.
+                if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
+                    continue;
+                }
+
+                $total += (int) $entry['size'];
 
                 $content = $zip->getFromIndex($i);
 

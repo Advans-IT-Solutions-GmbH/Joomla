@@ -60,8 +60,14 @@ class SourceTable extends Table
      * Store the source, taking the shared parent-domain lock when the source is
      * bound to a domain so a concurrent domain delete cannot clear the sources
      * table and then remove the domain while this row is written, which would
-     * leave it orphaned. An unbound source (domain_id = 0) has no parent to
-     * protect and is stored directly. See {@see DomainLock} for the protocol.
+     * leave it orphaned. When the source is moved between domains (or unbound),
+     * both the origin and destination parents are locked: pinning the origin
+     * stops a concurrent delete of the old parent from cascading this row away
+     * between the read and the write and leaving an UPDATE that touches no row
+     * yet still reports success. The two parents are locked in ascending id order
+     * so two concurrent moves of the same pair cannot deadlock. An unbound source
+     * (domain_id = 0) that was already unbound has no parent to protect and is
+     * stored directly. See {@see DomainLock} for the protocol.
      *
      * @param   boolean  $updateNulls  Whether null values are updated.
      *
@@ -69,18 +75,54 @@ class SourceTable extends Table
      */
     public function store($updateNulls = false)
     {
-        $domainId = (int) $this->domain_id;
+        $newDomainId = (int) $this->domain_id;
+        $oldDomainId = $this->currentDomainId();
 
-        if ($domainId <= 0) {
+        // Positive parents that must be pinned for the write: the destination and,
+        // for a move, the origin. Deduplicate and sort ascending for a stable lock
+        // order shared with the delete cascade's IN (...) FOR UPDATE.
+        $parentIds = [];
+
+        if ($newDomainId > 0) {
+            $parentIds[$newDomainId] = true;
+        }
+
+        if ($oldDomainId > 0) {
+            $parentIds[$oldDomainId] = true;
+        }
+
+        if ($parentIds === []) {
             return parent::store($updateNulls);
         }
+
+        $parentIds = array_keys($parentIds);
+        sort($parentIds);
 
         $db = $this->getDatabase();
         $db->transactionStart();
 
         try {
-            if (!DomainLock::lock($db, $domainId)) {
-                $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_DOMAIN'));
+            foreach ($parentIds as $parentId) {
+                $locked = DomainLock::lock($db, $parentId);
+
+                // The destination domain must exist; a missing target is invalid
+                // and rejects the whole save. A missing origin is acceptable here
+                // (its delete may already have run) and is caught below by the
+                // row-existence check rather than reported as an invalid domain.
+                if (!$locked && $parentId === $newDomainId) {
+                    $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_DOMAIN'));
+                    $db->transactionRollback();
+
+                    return false;
+                }
+            }
+
+            // With the origin parent pinned, confirm an existing row still exists:
+            // a concurrent delete of the old parent may already have cascaded this
+            // source away, in which case parent::store() would UPDATE no row yet
+            // still return true and silently drop the change.
+            if ((int) $this->id > 0 && !$this->rowExists((int) $this->id)) {
+                $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_DELETED'));
                 $db->transactionRollback();
 
                 return false;
@@ -100,6 +142,48 @@ class SourceTable extends Table
         }
 
         return true;
+    }
+
+    /**
+     * The domain_id currently stored for this row, or 0 when the row is new or no
+     * longer present. Read before locking so a move can also pin the origin
+     * parent domain.
+     */
+    private function currentDomainId(): int
+    {
+        $id = (int) $this->id;
+
+        if ($id <= 0) {
+            return 0;
+        }
+
+        $db    = $this->getDatabase();
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName('domain_id'))
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $id, ParameterType::INTEGER);
+        $query->setLimit(1);
+
+        $value = $db->setQuery($query)->loadResult();
+
+        return $value === null ? 0 : (int) $value;
+    }
+
+    /**
+     * Whether the source row with the given id still exists.
+     */
+    private function rowExists(int $id): bool
+    {
+        $db    = $this->getDatabase();
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $id, ParameterType::INTEGER);
+        $query->setLimit(1);
+
+        return (int) $db->setQuery($query)->loadResult() === $id;
     }
 
     /**
