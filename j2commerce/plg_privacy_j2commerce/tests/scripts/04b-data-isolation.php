@@ -878,6 +878,11 @@ class DataIsolationTest
             $wantedIds  = [$legacy['apos_raw'], $legacy['apos_html5'], $legacy['apos_numeric']];
             sort($wantedIds);
             $this->test('Legacy export: an apostrophe address is found raw, as &apos; and as &#039;', $found === $wantedIds, json_encode($found));
+
+            // A domain written with entities in an otherwise plain body.
+            $legacy['encoded_domain'] = $this->insertGuestTestLegacyConsent('encoded.guest@ex&#97;mple.com');
+            $encodedFound             = array_map('intval', array_column($repository->findLegacyGuestConsents(['encoded.guest@example.com']), 'id'));
+            $this->test('Legacy export: an address with an entity-encoded domain is found', $encodedFound === [$legacy['encoded_domain']], json_encode($encodedFound));
             $this->test('Legacy removal: the same three records are anonymized',
                 $repository->anonymizeLegacyConsents(0, ["O'Brien.Guest@example.com"]) === 3
                 && $legacySubject($legacy['apos_raw']) === 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_SUBJECT_LEGACY'

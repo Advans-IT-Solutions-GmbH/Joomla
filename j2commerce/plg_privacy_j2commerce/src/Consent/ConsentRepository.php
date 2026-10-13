@@ -1020,7 +1020,7 @@ final class ConsentRepository
 
     /**
      * SQL preselection of bodies that may contain $email, lossless like addressPrefilter(): bodies
-     * with any non-ASCII character are candidates; otherwise the ASCII lower case of the body must
+     * with any non-ASCII or control character or an HTML entity are candidates; otherwise the ASCII lower case of the body must
      * contain "@" or its entity "&#64;" plus the domain (only for an ASCII domain: a non-ASCII
      * domain can only be stored in a body with non-ASCII characters). The local part may be stored
      * raw or with HTML entities in several forms. The decision is bodyHasAddress() in PHP.
@@ -1030,7 +1030,9 @@ final class ConsentRepository
         $email  = self::normaliseAddress($email);
         $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
         $body   = $this->db->quoteName('body');
-        $parts  = [self::nonAsciiCondition($this->db, $body)];
+        // Bodies with an HTML entity anywhere are candidates too: addressTokens() decodes them, so
+        // "user@ex&#97;mple.com" can be the address although the plain domain is not in the text.
+        $parts  = [self::nonAsciiCondition($this->db, $body), $body . ' LIKE ' . $this->db->quote('%&%')];
 
         if (!preg_match('/[^\x00-\x7F]/', $domain)) {
             $lower = self::isPostgres($this->db)

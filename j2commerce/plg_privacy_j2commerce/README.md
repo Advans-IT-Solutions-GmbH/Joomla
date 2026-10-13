@@ -165,7 +165,7 @@ This applies to both cases:
 - **Guest customer without account:** the export contains the guest orders, guest addresses and checkout consents of the address. A removal request anonymizes the guest orders outside the retention period, keeps and reports the others (e-mail to the request address, administrator message) and deletes the guest addresses while **Delete Addresses** is on. The customer e-mail names only what was removed: it says saved addresses were deleted only with that option on.
 - **Account with earlier guest orders:** the export and the removal request cover the account's orders and the guest orders placed with the request or account address before the account existed.
 
-Retention works as for registered users: every order is kept until the end of its retention period (**Retention Period**, counted from the end of the fiscal year of the order) and anonymized afterwards. Orders with a lifetime license keep their order e-mail address. Guest orders kept by a removal request are anonymized later by the cleanup task (guest orders outside the retention period, per order). A removal request is never refused.
+Retention works as for registered users: every order is kept until the end of its retention period (**Retention Period**, counted from the end of the fiscal year of the order) and anonymized afterwards. Orders with a lifetime license keep their order e-mail address. Guest orders kept by a removal request are anonymized later by the cleanup task (guest orders outside the retention period, per order). A removal request is not refused for retention reasons (only an account of a different address is refused, see above).
 
 ### Process for a guest customer
 
@@ -540,7 +540,7 @@ Validate the implementation using the following test procedure:
 4. Run data deletion via `Complete Request → Delete Data`
 5. **Expected Result:** the request is carried out; the order is anonymized except its e-mail address, and the administrator message lists it as a lifetime-license order whose e-mail address is kept
 
-A removal request is never refused by this plugin (see [Data Deletion](#data-deletion)).
+A removal request is not refused by this plugin for retention reasons (see [Data Deletion](#data-deletion)); it is refused only when Joomla found the account of a different address (see [Which data a request covers](#which-data-a-request-covers)).
 
 ---
 
@@ -608,7 +608,7 @@ Payment data (credit card details, bank information) is stored by payment servic
 ```
 1. User requests data deletion
    ↓
-2. Request carried out (never refused by this plugin):
+2. Request carried out (not refused by this plugin, except for an account of a different address):
           • account pseudonymised (Joomla core privacy user plugin)
           • saved addresses, carts of the account, AcyMailing data deleted
           • orders outside the retention period anonymized
@@ -822,7 +822,7 @@ The administrator message and the customer e-mail list the lifetime-license orde
 - Under "Action Log" section
 
 **Location 3: Request Status**
-- This plugin never blocks a removal request
+- This plugin does not block a removal request, except when Joomla found the account of a different address (the reason names both addresses)
 - Changes to "Complete" when deletion succeeds
 
 ---
@@ -831,7 +831,7 @@ The administrator message and the customer e-mail list the lifetime-license orde
 
 Request management (viewing, confirming, completing export and deletion requests) is handled by Joomla's core Privacy component. See the [Joomla Privacy Suite Guide](https://docs.joomla.org/Privacy_Suite_Guide) for the full workflow.
 
-This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request. AcyMailing data is looked up with the e-mail address of the request and the account address (every matching subscriber is exported and deleted) (captured before Joomla's privacy user plugin pseudonymises the account). Requests of customers without account are created by the administrator and confirmed by the customer on the confirmation page of this plugin, see [Process for a guest customer](#process-for-a-guest-customer).
+This plugin applies the retention logic in the deletion step: data that is not subject to a retention obligation is removed, orders within the retention period are kept and reported. It does not refuse the request, except when Joomla found the account of a different address. AcyMailing data is looked up with the e-mail address of the request and the account address (every matching subscriber is exported and deleted) (captured before Joomla's privacy user plugin pseudonymises the account). Requests of customers without account are created by the administrator and confirmed by the customer on the confirmation page of this plugin, see [Process for a guest customer](#process-for-a-guest-customer).
 
 ---
 
