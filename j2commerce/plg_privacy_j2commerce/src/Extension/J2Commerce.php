@@ -179,12 +179,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $emails = self::requestEmails($emails);
 
-        // Byte-exact after normalisation: under the column collation "muller@" would also match
-        // the order of "müller@", another person (ConsentRepository::exactAddressExpression()).
+        // The stored addresses that are a request address are decided in PHP
+        // (ConsentRepository::addressValues()), then matched byte-exact: under the column
+        // collation "muller@" would also match the order of "müller@", another person.
         if ($emails !== []) {
-            $parts[] = '(' . $db->quoteName($prefix . 'user_id') . ' = 0 AND '
-                . ConsentRepository::exactAddressExpression($db, $db->quoteName($prefix . $emailColumn)) . ' IN ('
-                . implode(',', array_map([$db, 'quote'], $emails)) . '))';
+            $table  = $emailColumn === 'email'
+                ? ($this->isJ2Commerce4() ? '#__j2store_addresses' : '#__j2commerce_addresses')
+                : ($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders');
+            $values = ConsentRepository::addressValues($db, $table, $emailColumn, $emails, [$db->quoteName('user_id') . ' = 0']);
+
+            if ($values !== []) {
+                $parts[] = '(' . $db->quoteName($prefix . 'user_id') . ' = 0 AND '
+                    . ConsentRepository::exactValuesCondition($db, $db->quoteName($prefix . $emailColumn), $values) . ')';
+            }
         }
 
         return $parts === [] ? '1 = 0' : '(' . implode(' OR ', $parts) . ')';
@@ -615,16 +622,17 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 continue;
             }
 
-            // Load subscriber record (byte-exact, see ownerCondition())
+            // Load subscriber record: preselected, decided in PHP (see ownerCondition())
             try {
                 $query = $this->createDbQuery()
                     ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
                     ->from($db->quoteName($prefix . 'user'))
-                    ->where(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')) . ' = :email')
-                    ->bind(':email', $email);
+                    ->where(ConsentRepository::addressPrefilter($db, $db->quoteName('email'), [$email]));
 
                 foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
-                    $acymUsers[(int) $row->id] = $row;
+                    if (ConsentRepository::normaliseAddress((string) $row->email) === $email) {
+                        $acymUsers[(int) $row->id] = $row;
+                    }
                 }
             } catch (\Exception $e) {
                 return null;
@@ -822,12 +830,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            // Byte-exact, see ownerCondition().
+            // Preselected, decided in PHP (see ownerCondition()).
             $query   = $this->createDbQuery()
-                ->select('id')
+                ->select(['id', 'email'])
                 ->from($db->quoteName($prefix . 'user'))
-                ->whereIn(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')), $emails, ParameterType::STRING);
-            $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+                ->where(ConsentRepository::addressPrefilter($db, $db->quoteName('email'), $emails));
+            $wanted  = array_flip($emails);
+            $acymIds = [];
+
+            foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                if (isset($wanted[ConsentRepository::normaliseAddress((string) $row->email)])) {
+                    $acymIds[] = (int) $row->id;
+                }
+            }
         } catch (\Exception $e) {
             return;
         }
@@ -2424,13 +2439,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->where($db->quoteName('status') . ' = 0')
                     ->where($db->quoteName('confirm_token') . ' <> ' . $db->quote(''))
                     ->where($db->quoteName('confirm_token_created_at') . ' IS NOT NULL')
-                    // Byte-exact, see ownerCondition(): "dürchtest@" must not reach the request of "durchtest@".
-                    ->where(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')) . ' = :email')
-                    ->bind(':email', $emails[0])
+                    // Preselected; the address is decided in PHP (see ownerCondition()):
+                    // "dürchtest@" must not reach the request of "durchtest@".
+                    ->where(ConsentRepository::addressPrefilter($db, $db->quoteName('email'), [$emails[0]]))
                     ->order($db->quoteName('id') . ' DESC')
-                    ->setLimit(self::CONFIRM_HASH_CHECKS)
             );
-            $rows = $db->loadObjectList() ?: [];
+            $rows = array_values(array_filter(
+                $db->loadObjectList() ?: [],
+                static fn (object $row): bool => ConsentRepository::normaliseAddress((string) $row->email) === $emails[0]
+            ));
+            $rows = \array_slice($rows, 0, self::CONFIRM_HASH_CHECKS);
         }
 
         // Always the same number of hash verifications (com_privacy allows one open request per

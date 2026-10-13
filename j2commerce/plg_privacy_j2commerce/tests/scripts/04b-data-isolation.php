@@ -1429,6 +1429,9 @@ class DataIsolationTest
             // Same address, other letter case: must still match.
             $caseAddress            = 'Case.Kunde-' . $suffix . '@Example.COM';
             $orders['case_expired'] = $this->insertGuestTestOrder('COLL-CASE-E-' . $suffix, 0, $caseAddress, $expired, 'Cora');
+            // Non-ASCII upper case stored, lower case requested: still the same address.
+            $umlautAddress            = 'ÜBER.KUNDE-' . $suffix . '@EXAMPLE.COM';
+            $orders['umlaut_expired'] = $this->insertGuestTestOrder('COLL-UML-E-' . $suffix, 0, $umlautAddress, $expired, 'Ulla');
 
             $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
             $plugin->setDatabase($this->db);
@@ -1493,6 +1496,22 @@ class DataIsolationTest
             $caseOrder = $this->loadGuestTestOrder($orders['case_expired']);
             $this->test('Other letter case of the same address: the expired guest order is anonymized',
                 $caseOrder && $caseOrder->user_email === 'anonymized@deleted.invalid', json_encode($caseOrder));
+
+            // A request without the umlaut does not reach the order, the request with it does.
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest('uber.kunde-' . $suffix . '@example.com'),
+                'user'    => null,
+            ]));
+            $umlautOrder = $this->loadGuestTestOrder($orders['umlaut_expired']);
+            $this->test('Stored ÜBER.KUNDE@: a request for uber.kunde@ does not reach it',
+                $umlautOrder && $umlautOrder->user_email === $umlautAddress, json_encode($umlautOrder, JSON_UNESCAPED_UNICODE));
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest('über.kunde-' . $suffix . '@example.com'),
+                'user'    => null,
+            ]));
+            $umlautOrder = $this->loadGuestTestOrder($orders['umlaut_expired']);
+            $this->test('Stored ÜBER.KUNDE@ (non-ASCII upper case): the request for über.kunde@ anonymizes it',
+                $umlautOrder && $umlautOrder->user_email === 'anonymized@deleted.invalid', json_encode($umlautOrder, JSON_UNESCAPED_UNICODE));
 
             // Action log: language key with the request ID and counts, no English text.
             $entry = $this->db->setQuery(
@@ -1560,7 +1579,7 @@ class DataIsolationTest
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id IN (' . implode(',', $requests) . ')')->execute();
             }
 
-            foreach ($logIds as $id) {
+            foreach (array_merge($logIds, ['-']) as $id) {
                 $this->db->setQuery(
                     'DELETE FROM ' . $this->db->quoteName('#__action_logs') . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
                     . ' AND ' . $this->db->quoteName('message') . ' LIKE ' . $this->db->quote('%"requestid":"' . $id . '"%')

@@ -97,7 +97,9 @@ final class ConsentRepository
     public const ADDRESS_CHARS = '[^\s@<>()\[\]{}",;:\\\\]';
 
     /**
-     * An e-mail address as it is compared: trimmed and lower case (Unicode).
+     * An e-mail address as it is compared: trimmed and lower case (Unicode, locale-independent).
+     * This is the only place where addresses are lower-cased for a decision; the database never
+     * decides whether two addresses are equal.
      */
     public static function normaliseAddress(string $email): string
     {
@@ -105,34 +107,115 @@ final class ConsentRepository
     }
 
     /**
-     * SQL expression of an e-mail column, trimmed and lower case, for a byte-exact comparison
-     * with values normalised by normaliseAddress().
-     *
-     * The column collation must not decide: under utf8mb4_unicode_ci and utf8mb4_general_ci
-     * "muller@example.com" equals "müller@example.com" and "strasse" equals "stra&szlig;e", which are
-     * different addresses of different people. On MySQL and MariaDB the expression is converted
-     * to utf8mb4 (also for utf8mb3 tables of J2Store) and compared with utf8mb4_bin. PostgreSQL
-     * compares deterministically by default and gets no COLLATE.
-     *
-     * @param   string  $quotedColumn  Column, already quoted (for example $db->quoteName('o.user_email'))
+     * Whether the database is PostgreSQL (else MySQL or MariaDB, the other servers Joomla runs on).
      */
-    public static function exactAddressExpression(DatabaseInterface $db, string $quotedColumn): string
+    private static function isPostgres(DatabaseInterface $db): bool
     {
-        return self::exactText($db, 'LOWER(TRIM(' . $quotedColumn . '))');
+        return method_exists($db, 'getServerType') && strtolower((string) $db->getServerType()) === 'postgresql';
     }
 
     /**
-     * $expression compared byte-exact (see exactAddressExpression()), for = and LIKE.
+     * ASCII-only lower case, independent of the PHP locale (strtolower() depends on it before PHP 8.2).
      */
-    public static function exactText(DatabaseInterface $db, string $expression): string
+    private static function asciiLower(string $value): string
     {
-        $serverType = method_exists($db, 'getServerType') ? strtolower((string) $db->getServerType()) : 'mysql';
+        return strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+    }
 
-        if ($serverType === 'postgresql') {
-            return $expression;
+    /**
+     * SQL condition that preselects rows whose column may hold one of $emails: a superset under any
+     * column collation and server locale, never the decision. The decision is
+     * normaliseAddress($value) === $email in PHP (addressValues()), because SQL lower-casing and
+     * collations differ from it: under utf8mb4_unicode_ci and general_ci "muller@example.com"
+     * equals "müller@example.com" (another person), and PostgreSQL lower-cases by the server
+     * locale (Turkish: "I" becomes a dotless i).
+     *
+     * MySQL/MariaDB: comparison with utf8mb4_unicode_ci (case- and accent-insensitive), converted
+     * to utf8mb4 so that utf8mb3 tables (J2Store) work too. PostgreSQL: ASCII lower case through
+     * the "C" collation, or lower case by the server locale.
+     *
+     * @param   string    $quotedColumn  Column, already quoted
+     * @param   string[]  $emails        Normalised addresses
+     */
+    public static function addressPrefilter(DatabaseInterface $db, string $quotedColumn, array $emails): string
+    {
+        $emails = array_values(array_unique(array_filter(array_map('strval', $emails), 'strlen')));
+
+        if ($emails === []) {
+            return '1 = 0';
         }
 
-        return 'CONVERT(' . $expression . ' USING utf8mb4) COLLATE utf8mb4_bin';
+        $list = static fn (array $values): string => implode(',', array_map([$db, 'quote'], $values));
+
+        if (self::isPostgres($db)) {
+            return '(LOWER(TRIM(' . $quotedColumn . ') COLLATE "C") IN (' . $list(array_map([self::class, 'asciiLower'], $emails)) . ')'
+                . ' OR LOWER(TRIM(' . $quotedColumn . ')) IN (' . $list($emails) . '))';
+        }
+
+        return 'CONVERT(TRIM(' . $quotedColumn . ') USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (' . $list($emails) . ')';
+    }
+
+    /**
+     * SQL condition matching exactly the given stored values (byte-exact after SQL TRIM), for
+     * values found by addressValues(). MySQL/MariaDB compare with utf8mb4_bin; PostgreSQL compares
+     * deterministically by default.
+     *
+     * @param   string    $quotedColumn  Column, already quoted
+     * @param   string[]  $values        Stored values (trimmed)
+     */
+    public static function exactValuesCondition(DatabaseInterface $db, string $quotedColumn, array $values): string
+    {
+        $values = array_values(array_unique(array_map('strval', $values)));
+
+        if ($values === []) {
+            return '1 = 0';
+        }
+
+        $column = self::isPostgres($db)
+            ? 'TRIM(' . $quotedColumn . ')'
+            : 'CONVERT(TRIM(' . $quotedColumn . ') USING utf8mb4) COLLATE utf8mb4_bin';
+
+        return $column . ' IN (' . implode(',', array_map([$db, 'quote'], $values)) . ')';
+    }
+
+    /**
+     * The stored values (trimmed, as SQL TRIM returns them) of $column in $table that are one of
+     * $emails after normaliseAddress(): preselected with addressPrefilter(), decided in PHP.
+     *
+     * @param   string[]  $emails  Normalised addresses
+     * @param   string[]  $where   Further conditions (already quoted)
+     *
+     * @return  string[]
+     */
+    public static function addressValues(DatabaseInterface $db, string $table, string $column, array $emails, array $where = []): array
+    {
+        $wanted = array_flip(array_values(array_filter(array_map('strval', $emails), 'strlen')));
+
+        if ($wanted === []) {
+            return [];
+        }
+
+        $quoted = $db->quoteName($column);
+        $query  = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select('TRIM(' . $quoted . ') AS ' . $db->quoteName('value'))
+            ->from($db->quoteName($table))
+            ->where(self::addressPrefilter($db, $quoted, array_keys($wanted)));
+
+        foreach ($where as $condition) {
+            $query->where($condition);
+        }
+
+        $values = [];
+
+        foreach ($db->setQuery($query)->loadColumn() ?: [] as $value) {
+            $value = (string) $value;
+
+            if (isset($wanted[self::normaliseAddress($value)])) {
+                $values[$value] = true;
+            }
+        }
+
+        return array_map('strval', array_keys($values));
     }
 
     /**
@@ -199,7 +282,7 @@ final class ConsentRepository
 
         $wanted = array_flip($emails);
         $likes  = array_map(
-            fn (string $email): string => $this->addressPrefilter($email),
+            fn (string $email): string => $this->bodyPrefilter($email),
             $emails
         );
         $rows   = [];
@@ -677,7 +760,7 @@ final class ConsentRepository
                 // Under a case-sensitive collation "Anna@Example.com" in the body would otherwise
                 // never reach the case-insensitive check below.
                 foreach ($emails as $email) {
-                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->addressPrefilter($email) . ')';
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->bodyPrefilter($email) . ')';
                 }
 
                 $query->where('(' . implode(' OR ', $scope) . ')');
@@ -883,20 +966,24 @@ final class ConsentRepository
             return [];
         }
 
-        // One token identifies one order; nothing else of that e-mail address is looked up.
-        $normalisedEmail = self::normaliseAddress($guestEmail);
-        $query           = $this->createQuery()
-            ->select($this->db->quoteName('order_id'))
+        // One token identifies one order; nothing else of that e-mail address is looked up. The
+        // address is compared in PHP (normaliseAddress()), not under the column collation.
+        $query = $this->createQuery()
+            ->select($this->db->quoteName(['order_id', 'user_email']))
             ->from($this->db->quoteName($table))
             ->where($this->db->quoteName('user_id') . ' = 0')
             ->where($this->db->quoteName('token') . ' = :token')
-            ->where(self::exactAddressExpression($this->db, $this->db->quoteName('user_email')) . ' = :email')
-            ->bind(':token', $guestToken)
-            ->bind(':email', $normalisedEmail)
-            ->setLimit(1);
+            ->bind(':token', $guestToken);
 
         $this->db->setQuery($query);
-        $orderId = (string) $this->db->loadResult();
+        $orderId = '';
+
+        foreach ($this->db->loadObjectList() ?: [] as $row) {
+            if (self::normaliseAddress((string) $row->user_email) === self::normaliseAddress($guestEmail)) {
+                $orderId = (string) $row->order_id;
+                break;
+            }
+        }
 
         if (!self::isValidOrderId($orderId)) {
             return [];
@@ -908,22 +995,28 @@ final class ConsentRepository
     }
 
     /**
-     * SQL preselection of bodies that may contain $email. Only the domain is compared ("@" or
-     * its entity "&#64;" plus the domain, lower case): the local part may be stored raw or with
-     * HTML entities in several forms. The exact decision is bodyHasAddress().
+     * SQL preselection of bodies that may contain $email: only the domain is compared ("@" or its
+     * entity "&#64;" plus the domain), case- and accent-insensitive, so a superset under any
+     * collation and server locale. The local part may be stored raw or with HTML entities in
+     * several forms. The decision is bodyHasAddress() in PHP.
      */
-    private function addressPrefilter(string $email): string
+    private function bodyPrefilter(string $email): string
     {
         $email  = self::normaliseAddress($email);
         $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
-        $body   = self::exactText($this->db, 'LOWER(' . $this->db->quoteName('body') . ')');
+        $body   = $this->db->quoteName('body');
         $likes  = [];
 
-        // Byte-exact: under the column collation "@example.com" would also preselect
-        // "@exämple.com" (the exact decision is made in PHP anyway).
         foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
             foreach (['@', '&#64;'] as $at) {
-                $likes[] = $body . ' LIKE ' . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+                $pattern = '%' . $this->db->escape($at . $form, true) . '%';
+
+                if (self::isPostgres($this->db)) {
+                    $likes[] = 'LOWER(' . $body . ' COLLATE "C") LIKE ' . $this->db->quote(self::asciiLower($pattern), false);
+                    $likes[] = 'LOWER(' . $body . ') LIKE ' . $this->db->quote($pattern, false);
+                } else {
+                    $likes[] = 'CONVERT(' . $body . ' USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ' . $this->db->quote($pattern, false);
+                }
             }
         }
 
