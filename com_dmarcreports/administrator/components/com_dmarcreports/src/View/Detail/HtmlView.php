@@ -32,6 +32,9 @@ class HtmlView extends BaseHtmlView
     /** @var array<string, mixed> */
     protected $mtasts = [];
 
+    /** @var array<string, mixed> */
+    protected $tlsrpt = [];
+
     /** @var array<int, array<string, mixed>> */
     protected $actions = [];
 
@@ -49,6 +52,7 @@ class HtmlView extends BaseHtmlView
         if ($this->metrics !== null) {
             $this->dns     = $model->getDnsDiagnostics($this->metrics);
             $this->mtasts  = $model->getMtaStsDiagnostics($this->metrics);
+            $this->tlsrpt  = $model->getTlsRptSummary($this->metrics);
             $this->actions = $model->getActions($this->metrics, $this->dns, $this->mtasts);
         }
 

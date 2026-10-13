@@ -131,6 +131,20 @@ class DetailModel extends BaseDatabaseModel
     }
 
     /**
+     * TLS-RPT (RFC 8460) delivery summary for the selected domain, read from the
+     * ingested TLS-RPT reports so the drill-down view can surface successful and
+     * failed TLS sessions alongside the DMARC figures.
+     *
+     * @param   array<string, mixed>  $metrics
+     *
+     * @return  array<string, mixed>
+     */
+    public function getTlsRptSummary(array $metrics): array
+    {
+        return (new Metrics())->tlsRptSummary((int) $metrics['domain_id']);
+    }
+
+    /**
      * The prioritised action items for the selected domain.
      *
      * @param   array<string, mixed>  $metrics

@@ -23,3 +23,7 @@ require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';
 require_once $helperDir . '/SourceIdentity.php';
+require_once $helperDir . '/PolicyFetcherInterface.php';
+require_once $helperDir . '/MtaStsPolicy.php';
+require_once $helperDir . '/MtaStsDiagnostics.php';
+require_once $helperDir . '/TlsRptParser.php';

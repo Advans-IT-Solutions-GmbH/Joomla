@@ -162,6 +162,49 @@ defined('_JEXEC') or die;
         </div>
 
         <div class="card mb-4">
+            <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_HEADING'); ?></h3></div>
+            <div class="card-body">
+                <?php if (empty($this->tlsrpt['reports'])) : ?>
+                    <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_NONE'); ?></div>
+                <?php else : ?>
+                <dl class="row">
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_REPORTS'); ?></dt>
+                    <dd class="col-sm-9"><?php echo (int) $this->tlsrpt['reports']; ?></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SUCCESS'); ?></dt>
+                    <dd class="col-sm-9"><?php echo (int) $this->tlsrpt['success']; ?></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_FAILURE'); ?></dt>
+                    <dd class="col-sm-9">
+                        <span class="badge bg-<?php echo $this->tlsrpt['failure'] > 0 ? 'danger' : 'success'; ?>">
+                            <?php echo (int) $this->tlsrpt['failure']; ?>
+                        </span>
+                    </dd>
+                </dl>
+                <?php if (!empty($this->tlsrpt['failures'])) : ?>
+                    <h4 class="h6"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_FAILURES_HEADING'); ?></h4>
+                    <table class="table table-sm table-striped mb-0">
+                        <thead><tr>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_RESULT_TYPE'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_MX'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SENDER'); ?></th>
+                            <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SESSIONS'); ?></th>
+                        </tr></thead>
+                        <tbody>
+                            <?php foreach ($this->tlsrpt['failures'] as $fail) : ?>
+                            <tr>
+                                <td><code><?php echo htmlspecialchars((string) $fail['result_type']); ?></code></td>
+                                <td><?php echo htmlspecialchars((string) $fail['receiving_mx_host']); ?></td>
+                                <td><?php echo htmlspecialchars((string) $fail['sending_mta_ip']); ?></td>
+                                <td class="text-end"><?php echo (int) $fail['sessions']; ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="card mb-4">
             <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_HEADING'); ?></h3></div>
             <div class="card-body">
                 <?php if (empty($m['top_sources'])) : ?>
