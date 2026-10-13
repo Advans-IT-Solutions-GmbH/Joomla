@@ -13,6 +13,7 @@ use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
 
 defined('_JEXEC') or die;
@@ -103,7 +104,13 @@ class SourceModel extends AdminModel
             $current = $this->getExistingPassword($pk);
             $data['password_enc'] = $current;
         } else {
-            $data['password_enc'] = '';
+            // A new source must carry a credential. The blank-means-unchanged
+            // shortcut above only applies to edits; a create saved with an empty
+            // password (and sources default to published) would fail IMAP LOGIN
+            // on every run, so reject it with a localized validation error.
+            $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REQUIRED'));
+
+            return false;
         }
 
         unset($data['password']);
