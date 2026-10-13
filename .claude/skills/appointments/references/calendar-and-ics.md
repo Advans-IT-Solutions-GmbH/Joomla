@@ -15,10 +15,13 @@ It returns the start times, in UTC, that are bookable. The algorithm:
 1. Resolve the weekly schedule for each date in the range, in the schedule's time zone, applying
    date-specific overrides. A date with an `is_unavailable` row yields nothing.
 2. Convert each window to UTC. A window crossing midnight stays one window.
-3. Subtract every blocked period, and every active booking **extended by the buffers**: a booking
-   from 10:00 to 10:20 with a 10-minute buffer on each side removes 09:50 to 10:30.
-4. Walk each remaining window on the slot-step grid, anchored to the window start. A start time is
-   bookable when `start + duration <= window end`.
+3. Walk each window on the slot-step grid, **anchored to the window start**.
+4. A start time is bookable when all three hold:
+   - the **meeting** `[start, start + duration)` lies inside a free piece of the window, where the
+     free pieces are what is left after every occupied period is removed;
+   - the meeting **with its own buffers** lies inside the window, which is what moves the first and
+     last start of a window inward when buffers are configured;
+   - the meeting with its own buffers **does not overlap another meeting**.
 5. Drop every start earlier than `now + minimum notice`.
 6. Drop every start outside the horizon. The horizon is counted in calendar days in the schedule's
    time zone: with `horizon_days = 30`, the last bookable day is the 30th day after today, through
@@ -28,6 +31,37 @@ It returns the start times, in UTC, that are bookable. The algorithm:
 
 The engine is pure: same inputs, same output, no clock, no database, no Joomla. That is what makes
 the DST and horizon tests possible.
+
+### Why step 4 takes three conditions and not one
+
+Each obstacle is handed to the engine as a `BusyPeriod` carrying **two** windows: the meeting
+itself, and the period it occupies with the buffers of **its own** event type. Both are needed:
+
+- Checking only the meeting against the occupied periods would let an event type with a long buffer
+  place that buffer on top of somebody else's appointment.
+- Checking the occupied periods against each other would add the two buffers up, so two
+  neighbouring meetings with ten minutes of buffer each would need twenty minutes between them. A
+  buffer is a minimum gap, not a second reservation.
+
+An absence, and time the schedule itself does not offer, is a `BusyPeriod` whose two windows are the
+same: neither a meeting nor a buffer may lie inside it.
+
+The engine never applies the searched event type's buffers to somebody else's booking, because one
+host can serve several event types with different buffers.
+
+### Two rules about the grid that are easy to break
+
+- **The grid is anchored to the start of the schedule window, never to a cut-down window.** A window
+  clipped at `now + minimum notice`, at the horizon edge, at a clock change or next to a
+  date-specific entry would move the grid and offer times the schedule never contained, such as
+  10:31 for a schedule of 10:00 and 10:30. `ScheduleResolver` therefore returns whole windows and
+  reports what has to come out of them separately, and the engine removes those like any other
+  occupied period.
+- **Windows of two different local dates are never merged.** Merging them makes the anchor depend on
+  which date the resolution started from, so a month-long availability query and a one-day re-check
+  can offer different times for the same day — and the second one is the booking guard. The price is
+  that a meeting cannot span the boundary between two dates' windows; an operator who needs that
+  writes one rule crossing midnight, which stays one window.
 
 ### Daylight saving time
 

@@ -323,10 +323,21 @@ class ScheduleModel extends AdminModel
             $closed = !empty($rule['is_unavailable']);
 
             if ($closed) {
+                // A closed day has no times. Replacing entered ones with
+                // midnight would report a successful save while throwing away
+                // what the operator typed, and a typo in the availability
+                // selector would be invisible.
+                if (
+                    trim((string) ($rule['start_time'] ?? '')) !== ''
+                    || trim((string) ($rule['end_time'] ?? '')) !== ''
+                ) {
+                    $this->setError(Text::sprintf('COM_APPOINTMENTS_SCHEDULE_ERROR_MIXED_DATE', $date));
+
+                    return null;
+                }
+
                 $closedDates[$date] = true;
 
-                // A closed day needs no times, and storing one would suggest
-                // the day is partly open.
                 $rows[] = [
                     'weekday'        => null,
                     'specific_date'  => $date,
