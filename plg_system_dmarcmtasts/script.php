@@ -19,13 +19,21 @@ class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
 
     public function postflight(string $type, object $parent): void
     {
-        if ($type === 'install') {
-            $this->enablePlugin();
-
+        if ($type !== 'install' && $type !== 'update') {
             return;
         }
 
-        if ($type !== 'update') {
+        $app  = Factory::getApplication();
+        $lang = $app->getLanguage();
+        $lang->load('plg_system_dmarcmtasts', JPATH_ADMINISTRATOR);
+        $lang->load('plg_system_dmarcmtasts', $parent->getParent()->getPath('source'));
+
+        // A fresh install enables the plugin and shows the short orientation
+        // message that points at the component options to turn on MTA-STS.
+        if ($type === 'install') {
+            $this->enablePlugin();
+            $app->enqueueMessage(Text::_('PLG_SYSTEM_DMARCMTASTS_POSTINSTALL_INTRO'), 'message');
+
             return;
         }
 
@@ -35,11 +43,6 @@ class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
         if ($this->isPluginEnabled()) {
             return;
         }
-
-        $app  = Factory::getApplication();
-        $lang = $app->getLanguage();
-        $lang->load('plg_system_dmarcmtasts', JPATH_ADMINISTRATOR);
-        $lang->load('plg_system_dmarcmtasts', $parent->getParent()->getPath('source'));
 
         $app->enqueueMessage(Text::_('PLG_SYSTEM_DMARCMTASTS_ENABLE_HINT'), 'message');
     }
