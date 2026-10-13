@@ -37,8 +37,8 @@ final class ActionCenter
      */
     public static function generate(array $metrics, array $config, array $dnsFindings = []): array
     {
-        $quarantineThreshold = (float) ($config['quarantine_pass_threshold'] ?? 95);
-        $rejectThreshold     = (float) ($config['reject_pass_threshold'] ?? 99);
+        $quarantineThreshold = self::threshold($config, 'quarantine_pass_threshold', 95.0);
+        $rejectThreshold     = self::threshold($config, 'reject_pass_threshold', 99.0);
 
         // Reject enforcement demands a stricter pass rate than quarantine. If the
         // options are misconfigured so that reject sits below quarantine, raise the
@@ -182,6 +182,30 @@ final class ActionCenter
         }
 
         return self::finalise($items, $domainId, $dnsFindings);
+    }
+
+    /**
+     * Read a numeric threshold from the config array, treating an empty string
+     * or a non-numeric value as absent so it falls back to the declared default.
+     * com_config persists an emptied number field as "", which a bare (float)
+     * cast would turn into 0 and silently disable the bound; the default keeps
+     * the rollout thresholds inside their valid range.
+     *
+     * @param   array<string, mixed>  $config   Component thresholds.
+     * @param   string                $key      Threshold key.
+     * @param   float                 $default  Fallback when empty or non-numeric.
+     *
+     * @return  float
+     */
+    private static function threshold(array $config, string $key, float $default): float
+    {
+        $value = $config[$key] ?? null;
+
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return $default;
+        }
+
+        return (float) $value;
     }
 
     /**

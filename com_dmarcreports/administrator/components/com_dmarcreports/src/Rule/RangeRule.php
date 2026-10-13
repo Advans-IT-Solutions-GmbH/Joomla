@@ -36,22 +36,20 @@ class RangeRule extends FormRule
      * @param   Registry|null      $input    The full submitted data set.
      * @param   Form|null          $form     The form instance.
      *
-     * @return  boolean  True when the value is a whole number within bounds, or
-     *                   empty on an optional field; false otherwise.
+     * @return  boolean  True when the value is empty, or a whole number within
+     *                   the declared bounds; false otherwise.
      */
     public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null): bool
     {
         $value = (string) $value;
 
-        // An empty value on an optional field is deferred to the required rule.
-        // On a required field it must fail here directly: core's required check
-        // is not reliably applied on every save path (com_config can persist an
-        // empty number), and consumers cast "" to 0, which is outside the
-        // declared min/max. Enforcing it here keeps the bound authoritative.
+        // An empty value is accepted here: this rule only bounds values that are
+        // actually present. Presence is signalled by the field's required flag,
+        // and every consumer reads these options via Registry::get($key, $default),
+        // which returns the declared default for an empty/missing value, so an
+        // emptied option falls back to a safe in-range default rather than 0.
         if ($value === '') {
-            $required = strtolower((string) ($element['required'] ?? ''));
-
-            return !\in_array($required, ['true', 'required', '1'], true);
+            return true;
         }
 
         // Validate the raw lexical value as a plain integer. is_numeric() would
