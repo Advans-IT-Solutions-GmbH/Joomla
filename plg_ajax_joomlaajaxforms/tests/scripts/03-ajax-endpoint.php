@@ -621,14 +621,15 @@ class AjaxEndpointTest
      * The script builds the endpoint URL itself, in config.baseUrl. It must use
      * a raw & so that a redirect of the language filter keeps every parameter.
      *
-     * Only the return values of that function are inspected, not the whole
-     * script, so a commented-out URL elsewhere plays no part. The function is
-     * located outside JavaScript comments only (a commented-out copy never
-     * counts), and a self-check on variants of the script proves that. It is
-     * plain ES5 (identifiers, string literals, comments, no template or regex
-     * literal), where the PHP tokenizer splits strings and comments exactly as
-     * JavaScript does. A template or regex literal in it fails the check, so
-     * this assumption cannot silently stop holding.
+     * The script is split into tokens by the PHP tokenizer. For the parts that
+     * matter here, string literals, comments, identifiers and punctuation, it
+     * splits exactly as JavaScript does, so the property is only found as
+     * executable code: a copy inside a comment or a string literal is a comment
+     * or string token and never counts. Where the two lexers could disagree
+     * (inline HTML or a closing PHP tag anywhere, a template or regex literal,
+     * "#" inside the function) the check fails instead of guessing. A
+     * self-check on variants of the script proves that the reader rejects what
+     * it must reject.
      */
     private function testScriptEndpointUrlIsRaw(): bool
     {
@@ -648,9 +649,9 @@ class AjaxEndpointTest
         $problems = $this->baseUrlProblems($source, $urls);
 
         // Self-check of the reader on variants of the shipped script: a
-        // commented-out baseUrl (block or line comment) must never count as
-        // the endpoint, and an escaped URL must fail. Otherwise the guard
-        // could pass while the real assignment is gone.
+        // baseUrl inside a comment or a string literal must never count as
+        // the endpoint, and every broken or escaped return branch must fail.
+        // Otherwise the guard could pass while the real assignment is gone.
         if ($problems === []) {
             $problems = $this->baseUrlSelfCheck($source);
         }
@@ -667,11 +668,9 @@ class AjaxEndpointTest
     }
 
     /**
-     * Problems of the endpoint URL that config.baseUrl returns, or [] when it
-     * is the raw com_ajax URL. $urls receives the URLs found.
-     *
-     * The function is located only outside JavaScript comments. Exactly one
-     * such definition must exist.
+     * Problems of the endpoint URL that config.baseUrl returns, or [] when
+     * every return branch returns the raw com_ajax URL. $urls receives the
+     * URLs found. Exactly one executable definition must exist.
      *
      * @param  string[]  $urls
      *
@@ -679,27 +678,29 @@ class AjaxEndpointTest
      */
     private function baseUrlProblems(string $source, array &$urls): array
     {
-        $urls   = [];
-        $blocks = $this->baseUrlDefinitions($source);
+        $urls        = [];
+        $definitions = $this->baseUrlDefinitions($source, $unreadable);
 
-        if (count($blocks) !== 1) {
-            return ['expected one config.baseUrl function outside comments, found ' . count($blocks)];
+        if ($unreadable !== null) {
+            return ['the script cannot be read reliably: ' . $unreadable];
+        }
+
+        if (count($definitions) !== 1) {
+            return ['expected one executable config.baseUrl function, found ' . count($definitions)];
         }
 
         $problems = [];
         $returns  = 0;
-        $tokens   = token_get_all('<?php ' . $blocks[0][1][0]);
+        $tokens   = $definitions[0]['body'];
 
         foreach ($tokens as $i => $token) {
             $text = is_array($token) ? $token[1] : $token;
 
             // Where the two lexers could disagree, fail instead of guessing: a
             // template literal (backtick), a bare slash (regex literal or
-            // division, neither belongs in a URL builder), a "#" (a comment
-            // in PHP, a private field in JavaScript) and a closing PHP tag
-            // (ends PHP mode, the rest would be read as inline HTML).
+            // division, neither belongs in a URL builder) and a "#" (a comment
+            // in PHP, a private field in JavaScript).
             if ($text === '`' || $text === '/'
-                || (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML], true))
                 || (is_array($token) && $token[0] === T_COMMENT && $text[0] === '#')
             ) {
                 $problems[] = 'config.baseUrl contains code this check cannot read reliably: ' . trim($text);
@@ -751,52 +752,107 @@ class AjaxEndpointTest
     }
 
     /**
-     * The config.baseUrl function definitions outside JavaScript comments, as
-     * preg matches with offsets: [0] the whole definition, [1] its body.
+     * The executable definitions "baseUrl: (function() { ... })()" of the
+     * script, found in its token stream: start and end byte offset of the
+     * whole definition and the tokens of the function body. A copy inside a
+     * comment or a string literal is a single comment or string token and is
+     * never found. $unreadable names the reason when the token stream cannot
+     * be trusted (inline HTML or a closing PHP tag), otherwise it is null.
      *
-     * @return array<int, array<int, array{0:string, 1:int}>>
+     * @return array<int, array{start:int, end:int, body:array<int, mixed>}>
      */
-    private function baseUrlDefinitions(string $source): array
+    private function baseUrlDefinitions(string $source, ?string &$unreadable = null): array
     {
-        preg_match_all('/baseUrl\s*:\s*\(function\s*\(\)\s*\{(.*?)\}\)\(\)/s', $source, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        $unreadable = null;
+        $tokens     = token_get_all('<?php ' . $source);
+        $offsets    = [];
+        $position   = -strlen('<?php ');
 
-        return array_values(array_filter($all, function (array $match) use ($source): bool {
-            return !$this->jsOffsetInComment($source, $match[0][1]);
-        }));
-    }
+        foreach ($tokens as $i => $token) {
+            $offsets[$i] = $position;
+            $position   += strlen(is_array($token) ? $token[1] : $token);
 
-    /**
-     * Whether a position of the script lies inside a JavaScript comment.
-     *
-     * Block comment: the last "/*" before the position comes after the last
-     * closing marker. A block comment cannot contain its closing marker, so a
-     * real block comment is never missed. Line comment: the line up to the
-     * position contains "//". A comment marker inside a string can only make
-     * code look commented, never the other way round, so the error is always
-     * on the safe side: the check fails instead of passing.
-     */
-    private function jsOffsetInComment(string $source, int $offset): bool
-    {
-        $before = substr($source, 0, $offset);
-        $open   = strrpos($before, '/*');
-        $close  = strrpos($before, '*/');
+            if (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML], true)) {
+                $unreadable = 'PHP tokenizer left code mode at byte ' . max(0, $offsets[$i]);
 
-        if ($open !== false && ($close === false || $close < $open)) {
-            return true;
+                return [];
+            }
         }
 
-        $lineStart = strrpos($before, "\n");
-        $line      = $lineStart === false ? $before : substr($before, $lineStart + 1);
+        // Indexes of the significant tokens (no whitespace, no comments).
+        $significant = [];
 
-        return strpos($line, '//') !== false;
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token) || !in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG], true)) {
+                $significant[] = $i;
+            }
+        }
+
+        $text = static function (int $i) use ($tokens): string {
+            return is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
+        };
+
+        $definitions = [];
+        $count       = count($significant);
+
+        for ($k = 0; $k + 6 < $count; $k++) {
+            $s = array_slice($significant, $k, 7);
+
+            if (!is_array($tokens[$s[0]]) || $tokens[$s[0]][0] !== T_STRING || $tokens[$s[0]][1] !== 'baseUrl'
+                || $text($s[1]) !== ':' || $text($s[2]) !== '('
+                || !is_array($tokens[$s[3]]) || $tokens[$s[3]][0] !== T_FUNCTION
+                || $text($s[4]) !== '(' || $text($s[5]) !== ')' || $text($s[6]) !== '{'
+            ) {
+                continue;
+            }
+
+            // Walk to the brace that closes the function body.
+            $depth = 0;
+            $close = null;
+
+            for ($i = $s[6]; $i < count($tokens); $i++) {
+                $t = $text($i);
+
+                if ($t === '{' || $t === '${') {
+                    $depth++;
+                } elseif ($t === '}') {
+                    $depth--;
+
+                    if ($depth === 0) {
+                        $close = $i;
+                        break;
+                    }
+                }
+            }
+
+            if ($close === null) {
+                continue;
+            }
+
+            // The function must be called right away: "})()".
+            $after = array_values(array_filter($significant, static fn (int $i): bool => $i > $close));
+
+            if (count($after) < 3 || $text($after[0]) !== ')' || $text($after[1]) !== '(' || $text($after[2]) !== ')') {
+                continue;
+            }
+
+            $definitions[] = [
+                'start' => $offsets[$s[0]],
+                'end'   => $offsets[$after[2]] + 1,
+                'body'  => array_slice($tokens, $s[6] + 1, $close - $s[6] - 1),
+            ];
+        }
+
+        return $definitions;
     }
 
     /**
      * Run baseUrlProblems() on variants of the shipped script and return what
-     * it misjudged. The real config.baseUrl is replaced by a commented-out
-     * copy (multi-line block comment, single-line block comment, line
-     * comment), which must fail; an escaped URL must fail; an additional
-     * commented-out copy next to the real function must still pass.
+     * it misjudged. Must fail: the real config.baseUrl replaced by a copy in a
+     * multi-line block comment, a single-line block comment, a line comment or
+     * a string literal; an escaped URL; each return branch broken or escaped
+     * on its own. Must pass: the real function next to an extra commented-out
+     * copy and an extra copy inside a string literal.
      *
      * @return string[]
      */
@@ -808,14 +864,17 @@ class AjaxEndpointTest
             return ['self-check: config.baseUrl not found'];
         }
 
-        [$real, $offset] = $definitions[0][0];
+        $offset  = $definitions[0]['start'];
+        $real    = substr($source, $offset, $definitions[0]['end'] - $offset);
         $url     = '/index.php?option=com_ajax&plugin=joomlaajaxforms&format=json';
+        $copy    = "baseUrl: (function() { return '" . $url . "'; })()";
         $replace = static fn (string $with): string => substr_replace($source, $with, $offset, strlen($real));
 
         $mustFail = [
-            'multi-line block comment' => $replace("/*\nbaseUrl: (function() { return '" . $url . "'; })()\n*/"),
-            'single-line block comment' => $replace("/* baseUrl: (function(){ return '" . $url . "'; })() */"),
-            'line comment'              => $replace("// baseUrl: (function(){ return '" . $url . "'; })(),"),
+            'multi-line block comment'  => $replace("/*\n" . $copy . "\n*/ x: 1"),
+            'single-line block comment' => $replace('/* ' . $copy . ' */ x: 1'),
+            'line comment'              => $replace('// ' . $copy . "\n x: 1"),
+            'string literal'            => $replace('x: "' . $copy . '"'),
             'escaped ampersand'         => $replace(str_replace('&plugin', '&amp;plugin', $real)),
         ];
 
@@ -837,6 +896,7 @@ class AjaxEndpointTest
 
         $mustPass = [
             'extra commented-out copy' => $replace("/* baseUrl: (function(){ return '/x'; })() */\n" . $real),
+            'extra copy in a string'   => $replace("x: \"baseUrl: (function(){ return '/x'; })()\",\n" . $real),
         ];
 
         $problems = [];
