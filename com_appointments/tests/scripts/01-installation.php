@@ -71,6 +71,17 @@ class InstallationTest
             return $result && $result->num_rows > 0;
         });
 
+        $this->test('Schema baseline registered for future migrations', function () {
+            $result = $this->db->query(
+                "SELECT s.version_id FROM {$this->dbPrefix}schemas AS s"
+                . " INNER JOIN {$this->dbPrefix}extensions AS e ON e.extension_id = s.extension_id"
+                . " WHERE e.element = 'com_appointments' AND e.type = 'component'"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && $row['version_id'] === '1.0.0';
+        });
+
         $this->test('Administrator language file en-GB is installed', function () {
             return file_exists('/var/www/html/administrator/language/en-GB/com_appointments.ini')
                 && file_exists('/var/www/html/administrator/language/en-GB/com_appointments.sys.ini');

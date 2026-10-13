@@ -149,6 +149,9 @@ Rolling-horizon tests include Apia's skipped date and Havana's repeated midnight
 resolver's convention for the exclusive boundary.
 The schedule form explicitly includes Joomla's translated UTC option; HTTP assertions verify the
 site-zone default and the unchanged save of an existing UTC schedule from rendered fields.
+The structure suite verifies the mandatory schedule foreign key, the legacy schema migration and
+two-connection assignment/deletion races on both MySQL and MariaDB. Installation asserts the
+registered schema baseline, so later migrations are not silently skipped.
 
 ### The blocked-period redisplay assertions
 

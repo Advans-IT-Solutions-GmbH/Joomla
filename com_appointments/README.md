@@ -58,7 +58,8 @@ The component registers its own update site during installation, so later versio
 - A public page that lists the bookable event types a visitor is allowed to see.
 - **Schedules.** A named weekly pattern with any number of intervals per weekday, in one time zone,
   plus date-specific entries that replace the weekly times of a single date or close it entirely.
-  A schedule that an event type still uses cannot be deleted. Creating a schedule without
+  A schedule that an event type still uses cannot be deleted, even during a concurrent assignment:
+  a database foreign key enforces the reference. Creating a schedule without
   `core.edit.state` leaves it unpublished; editing its content without that permission preserves
   its existing publication state.
 - **Blocked periods.** Time a host is not available, independent of any event type. Entered in the
@@ -244,6 +245,12 @@ the package build and integration suites must be verified in CI, not reported as
 to create a schedule alone does not grant permission to enable it.
 
 **A schedule cannot be deleted:** remove its event-type assignments first.
+
+**An update reports missing schedules:** an older installation contains event types pointing to
+missing schedules (including the former zero default). Reassign those event types to existing
+schedules before retrying the update. The installer refuses the upgrade rather than deleting or
+silently remapping data; the registered SQL migration then enforces the same reference as a fresh
+installation.
 
 **A blocked time is rejected:** verify the start precedes the end and neither bound falls in a
 skipped or repeated local hour during a clock change.

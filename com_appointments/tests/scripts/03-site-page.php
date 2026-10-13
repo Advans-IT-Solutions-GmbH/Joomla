@@ -9,7 +9,7 @@
  * suite therefore requests the component's public pages over HTTP and checks
  * the response the way the shared backend suite does for the administrator.
  *
- * It only reads; it changes nothing on the site.
+ * Temporary event types and their schedule are removed after the requests.
  */
 
 class SitePageTest
@@ -19,6 +19,7 @@ class SitePageTest
     private $baseUrl;
     private $db;
     private $dbPrefix;
+    private int $scheduleId = 0;
 
     /** @var array<string, string> */
     private $strings = [];
@@ -143,10 +144,13 @@ class SitePageTest
     {
         echo "\n--- with seeded event types ---\n";
 
-        $this->seed();
-        $response = $this->request('index.php?option=com_appointments&view=eventtypes');
-        $body = $response['body'];
-        $this->cleanUp();
+        try {
+            $this->seed();
+            $response = $this->request('index.php?option=com_appointments&view=eventtypes');
+            $body = $response['body'];
+        } finally {
+            $this->cleanUp();
+        }
 
         $this->test('seeded: answers HTTP 200', function () use ($response) {
             if ($response['code'] !== 200) {
@@ -209,6 +213,11 @@ class SitePageTest
 
         $table = "{$this->dbPrefix}appointments_eventtypes";
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $this->db->query(
+            "INSERT INTO {$this->dbPrefix}appointments_schedules (title, created_utc, modified_utc)"
+            . " VALUES ('sitepage-seed-schedule', '{$now}', '{$now}')"
+        );
+        $this->scheduleId = (int) $this->db->insert_id;
 
         // published, access (1 = Public), language, duration, title
         $rows = [
@@ -226,11 +235,11 @@ class SitePageTest
             $token = str_pad((string) $index, 64, 'a', STR_PAD_LEFT);
             $statement = $this->db->prepare(
                 "INSERT INTO {$table} (title, alias, duration_minutes, slot_step_minutes, access, language,"
-                . " published, feed_token, created_utc, modified_utc)"
-                . " VALUES (?, ?, ?, 30, ?, ?, ?, ?, ?, ?)"
+                . " published, feed_token, created_utc, modified_utc, schedule_id)"
+                . " VALUES (?, ?, ?, 30, ?, ?, ?, ?, ?, ?, ?)"
             );
             $statement->bind_param(
-                'ssiisisss',
+                'ssiisisssi',
                 $row['title'],
                 $alias,
                 $row['duration'],
@@ -239,7 +248,8 @@ class SitePageTest
                 $row['published'],
                 $token,
                 $now,
-                $now
+                $now,
+                $this->scheduleId
             );
             $statement->execute();
             $statement->close();
@@ -254,6 +264,10 @@ class SitePageTest
         $statement->bind_param('s', $marker);
         $statement->execute();
         $statement->close();
+        if ($this->scheduleId > 0) {
+            $this->db->query("DELETE FROM {$this->dbPrefix}appointments_schedules WHERE id = {$this->scheduleId}");
+            $this->scheduleId = 0;
+        }
     }
 
     /**

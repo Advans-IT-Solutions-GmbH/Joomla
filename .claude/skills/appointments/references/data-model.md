@@ -70,6 +70,12 @@ The bookable thing.
 
 Indexes: unique `alias`, unique `feed_token`, index `(published, access, language)`.
 
+The mandatory `schedule_id` has no default and a foreign key with `ON DELETE RESTRICT`.
+Schedule deletion locks the parent rows before checking assignments; the foreign key also protects
+against an insert or reassignment that waits until deletion commits. The registered `1.0.0.sql`
+baseline migration upgrades installations created before schema tracking existed. Updates with
+missing schedule references are refused explicitly, without deleting or remapping event types.
+
 ## `#__appointments_schedules`
 
 A named weekly pattern, reusable across event types.

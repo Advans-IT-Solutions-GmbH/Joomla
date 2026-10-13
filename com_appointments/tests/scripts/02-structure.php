@@ -330,6 +330,9 @@ class StructureTest
             return $weekly && $override && $stored;
         });
 
+        $this->testScheduleReferences();
+        $this->testScheduleMigration();
+
         $files = [
             'Administrator provider'  => $this->admin . '/services/provider.php',
             'Component class'         => $this->admin . '/src/Extension/AppointmentsComponent.php',
@@ -352,6 +355,7 @@ class StructureTest
             'Dashboard layout'        => $this->admin . '/tmpl/dashboard/default.php',
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
+            'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',
@@ -371,6 +375,187 @@ class StructureTest
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    private function connection(): \mysqli
+    {
+        $config = new \JConfig();
+        $db = new \mysqli($config->host, $config->user, $config->password, $config->db);
+        $db->query('SET SESSION innodb_lock_wait_timeout = 5');
+
+        return $db;
+    }
+
+    private function refused(callable $operation, int $code): bool
+    {
+        try {
+            $operation();
+        } catch (\mysqli_sql_exception $e) {
+            if ($e->getCode() === $code) {
+                return true;
+            }
+
+            throw $e;
+        }
+
+        return false;
+    }
+
+    private function waiting(\mysqli $db): bool
+    {
+        $read = [$db];
+        $error = [$db];
+        $reject = [];
+
+        return \mysqli::poll($read, $error, $reject, 0, 200000) === 0;
+    }
+
+    private function testScheduleReferences(): void
+    {
+        $schedules = "{$this->dbPrefix}appointments_schedules";
+        $events = "{$this->dbPrefix}appointments_eventtypes";
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $this->db->query(
+            "INSERT INTO {$schedules} (title, created_utc, modified_utc)"
+            . " VALUES ('structure-reference', '{$now}', '{$now}')"
+        );
+        $scheduleId = (int) $this->db->insert_id;
+        $insert = "INSERT INTO {$events} (title, alias, schedule_id, feed_token, created_utc, modified_utc)"
+            . " VALUES ('structure-reference', 'structure-reference', {$scheduleId},"
+            . " '" . str_repeat('c', 64) . "', '{$now}', '{$now}')";
+
+        try {
+            $this->test('Event types require an explicit existing schedule', function () use ($events, $insert, $scheduleId) {
+                $column = $this->db->query("SHOW COLUMNS FROM {$events} LIKE 'schedule_id'")->fetch_assoc();
+                $zeroRefused = $this->refused(
+                    fn () => $this->db->query(str_replace(", {$scheduleId},", ', 0,', $insert)),
+                    1452
+                );
+
+                return $column['Null'] === 'NO' && $column['Default'] === null && $zeroRefused;
+            });
+
+            $this->test('An assignment committed first prevents concurrent deletion', function () use ($schedules, $events, $insert, $scheduleId) {
+                $other = $this->connection();
+
+                try {
+                    $this->db->begin_transaction();
+                    $this->db->query($insert);
+                    $other->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}", MYSQLI_ASYNC);
+                    $waited = $this->waiting($other);
+                    $this->db->commit();
+                    $refused = $this->refused(fn () => $other->reap_async_query(), 1451);
+                    $present = $this->db->query("SELECT id FROM {$schedules} WHERE id = {$scheduleId}")->num_rows === 1;
+
+                    return $waited && $refused && $present;
+                } finally {
+                    $this->db->rollback();
+                    $other->close();
+                    $this->db->query("DELETE FROM {$events} WHERE schedule_id = {$scheduleId}");
+                }
+            });
+
+            foreach (['insert', 'reassignment'] as $operation) {
+                $this->test("Deletion committed first refuses a waiting {$operation}", function () use ($schedules, $events, $insert, $scheduleId, $operation) {
+                    $other = $this->connection();
+                    $this->db->query(
+                        "INSERT INTO {$schedules} (title, created_utc, modified_utc)"
+                        . " SELECT title, created_utc, modified_utc FROM {$schedules} WHERE id = {$scheduleId}"
+                    );
+                    $deletedId = (int) $this->db->insert_id;
+
+                    try {
+                        if ($operation === 'reassignment') {
+                            $this->db->query($insert);
+                            $sql = "UPDATE {$events} SET schedule_id = {$deletedId} WHERE schedule_id = {$scheduleId}";
+                        } else {
+                            $sql = str_replace(", {$scheduleId},", ", {$deletedId},", $insert);
+                        }
+
+                        $this->db->begin_transaction();
+                        $this->db->query("SELECT id FROM {$schedules} WHERE id = {$deletedId} FOR UPDATE");
+                        $this->db->query("DELETE FROM {$schedules} WHERE id = {$deletedId}");
+                        $other->query($sql, MYSQLI_ASYNC);
+                        $waited = $this->waiting($other);
+                        $this->db->commit();
+                        $refused = $this->refused(fn () => $other->reap_async_query(), 1452);
+                        $orphans = $this->db->query(
+                            "SELECT id FROM {$events} WHERE schedule_id = {$deletedId}"
+                        )->num_rows;
+
+                        return $waited && $refused && $orphans === 0;
+                    } finally {
+                        $this->db->rollback();
+                        $other->close();
+                        $this->db->query("DELETE FROM {$events} WHERE schedule_id IN ({$scheduleId}, {$deletedId})");
+                        $this->db->query("DELETE FROM {$schedules} WHERE id = {$deletedId}");
+                    }
+                });
+            }
+        } finally {
+            $this->db->query("DELETE FROM {$events} WHERE schedule_id = {$scheduleId}");
+            $this->db->query("DELETE FROM {$schedules} WHERE id = {$scheduleId}");
+        }
+    }
+
+    private function testScheduleMigration(): void
+    {
+        $schedules = "{$this->dbPrefix}appointments_upgrade_test_schedules";
+        $events = "{$this->dbPrefix}appointments_upgrade_test_eventtypes";
+        $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.0.0.sql');
+
+        if ($migration === false) {
+            $this->test('Schema migration can be read', static fn () => false);
+
+            return;
+        }
+
+        $sql = str_replace(
+            '#__appointments_',
+            $this->dbPrefix . 'appointments_upgrade_test_',
+            preg_replace('/^--.*$/m', '', $migration)
+        );
+
+        foreach ([false, true] as $orphaned) {
+            $this->test(
+                $orphaned ? 'Legacy orphan references prevent migration without data loss' : 'Legacy schema migration preserves valid event types and enforces references',
+                function () use ($schedules, $events, $sql, $orphaned) {
+                    try {
+                        // CREATE LIKE deliberately does not copy foreign keys.
+                        $this->db->query("CREATE TABLE {$schedules} LIKE {$this->dbPrefix}appointments_schedules");
+                        $this->db->query("CREATE TABLE {$events} LIKE {$this->dbPrefix}appointments_eventtypes");
+                        $this->db->query("ALTER TABLE {$events} ALTER COLUMN schedule_id SET DEFAULT 0");
+                        $this->db->query(
+                            "INSERT INTO {$schedules} (id, title, created_utc, modified_utc)"
+                            . " VALUES (1, 'legacy-reference', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                        );
+                        $scheduleId = $orphaned ? 0 : 1;
+                        $this->db->query(
+                            "INSERT INTO {$events} (id, alias, schedule_id, feed_token, created_utc, modified_utc)"
+                            . " VALUES (1, 'legacy-reference', {$scheduleId}, '" . str_repeat('d', 64)
+                            . "', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                        );
+
+                        if ($orphaned) {
+                            $enforced = $this->refused(fn () => $this->db->query($sql), 1452);
+                        } else {
+                            $this->db->query($sql);
+                            $enforced = $this->refused(
+                                fn () => $this->db->query("DELETE FROM {$schedules} WHERE id = 1"),
+                                1451
+                            );
+                        }
+
+                        $row = $this->db->query("SELECT id, schedule_id FROM {$events}")->fetch_assoc();
+
+                        return $enforced && (int) $row['id'] === 1 && (int) $row['schedule_id'] === $scheduleId;
+                    } finally {
+                        $this->db->query("DROP TABLE IF EXISTS {$events}");
+                        $this->db->query("DROP TABLE IF EXISTS {$schedules}");
+                    }
+                }
+            );
+        }
     }
 
     /**

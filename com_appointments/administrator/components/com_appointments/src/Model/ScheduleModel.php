@@ -192,24 +192,32 @@ class ScheduleModel extends AdminModel
         }
 
         $db = $this->getDatabase();
+        $db->transactionStart();
 
-        foreach ($ids as $id) {
+        try {
+            sort($ids, SORT_NUMERIC);
+
+            // The foreign key makes assignments take a shared parent lock.
+            // Lock parents first, so the check and deletion cannot be overtaken.
             $query = $this->createDbQuery($db)
-                ->select('COUNT(*)')
-                ->from($db->quoteName('#__appointments_eventtypes'))
-                ->where($db->quoteName('schedule_id') . ' = :id')
-                ->bind(':id', $id, ParameterType::INTEGER);
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__appointments_schedules'))
+                ->where($db->quoteName('id') . ' IN (' . implode(',', $ids) . ')')
+                ->order($db->quoteName('id'));
+            $db->setQuery((string) $query . ' FOR UPDATE')->loadColumn();
 
-            if ((int) $db->setQuery($query)->loadResult() > 0) {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__appointments_eventtypes'))
+                ->where($db->quoteName('schedule_id') . ' IN (' . implode(',', $ids) . ')');
+
+            if ($db->setQuery((string) $query . ' FOR UPDATE')->loadColumn() !== []) {
+                $db->transactionRollback();
                 $this->setError(Text::_('COM_APPOINTMENTS_SCHEDULE_ERROR_IN_USE'));
 
                 return false;
             }
-        }
 
-        $db->transactionStart();
-
-        try {
             $query = $this->createDbQuery($db)
                 ->delete($db->quoteName('#__appointments_schedule_rules'))
                 ->whereIn($db->quoteName('schedule_id'), $ids, ParameterType::INTEGER);
