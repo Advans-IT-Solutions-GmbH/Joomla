@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="task" method="upgrade">
+    <autoloadLanguage>true</autoloadLanguage>
+    <name>PLG_TASK_DMARCREPORTS</name>
+    <element>dmarcreports</element>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-08</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <authorEmail>info@advans.ch</authorEmail>
+    <authorUrl>https://advans.ch</authorUrl>
+    <version>1.0.0</version>
+    <description>PLG_TASK_DMARCREPORTS_XML_DESCRIPTION</description>
+
+    <namespace path="src">Advans\Plugin\Task\DmarcReports</namespace>
+
+    <scriptfile>script.php</scriptfile>
+
+    <files>
+        <folder plugin="dmarcreports">services</folder>
+        <folder>src</folder>
+        <folder>forms</folder>
+        <folder>language</folder>
+        <filename>LICENSE.txt</filename>
+        <filename>index.html</filename>
+        <filename>script.php</filename>
+    </files>
+
+    <updateservers>
+        <server type="extension" name="DMARC Reports Ingestion Task">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_task_dmarcreports/updates/update.xml</server>
+    </updateservers>
+
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+</extension>
