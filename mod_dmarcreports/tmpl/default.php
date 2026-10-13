@@ -94,7 +94,7 @@ $hasData    = (int) ($totals['total'] ?? 0) > 0 || (int) ($totals['domains'] ?? 
             </div>
         <?php else : ?>
             <?php if ($actions !== []) : ?>
-            <ul class="list-group mod-dmarcreports__actions mb-2">
+            <div class="list-group mod-dmarcreports__actions mb-2">
                 <?php foreach ($actions as $action) : ?>
                     <a class="list-group-item list-group-item-action d-flex align-items-start gap-2" href="<?php echo htmlspecialchars($link, ENT_QUOTES, 'UTF-8'); ?>">
                         <span class="badge bg-<?php echo htmlspecialchars($action['severityClass'], ENT_QUOTES, 'UTF-8'); ?> flex-shrink-0">
@@ -110,7 +110,7 @@ $hasData    = (int) ($totals['total'] ?? 0) > 0 || (int) ($totals['domains'] ?? 
                         </span>
                     </a>
                 <?php endforeach; ?>
-            </ul>
+            </div>
             <?php endif; ?>
 
             <?php if ($activeCnt > \count($actions)) : ?>
