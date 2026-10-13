@@ -10,6 +10,8 @@
  *   account with earlier guest orders, another customer's guest order with the same name stays
  *   untouched, case-insensitive matching, the confirmation of a request without login and the
  *   link in the administrator request mail
+ * - the com_ajax endpoint without a session cookie: no 303 redirect loop (no Session::checkToken()),
+ *   raw routed URLs, and the address task with a valid form token as before
  *
  * Covers issues #97 and #105 (J6 branch coverage).
  */
@@ -1926,6 +1928,585 @@ PHP
     }
 
     // -------------------------------------------------------------------------
+    // com_ajax endpoint without a session cookie (dev check 13.10.2026)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Installed plugin files (privacy plugin with its overrides and layouts, system and task
+     * plugin) as path => tokens without comments and whitespace.
+     *
+     * @return  array<string, array<int, mixed>>
+     */
+    private function installedPluginTokens(bool $classesOnly): array
+    {
+        $roots = [
+            JPATH_BASE . '/plugins/privacy/j2commerce',
+            JPATH_BASE . '/plugins/system/j2commerceprivacy',
+            JPATH_BASE . '/plugins/task/j2commerceprivacy',
+        ];
+        $files = [];
+
+        foreach ($roots as $root) {
+            if (!is_dir($root)) {
+                continue;
+            }
+
+            $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+
+            foreach ($iterator as $file) {
+                $path = $file->getPathname();
+
+                if (substr($path, -4) !== '.php' || ($classesOnly && strpos($path, '/src/') === false)) {
+                    continue;
+                }
+
+                $files[$path] = array_values(array_filter(token_get_all((string) file_get_contents($path)), static function ($t): bool {
+                    return !is_array($t) || !in_array($t[0], [T_COMMENT, T_DOC_COMMENT, T_WHITESPACE], true);
+                }));
+            }
+        }
+
+        ksort($files);
+
+        return $files;
+    }
+
+    /**
+     * Lower-case short names under which a file can refer to a class: its own short name and
+     * every alias imported with "use ...\Class as Alias".
+     *
+     * @return  array<string, true>
+     */
+    private function tokenClassNames(array $tokens, string $class): array
+    {
+        $names = [strtolower($class) => true];
+
+        for ($i = 0, $n = count($tokens); $i < $n - 2; $i++) {
+            if (is_array($tokens[$i])
+                && in_array($tokens[$i][0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+                && preg_match('/(^|\\\\)' . preg_quote($class, '/') . '$/i', $tokens[$i][1])
+                && is_array($tokens[$i + 1]) && $tokens[$i + 1][0] === T_AS
+                && is_array($tokens[$i + 2]) && $tokens[$i + 2][0] === T_STRING
+            ) {
+                $names[strtolower($tokens[$i + 2][1])] = true;
+            }
+        }
+
+        return $names;
+    }
+
+    /** Whether a token is a class name (short, qualified or fully qualified) ending in one of $names. */
+    private function tokenNamesClass($token, array $names): bool
+    {
+        if (!is_array($token) || !in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            return false;
+        }
+
+        return isset($names[strtolower(substr((string) strrchr('\\' . $token[1], '\\'), 1))]);
+    }
+
+    /**
+     * Static calls Class::method( in a token list: line and argument texts of each call.
+     *
+     * @return  array<int, array{line: int, args: array<int, string>}>
+     */
+    private function staticCalls(array $tokens, string $class, string $method): array
+    {
+        $names = $this->tokenClassNames($tokens, $class);
+        $calls = [];
+
+        for ($i = 0, $n = count($tokens); $i < $n - 3; $i++) {
+            if (!$this->tokenNamesClass($tokens[$i], $names)
+                || !is_array($tokens[$i + 1]) || $tokens[$i + 1][0] !== T_DOUBLE_COLON
+                || !is_array($tokens[$i + 2]) || strcasecmp($tokens[$i + 2][1], $method) !== 0
+                || $tokens[$i + 3] !== '('
+            ) {
+                continue;
+            }
+
+            $depth = 0;
+            $args  = [''];
+
+            for ($j = $i + 3; $j < $n; $j++) {
+                $text = is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+
+                if (in_array($text, ['(', '[', '{'], true)) {
+                    $depth++;
+
+                    if ($depth === 1) {
+                        continue;
+                    }
+                } elseif (in_array($text, [')', ']', '}'], true)) {
+                    $depth--;
+
+                    if ($depth === 0) {
+                        break;
+                    }
+                } elseif ($text === ',' && $depth === 1) {
+                    $args[] = '';
+                    continue;
+                }
+
+                $args[count($args) - 1] .= $text;
+            }
+
+            $calls[] = ['line' => (int) $tokens[$i][2], 'args' => array_map(static fn ($a) => strtolower(trim($a)), $args)];
+        }
+
+        return $calls;
+    }
+
+    /**
+     * Static checks on the installed plugins: no Session::checkToken() anywhere (it redirects a
+     * request without session with 303 to Route::_('index.php'), the loop of the dev check), and
+     * every Route::_() in the plugin classes passes xhtml=false (their URLs go to a redirect, a
+     * JSON answer, a mail or an attribute that is escaped once by the caller). The overrides
+     * and layouts write their links straight into HTML, where the escaped default is right; the
+     * request URL of the privacy tab goes into a layout that escapes it, so it must be raw too
+     * (the layout also decodes &amp; for copies of earlier versions, see 12-consent-logging).
+     */
+    private function testNoRedirectingTokenCheck(): void
+    {
+        echo "\n--- Static checks: no Session::checkToken(), raw routed URLs ---\n";
+
+        $all = $this->installedPluginTokens(false);
+        $this->test('Static check reads the installed privacy, system and task plugin', count(array_filter(array_keys($all), static fn ($p) => str_contains($p, '/plugins/system/j2commerceprivacy/'))) > 0
+            && count(array_filter(array_keys($all), static fn ($p) => str_contains($p, '/plugins/task/j2commerceprivacy/'))) > 0
+            && count(array_filter(array_keys($all), static fn ($p) => str_contains($p, '/plugins/privacy/j2commerce/src/'))) > 0, (string) count($all));
+
+        $found = [];
+
+        foreach ($all as $path => $tokens) {
+            foreach ($this->staticCalls($tokens, 'Session', 'checkToken') as $call) {
+                $found[] = basename($path) . ':' . $call['line'];
+            }
+        }
+
+        $this->test('No plugin file calls Session::checkToken() (303 redirect for a new session)', $found === [], implode(', ', $found));
+
+        $calls    = 0;
+        $problems = [];
+
+        foreach ($this->installedPluginTokens(true) as $path => $tokens) {
+            foreach ($this->staticCalls($tokens, 'Route', '_') as $call) {
+                $calls++;
+                $named = array_values(array_filter($call['args'], static fn ($a) => str_starts_with($a, 'xhtml:')));
+                $xhtml = $named !== [] ? trim(substr($named[0], 6)) : ($call['args'][1] ?? '');
+
+                if ($xhtml !== 'false') {
+                    $problems[] = basename($path) . ':' . $call['line'];
+                }
+            }
+        }
+
+        $this->test('Every Route::_() in the plugin classes passes xhtml=false', $calls > 0 && $problems === [], $calls . ' calls; ' . implode(', ', $problems));
+
+        $requestUrls = 0;
+        $escaped     = [];
+
+        foreach ($all as $path => $tokens) {
+            if (!str_ends_with($path, '/myprofile/default_privacy.php')) {
+                continue;
+            }
+
+            // Route::_() calls on the line of the 'requestUrl' element.
+            $lines = [];
+
+            foreach ($tokens as $token) {
+                if (is_array($token) && $token[0] === T_CONSTANT_ENCAPSED_STRING && $token[1] === "'requestUrl'") {
+                    $lines[$token[2]] = true;
+                }
+            }
+
+            foreach ($this->staticCalls($tokens, 'Route', '_') as $call) {
+                if (!isset($lines[$call['line']])) {
+                    continue;
+                }
+
+                $requestUrls++;
+                $named = array_values(array_filter($call['args'], static fn ($a) => str_starts_with($a, 'xhtml:')));
+
+                if (($named !== [] ? trim(substr($named[0], 6)) : ($call['args'][1] ?? '')) !== 'false') {
+                    $escaped[] = basename(dirname($path, 2)) . ':' . $call['line'];
+                }
+            }
+        }
+
+        $this->test('The privacy tab gets a raw request URL (the layout escapes it once)', $requestUrls >= 2 && $escaped === [], $requestUrls . ' ' . implode(' | ', $escaped));
+    }
+
+    /**
+     * One request without cookies and without following redirects.
+     *
+     * @return  array{0: int, 1: string, 2: string}  Status, Location header, body
+     */
+    private function rawRequest(string $method, string $url, array $post = [], array $headers = [], ?string $jar = null): array
+    {
+        $location = '';
+        $ch       = curl_init($url);
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_TIMEOUT        => 60,
+            CURLOPT_USERAGENT      => 'TokenRedirectTest/1.0',
+            CURLOPT_HTTPHEADER     => $headers,
+            CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$location): int {
+                if (stripos($line, 'Location:') === 0) {
+                    $location = trim(substr($line, 9));
+                }
+
+                return strlen($line);
+            },
+        ]);
+
+        if ($jar !== null) {
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $jar);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $jar);
+        }
+
+        if ($method === 'POST') {
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post));
+        }
+
+        $body   = (string) curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        unset($ch);
+
+        return [$status, $location, $body];
+    }
+
+    /**
+     * A request to the endpoint, redirects followed by hand with the same method, body and
+     * headers. Without $jar no cookie is sent at all (like the checker's curl). Allowed are
+     * 301/302 redirects that keep the query intact (the language filter, strict routing); a 303
+     * (the redirect of Session::checkToken()), an escaped ampersand or a lost parameter fails, and
+     * the answer must come within three hops.
+     *
+     * @return  array{problems: array<int, string>, hops: array<int, string>, status: int, body: string}
+     */
+    private function endpointRequest(string $method, array $query, array $post = [], array $headers = [], ?string $jar = null): array
+    {
+        $expected = array_intersect_key($query, array_flip(['option', 'plugin', 'group', 'format', 'task']));
+        $url      = 'http://localhost/index.php?' . http_build_query($query);
+        $hops     = [];
+        $problems = [];
+        $status   = 0;
+        $body     = '';
+
+        for ($i = 0; $i < 4; $i++) {
+            [$status, $location, $body] = $this->rawRequest($method, $url, $post, $headers, $jar);
+
+            if ($status < 300 || $status >= 400) {
+                break;
+            }
+
+            $hops[] = "$status $location";
+
+            if ($i === 3) {
+                $problems[] = 'no answer after three redirects';
+                break;
+            }
+
+            if ($location === '') {
+                $problems[] = "HTTP $status without Location";
+                break;
+            }
+
+            if (stripos($location, '&amp;') !== false || stripos($location, 'amp;') !== false || stripos($location, 'amp%3B') !== false) {
+                $problems[] = "Location carries an HTML-escaped ampersand: $location";
+            }
+
+            if ($status === 303) {
+                $problems[] = "HTTP 303 (the redirect of Session::checkToken()): $location";
+            } elseif ($status !== 301 && $status !== 302) {
+                $problems[] = "HTTP $status is neither a language nor a routing redirect: $location";
+            }
+
+            parse_str((string) parse_url($location, PHP_URL_QUERY), $vars);
+
+            foreach ($expected as $name => $value) {
+                if (($vars[$name] ?? null) !== (string) $value) {
+                    $problems[] = "Location lost $name=$value: $location";
+                }
+            }
+
+            if ($problems !== []) {
+                break;
+            }
+
+            $url = preg_match('#^https?://#i', $location) ? $location : 'http://localhost/' . ltrim($location, '/');
+        }
+
+        if ($problems === [] && $status !== 200) {
+            $problems[] = "final answer HTTP $status: " . mb_substr(trim(strip_tags($body)), 0, 150);
+        }
+
+        return ['problems' => $problems, 'hops' => $hops, 'status' => $status, 'body' => $body];
+    }
+
+    /** Plugin answer of a com_ajax JSON response (data[0]), or null. */
+    private function ajaxAnswer(string $body): ?array
+    {
+        $json = json_decode($body, true);
+
+        return is_array($json) && isset($json['data'][0]) && is_array($json['data'][0]) ? $json['data'][0] : null;
+    }
+
+    /**
+     * Make the site multilingual for the checker's case (language filter on, content language
+     * en-GB published). Returns the callback that restores the previous state.
+     */
+    private function ensureMultilingual(): callable
+    {
+        $filter = $this->db->setQuery(
+            'SELECT extension_id, enabled FROM ' . $this->db->quoteName('#__extensions')
+            . " WHERE type = 'plugin' AND folder = 'system' AND element = 'languagefilter'"
+        )->loadObject();
+        $language = $this->db->setQuery(
+            'SELECT lang_id, published FROM ' . $this->db->quoteName('#__languages') . " WHERE lang_code = 'en-GB'"
+        )->loadObject();
+
+        $filterWasOn   = $filter && (int) $filter->enabled === 1;
+        $languageWasOn = $language && (int) $language->published === 1;
+
+        if ($filter && !$filterWasOn) {
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . ' SET enabled = 1 WHERE extension_id = ' . (int) $filter->extension_id)->execute();
+        }
+
+        if ($language && !$languageWasOn) {
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__languages') . ' SET published = 1 WHERE lang_id = ' . (int) $language->lang_id)->execute();
+        }
+
+        $this->clearSiteCache();
+        echo 'Multilingual setup: language filter ' . ($filter ? ($filterWasOn ? 'enabled' : 'enabled for this test') : 'NOT INSTALLED')
+            . ', content language en-GB ' . ($language ? ($languageWasOn ? 'published' : 'published for this test') : 'MISSING') . "\n";
+
+        return function () use ($filter, $filterWasOn, $language, $languageWasOn): void {
+            if ($filter && !$filterWasOn) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__extensions') . ' SET enabled = 0 WHERE extension_id = ' . (int) $filter->extension_id)->execute();
+            }
+
+            if ($language && !$languageWasOn) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__languages') . ' SET published = 0 WHERE lang_id = ' . (int) $language->lang_id)->execute();
+            }
+
+            $this->clearSiteCache();
+        };
+    }
+
+    /**
+     * Every task of the com_ajax endpoint, GET and POST, without any cookie: no 303, no &amp;,
+     * an answer of the plugin (JSON rejection for the account tasks, the confirmation form for
+     * confirmRequest). Once on the site as it is and once multilingual, the checker's case.
+     */
+    private function testEndpointWithoutCookie(): void
+    {
+        echo "\n--- com_ajax endpoint without a session cookie (no redirect loop) ---\n";
+
+        if (!function_exists('curl_init')) {
+            $this->test('PHP curl extension available for HTTP tests', false);
+
+            return;
+        }
+
+        $base  = ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy'];
+        $cases = [
+            'deleteAddress'                 => $base + ['format' => 'json', 'task' => 'deleteAddress', 'address_id' => 1],
+            'deleteAddress with stale token' => $base + ['format' => 'json', 'task' => 'deleteAddress', 'address_id' => 1, md5('stale-token') => 1],
+            'unknown task'                  => $base + ['format' => 'json', 'task' => 'noSuchTask'],
+            'no task'                       => $base + ['format' => 'json'],
+            'confirmRequest'                => $base + ['format' => 'html', 'task' => 'confirmRequest'],
+        ];
+
+        $restore = null;
+
+        try {
+            foreach (['as installed', 'multilingual'] as $mode) {
+                if ($mode === 'multilingual') {
+                    $restore = $this->ensureMultilingual();
+                }
+
+                foreach ($cases as $name => $query) {
+                    foreach (['GET', 'POST'] as $method) {
+                        $result   = $this->endpointRequest($method, $query, $method === 'POST' ? ['email' => 'nobody@example.com', 'confirm_token' => md5('x')] : []);
+                        $problems = $result['problems'];
+
+                        if ($problems === []) {
+                            if (($query['task'] ?? '') === 'confirmRequest') {
+                                if (!str_contains($result['body'], 'j2commerce-privacy-confirm')) {
+                                    $problems[] = 'no confirmation page: ' . mb_substr(trim(strip_tags($result['body'])), 0, 150);
+                                }
+                            } else {
+                                $answer = $this->ajaxAnswer($result['body']);
+
+                                if (($answer['success'] ?? null) !== false) {
+                                    $problems[] = 'no JSON rejection of the plugin: ' . mb_substr($result['body'], 0, 150);
+                                }
+                            }
+                        }
+
+                        // The multilingual case must really pass the language filter (one language
+                        // redirect for a GET), otherwise it would not show the checker's case.
+                        if ($mode === 'multilingual' && $method === 'GET'
+                            && !preg_grep('#/en/|[?&]lang=en(&|$)#', $result['hops'])
+                        ) {
+                            $problems[] = 'no language redirect, is the language filter active? ' . implode(' -> ', $result['hops']);
+                        }
+
+                        $this->test("Cookie-less $method ($mode), $name: no 303, no &amp;, answer of the plugin",
+                            $problems === [], implode('; ', array_unique($problems)) . ' | hops: ' . implode(' -> ', $result['hops']));
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->test('Cookie-less endpoint tests ran without error', false, get_class($e) . ': ' . $e->getMessage());
+        } finally {
+            if ($restore !== null) {
+                $restore();
+            }
+        }
+    }
+
+    /**
+     * With a session and a valid form token the address task behaves as before: a logged-in
+     * customer deletes an own address with the token in the query, in the POST body or in the
+     * X-CSRF-Token header; without it or with a wrong one the task is refused and the address
+     * stays.
+     */
+    private function testAccountTaskWithToken(): void
+    {
+        echo "\n--- Address task with a session and a valid form token ---\n";
+
+        if (!function_exists('curl_init')) {
+            $this->test('PHP curl extension available for HTTP tests', false);
+
+            return;
+        }
+
+        $table    = '#__' . $this->tp . '_addresses';
+        $pk       = $this->tp . '_address_id';
+        $password = bin2hex(random_bytes(12));
+        $username = 'token.test.' . random_int(100000, 999999);
+        $userId   = 0;
+        $jar      = tempnam(sys_get_temp_dir(), 'token-test-');
+        $seeded   = [];
+
+        try {
+            $user = (object) [
+                'name'          => 'Token Test',
+                'username'      => $username,
+                'email'         => $username . '@example.com',
+                'password'      => \Joomla\CMS\User\UserHelper::hashPassword($password),
+                'block'         => 0,
+                'sendEmail'     => 0,
+                'registerDate'  => gmdate('Y-m-d H:i:s'),
+                'lastvisitDate' => null,
+                'activation'    => '',
+                'params'        => '{}',
+                'lastResetTime' => null,
+                'resetCount'    => 0,
+                'requireReset'  => 0,
+            ];
+            $this->db->insertObject('#__users', $user, 'id');
+            $userId = (int) $user->id;
+            $map    = (object) ['user_id' => $userId, 'group_id' => 2];
+            $this->db->insertObject('#__user_usergroup_map', $map);
+
+            // Consent of Joomla's privacy consent plugin, which otherwise sends a logged-in user
+            // without consent to the profile form (303) on every request.
+            $consent = (object) [
+                'user_id' => $userId, 'state' => 1, 'created' => gmdate('Y-m-d H:i:s'),
+                'subject' => 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT', 'body' => 'Token test consent', 'remind' => 0, 'token' => '',
+            ];
+            $this->db->insertObject('#__privacy_consents', $consent);
+
+            // Log in through the site login form.
+            $page  = $this->guestHttp($jar, 'GET', ['option' => 'com_users', 'view' => 'login']);
+            $login = preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $page, $m) ? $m[1] : '';
+            $this->guestHttp($jar, 'POST', ['option' => 'com_users', 'task' => 'user.login'], [
+                'username' => $username, 'password' => $password, 'return' => base64_encode('index.php?option=com_users&view=login'), $login => '1',
+            ]);
+            $page  = $this->guestHttp($jar, 'GET', ['option' => 'com_users', 'view' => 'login']);
+            $token = preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $page, $m) ? $m[1] : '';
+            $this->test('Logged in through the site login form (logout form with form token)',
+                $login !== '' && $token !== '' && str_contains($page, 'user.logout'), $this->lastHttp);
+
+            if ($token === '' || !str_contains($page, 'user.logout')) {
+                return;
+            }
+
+            $seed = function () use ($table, $pk, $userId, &$seeded): int {
+                $address = (object) [
+                    'user_id' => $userId, 'first_name' => 'Token', 'last_name' => 'Test', 'address_1' => 'Street 1',
+                    'city' => 'Basel', 'zip' => '4001', 'email' => 'token.address@example.com', 'type' => 'billing',
+                ];
+                $this->db->insertObject($table, $address, $pk);
+                $seeded[] = $id = (int) $this->db->insertid();
+
+                return $id;
+            };
+            $exists = fn (int $id): bool => (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($table) . ' WHERE ' . $this->db->quoteName($pk) . ' = ' . $id
+            )->loadResult() === 1;
+            // Answer of the address task with the session of the logged-in customer.
+            $call = function (string $method, array $extra, array $post = [], array $headers = []) use ($jar): array {
+                $result = $this->endpointRequest($method,
+                    ['option' => 'com_ajax', 'plugin' => 'j2commercePrivacy', 'group' => 'privacy', 'format' => 'json', 'task' => 'deleteAddress'] + $extra,
+                    $post, $headers, $jar);
+
+                return [$result['problems'] === [] ? ($this->ajaxAnswer($result['body'])['success'] ?? null) : null,
+                    implode('; ', $result['problems']) . ' | hops: ' . implode(' -> ', $result['hops']) . ' | ' . mb_substr($result['body'], 0, 150)];
+            };
+
+            $id = $seed();
+            [$success, $detail] = $call('POST', ['address_id' => $id], [], []);
+            $this->test('Logged in, no form token: refused with JSON, address kept, no redirect',
+                $success === false && $exists($id), $detail);
+
+            [$success, $detail] = $call('POST', ['address_id' => $id, md5('wrong-token') => 1], [], []);
+            $this->test('Logged in, wrong form token: refused with JSON, address kept',
+                $success === false && $exists($id), $detail);
+
+            [$success, $detail] = $call('POST', ['address_id' => $id, $token => 1], [], []);
+            $this->test('Logged in, form token in the query (address script): own address deleted',
+                $success === true && !$exists($id), $detail);
+
+            $id = $seed();
+            [$success, $detail] = $call('POST', ['address_id' => $id], [$token => '1'], []);
+            $this->test('Logged in, form token in the POST body: own address deleted',
+                $success === true && !$exists($id), $detail);
+
+            $id = $seed();
+            [$success, $detail] = $call('POST', ['address_id' => $id], [], ['X-CSRF-Token: ' . $token]);
+            $this->test('Logged in, form token in the X-CSRF-Token header: own address deleted',
+                $success === true && !$exists($id), $detail);
+
+            $id = $seed();
+            [$success, $detail] = $call('GET', ['address_id' => $id, $token => 1], [], []);
+            $this->test('Logged in, GET with form token in the query: own address deleted',
+                $success === true && !$exists($id), $detail);
+        } catch (\Throwable $e) {
+            $this->test('Address task tests with a session ran without error', false, get_class($e) . ': ' . $e->getMessage());
+        } finally {
+            foreach ($seeded as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($table) . ' WHERE ' . $this->db->quoteName($pk) . ' = ' . $id)->execute();
+            }
+
+            if ($userId > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__user_usergroup_map') . ' WHERE user_id = ' . $userId)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE user_id = ' . $userId)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__session') . ' WHERE userid = ' . $userId)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__action_logs') . ' WHERE user_id = ' . $userId)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+            }
+
+            @unlink($jar);
+        }
+    }
+
+    // -------------------------------------------------------------------------
 
     public function run(): bool
     {
@@ -1940,6 +2521,9 @@ PHP
         $this->testRequestConfirmation();
         $this->testAdminRequestMailLink();
         $this->testConfirmationPageHttp();
+        $this->testNoRedirectingTokenCheck();
+        $this->testEndpointWithoutCookie();
+        $this->testAccountTaskWithToken();
         $this->testConfirmAttemptLimits();
 
         echo "\n=== Data Isolation Test Summary ===\n";
