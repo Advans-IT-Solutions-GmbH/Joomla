@@ -105,6 +105,8 @@ class ConfigFormsTest
             'quarantine_pass_threshold below the minimum (0)'   => ['quarantine_pass_threshold' => '0'],
             'quarantine_pass_threshold above the maximum (101)' => ['quarantine_pass_threshold' => '101'],
             'quarantine_pass_threshold non-numeric ("abc")'     => ['quarantine_pass_threshold' => 'abc'],
+            'quarantine_pass_threshold with decimals ("50.5")'  => ['quarantine_pass_threshold' => '50.5'],
+            'quarantine_pass_threshold in exponent form ("1e2")' => ['quarantine_pass_threshold' => '1e2'],
             'default_policy_target with an invalid option'      => ['default_policy_target' => 'bogus'],
         ] as $label => $override) {
             $res = $this->saveConfig($configTask, $extensionId, array_merge($validConfig, $override));

@@ -24,7 +24,7 @@
             max="100"
             step="1"
             validate="range"
-            filter="integer"
+            filter="raw"
             message="COM_DMARCREPORTS_CONFIG_QUARANTINE_THRESHOLD_ERROR"
         />
 
@@ -38,7 +38,7 @@
             max="100"
             step="1"
             validate="range"
-            filter="integer"
+            filter="raw"
             message="COM_DMARCREPORTS_CONFIG_REJECT_THRESHOLD_ERROR"
         />
 
@@ -52,7 +52,7 @@
             max="120"
             step="5"
             validate="range"
-            filter="integer"
+            filter="raw"
             message="COM_DMARCREPORTS_CONFIG_IMAP_TIMEOUT_ERROR"
         />
 
@@ -66,7 +66,7 @@
             max="2000"
             step="10"
             validate="range"
-            filter="integer"
+            filter="raw"
             message="COM_DMARCREPORTS_CONFIG_MAX_MESSAGES_ERROR"
         />
 

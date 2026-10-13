@@ -196,8 +196,26 @@ XML;
 
     public function testRejectsNonFeedbackDocument(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        DmarcParser::parse('<?xml version="1.0"?><notfeedback/>');
+        try {
+            DmarcParser::parse('<?xml version="1.0"?><notfeedback/>');
+            $this->fail('Expected InvalidArgumentException for a non-feedback document.');
+        } catch (\InvalidArgumentException $e) {
+            // A well-formed, wrong-shape document is classified as "not a report"
+            // so the operator sees a wrong-format upload message, not "malformed".
+            $this->assertSame(DmarcParser::ERROR_NOT_REPORT, $e->getCode());
+        }
+    }
+
+    public function testMalformedXmlIsNotClassifiedAsNonReport(): void
+    {
+        try {
+            DmarcParser::parse('<?xml version="1.0"?><feedback><org');
+            $this->fail('Expected InvalidArgumentException for malformed XML.');
+        } catch (\InvalidArgumentException $e) {
+            // A failed parse must not borrow the non-report code: it maps to the
+            // default "malformed XML" reason, distinct from a wrong-format upload.
+            $this->assertNotSame(DmarcParser::ERROR_NOT_REPORT, $e->getCode());
+        }
     }
 
     public function testRejectsEmptyDocument(): void

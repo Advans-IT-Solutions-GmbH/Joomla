@@ -124,7 +124,15 @@ final class DmarcParser
             libxml_use_internal_errors($previous);
         }
 
-        if (!$feedback instanceof \SimpleXMLElement || strtolower($feedback->getName()) !== 'feedback') {
+        // A failed parse (malformed or truncated XML) is a different operator
+        // problem from a well-formed document whose root is not <feedback>: the
+        // former is "malformed XML", the latter a wrong-"format" upload. Keep
+        // them on separate codes so Ingestor::parseReason() can tell them apart.
+        if (!$feedback instanceof \SimpleXMLElement) {
+            throw new \InvalidArgumentException('The DMARC report XML could not be parsed.');
+        }
+
+        if (strtolower($feedback->getName()) !== 'feedback') {
             throw new \InvalidArgumentException('The document is not a DMARC aggregate report.', self::ERROR_NOT_REPORT);
         }
 

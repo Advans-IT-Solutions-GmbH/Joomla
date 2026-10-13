@@ -36,7 +36,7 @@ class RangeRule extends FormRule
      * @param   Registry|null      $input    The full submitted data set.
      * @param   Form|null          $form     The form instance.
      *
-     * @return  boolean  True when the value is empty or a number within bounds.
+     * @return  boolean  True when the value is empty or a whole number within bounds.
      */
     public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null): bool
     {
@@ -48,7 +48,11 @@ class RangeRule extends FormRule
             return true;
         }
 
-        if (!is_numeric($value)) {
+        // Validate the raw lexical value as a plain integer. is_numeric() would
+        // accept "50.5" or "1e2", which a coercing filter could then round into
+        // the valid range; the config fields use a non-coercing filter so this
+        // rule is the authoritative bound check on the value the operator typed.
+        if (!preg_match('/^-?\d+$/', $value)) {
             return false;
         }
 
