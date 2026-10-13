@@ -12,6 +12,10 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
+
+/** @var Joomla\CMS\WebAsset\WebAssetManager $wa */
+$wa = $this->getDocument()->getWebAssetManager();
+$wa->useScript('keepalive')->useScript('form.validate');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=source&layout=edit&id=' . (int) $this->item->id); ?>"
       method="post" name="adminForm" id="source-form" class="form-validate">

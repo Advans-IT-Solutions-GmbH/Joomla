@@ -51,6 +51,7 @@ class StructureTest
             'Install SQL'          => $this->base . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'        => $this->base . '/sql/uninstall.mysql.utf8.sql',
             'LICENSE.txt'          => $this->base . '/LICENSE.txt',
+            'Options config.xml'   => $this->base . '/config.xml',
         ];
 
         foreach ($files as $label => $path) {
@@ -58,6 +59,39 @@ class StructureTest
                 return file_exists($path);
             });
         }
+
+        // config.xml must carry the option fields so the com_config Options
+        // screen can load them; the manifest <config> block is not read for a
+        // component's global options.
+        $this->test('config.xml defines the component option fields', function () {
+            $xml = @simplexml_load_file($this->base . '/config.xml');
+
+            if ($xml === false || !isset($xml->fields)) {
+                return false;
+            }
+
+            return strpos(file_get_contents($this->base . '/config.xml'), 'default_policy_target') !== false;
+        });
+
+        // The edit layouts must load the form.validate web asset, otherwise
+        // document.formvalidator is undefined and Save/Apply throw silently,
+        // leaving the toolbar buttons dead.
+        foreach (['source', 'domain'] as $editView) {
+            $this->test("{$editView} edit layout loads the form validator script", function () use ($editView) {
+                $contents = file_get_contents($this->base . "/tmpl/{$editView}/edit.php");
+
+                return strpos($contents, "useScript('form.validate')") !== false;
+            });
+        }
+
+        // The source domain picker must map the SQL label column explicitly,
+        // otherwise Joomla's SqlField defaults value_field to the field name and
+        // renders the stored id instead of the domain name.
+        $this->test('source form maps the domain picker label column', function () {
+            $contents = file_get_contents($this->base . '/forms/source.xml');
+
+            return strpos($contents, 'value_field="text"') !== false;
+        });
 
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";

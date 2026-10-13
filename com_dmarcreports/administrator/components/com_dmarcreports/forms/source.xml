@@ -18,6 +18,8 @@
             label="COM_DMARCREPORTS_FIELD_DOMAIN_ID_LABEL"
             description="COM_DMARCREPORTS_FIELD_DOMAIN_ID_DESC"
             query="SELECT id AS value, domain AS text FROM #__dmarc_domains ORDER BY domain ASC"
+            key_field="value"
+            value_field="text"
             header="JOPTION_SELECT_PUBLISHED">
             <option value="0">COM_DMARCREPORTS_FIELD_DOMAIN_ID_AUTO</option>
         </field>
