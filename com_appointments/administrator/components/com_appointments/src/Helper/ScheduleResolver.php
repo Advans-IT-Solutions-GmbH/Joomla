@@ -74,6 +74,20 @@ final class ScheduleResolver
      */
     public function __construct(string $timezone, array $weeklyRules, array $dateOverrides = [])
     {
+        // An IANA name, and nothing else. `new DateTimeZone()` also accepts an
+        // abbreviation such as "CET" and a bare offset such as "+01:00", and
+        // both are traps here rather than conveniences: PHP gives them a fixed
+        // offset and no transitions at all, so a schedule on "CET" would keep
+        // winter time through the summer and silently offer every slot an hour
+        // out. The administrator interface offers only IANA names, but this
+        // constructor is public and also sees rows that were imported or
+        // hand-edited, so it holds its own contract.
+        if (!\in_array($timezone, \DateTimeZone::listIdentifiers(), true)) {
+            throw new \InvalidArgumentException(
+                sprintf('A schedule needs an IANA time zone such as "Europe/Zurich", got "%s".', $timezone)
+            );
+        }
+
         try {
             $this->zone = new \DateTimeZone($timezone);
         } catch (\Exception $e) {
@@ -102,10 +116,10 @@ final class ScheduleResolver
             // PHP would quietly read it as the 3rd of March when the windows of
             // that date are built, so the override would land on a date nobody
             // asked for, or, since the key never matches a real date in the
-            // range, be ignored without a word.
-            if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)
-                || !checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])
-            ) {
+            // range, be ignored without a word. `UtcTimestamp::isDate()` is the
+            // one definition of a usable date in this component, so the shape,
+            // the calendar and the column's year range are all one check.
+            if (!UtcTimestamp::isDate($date)) {
                 throw new \InvalidArgumentException(
                     sprintf('A date-specific rule needs a date that exists, got "%s".', $date)
                 );

@@ -65,7 +65,21 @@ host can serve several event types with different buffers.
 
 ### Daylight saving time
 
-The two cases that must have tests, with `Europe/Zurich`:
+A schedule's time zone is an **IANA name** such as `Europe/Zurich`, and nothing else. `CET`,
+`CEST`, `EST` and a bare `+01:00` are all accepted by `new DateTimeZone()` and are all traps: PHP
+gives them a fixed offset and no transitions, so a schedule on `CET` keeps winter time through the
+summer and offers every slot an hour out for half the year. Both the table that stores a schedule
+and the resolver that reads one check the value against `DateTimeZone::listIdentifiers()`, which
+excludes those names. The resolver checks it again rather than trusting the table, because its
+constructor is public and also sees imported and hand-edited rows.
+
+A date or a timestamp is also refused outside the years 1000 to 9999, which is the range the
+`DATE` and `DATETIME` columns document as supported. `UtcTimestamp::isDate()` and
+`UtcTimestamp::parse()` are the one definition of a usable date in the component, and every layer
+that validates one uses them, so a value that reaches a column has already been through the same
+check.
+
+The two daylight-saving cases that must have tests, with `Europe/Zurich`:
 
 - **Spring forward**, the last Sunday in March. 02:00 to 03:00 local does not exist. A window that
   lies inside the skipped hour yields no slot, and a window spanning it is one hour shorter in real

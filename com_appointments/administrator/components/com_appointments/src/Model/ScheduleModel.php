@@ -9,6 +9,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Model;
 
+use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -451,19 +452,17 @@ class ScheduleModel extends AdminModel
     }
 
     /**
-     * Whether the string is a date that exists.
+     * Whether the string is a date the DATE column can hold.
      *
-     * The shape alone is not enough: 2026-02-31 has the right shape and would
-     * reach the DATE column, where the database rejects it with an error
-     * message nobody can act on instead of the translated one.
+     * The shape alone is not enough, and neither is the calendar. 2026-02-31
+     * has the right shape, and the year 0001 is a date that exists but lies
+     * below the range the column documents as supported. Either would reach the
+     * column and leave the operator with whatever the database decides to do
+     * instead of the translated message, so one strict check answers both.
      */
     private function isRealDate(string $date): bool
     {
-        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)) {
-            return false;
-        }
-
-        return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]);
+        return UtcTimestamp::isDate($date);
     }
 
     /**

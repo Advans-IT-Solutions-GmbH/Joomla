@@ -69,6 +69,47 @@ final class UtcTimestampTest extends TestCase
             'other format'     => ['02.06.2026 10:30', 'only the database format is accepted'],
             'with timezone'    => ['2026-06-02T10:30:00+02:00', 'the value is UTC by contract, not by suffix'],
             'trailing text'    => ['2026-06-02 10:30:00 oclock', 'the whole value has to be the timestamp'],
+            'year below range' => ['0001-01-01 00:00:00', 'the date columns support 1000 onwards, so nothing earlier is written'],
+            'year 999'         => ['0999-12-31 23:59:59', 'the last year before the supported range'],
+        ];
+    }
+
+    public function testTheEdgesOfTheSupportedYearRangeAreAccepted(): void
+    {
+        // The range is a property of the columns the value is written to, so
+        // both ends belong to it and neither is off by a year.
+        $this->assertNotNull(UtcTimestamp::parse('1000-01-01 00:00:00'));
+        $this->assertNotNull(UtcTimestamp::parse('9999-12-31 23:59:59'));
+        $this->assertSame(1000, UtcTimestamp::MIN_YEAR);
+        $this->assertSame(9999, UtcTimestamp::MAX_YEAR);
+    }
+
+    /**
+     * @dataProvider dateValues
+     */
+    public function testIsDateReadsADateStrictly(string $value, bool $expected, string $why): void
+    {
+        $this->assertSame($expected, UtcTimestamp::isDate($value), $why);
+    }
+
+    /**
+     * @return array<string, array{0:string, 1:bool, 2:string}>
+     */
+    public static function dateValues(): array
+    {
+        return [
+            'a date'           => ['2026-06-02', true, 'the ordinary case'],
+            'leap day'         => ['2028-02-29', true, '2028 is a leap year'],
+            'first supported'  => ['1000-01-01', true, 'the start of the column range'],
+            'last supported'   => ['9999-12-31', true, 'the end of the column range'],
+            'no leap day'      => ['2026-02-29', false, '2026 is not a leap year'],
+            'impossible day'   => ['2026-02-31', false, 'February has no 31st'],
+            'below range'      => ['0001-01-01', false, 'earlier than the column supports'],
+            'zero date'        => ['0000-00-00', false, 'a database zero date is not a date'],
+            'with a time'      => ['2026-06-02 10:00:00', false, 'a date-specific rule is a date and nothing else'],
+            'single digits'    => ['2026-6-2', false, 'only the database format is accepted'],
+            'empty'            => ['', false, 'nothing was entered'],
+            'relative text'    => ['tomorrow', false, 'relative text is not a date'],
         ];
     }
 
@@ -150,6 +191,21 @@ final class UtcTimestampTest extends TestCase
 
         $this->assertCount(1, $instants);
         $this->assertSame('2026-03-29 02:30:00', $instants[0]->format('Y-m-d H:i:s'));
+    }
+
+    public function testAFixedOffsetZoneAnswersWithOneInstantAndNoWarning(): void
+    {
+        // `DateTimeZone::getTransitions()` answers `false` rather than an empty
+        // array for a zone that has none, so this is the case that would raise
+        // a warning and lose the offset set if the answer were trusted blindly.
+        // "+01:00" and "CET" are both such zones, and a schedule may not use
+        // them, but a reader of a single wall clock has to cope with them.
+        foreach (['+01:00', 'CET'] as $name) {
+            $instants = UtcTimestamp::localInstants('2026-06-02 14:00:00', new \DateTimeZone($name));
+
+            $this->assertCount(1, $instants, $name . ' is one instant');
+            $this->assertSame('2026-06-02 13:00:00', $instants[0]->format('Y-m-d H:i:s'), $name . ' is one hour ahead');
+        }
     }
 
     public function testAnImpossibleCalendarDateHasNoInstantInAnyZone(): void

@@ -38,6 +38,17 @@ final class UtcTimestamp
     private const FORMATS = ['Y-m-d H:i:s', 'Y-m-d H:i'];
 
     /**
+     * The years the `DATE` and `DATETIME` columns that consume these values
+     * support. MySQL and MariaDB document the range 1000-01-01 to 9999-12-31
+     * and say that earlier values may work but are not guaranteed, so a year
+     * outside it is refused here rather than written and hoped for. Refusing it
+     * at the parser also means the operator gets the translated message instead
+     * of whatever the database decides to do.
+     */
+    public const MIN_YEAR = 1000;
+    public const MAX_YEAR = 9999;
+
+    /**
      * @param   string  $value  The timestamp as it was submitted or stored.
      *
      * @return  \DateTimeImmutable|null  The instant in UTC, or null when the
@@ -67,12 +78,48 @@ final class UtcTimestamp
 
             // The round trip is what catches a normalised date: 2026-02-31
             // parses without an error but comes back as 2026-03-03.
-            if ($parsed->format($format) === $value) {
-                return $parsed;
+            if ($parsed->format($format) !== $value) {
+                continue;
             }
+
+            return self::withinColumnRange($parsed) ? $parsed : null;
         }
 
         return null;
+    }
+
+    /**
+     * Whether the value is an exact date, with no time of day.
+     *
+     * The same strict reading as `parse()`, for the `DATE` columns: a
+     * date-specific availability rule is a date and nothing else.
+     */
+    public static function isDate(string $value): bool
+    {
+        $value = trim($value);
+
+        if ($value === '' || str_starts_with($value, '0000-00-00')) {
+            return false;
+        }
+
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $value, new \DateTimeZone('UTC'));
+        $errors = \DateTimeImmutable::getLastErrors();
+
+        if ($parsed === false || ($errors !== false && ($errors['warning_count'] || $errors['error_count']))) {
+            return false;
+        }
+
+        return $parsed->format('Y-m-d') === $value && self::withinColumnRange($parsed);
+    }
+
+    /**
+     * Whether the year is one the date columns support.
+     */
+    private static function withinColumnRange(\DateTimeImmutable $moment): bool
+    {
+        $year = (int) $moment->format('Y');
+
+        return $year >= self::MIN_YEAR && $year <= self::MAX_YEAR;
     }
 
     /**
@@ -139,7 +186,12 @@ final class UtcTimestamp
         // transition in the span at all.
         $offsets = [$zone->getOffset($wall) => true];
 
-        foreach ($zone->getTransitions($pivot - 172800, $pivot + 172800) as $transition) {
+        // A zone with no transitions at all, such as a fixed offset, answers
+        // `false` here rather than an empty array. The offset at the pivot is
+        // already in the set, so there is nothing to add in that case.
+        $transitions = $zone->getTransitions($pivot - 172800, $pivot + 172800);
+
+        foreach (\is_array($transitions) ? $transitions : [] as $transition) {
             $offsets[(int) $transition['offset']] = true;
         }
 

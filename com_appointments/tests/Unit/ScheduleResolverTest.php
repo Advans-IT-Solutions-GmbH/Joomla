@@ -90,6 +90,63 @@ final class ScheduleResolverTest extends TestCase
         new ScheduleResolver('Mars/Olympus_Mons', []);
     }
 
+    /**
+     * @dataProvider zonesThatAreNotIanaNames
+     */
+    public function testAZoneThatIsNotAnIanaNameIsRejected(string $zone): void
+    {
+        // PHP accepts all of these and gives each a fixed offset with no
+        // transitions, so a schedule on one of them would keep one offset all
+        // year and offer every slot an hour out for half of it. The schedule
+        // form offers only IANA names, but the constructor is public and also
+        // sees imported and hand-edited rows.
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ScheduleResolver($zone, []);
+    }
+
+    /**
+     * The comment on each case says why the name is a trap rather than a
+     * convenience.
+     *
+     * @return array<string, array{0:string}>
+     */
+    public static function zonesThatAreNotIanaNames(): array
+    {
+        return [
+            // An abbreviation has no daylight-saving rules.
+            'abbreviation'     => ['CET'],
+            // A summer-time abbreviation is a fixed offset all year.
+            'summer time name' => ['CEST'],
+            // An offset is not a zone.
+            'bare offset'      => ['+01:00'],
+            // A backwards-compatible name, which PHP does not list either.
+            'legacy name'      => ['EST'],
+        ];
+    }
+
+    public function testTheZoneOfASwissScheduleIsAccepted(): void
+    {
+        // The counter-test to the one above: the names the form really offers
+        // have to keep working, including the ones without a region.
+        $this->assertSame(self::ZONE, (new ScheduleResolver(self::ZONE, []))->getTimezone()->getName());
+        $this->assertSame('UTC', (new ScheduleResolver('UTC', []))->getTimezone()->getName());
+    }
+
+    public function testADateBelowTheSupportedYearRangeIsRejected(): void
+    {
+        // The year 1 exists in the calendar but not in the range the DATE
+        // column documents, so a rule carrying it cannot have come from a
+        // schedule that was saved through the component.
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ScheduleResolver(
+            self::ZONE,
+            [],
+            [['specific_date' => '0001-01-01', 'start_time' => '10:00', 'end_time' => '11:00']]
+        );
+    }
+
     public function testAWeekdayOutsideTheIsoRangeIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);
