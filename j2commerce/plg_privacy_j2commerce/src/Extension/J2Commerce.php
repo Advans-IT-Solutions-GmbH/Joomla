@@ -2383,13 +2383,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $reserved = false;
 
         // Admission is atomic: the attempt is counted before it is checked (ConfirmAttempts::reserve()),
-        // so parallel requests cannot pass the limit together.
-        if (!$blocked && $limiter !== null) {
-            try {
-                $reserved = true;
-                $blocked  = !$limiter->reserve($subjects, $now);
-            } catch (\Throwable $e) {
-                Log::add('Confirmation attempt limit not available: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        // so parallel requests cannot pass the limit together. Without the server-side counter
+        // (table missing, database error) nothing is confirmed: fail closed.
+        if (!$blocked) {
+            if ($limiter === null) {
+                $blocked = true;
+            } else {
+                try {
+                    $blocked  = !$limiter->reserve($subjects, $now);
+                    $reserved = true;
+                } catch (\Throwable $e) {
+                    Log::add('Confirmation attempt limit not available, nothing confirmed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                    $blocked = true;
+                }
             }
         }
 
@@ -2435,7 +2441,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Server-side attempt counter; null without its table or application (logged).
+     * Server-side attempt counter; null without an application (logged). Without it the page confirms nothing.
      */
     protected function confirmAttempts(): ?ConfirmAttempts
     {

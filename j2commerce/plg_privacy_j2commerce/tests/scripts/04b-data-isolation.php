@@ -1740,8 +1740,22 @@ class DataIsolationTest
             $this->test('After the window the right code of the blocked address is confirmed',
                 $plugin->attemptConfirmation($x, $tx, $fresh(), 'client-b', $t0 + $class::WINDOW + 30) === 'confirmed' && $status($idX) === 1);
 
+            // Without the server-side counter the page confirms nothing (fail closed).
+            $w       = 'limit-w-' . $suffix . '@example.com';
+            $tw      = md5('limit-w' . $suffix);
+            $idW     = $insert($w, $tw);
+            $noLimit = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]) extends GuestRequestTestPlugin {
+                protected function confirmAttempts(): ?\Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts
+                {
+                    return null;
+                }
+            };
+            $noLimit->setDatabase($this->db);
+            $this->test('Without the attempt counter the right code is refused (fail closed)',
+                $noLimit->attemptConfirmation($w, $tw, $fresh(), 'client-e', $t0 + 50) === 'failed' && $status($idW) === 0);
+
             // Only hashes are stored.
-            $rows = $this->db->setQuery('SELECT scope, subject_hash FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadObjectList();
+            $rows =$this->db->setQuery('SELECT scope, subject_hash FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadObjectList();
             $raw  = array_filter($rows, static fn ($row): bool => !preg_match('/^[0-9a-f]{64}$/', (string) $row->subject_hash));
             $this->test('Attempt records hold only 64-character hashes, no address or client value',
                 $rows !== [] && $raw === [] && !in_array('client-a', array_column($rows, 'subject_hash'), true), json_encode($rows));
