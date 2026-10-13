@@ -640,6 +640,7 @@ jobs:
       - syntax-check
       - language-lint
       - js-tests
+      - limiter-db
       - test-j5
       - test-j6
       - test-production
