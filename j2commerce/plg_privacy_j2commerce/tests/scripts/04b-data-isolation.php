@@ -1733,6 +1733,15 @@ class DataIsolationTest
 
             $this->test('Per IP: after the maximum of failures from one client its right code for a third address is refused',
                 $plugin->attemptConfirmation($z, $tz, $fresh(), 'client-c', $t0 + 21) === 'failed' && $status($idZ) === 0);
+            // Once the IP limit is used up, new addresses from that client create no rows.
+            $rowCount = fn (): int => (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadResult();
+            $before   = $rowCount();
+
+            for ($i = 1; $i <= 5; $i++) {
+                $plugin->attemptConfirmation('after-limit-' . $i . '-' . $suffix . '@example.com', md5('after' . $i), $fresh(), 'client-c', $t0 + 21);
+            }
+
+            $this->test('Per IP: after the limit, attempts with new addresses from that client add no rows', $rowCount() === $before, $before . ' -> ' . $rowCount());
             $this->test('Per IP: the same address and code from another client is confirmed',
                 $plugin->attemptConfirmation($z, $tz, $fresh(), 'client-d', $t0 + 22) === 'confirmed' && $status($idZ) === 1);
 

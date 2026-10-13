@@ -269,7 +269,8 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                     $purged = (new ConfirmAttempts($db, ''))->purgeExpired();
                     $this->logTask("Expired confirmation attempt records removed: {$purged}");
                 } catch (\Throwable $e) {
-                    $this->logTask('Confirmation attempt records not removed: ' . $e->getMessage(), 'warning');
+                    $otherErrors++;
+                    $this->logTask('Confirmation attempt records not removed: ' . $e->getMessage(), 'error');
                 }
             }
 

@@ -57,20 +57,40 @@ final class ConfirmAttempts
     }
 
     /**
-     * Admit an attempt: count it first for every subject (one atomic statement each, see
-     * registerFailure()), then check the counts. An attempt is admitted only while every count,
-     * its own included, is within the limit, so parallel requests cannot all pass a check made
-     * before any of them is counted. An admitted attempt that succeeds is given back with
-     * release(); a failed one stays counted.
+     * Admit an attempt: count it first (one atomic statement per subject, see increment()), then
+     * check the count, its own included, so parallel requests cannot all pass a check made before
+     * any of them is counted. The client IP address is counted and checked first: once it is over
+     * its limit, nothing else is written (no row for a new e-mail address, no purge), so a client
+     * can create at most MAX_IP_FAILURES address rows per window. An admitted attempt that
+     * succeeds is given back with release(); a failed one stays counted.
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
      */
     public function reserve(array $subjects, ?int $now = null): bool
     {
-        $now = $now ?? time();
-        $this->registerFailure($subjects, $now);
+        $now   = $now ?? time();
+        $ip    = (string) ($subjects['ip'] ?? '');
+        $email = (string) ($subjects['email'] ?? '');
 
-        return !$this->exceeds($subjects, $now);
+        if ($ip !== '') {
+            $this->increment('ip', $ip, $now);
+
+            if ($this->count('ip', $ip, $now) > self::MAX_IP_FAILURES) {
+                return false;
+            }
+        }
+
+        $this->purgeExpired($now);
+
+        if ($email !== '') {
+            $this->increment('email', $email, $now);
+
+            if ($this->count('email', $email, $now) > self::MAX_EMAIL_FAILURES) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -108,23 +128,11 @@ final class ConfirmAttempts
      */
     public function exceeds(array $subjects, ?int $now = null): bool
     {
-        $now     = $now ?? time();
-        $limits  = ['email' => self::MAX_EMAIL_FAILURES, 'ip' => self::MAX_IP_FAILURES];
-        $since   = gmdate('Y-m-d H:i:s', $now - self::WINDOW);
+        $now    = $now ?? time();
+        $limits = ['email' => self::MAX_EMAIL_FAILURES, 'ip' => self::MAX_IP_FAILURES];
 
         foreach ($subjects as $scope => $value) {
-            if ($value === '' || !isset($limits[$scope])) {
-                continue;
-            }
-
-            $query = $this->createQuery()
-                ->select($this->db->quoteName('failures'))
-                ->from($this->db->quoteName(self::TABLE))
-                ->where($this->db->quoteName('scope') . ' = ' . $this->db->quote($scope))
-                ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
-                ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote($since));
-
-            if ((int) $this->db->setQuery($query)->loadResult() > $limits[$scope]) {
+            if ($value !== '' && isset($limits[$scope]) && $this->count($scope, (string) $value, $now) > $limits[$scope]) {
                 return true;
             }
         }
@@ -133,47 +141,78 @@ final class ConfirmAttempts
     }
 
     /**
-     * Count a failed attempt for every subject: a new window when the last one ended, else one
-     * more failure in it. Rows of ended windows are removed first.
+     * Count a failed attempt that was not admitted through reserve() (for example refused by the
+     * session limit): the client IP address first, the e-mail address only while the IP address
+     * is within its limit (see reserve()).
      *
      * @param   array<string, string>  $subjects  Scope ('email', 'ip') => value; empty values are ignored
      */
     public function registerFailure(array $subjects, ?int $now = null): void
     {
-        $now     = $now ?? time();
+        $now   = $now ?? time();
+        $ip    = (string) ($subjects['ip'] ?? '');
+        $email = (string) ($subjects['email'] ?? '');
+
+        if ($ip !== '') {
+            $this->increment('ip', $ip, $now);
+
+            if ($this->count('ip', $ip, $now) > self::MAX_IP_FAILURES) {
+                return;
+            }
+        }
+
         $this->purgeExpired($now);
+
+        if ($email !== '') {
+            $this->increment('email', $email, $now);
+        }
+    }
+
+    /**
+     * Counted attempts of a subject in the current window.
+     */
+    private function count(string $scope, string $value, int $now): int
+    {
+        $query = $this->createQuery()
+            ->select($this->db->quoteName('failures'))
+            ->from($this->db->quoteName(self::TABLE))
+            ->where($this->db->quoteName('scope') . ' = ' . $this->db->quote($scope))
+            ->where($this->db->quoteName('subject_hash') . ' = ' . $this->db->quote($this->hash($scope, $value)))
+            ->where($this->db->quoteName('window_start') . ' > ' . $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW)));
+
+        return (int) $this->db->setQuery($query)->loadResult();
+    }
+
+    /**
+     * Count one attempt of a subject with one atomic statement: a new window when the last one
+     * ended, else one more in it. Parallel attempts cannot overwrite each other.
+     */
+    private function increment(string $scope, string $value, int $now): void
+    {
         $current = $this->db->quote(gmdate('Y-m-d H:i:s', $now));
         $ended   = $this->db->quote(gmdate('Y-m-d H:i:s', $now - self::WINDOW));
         $table   = $this->db->quoteName(self::TABLE);
         $columns = implode(', ', $this->db->quoteName(['scope', 'subject_hash', 'failures', 'window_start']));
         $isPg    = method_exists($this->db, 'getServerType') && strtolower((string) $this->db->getServerType()) === 'postgresql';
+        $values  = $this->db->quote($scope) . ', ' . $this->db->quote($this->hash($scope, $value)) . ', 1, ' . $current;
 
-        foreach ($subjects as $scope => $value) {
-            if ($value === '' || !\in_array($scope, ['email', 'ip'], true)) {
-                continue;
-            }
-
-            $values = $this->db->quote($scope) . ', ' . $this->db->quote($this->hash($scope, $value)) . ', 1, ' . $current;
-
-            // One statement per subject: parallel failures cannot overwrite each other.
-            if ($isPg) {
-                $old = $table . '.' . $this->db->quoteName('window_start');
-                $sql = 'INSERT INTO ' . $table . ' (' . $columns . ') VALUES (' . $values . ')'
-                    . ' ON CONFLICT (' . implode(', ', $this->db->quoteName(['scope', 'subject_hash'])) . ') DO UPDATE SET '
-                    . $this->db->quoteName('failures') . ' = CASE WHEN ' . $old . ' <= ' . $ended . ' THEN 1 ELSE '
-                    . $table . '.' . $this->db->quoteName('failures') . ' + 1 END, '
-                    . $this->db->quoteName('window_start') . ' = CASE WHEN ' . $old . ' <= ' . $ended . ' THEN ' . $current . ' ELSE ' . $old . ' END';
-            } else {
-                // MySQL assigns from left to right: failures is set while window_start is still old.
-                $old = $this->db->quoteName('window_start');
-                $sql = 'INSERT INTO ' . $table . ' (' . $columns . ') VALUES (' . $values . ')'
-                    . ' ON DUPLICATE KEY UPDATE '
-                    . $this->db->quoteName('failures') . ' = IF(' . $old . ' <= ' . $ended . ', 1, ' . $this->db->quoteName('failures') . ' + 1), '
-                    . $old . ' = IF(' . $old . ' <= ' . $ended . ', ' . $current . ', ' . $old . ')';
-            }
-
-            $this->db->setQuery($sql)->execute();
+        if ($isPg) {
+            $old = $table . '.' . $this->db->quoteName('window_start');
+            $sql = 'INSERT INTO ' . $table . ' (' . $columns . ') VALUES (' . $values . ')'
+                . ' ON CONFLICT (' . implode(', ', $this->db->quoteName(['scope', 'subject_hash'])) . ') DO UPDATE SET '
+                . $this->db->quoteName('failures') . ' = CASE WHEN ' . $old . ' <= ' . $ended . ' THEN 1 ELSE '
+                . $table . '.' . $this->db->quoteName('failures') . ' + 1 END, '
+                . $this->db->quoteName('window_start') . ' = CASE WHEN ' . $old . ' <= ' . $ended . ' THEN ' . $current . ' ELSE ' . $old . ' END';
+        } else {
+            // MySQL assigns from left to right: failures is set while window_start is still old.
+            $old = $this->db->quoteName('window_start');
+            $sql = 'INSERT INTO ' . $table . ' (' . $columns . ') VALUES (' . $values . ')'
+                . ' ON DUPLICATE KEY UPDATE '
+                . $this->db->quoteName('failures') . ' = IF(' . $old . ' <= ' . $ended . ', 1, ' . $this->db->quoteName('failures') . ' + 1), '
+                . $old . ' = IF(' . $old . ' <= ' . $ended . ', ' . $current . ', ' . $old . ')';
         }
+
+        $this->db->setQuery($sql)->execute();
     }
 
     /**
