@@ -14,9 +14,9 @@
  *   - opens and submits the domain edit form and the source edit form, proving
  *     Save actually writes a row,
  *   - posts the out-of-bounds values from the issue (duplicate domain, over-long
- *     note, port 0 / 70000 / "abc") and asserts each is rejected with the
- *     component's own localized message and never reaches the database as a raw
- *     SQL error.
+ *     note, port 0 / 70000 / "abc" / "50.5" / "1e2") and asserts each is rejected
+ *     with the component's own localized message and never reaches the database
+ *     as a raw SQL error.
  *
  * The suite talks to the live site over HTTP and seeds/cleans its own rows via
  * mysqli; it only touches records it creates.
@@ -206,8 +206,11 @@ class ConfigFormsTest
         });
 
         // Server-side port bounds: 0, 70000 and "abc" must all be rejected with
-        // the localized message and must never create a row (K-E5c).
-        foreach (['0', '70000', 'abc'] as $badPort) {
+        // the localized message and must never create a row (K-E5c). The decimal
+        // and exponent forms guard the non-coercing raw filter: with
+        // filter="integer" Joomla would round "50.5"/"1e2" into range before
+        // validation and silently accept them.
+        foreach (['0', '70000', 'abc', '50.5', '1e2'] as $badPort) {
             $name = $this->tag . ' badport ' . $badPort;
             $res  = $this->saveSource(['name' => $name, 'port' => $badPort]);
             $this->test("Source port \"{$badPort}\" is rejected with the localized message", function () use ($res, $name) {

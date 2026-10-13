@@ -392,11 +392,12 @@ class IngestController extends BaseController
     private function uploadReasonKey(string $reason): string
     {
         return match ($reason) {
-            'empty'     => 'COM_DMARCREPORTS_UPLOAD_REASON_EMPTY',
-            'format'    => 'COM_DMARCREPORTS_UPLOAD_REASON_FORMAT',
-            'malformed' => 'COM_DMARCREPORTS_UPLOAD_REASON_MALFORMED',
-            'bomb'      => 'COM_DMARCREPORTS_UPLOAD_REASON_BOMB',
-            default     => '',
+            'empty'      => 'COM_DMARCREPORTS_UPLOAD_REASON_EMPTY',
+            'unreadable' => 'COM_DMARCREPORTS_UPLOAD_REASON_UNREADABLE',
+            'format'     => 'COM_DMARCREPORTS_UPLOAD_REASON_FORMAT',
+            'malformed'  => 'COM_DMARCREPORTS_UPLOAD_REASON_MALFORMED',
+            'bomb'       => 'COM_DMARCREPORTS_UPLOAD_REASON_BOMB',
+            default      => '',
         };
     }
 

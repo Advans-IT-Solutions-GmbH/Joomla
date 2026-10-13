@@ -181,8 +181,11 @@ final class Ingestor
         $summary = $this->newSummary();
 
         if (!is_readable($path)) {
+            // Unreadable is not the same as empty: the file may exist but a
+            // permission or storage error prevents reading it. Report it as a
+            // distinct read error so the operator is not told it was empty.
             $summary['failed']++;
-            $summary['reason'] = 'empty';
+            $summary['reason'] = 'unreadable';
 
             return $summary;
         }
@@ -210,8 +213,11 @@ final class Ingestor
         $payload = (string) @file_get_contents($path, false, null, 0, self::MAX_UPLOAD_BYTES + 1);
 
         if ($payload === '') {
+            // filesize() already reported a positive size above, so an empty
+            // read here is a read failure (permissions/storage), not a genuinely
+            // empty file; classify it as unreadable rather than empty.
             $summary['failed']++;
-            $summary['reason'] = 'empty';
+            $summary['reason'] = 'unreadable';
 
             return $summary;
         }
