@@ -317,12 +317,23 @@ final class DmarcParser
      */
     public static function fingerprint(array $report): string
     {
-        return hash(
-            'sha256',
-            strtolower((string) ($report['org_name'] ?? '')) . '|'
-            . (string) ($report['report_id'] ?? '') . '|'
-            . (string) ($report['date_begin'] ?? '0')
-        );
+        // org_name and report_id are untrusted strings that may contain any
+        // character, so a plain delimiter would be ambiguous: ("a|b", "c") and
+        // ("a", "b|c") would collide and one distinct report would be dropped as
+        // a duplicate. Length-prefix every field so the boundaries are explicit.
+        $fields = [
+            strtolower((string) ($report['org_name'] ?? '')),
+            (string) ($report['report_id'] ?? ''),
+            (string) ($report['date_begin'] ?? '0'),
+        ];
+
+        $canonical = '';
+
+        foreach ($fields as $field) {
+            $canonical .= \strlen($field) . ':' . $field . '|';
+        }
+
+        return hash('sha256', $canonical);
     }
 
     private static function text($node): string

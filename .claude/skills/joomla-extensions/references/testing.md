@@ -223,7 +223,7 @@ Notable test details:
   file, and manually (`workflow_dispatch`).
 - **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
-  `shared-install-messages.php` are used by all six extensions and start all six.
+  `shared-install-messages.php` are used by all seven extensions and start all seven.
   `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
   are used only by AJAX Forms, OSMap and Privacy (update lane and production-like lane) and start
   only those three. `shared/tests/Dockerfile.template`, `shared/tests/scripts/docker-entrypoint.sh`

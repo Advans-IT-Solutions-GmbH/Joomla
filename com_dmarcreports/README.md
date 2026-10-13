@@ -164,7 +164,7 @@ Order as in `tests/test.env`:
 1. **Installation** - Component registration, file deployment, table creation
 2. **Structure** - Namespaces, services, forms and SQL are present and well-formed
 3. **Parser** - RFC 7489 aggregate-report XML is parsed into the expected records
-4. **Storage** - Reports and records are stored idempotently (dedupe by reporter org + report id)
+4. **Storage** - Reports and records are stored idempotently (dedupe by reporter org, report id and report-window start date)
 5. **Action Center** - Recommendations are derived correctly from the parsed data
 6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
 7. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
@@ -226,7 +226,7 @@ Test results are saved in `tests/test-results/`.
 
 ### The same report seems to be missing after a second ingestion
 **Problem:** Re-running ingestion does not add rows  
-**Solution:** This is expected. Reports are de-duplicated by reporter org and report id, so importing the same report twice does not create duplicates.
+**Solution:** This is expected. Reports are de-duplicated by reporter org, report id and report-window start date, so importing the same report twice does not create duplicates.
 
 ### Cannot access the component after installation
 **Problem:** Menu item missing or permission denied  

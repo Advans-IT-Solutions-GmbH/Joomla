@@ -137,6 +137,20 @@ XML;
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', DmarcParser::fingerprint($a));
     }
 
+    public function testFingerprintUsesUnambiguousFieldBoundaries(): void
+    {
+        // Without explicit field boundaries these two reports would share a
+        // delimiter-joined preimage ("a|b|c") and collide, dropping one as a
+        // duplicate. Length-prefixing keeps them distinct.
+        $left  = ['org_name' => 'a|b', 'report_id' => 'c', 'date_begin' => 0];
+        $right = ['org_name' => 'a', 'report_id' => 'b|c', 'date_begin' => 0];
+
+        $this->assertNotSame(
+            DmarcParser::fingerprint($left),
+            DmarcParser::fingerprint($right)
+        );
+    }
+
     public function testRejectsDoctypeToPreventXxe(): void
     {
         $this->expectException(\InvalidArgumentException::class);
