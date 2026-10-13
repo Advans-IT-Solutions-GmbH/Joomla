@@ -1858,11 +1858,12 @@ PHP
                 $shared === $class::MAX_IP_FAILURES + 5, (string) $shared);
             $this->test('Shared network: successful attempts are given back, no count is left for the client', $ipRows === 0, (string) $ipRows);
 
-            // Only hashes are stored.
+            // Only hashes are stored (successes above were given back, so count a failure first).
+            (new $class($this->db, 'guest-request-test-secret'))->registerFailure(['email' => 'hashed-' . $suffix . '@example.com', 'ip' => 'client-h'], $t0 + $class::WINDOW + 40);
             $rows =$this->db->setQuery('SELECT scope, subject_hash FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadObjectList();
             $raw  = array_filter($rows, static fn ($row): bool => !preg_match('/^[0-9a-f]{64}$/', (string) $row->subject_hash));
             $this->test('Attempt records hold only 64-character hashes, no address or client value',
-                $rows !== [] && $raw === [] && !in_array('client-a', array_column($rows, 'subject_hash'), true), json_encode($rows));
+                $rows !== [] && $raw === [] && !in_array('client-h', array_column($rows, 'subject_hash'), true), json_encode($rows));
 
             $limiter = new $class($this->db, 'guest-request-test-secret');
 
@@ -1910,7 +1911,7 @@ PHP
             $this->test('Release after a window rollover leaves the attempt of the new window counted', (string) $left === '1', var_export($left, true));
 
             $this->test('Hashes depend on the site secret', $limiter->hash('ip', 'client-a') !== (new $class($this->db, 'other-secret'))->hash('ip', 'client-a'));
-            $limiter->purgeExpired($t0 + 3 * $class::WINDOW);
+            $limiter->purgeExpired($t0 + 4 * $class::WINDOW);
             $left = (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__privacy_j2commerce_attempts'))->loadResult();
             $this->test('Records of ended windows are purged', $left === 0, (string) $left);
         } catch (\Throwable $e) {
