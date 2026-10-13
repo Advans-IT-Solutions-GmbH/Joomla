@@ -128,7 +128,9 @@ The installer creates eight editable site-wide templates in each shipped languag
 pending, approved, reschedule, cancellation, reminder, host notice and erasure notice.
 An event-specific template takes precedence over the published site-wide template for that purpose
 and language. If neither is available, the corresponding English template is used. Updating the
-component preserves existing templates rather than overwriting operator changes.
+component preserves existing templates rather than overwriting operator changes. Notification
+labels are installed privately from the same shipped language files, so a stored recipient
+language does not depend on that Joomla language pack being installed.
 
 Templates are plain text. Common placeholders include `{event_title}`, `{invitee_name}`,
 `{invitee_email}`, `{invitee_phone}`, `{guest_emails}`, `{host_name}`, `{host_email}`, `{location}`,

@@ -14,6 +14,8 @@ use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Joomla\Filesystem\File;
+use Joomla\Filesystem\Folder;
 
 class Com_appointmentsInstallerScript extends InstallerScript
 {
@@ -186,6 +188,11 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $file = $source . '/administrator/language/' . $tag . '/com_appointments.ini';
+            // Recipient languages must work even without the corresponding Joomla language pack.
+            $localLanguage = JPATH_ADMINISTRATOR . '/components/com_appointments/language/' . $tag;
+            if (!Folder::create($localLanguage) || !File::copy($file, $localLanguage . '/com_appointments.ini')) {
+                throw new \RuntimeException('The appointment notification language could not be installed.');
+            }
             $strings = parse_ini_file($file, false, INI_SCANNER_RAW);
 
             if (!is_array($strings)) {

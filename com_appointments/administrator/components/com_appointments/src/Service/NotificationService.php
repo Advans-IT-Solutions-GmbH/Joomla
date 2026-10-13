@@ -57,7 +57,7 @@ final class NotificationService
                 $recipientPurpose = $isHost && in_array($purpose, ['confirmation', 'pending'], true) ? 'host_notice' : $purpose;
                 $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
                 $language = new Language($tag);
-                $language->load('com_appointments', JPATH_ADMINISTRATOR, $tag, true);
+                $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
                 $timezone = $isHost ? (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'))
                     : (string) $booking['invitee_timezone'];
                 $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);

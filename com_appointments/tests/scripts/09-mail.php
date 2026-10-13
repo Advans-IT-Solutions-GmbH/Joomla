@@ -1,6 +1,7 @@
 <?php
 
 require __DIR__ . '/appointments-http.php';
+require __DIR__ . '/appointments-mail.php';
 require '/var/www/html/configuration.php';
 $config = new JConfig();
 $db = new mysqli($config->host, $config->user, $config->password, $config->db);
@@ -38,6 +39,11 @@ $inspect = static function (array $before, array $booking, string $method, strin
         if (str_contains($unfolded, 'invitee@example.test') || str_contains($unfolded, 'guest@example.test')) {
             $check(str_contains($mime, 'action=reschedule') && str_contains($mime, 'action=cancel')
                 && str_contains($mime, 'action=erase'), 'Mandatory action links survive customized template content');
+            if ($localizedSubject === 'Validé :') {
+                $decoded = AppointmentsMail::decoded($mime);
+                $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),
+                    'French mandatory footer works independently of installed Joomla language packs');
+            }
         }
         if ($localizedSubject !== null && preg_match('/^Subject:\s*(.*)$/mi', $unfolded, $subject)) {
             $localized = $localized || str_contains(iconv_mime_decode(trim($subject[1]), 0, 'UTF-8'), $localizedSubject);
