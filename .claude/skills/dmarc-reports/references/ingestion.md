@@ -31,6 +31,29 @@ operator installs it and re-runs; on upload `ingestFile()` lets the exception pr
 `IngestController` shows the concrete requirement (`COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE`)
 rather than a generic failure.
 
+## Operator-facing failure reasons
+
+Ingest and upload failures state a short, localized reason so a non-expert can act, and never leak a
+credential or raw technical detail:
+
+- Upload: when nothing is imported, `IngestController::upload()` appends a specific cause —
+  `Ingestor` tags the summary `reason` as `empty`, `format` (not a recognised DMARC report),
+  `malformed` (corrupt or security-rejected XML, e.g. a declared DOCTYPE / the XXE class) or `bomb`
+  (oversized or over-expanding), mapped to `COM_DMARCREPORTS_UPLOAD_REASON_*`. The parser exposes
+  `DmarcParser::ERROR_*` codes that `Ingestor::parseReason()` folds into those tokens.
+- Archive cap: `ReportArchive::MAX_DOCUMENTS` (256) bounds the `.xml` entries extracted from one
+  archive. The surplus is counted (`stats['dropped']`) and surfaced in the run summary
+  (`COM_DMARCREPORTS_INGEST_DROPPED`) instead of being dropped silently.
+- IMAP: transport/protocol failures throw `ImapException` with a coarse category
+  (`connection`/`tls`/`login`/`config`); the controller shows only the fixed localized category text
+  (`COM_DMARCREPORTS_INGEST_REASON_*`), never the exception message.
+
+## CSV export
+
+`ExportController` writes a UTF-8 BOM and uses the operator-configured `csv_delimiter` option
+(`semicolon` default, `comma`, or `tab`) for both the header and every row, so Excel on a de-CH
+locale opens the export into columns with correct umlauts rather than one mojibake column.
+
 ## IMAP client (`ImapClient`)
 
 Connects over an encrypted stream socket — it does **not** require the PHP `imap` extension, so it

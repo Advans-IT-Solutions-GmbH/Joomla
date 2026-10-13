@@ -111,8 +111,10 @@ final class Ingestor
         $blocked = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
+            $stats = [];
+
             try {
-                $documents = ReportArchive::extract($attachment['content'], $attachment['filename']);
+                $documents = ReportArchive::extract($attachment['content'], $attachment['filename'], $stats);
             } catch (DecoderUnavailableException) {
                 // The host cannot decompress this container because the PHP zlib
                 // or zip extension is absent. This is a permanent configuration
@@ -131,6 +133,11 @@ final class Ingestor
                 $retry = true;
                 continue;
             }
+
+            // A zip that packs more than the per-archive document cap has its
+            // surplus reports counted so the caller can note the dropped total
+            // in the run summary instead of discarding them silently.
+            $summary['dropped'] = (int) ($summary['dropped'] ?? 0) + (int) ($stats['dropped'] ?? 0);
 
             $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
         }
@@ -173,15 +180,24 @@ final class Ingestor
 
         if (!is_readable($path)) {
             $summary['failed']++;
+            $summary['reason'] = 'empty';
 
             return $summary;
         }
 
         $size = (int) @filesize($path);
 
-        if ($size <= 0 || $size > self::MAX_UPLOAD_BYTES) {
-            // Empty, unreadable or larger than the accepted compressed ceiling.
+        if ($size <= 0) {
             $summary['failed']++;
+            $summary['reason'] = 'empty';
+
+            return $summary;
+        }
+
+        if ($size > self::MAX_UPLOAD_BYTES) {
+            // Larger than the accepted compressed ceiling.
+            $summary['failed']++;
+            $summary['reason'] = 'bomb';
 
             return $summary;
         }
@@ -191,15 +207,33 @@ final class Ingestor
         // before the archive helper applies its decompression limits.
         $payload = (string) @file_get_contents($path, false, null, 0, self::MAX_UPLOAD_BYTES + 1);
 
-        if ($payload === '' || \strlen($payload) > self::MAX_UPLOAD_BYTES) {
+        if ($payload === '') {
             $summary['failed']++;
+            $summary['reason'] = 'empty';
+
+            return $summary;
+        }
+
+        if (\strlen($payload) > self::MAX_UPLOAD_BYTES) {
+            $summary['failed']++;
+            $summary['reason'] = 'bomb';
 
             return $summary;
         }
 
         $retry     = false;
-        $documents = ReportArchive::extract($payload, $filename);
+        $stats     = [];
+        $documents = ReportArchive::extract($payload, $filename, $stats);
+        $summary['dropped'] += (int) ($stats['dropped'] ?? 0);
         $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+
+        // When nothing was imported, explain why. A parse-level reason recorded
+        // by ingestDocuments (malformed or wrong format) takes precedence over
+        // the container-level reason from the archive helper (empty, bomb or
+        // unrecognised format), so the operator sees the most specific cause.
+        if ((int) $summary['imported'] === 0 && ($summary['reason'] ?? '') === '' && ($stats['reason'] ?? '') !== '') {
+            $summary['reason'] = (string) $stats['reason'];
+        }
 
         return $summary;
     }
@@ -221,13 +255,32 @@ final class Ingestor
         foreach ($documents as $xml) {
             try {
                 $report = DmarcParser::parse($xml);
-            } catch (\InvalidArgumentException) {
+            } catch (\InvalidArgumentException $e) {
                 $summary['failed']++;
+
+                if (($summary['reason'] ?? '') === '') {
+                    $summary['reason'] = self::parseReason((int) $e->getCode());
+                }
+
                 continue;
             }
 
             $this->store($report, $sourceId, $forcedDomainId, $summary, $retry);
         }
+    }
+
+    /**
+     * Map a {@see DmarcParser} failure code to the short reason the upload
+     * controller shows the operator. A hardening guard (NUL bytes or a DOCTYPE,
+     * i.e. the XXE class) is "malformed"; an empty or non-report document is a
+     * wrong-"format" upload. Any other parse failure defaults to malformed.
+     */
+    private static function parseReason(int $code): string
+    {
+        return match ($code) {
+            DmarcParser::ERROR_EMPTY, DmarcParser::ERROR_NOT_REPORT => 'format',
+            default => 'malformed',
+        };
     }
 
     /**
@@ -558,6 +611,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'dropped' => 0, 'reason' => ''];
     }
 }

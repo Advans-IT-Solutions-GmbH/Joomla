@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<form>
+<form addruleprefix="Advans\Component\DmarcReports\Administrator\Rule">
     <fieldset name="details">
         <field name="id" type="hidden" />
 
@@ -19,8 +19,7 @@
             description="COM_DMARCREPORTS_FIELD_DOMAIN_ID_DESC"
             query="SELECT id AS value, domain AS text FROM #__dmarc_domains ORDER BY domain ASC"
             key_field="value"
-            value_field="text"
-            header="JOPTION_SELECT_PUBLISHED">
+            value_field="text">
             <option value="0">COM_DMARCREPORTS_FIELD_DOMAIN_ID_AUTO</option>
         </field>
 
@@ -55,7 +54,10 @@
             description="COM_DMARCREPORTS_FIELD_PORT_DESC"
             default="993"
             min="1"
-            max="65535" />
+            max="65535"
+            validate="range"
+            filter="integer"
+            message="COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT" />
 
         <field
             name="security"

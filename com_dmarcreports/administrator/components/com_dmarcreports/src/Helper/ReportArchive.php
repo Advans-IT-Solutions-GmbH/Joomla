@@ -46,7 +46,7 @@ final class ReportArchive
     /**
      * Largest number of XML documents extracted from a single archive.
      */
-    private const MAX_DOCUMENTS = 256;
+    public const MAX_DOCUMENTS = 256;
 
     /**
      * Largest number of entries examined in a single archive. A zip can stay
@@ -59,8 +59,15 @@ final class ReportArchive
     /**
      * Extract every XML document contained in a raw attachment payload.
      *
-     * @param   string  $payload   The raw bytes of the attachment.
-     * @param   string  $filename  The attachment file name (used as a hint).
+     * @param   string      $payload   The raw bytes of the attachment.
+     * @param   string      $filename  The attachment file name (used as a hint).
+     * @param   array|null  $stats     Optional out-parameter. When a variable is
+     *          passed it is filled with diagnostics for the caller that needs to
+     *          explain an empty result: 'reason' is one of '' (documents were
+     *          extracted), 'empty' (no payload), 'format' (not a recognised or
+     *          decodable report) or 'bomb' (a size/decompression limit tripped);
+     *          'dropped' is the number of valid XML reports skipped because the
+     *          archive held more than {@see self::MAX_DOCUMENTS}.
      *
      * @return  string[]  A list of XML document strings (possibly empty).
      *
@@ -72,9 +79,13 @@ final class ReportArchive
      *          to read a zip container cannot be created or fully written, a
      *          transient host failure the caller must retry rather than skip.
      */
-    public static function extract(string $payload, string $filename = ''): array
+    public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
+        $stats = ['reason' => '', 'dropped' => 0];
+
         if ($payload === '') {
+            $stats['reason'] = 'empty';
+
             return [];
         }
 
@@ -99,9 +110,24 @@ final class ReportArchive
                 );
             }
 
-            $xml = self::gunzip($payload);
+            // Bound decompression itself (ceiling + 1 byte) so a gzip bomb cannot
+            // expand to an unbounded size before the size check below runs.
+            $data = @gzdecode($payload, self::MAX_BYTES + 1);
 
-            return $xml === null ? [] : [self::clean($xml)];
+            if ($data === false) {
+                // Not a decodable gzip stream: corrupt or not actually gzip.
+                $stats['reason'] = 'format';
+
+                return [];
+            }
+
+            if (\strlen($data) > self::MAX_BYTES) {
+                $stats['reason'] = 'bomb';
+
+                return [];
+            }
+
+            return [self::clean($data)];
         }
 
         if ($isZip) {
@@ -111,7 +137,7 @@ final class ReportArchive
                 );
             }
 
-            return self::unzip($payload);
+            return self::unzip($payload, $stats);
         }
 
         $trimmed = ltrim($payload);
@@ -119,38 +145,29 @@ final class ReportArchive
         if (str_starts_with($trimmed, '<?xml') || stripos($trimmed, '<feedback') !== false) {
             // A raw document is its own uncompressed size, so bound it directly.
             if (\strlen($payload) > self::MAX_BYTES) {
+                $stats['reason'] = 'bomb';
+
                 return [];
             }
 
             return [self::clean($payload)];
         }
 
+        $stats['reason'] = 'format';
+
         return [];
     }
 
-    private static function gunzip(string $payload): ?string
-    {
-        if (!\function_exists('gzdecode')) {
-            return null;
-        }
-
-        // Bound decompression itself (ceiling + 1 byte) so a gzip bomb cannot
-        // expand to an unbounded size before the size check below runs.
-        $data = @gzdecode($payload, self::MAX_BYTES + 1);
-
-        if ($data === false || \strlen($data) > self::MAX_BYTES) {
-            return null;
-        }
-
-        return $data;
-    }
-
     /**
+     * @param   array  $stats  Diagnostics out-parameter shared with extract().
+     *
      * @return string[]
      */
-    private static function unzip(string $payload): array
+    private static function unzip(string $payload, array &$stats): array
     {
         if (!class_exists(\ZipArchive::class)) {
+            $stats['reason'] = 'format';
+
             return [];
         }
 
@@ -183,6 +200,8 @@ final class ReportArchive
             $zip = new \ZipArchive();
 
             if ($zip->open($tmp) !== true) {
+                $stats['reason'] = 'format';
+
                 return [];
             }
 
@@ -191,12 +210,18 @@ final class ReportArchive
             // could still force hundreds of thousands of statIndex() calls.
             if ($zip->numFiles > self::MAX_ENTRIES) {
                 $zip->close();
+                $stats['reason'] = 'bomb';
 
                 return [];
             }
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 if (\count($documents) >= self::MAX_DOCUMENTS) {
+                    // The per-archive document cap is reached. Count the valid XML
+                    // reports still ahead so the caller can report how many were
+                    // dropped instead of letting them disappear silently.
+                    $stats['dropped'] += self::countRemainingXml($zip, $i);
+
                     break;
                 }
 
@@ -238,7 +263,36 @@ final class ReportArchive
             @unlink($tmp);
         }
 
+        if ($documents === [] && $stats['reason'] === '') {
+            // A readable archive that held no usable XML report is a wrong-format
+            // upload from the operator's point of view.
+            $stats['reason'] = 'format';
+        }
+
         return $documents;
+    }
+
+    /**
+     * Count the XML entries from index $from onward, used to report how many
+     * reports were dropped once the per-archive document cap is reached.
+     */
+    private static function countRemainingXml(\ZipArchive $zip, int $from): int
+    {
+        $dropped = 0;
+
+        for ($i = $from; $i < $zip->numFiles; $i++) {
+            $entry = $zip->statIndex($i);
+
+            if ($entry === false) {
+                continue;
+            }
+
+            if (str_ends_with(strtolower($entry['name']), '.xml')) {
+                $dropped++;
+            }
+        }
+
+        return $dropped;
     }
 
     private static function clean(string $xml): string

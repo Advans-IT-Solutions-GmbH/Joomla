@@ -12,7 +12,9 @@ namespace Advans\Component\DmarcReports\Administrator\Controller;
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\DecoderUnavailableException;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
+use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
+use Advans\Component\DmarcReports\Administrator\Helper\ReportArchive;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
@@ -126,6 +128,18 @@ class IngestController extends BaseController
             );
 
             $this->setRedirect($redirect, $message, $flashType);
+        } catch (ImapException $e) {
+            // Give the operator the category of failure — a connection problem, a
+            // TLS failure, a login rejection or a misconfiguration — so they know
+            // what to fix. Only the fixed, localized category text is shown; the
+            // exception message is never surfaced, so a mailbox credential can
+            // never leak into a flash message, the stored run status or a log.
+            $message = Text::_('COM_DMARCREPORTS_INGEST_FAILED') . ' '
+                . Text::_($this->imapReasonKey($e->getCategory()));
+            $this->recordRun($sourceId, 'error', $message);
+            $this->setRedirect($redirect, $message, 'error');
+
+            return false;
         } catch (\Throwable $e) {
             $this->recordRun($sourceId, 'error', Text::_('COM_DMARCREPORTS_INGEST_FAILED'));
             $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_INGEST_FAILED'), 'error');
@@ -134,6 +148,21 @@ class IngestController extends BaseController
         }
 
         return true;
+    }
+
+    /**
+     * Map an {@see ImapException} category to its localized reason key. The
+     * category is a fixed enumeration, so the message never contains any
+     * server-supplied or credential-derived text.
+     */
+    private function imapReasonKey(string $category): string
+    {
+        return match ($category) {
+            ImapException::CATEGORY_TLS   => 'COM_DMARCREPORTS_INGEST_REASON_TLS',
+            ImapException::CATEGORY_LOGIN => 'COM_DMARCREPORTS_INGEST_REASON_LOGIN',
+            ImapException::CATEGORY_CONFIG => 'COM_DMARCREPORTS_INGEST_REASON_CONFIG',
+            default                       => 'COM_DMARCREPORTS_INGEST_REASON_CONNECTION',
+        };
     }
 
     /**
@@ -169,7 +198,20 @@ class IngestController extends BaseController
             );
 
             $type = $summary['imported'] > 0 ? 'message' : 'warning';
-            $this->setRedirect($redirect, $this->summaryText($summary), $type);
+            $message = $this->summaryText($summary);
+
+            // When nothing was imported, append the specific reason (empty file,
+            // wrong format, malformed/XXE, or a decompression-bomb guard) so the
+            // operator knows why rather than seeing only an empty-result summary.
+            if ((int) $summary['imported'] === 0 && !empty($summary['reason'])) {
+                $key = $this->uploadReasonKey((string) $summary['reason']);
+
+                if ($key !== '') {
+                    $message .= ' ' . Text::_($key);
+                }
+            }
+
+            $this->setRedirect($redirect, $message, $type);
         } catch (DecoderUnavailableException $e) {
             // The uploaded report is a compressed container the host cannot
             // decode because the required PHP extension is missing. Surface a
@@ -343,17 +385,44 @@ class IngestController extends BaseController
     }
 
     /**
+     * Map an ingest reason token from {@see Ingestor} to its localized upload
+     * message key. An unknown token yields an empty string so only the summary
+     * is shown.
+     */
+    private function uploadReasonKey(string $reason): string
+    {
+        return match ($reason) {
+            'empty'     => 'COM_DMARCREPORTS_UPLOAD_REASON_EMPTY',
+            'format'    => 'COM_DMARCREPORTS_UPLOAD_REASON_FORMAT',
+            'malformed' => 'COM_DMARCREPORTS_UPLOAD_REASON_MALFORMED',
+            'bomb'      => 'COM_DMARCREPORTS_UPLOAD_REASON_BOMB',
+            default     => '',
+        };
+    }
+
+    /**
      * @param   array<string, int>  $summary
      */
     private function summaryText(array $summary): string
     {
-        return Text::sprintf(
+        $text = Text::sprintf(
             'COM_DMARCREPORTS_INGEST_SUMMARY',
             (int) ($summary['imported'] ?? 0),
             (int) ($summary['duplicates'] ?? 0),
             (int) ($summary['failed'] ?? 0),
             (int) ($summary['skipped'] ?? 0)
         );
+
+        // An archive that held more reports than the per-run cap had the surplus
+        // dropped; tell the operator how many so a silently truncated import is
+        // never mistaken for a complete one.
+        $dropped = (int) ($summary['dropped'] ?? 0);
+
+        if ($dropped > 0) {
+            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_DROPPED', $dropped, ReportArchive::MAX_DOCUMENTS);
+        }
+
+        return $text;
     }
 
     private function getConfig(string $key, $default)

@@ -65,6 +65,18 @@ final class DmarcParser
     private const MAX_RECORDS = 100000;
 
     /**
+     * Parse-failure codes carried on the thrown InvalidArgumentException so a
+     * caller can classify the failure (for an upload reason message) without
+     * matching on the English exception text. A document that looks the wrong
+     * shape is FORMAT; one that trips a hardening guard (NUL bytes, DOCTYPE) is
+     * MALFORMED. Any other failure defaults to code 0.
+     */
+    public const ERROR_EMPTY = 1;
+    public const ERROR_NUL = 2;
+    public const ERROR_DOCTYPE = 3;
+    public const ERROR_NOT_REPORT = 4;
+
+    /**
      * Parse one aggregate report document.
      *
      * @param   string    $xml         The raw XML of a single <feedback> document.
@@ -82,7 +94,7 @@ final class DmarcParser
         $xml        = trim($xml);
 
         if ($xml === '') {
-            throw new \InvalidArgumentException('Empty DMARC report document.');
+            throw new \InvalidArgumentException('Empty DMARC report document.', self::ERROR_EMPTY);
         }
 
         // A legitimate aggregate report is UTF-8 (or ASCII) XML, and XML 1.0
@@ -94,13 +106,13 @@ final class DmarcParser
         // any UTF-16/UTF-32 payload) up front so the DOCTYPE invariant cannot be
         // bypassed by re-encoding the document.
         if (strpos($xml, "\0") !== false) {
-            throw new \InvalidArgumentException('DMARC reports must be UTF-8 XML without NUL bytes.');
+            throw new \InvalidArgumentException('DMARC reports must be UTF-8 XML without NUL bytes.', self::ERROR_NUL);
         }
 
         // Reject any DOCTYPE outright: a legitimate aggregate report never has one,
         // and forbidding it removes the whole class of entity-expansion attacks.
         if (preg_match('/<!DOCTYPE/i', $xml)) {
-            throw new \InvalidArgumentException('DOCTYPE is not allowed in DMARC reports.');
+            throw new \InvalidArgumentException('DOCTYPE is not allowed in DMARC reports.', self::ERROR_DOCTYPE);
         }
 
         $previous = libxml_use_internal_errors(true);
@@ -113,7 +125,7 @@ final class DmarcParser
         }
 
         if (!$feedback instanceof \SimpleXMLElement || strtolower($feedback->getName()) !== 'feedback') {
-            throw new \InvalidArgumentException('The document is not a DMARC aggregate report.');
+            throw new \InvalidArgumentException('The document is not a DMARC aggregate report.', self::ERROR_NOT_REPORT);
         }
 
         $meta   = $feedback->report_metadata;

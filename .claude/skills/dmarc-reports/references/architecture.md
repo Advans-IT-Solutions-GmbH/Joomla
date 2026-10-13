@@ -11,6 +11,17 @@ Standard Joomla 5/6 administrator MVC component, namespace `Advans\Component\Dma
 - `src/Extension/` — the component entry/boot class.
 - `forms/domain.xml`, `forms/source.xml` — JForm definitions for the domain and source editors.
 - `access.xml` — ACL actions; component options live inline in `com_dmarcreports.xml` `<config>`.
+- `src/Rule/RangeRule.php` — a server-side `FormRule` (`validate="range"`, prefix declared with
+  `addruleprefix` on `config.xml` and `forms/source.xml`) that re-checks numeric bounds the HTML5
+  `min`/`max` only enforce in the browser. It backs the config thresholds/timeouts/limits and the
+  source port, so an out-of-range or non-numeric value posted directly is rejected before storage.
+- Table `check()` methods add the data-level guards a form rule cannot express: `DomainTable`
+  rejects an over-long note and a duplicate domain with a localized message instead of a raw SQL
+  error; `SourceTable` keeps a port backstop.
+- `src/Helper/ImapException.php` — carries a coarse category (`connection`/`tls`/`login`/`config`)
+  that `IngestController` maps to a localized reason. Only the fixed category text is shown; the
+  exception message (which could hold connection detail) is never surfaced, so a credential can
+  never leak into a flash message, run status or log.
 
 ## Views
 
@@ -42,6 +53,11 @@ Both are declared in the manifest `<install>`/`<uninstall>` `<sql>` blocks. Tabl
   (`FLOOR(date_begin / 86400)`, portable across MySQL and PostgreSQL), so several reporters covering
   the same day collapse into one point and the 90-row limit means 90 distinct days, not 90 reports.
 - `#__dmarc_actions` persists Action Center items so status (open/done/snoozed) survives re-ingestion.
+
+The manifest also declares an `<update><schemas>` path (`sql/updates/mysql`) with a baseline
+`1.0.0.sql` (no-op), so `#__schemas` gets a row for the extension and future schema migrations have
+a baseline to run from. The schema version sequence is independent of the extension version that
+the release CI bumps.
 
 ## Database API (Joomla 5 vs 6)
 

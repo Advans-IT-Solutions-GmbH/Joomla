@@ -41,6 +41,15 @@ class SourceTable extends Table
             $this->port = 993;
         }
 
+        // The mailbox port must stay within the valid TCP range. The form range
+        // rule rejects an out-of-range value in the UI; this backstop rejects it
+        // for any path that writes the table directly.
+        if ((int) $this->port > 65535) {
+            $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT'));
+
+            return false;
+        }
+
         // A source may be left unbound (domain_id = 0) so ingestion maps each
         // report to the domain named in its XML. Any other value must reference
         // a real domain: a forged or stale id would otherwise be trusted as the
