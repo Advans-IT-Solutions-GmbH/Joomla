@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
+use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -108,16 +109,11 @@ class DomainModel extends AdminModel
 
         try {
             // Lock the parent domain rows before clearing children so a
-            // concurrent ingestion (which locks the same row before inserting
-            // its report and records) cannot write a child after these tables
-            // are cleared, which would orphan it. A plain FOR UPDATE keeps this
-            // portable across MySQL and MariaDB; the ids are already integers,
-            // so inlining them carries no injection risk.
-            $lockSql = 'SELECT ' . $db->quoteName('id')
-                . ' FROM ' . $db->quoteName('#__dmarc_domains')
-                . ' WHERE ' . $db->quoteName('id') . ' IN (' . implode(',', $ids) . ')'
-                . ' FOR UPDATE';
-            $db->setQuery($lockSql)->execute();
+            // concurrent child writer (ingestion, an Action Center status change
+            // or a source save) that locks the same row cannot commit a child
+            // after these tables are cleared, which would orphan it. See
+            // {@see DomainLock} for the shared protocol.
+            DomainLock::lockMany($db, $ids);
 
             foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
                 $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))

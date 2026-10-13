@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Controller;
 
+use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -77,41 +78,67 @@ class ActionsController extends BaseController
         $snoozeUntil = $snoozeDays > 0 ? Factory::getDate('+' . $snoozeDays . ' days')->toSql() : null;
         $userId      = (int) $app->getIdentity()->id;
 
-        $existingId = $this->findActionId($db, $domainId, $actionKey);
+        $db->transactionStart();
 
-        if ($existingId > 0) {
-            $this->applyStatus($db, $existingId, $status, $snoozeUntil, $now, $userId);
-        } else {
-            $row = (object) [
-                'domain_id'    => $domainId,
-                'action_key'   => $actionKey,
-                'category'     => $category,
-                'severity'     => 0,
-                'status'       => $status,
-                'params'       => '',
-                'snooze_until' => $snoozeUntil,
-                'first_seen'   => $now,
-                'last_seen'    => $now,
-                'modified'     => $now,
-                'modified_by'  => $userId,
-            ];
+        try {
+            // Take the shared parent-domain lock before writing the action so a
+            // concurrent domain delete cannot clear the actions table and then
+            // remove the domain while this row is being written, which would
+            // leave it orphaned. If the domain is already gone, abandon the
+            // write rather than store an action for a domain that no longer
+            // exists. See {@see DomainLock} for the protocol.
+            if (!DomainLock::lock($db, $domainId)) {
+                $db->transactionRollback();
+                $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_ACTION_INVALID'), 'error');
 
-            try {
-                $db->insertObject('#__dmarc_actions', $row);
-            } catch (\RuntimeException $e) {
-                // The read-then-insert is not atomic: a concurrent request can
-                // create the same (domain_id, action_key) row between the lookup
-                // above and this insert, so the unique index rejects it. Recover
-                // the race by re-reading the row the other request created and
-                // applying the requested status as an update instead of failing.
-                $raceId = $this->findActionId($db, $domainId, $actionKey);
-
-                if ($raceId <= 0) {
-                    throw $e;
-                }
-
-                $this->applyStatus($db, $raceId, $status, $snoozeUntil, $now, $userId);
+                return false;
             }
+
+            // Look up any existing override under the lock so a concurrent
+            // writer cannot slip a row in between the read and the write.
+            $existingId = $this->findActionId($db, $domainId, $actionKey);
+
+            if ($existingId > 0) {
+                $this->applyStatus($db, $existingId, $status, $snoozeUntil, $now, $userId);
+            } else {
+                $row = (object) [
+                    'domain_id'    => $domainId,
+                    'action_key'   => $actionKey,
+                    'category'     => $category,
+                    'severity'     => 0,
+                    'status'       => $status,
+                    'params'       => '',
+                    'snooze_until' => $snoozeUntil,
+                    'first_seen'   => $now,
+                    'last_seen'    => $now,
+                    'modified'     => $now,
+                    'modified_by'  => $userId,
+                ];
+
+                try {
+                    $db->insertObject('#__dmarc_actions', $row);
+                } catch (\RuntimeException $e) {
+                    // The read-then-insert is not atomic: a concurrent request
+                    // can create the same (domain_id, action_key) row between the
+                    // lookup above and this insert, so the unique index rejects
+                    // it. Recover the race by re-reading the row the other
+                    // request created and applying the requested status as an
+                    // update instead of failing.
+                    $raceId = $this->findActionId($db, $domainId, $actionKey);
+
+                    if ($raceId <= 0) {
+                        throw $e;
+                    }
+
+                    $this->applyStatus($db, $raceId, $status, $snoozeUntil, $now, $userId);
+                }
+            }
+
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
         }
 
         $this->setRedirect($redirect, Text::_('COM_DMARCREPORTS_ACTION_UPDATED'), 'message');

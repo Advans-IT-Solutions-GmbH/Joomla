@@ -276,23 +276,13 @@ final class Ingestor
 
     /**
      * Lock the parent domain row for the lifetime of the surrounding
-     * transaction. A concurrent domain delete locks the same row before
-     * clearing the child tables, so taking this lock serialises the two
-     * operations and prevents a report or its records from being written
-     * against a domain that is being removed. Returns false when the row no
-     * longer exists, signalling the caller to abort rather than orphan rows.
-     *
-     * A plain FOR UPDATE is used for portability across MySQL and MariaDB. The
-     * id is already an integer, so inlining it carries no injection risk.
+     * transaction so a concurrent domain delete cannot remove it while this
+     * report's children are written. Returns false when the row no longer
+     * exists, signalling the caller to abort rather than orphan rows.
      */
     private function lockDomain(int $domainId): bool
     {
-        $sql = 'SELECT ' . $this->db->quoteName('id')
-            . ' FROM ' . $this->db->quoteName('#__dmarc_domains')
-            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $domainId
-            . ' FOR UPDATE';
-
-        return (int) $this->db->setQuery($sql)->loadResult() === $domainId;
+        return DomainLock::lock($this->db, $domainId);
     }
 
     /**
@@ -333,9 +323,26 @@ final class Ingestor
             'published'       => 1,
             'created'         => $now,
         ];
-        $this->db->insertObject('#__dmarc_domains', $insert, 'id');
 
-        return (int) $insert->id;
+        try {
+            $this->db->insertObject('#__dmarc_domains', $insert, 'id');
+
+            return (int) $insert->id;
+        } catch (\RuntimeException $e) {
+            // The lookup above and this insert are not atomic: a concurrent
+            // import of the same previously unknown domain can create the row in
+            // between, tripping the unique domain index. Recover by re-reading
+            // the row the other request created and treating it as resolved, so
+            // the whole IMAP batch is not aborted and left unread for retry.
+            // Only a genuine failure (the domain still does not exist) re-throws.
+            $existing = (int) $this->db->setQuery($query)->loadResult();
+
+            if ($existing > 0) {
+                return $existing;
+            }
+
+            throw $e;
+        }
     }
 
     /**

@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Table;
 
+use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Table;
 use Joomla\Database\DatabaseDriver;
@@ -50,6 +51,52 @@ class SourceTable extends Table
             $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_DOMAIN'));
 
             return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Store the source, taking the shared parent-domain lock when the source is
+     * bound to a domain so a concurrent domain delete cannot clear the sources
+     * table and then remove the domain while this row is written, which would
+     * leave it orphaned. An unbound source (domain_id = 0) has no parent to
+     * protect and is stored directly. See {@see DomainLock} for the protocol.
+     *
+     * @param   boolean  $updateNulls  Whether null values are updated.
+     *
+     * @return  boolean
+     */
+    public function store($updateNulls = false)
+    {
+        $domainId = (int) $this->domain_id;
+
+        if ($domainId <= 0) {
+            return parent::store($updateNulls);
+        }
+
+        $db = $this->getDatabase();
+        $db->transactionStart();
+
+        try {
+            if (!DomainLock::lock($db, $domainId)) {
+                $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_INVALID_DOMAIN'));
+                $db->transactionRollback();
+
+                return false;
+            }
+
+            if (!parent::store($updateNulls)) {
+                $db->transactionRollback();
+
+                return false;
+            }
+
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
         }
 
         return true;
