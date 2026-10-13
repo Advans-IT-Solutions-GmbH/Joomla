@@ -348,7 +348,11 @@ class ConfigFormsTest
      * Submit the component's com_config Options form and follow the redirect so
      * any validation message is visible in the returned body.
      *
-     * @param   array<string, string>  $params  jform[params] overrides to post.
+     * com_config renders a component's config.xml fields flat under the jform
+     * control (jform[field]) and stores the validated set as the extension's
+     * params, so the overrides are posted as jform[field], not jform[params][field].
+     *
+     * @param   array<string, string>  $params  jform field overrides to post.
      *
      * @return array{code:int, body:string}
      */
@@ -362,7 +366,7 @@ class ConfigFormsTest
         ];
 
         foreach ($params as $key => $value) {
-            $post["jform[params][{$key}]"] = $value;
+            $post["jform[{$key}]"] = $value;
         }
 
         if ($this->token !== null) {
