@@ -110,3 +110,4 @@ Skills liegen in:
 - `.claude/skills/joomla-extensions`
 - `.claude/skills/privacy-plugin`
 - `.claude/skills/dmarc-reports`
+- `.claude/skills/appointments`

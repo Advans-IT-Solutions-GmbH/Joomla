@@ -1,0 +1,144 @@
+# Scope
+
+## Where the requirements come from
+
+The component replaces a hosted scheduling service for the first deployment. The feature list below
+was derived from a direct inspection of that service's public booking page and its administrative
+interface on 13 October 2026, plus its published documentation. Two findings shaped the scope more
+than anything else:
+
+1. **No external calendar was connected.** The hosted service offered Google, Outlook and Exchange
+   connections and none of them was in use. It therefore never checked an external calendar for
+   conflicts. A self-hosted component that owns its own calendar loses no capability that was
+   actually in use.
+2. **The paid tiers were not in use.** Workflows, routing forms, payment collection, team
+   scheduling, meeting polls and managed round-robin assignment were all unavailable on the plan in
+   use. They are not part of version 1.
+
+## Reference configuration
+
+The first deployment must be reproducible with component settings alone. For the record, the
+configuration that has to be expressible is:
+
+| Property | Value |
+|---|---|
+| Event types | 1 |
+| Duration | 20 minutes |
+| Slot step | 30 minutes |
+| Location type | telephone — the host calls the invitee on the number given at booking |
+| Weekly availability | Tue 14:00–17:00, Wed 10:00–12:00, Thu 14:00–17:00 |
+| Time zone | Europe/Zurich, invitee may switch the displayed zone |
+| Booking horizon | 30 calendar days ahead, rolling |
+| Booking form | name*, e-mail*, additional guests, phone* (country selector, default CH), company*, role*, one free-text question, one short-answer question |
+| Confirmation | e-mail to invitee and host, calendar entry attached |
+
+`*` = required. This is a reference, not a hardcoded default: every one of these values is a
+setting.
+
+## In scope for version 1
+
+### Event types
+- Unlimited event types, each with: title, URL alias, description (rich text), duration, colour,
+  active/inactive, access level, language.
+- Location type per event type: `phone_host_calls`, `phone_invitee_calls`, `in_person`,
+  `custom_text`, `conference` (see `references/conferencing.md`).
+- Slot step independent of duration (e.g. a 20-minute meeting offered on a 30-minute grid).
+- Buffer before and buffer after a booking, in minutes.
+- Minimum notice before the earliest bookable slot, in minutes.
+- Booking horizon: rolling number of days, or a fixed date range.
+- Maximum bookings per day and per week for the event type.
+- Per-event-type override of the weekly availability schedule.
+
+### Availability
+- Named weekly schedules, assignable to one or more event types, with any number of intervals per
+  weekday.
+- Date-specific overrides: a different set of intervals, or fully unavailable, for a given date or
+  date range (holidays, absences).
+- One time zone per schedule. The public page converts to the visitor's zone and lets them change it.
+
+### Booking form
+- Fixed fields: name, e-mail, optional additional guest e-mail addresses.
+- Configurable custom fields per event type: single line, multi line, number, phone (with country
+  selector), e-mail, URL, single choice, multiple choice, checkbox, date. Each with label,
+  description, required flag and ordering.
+- Honeypot plus a timing check against bots. No external CAPTCHA.
+- Consent checkbox with a configurable text and a link to the site's own privacy notice.
+
+### Booking lifecycle
+- Confirm immediately, or require host approval before the slot is held (configurable per event type).
+- Reschedule by the invitee through a signed link, subject to the same availability rules.
+- Cancel by the invitee through a signed link, with an optional reason.
+- Cancel and reschedule by the host from the administrator interface.
+- Automatic no-show and completed marking is **not** in version 1.
+
+### Notifications
+- E-mail to the invitee and to the host on: new booking, pending approval, approval, reschedule,
+  cancellation.
+- Reminder e-mails at configurable offsets before the start, delivered by a Joomla Scheduler task.
+- Every one of these e-mails carries the iCalendar entry as an attachment. No exception.
+- Templates per event type with a site-wide fallback, in all three shipped languages, with
+  placeholders for every booking field.
+
+### Calendars
+- One iCalendar subscription feed per event type, plus one combined feed per host, reachable at a
+  stable URL with an unguessable token. Details and the security model in
+  `references/calendar-and-ics.md`.
+- Export of a single booking as an `.ics` file from the administrator interface.
+
+### Video conferencing
+- A conference link generated per booking, written into the e-mail, the calendar entry and the
+  confirmation page. Providers and the adapter interface in `references/conferencing.md`.
+
+### Administration
+- Dashboard: upcoming bookings, today's bookings, counts per event type.
+- Booking list with filters by event type, state, date range and free-text search; detail view.
+- Blocked periods, independent of event types.
+- CSV export of bookings.
+- Joomla ACL on the component, on event types and on bookings.
+- A system check view that reports: PHP version, Joomla version, time zone, mail configuration,
+  whether the Scheduler task is registered and when it last ran, and whether the feed token is set.
+
+### Front end
+- A menu item type for the list of event types and one for a single event type.
+- The booking page: month grid, available days marked, day selection, slot list, time-zone switcher,
+  form, confirmation page.
+- Works without JavaScript for the core path. Progressive enhancement only.
+- Mobile first. No external assets: no remote fonts, no CDN, no tracking.
+- Reschedule and cancel pages reachable from the signed link in the e-mail.
+
+### Privacy and deletion
+Full specification in `references/privacy-and-deletion.md`. In summary, three independent paths,
+all three in version 1:
+- A signed "delete my data" link in every e-mail to the invitee. One click, one confirmation page,
+  no account.
+- A bundled `plg_privacy_appointments` sub-plugin, so Joomla's own data subject request workflow
+  answers export and removal requests for bookings.
+- A retention task that anonymises or deletes bookings a configurable number of days after they
+  ended.
+
+No IP address is stored beyond the anti-bot timing check, and that is purged with the booking.
+
+## Explicitly out of scope for version 1
+
+These are recorded so that they are not silently added. Each is a candidate for a later version.
+
+| Not in version 1 | Why |
+|---|---|
+| Reading an external calendar (Microsoft Graph, Google, CalDAV, ICS subscription) for conflicts | The component owns the calendar. Was not in use in the service being replaced. |
+| Payment collection | Not in use. Belongs to a shop component, not here. |
+| Round robin, collective and group events | Single-host scheduling is the requirement. |
+| Routing forms | Not in use. |
+| SMS reminders | Requires an external gateway, which contradicts the self-hosted constraint. |
+| Meeting polls | Not in use. |
+| An embeddable widget for third-party sites | A Joomla menu item covers the requirement. |
+| Analytics beyond the dashboard counts | Not required, and a privacy liability. |
+
+## Definition of done for version 1
+
+- Every item under "In scope" is implemented, covered by a test and documented in the component
+  README.
+- `php shared/tests/requirements-check.php com_appointments` passes.
+- The CI workflow for the component is green on Joomla 6.
+- The reference configuration above can be reproduced through the administrator interface alone,
+  with no file edit and no database change.
+- The repository's Copilot review definition of done in `AGENTS.md` is met.

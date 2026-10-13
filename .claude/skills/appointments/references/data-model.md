@@ -1,0 +1,195 @@
+# Data model
+
+All tables use the `#__` prefix. All timestamps are `DATETIME` in **UTC**, named with the `_utc`
+suffix so a wrong value is visible in a code review. `utf8mb4_unicode_ci`, InnoDB.
+
+The schema below is the target. Write it as `sql/install.mysql.utf8.sql`, with a matching
+`sql/uninstall.mysql.utf8.sql` that drops the tables in reverse dependency order, and add
+`sql/updates/mysql/<version>.sql` for every later change. Never alter a shipped install file to
+change an existing installation.
+
+## `#__appointments_eventtypes`
+
+The bookable thing.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `asset_id` | `INT UNSIGNED NOT NULL DEFAULT 0` | Joomla ACL |
+| `title` | `VARCHAR(255) NOT NULL` | |
+| `alias` | `VARCHAR(255) NOT NULL` | unique, used in the URL |
+| `description` | `MEDIUMTEXT` | rich text |
+| `duration_minutes` | `SMALLINT UNSIGNED NOT NULL` | |
+| `slot_step_minutes` | `SMALLINT UNSIGNED NOT NULL` | grid the start times sit on |
+| `buffer_before_minutes` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` | |
+| `buffer_after_minutes` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` | |
+| `min_notice_minutes` | `INT UNSIGNED NOT NULL DEFAULT 0` | |
+| `horizon_days` | `SMALLINT UNSIGNED NOT NULL DEFAULT 30` | 0 means use `horizon_start_utc`/`horizon_end_utc` |
+| `horizon_start_utc`, `horizon_end_utc` | `DATETIME NULL` | fixed range alternative |
+| `max_per_day`, `max_per_week` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` | 0 = unlimited |
+| `schedule_id` | `INT UNSIGNED NOT NULL` | → `#__appointments_schedules` |
+| `host_user_id` | `INT UNSIGNED NOT NULL` | Joomla user who hosts and is notified |
+| `location_type` | `VARCHAR(32) NOT NULL` | see `references/scope.md` |
+| `location_text` | `TEXT` | address or instructions for the non-conference types |
+| `conference_provider` | `VARCHAR(64) NULL` | adapter name, null = none |
+| `conference_params` | `JSON NULL` | per-event-type adapter settings |
+| `requires_approval` | `TINYINT(1) NOT NULL DEFAULT 0` | |
+| `retention_days` | `SMALLINT UNSIGNED NULL` | null = use the component default |
+| `colour` | `VARCHAR(7)` | |
+| `access` | `INT UNSIGNED NOT NULL` | Joomla view level |
+| `language` | `CHAR(7) NOT NULL DEFAULT '*'` | |
+| `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
+| `ordering` | `INT NOT NULL DEFAULT 0` | |
+| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes |
+| `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
+| `checked_out`, `checked_out_time` | Joomla standard | |
+
+Indexes: unique `alias`, unique `feed_token`, index `(published, access, language)`.
+
+## `#__appointments_schedules`
+
+A named weekly pattern, reusable across event types.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `title` | `VARCHAR(255) NOT NULL` | |
+| `timezone` | `VARCHAR(64) NOT NULL` | IANA name, e.g. `Europe/Zurich` |
+| `owner_user_id` | `INT UNSIGNED NOT NULL` | |
+| `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
+| `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
+
+## `#__appointments_schedule_rules`
+
+One row per interval. A weekday with no row is unavailable.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `schedule_id` | `INT UNSIGNED NOT NULL` | |
+| `weekday` | `TINYINT UNSIGNED NULL` | 1 = Monday … 7 = Sunday, per ISO-8601. Null when `specific_date` is set. |
+| `specific_date` | `DATE NULL` | a date-specific override |
+| `start_time`, `end_time` | `TIME NOT NULL` | **local to the schedule's time zone**, never UTC |
+| `is_unavailable` | `TINYINT(1) NOT NULL DEFAULT 0` | a date-specific "closed all day" row |
+
+Index `(schedule_id, weekday)`, index `(schedule_id, specific_date)`.
+
+A `specific_date` row replaces the weekly rows for that date entirely. If a date has only an
+`is_unavailable` row, the day is closed.
+
+## `#__appointments_blocked`
+
+Absences, independent of event types.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `user_id` | `INT UNSIGNED NOT NULL` | whose time is blocked |
+| `title` | `VARCHAR(255)` | internal only, never shown publicly |
+| `start_utc`, `end_utc` | `DATETIME NOT NULL` | |
+| `created_utc` | `DATETIME NOT NULL` | |
+
+Index `(user_id, start_utc, end_utc)`.
+
+## `#__appointments_bookings`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `uid` | `CHAR(64) NOT NULL` | the iCalendar `UID`, stable for the booking's whole life |
+| `sequence` | `INT UNSIGNED NOT NULL DEFAULT 0` | iCalendar `SEQUENCE`, incremented on every change |
+| `eventtype_id` | `INT UNSIGNED NOT NULL` | |
+| `host_user_id` | `INT UNSIGNED NOT NULL` | copied at booking time |
+| `start_utc`, `end_utc` | `DATETIME NOT NULL` | the meeting itself, buffers excluded |
+| `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled, 3 rescheduled-away |
+| `invitee_name` | `VARCHAR(255)` | nullable after anonymisation |
+| `invitee_email` | `VARCHAR(255)` | |
+| `invitee_phone` | `VARCHAR(64)` | |
+| `invitee_timezone` | `VARCHAR(64)` | what they saw, for the e-mail |
+| `invitee_language` | `CHAR(7)` | which language to write to them in |
+| `guest_emails` | `TEXT` | newline separated |
+| `custom_fields` | `JSON` | answers, keyed by field id |
+| `conference_provider` | `VARCHAR(64) NULL` | |
+| `conference_url` | `TEXT NULL` | |
+| `conference_room` | `VARCHAR(255) NULL` | identifier for teardown |
+| `cancel_reason` | `TEXT NULL` | |
+| `rescheduled_from_id` | `INT UNSIGNED NULL` | chain to the previous booking |
+| `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
+| `anonymised_utc` | `DATETIME NULL` | set when the personal fields are erased |
+| `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
+| `created_ip` | `VARBINARY(16) NULL` | anti-bot only, erased with the booking |
+
+Indexes:
+- Unique `uid`.
+- **Unique `(eventtype_id, start_utc, state_active)`** where `state_active` is a generated column
+  that is `1` for `state IN (0,1)` and `NULL` otherwise. MySQL and MariaDB ignore `NULL` in a unique
+  index, so cancelled bookings do not block the slot while active ones do. This is the concurrency
+  guarantee from `references/architecture.md`; do not replace it with a PHP-side check.
+- Index `(host_user_id, start_utc)`, index `(invitee_email)`, index `(state, start_utc)`.
+
+## `#__appointments_fields`
+
+Custom booking form fields per event type.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `eventtype_id` | `INT UNSIGNED NOT NULL` | |
+| `type` | `VARCHAR(32) NOT NULL` | `text`, `textarea`, `number`, `tel`, `email`, `url`, `radio`, `checkboxes`, `checkbox`, `date` |
+| `label`, `description` | `VARCHAR(255)` / `TEXT` | |
+| `options` | `JSON NULL` | for the choice types |
+| `required` | `TINYINT(1) NOT NULL DEFAULT 0` | |
+| `ordering` | `INT NOT NULL DEFAULT 0` | |
+| `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
+
+Labels and descriptions are site content, so they are translated through Joomla's normal content
+language handling, not through the component's `.ini` files.
+
+## `#__appointments_templates`
+
+E-mail templates. One row per (event type or site-wide) × purpose × language.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `eventtype_id` | `INT UNSIGNED NULL` | null = site-wide fallback |
+| `purpose` | `VARCHAR(32) NOT NULL` | `confirmation`, `pending`, `approved`, `reschedule`, `cancellation`, `reminder`, `host_notice`, `erasure_notice` |
+| `language` | `CHAR(7) NOT NULL` | |
+| `subject` | `VARCHAR(255) NOT NULL` | |
+| `body` | `MEDIUMTEXT NOT NULL` | |
+| `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
+
+Unique `(eventtype_id, purpose, language)`.
+
+## `#__appointments_audit`
+
+Deletion evidence. **Contains no personal data.** A test asserts the column set.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `booking_id` | `INT UNSIGNED NOT NULL` | may point at a deleted row |
+| `action` | `VARCHAR(32) NOT NULL` | `anonymised`, `deleted` |
+| `path` | `VARCHAR(32) NOT NULL` | `self_service`, `privacy_request`, `retention`, `admin` |
+| `actor_user_id` | `INT UNSIGNED NULL` | set only for `admin` |
+| `occurred_utc` | `DATETIME NOT NULL` | |
+
+## `#__appointments_ratelimit`
+
+Short-lived counters for the public endpoints.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `INT UNSIGNED AUTO_INCREMENT` | |
+| `bucket` | `VARCHAR(64) NOT NULL` | endpoint plus hashed IP |
+| `window_utc` | `DATETIME NOT NULL` | |
+| `hits` | `INT UNSIGNED NOT NULL DEFAULT 0` | |
+
+Unique `(bucket, window_utc)`. The retention task deletes rows older than one day. The IP is
+hashed with the install secret so the table is not a log of visitors.
+
+## Install secret
+
+`script.php` generates a 32-byte random secret on first install and stores it in the component
+parameters. `SignedLink` and the rate-limit hash use it. It is never regenerated on update, because
+that would invalidate every live link, and it is never written to a log.
