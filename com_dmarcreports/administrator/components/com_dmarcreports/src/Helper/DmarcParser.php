@@ -333,7 +333,13 @@ final class DmarcParser
         // character, so a plain delimiter would be ambiguous: ("a|b", "c") and
         // ("a", "b|c") would collide and one distinct report would be dropped as
         // a duplicate. Length-prefix every field so the boundaries are explicit.
+        //
+        // The policy domain is part of the fingerprint because the hash is
+        // global (not scoped to a domain row): a reporter can legitimately reuse
+        // the same report id and window for different policy domains, so without
+        // it the second domain's report would be discarded as a duplicate.
         $fields = [
+            strtolower((string) ($report['policy']['domain'] ?? '')),
             strtolower((string) ($report['org_name'] ?? '')),
             (string) ($report['report_id'] ?? ''),
             (string) ($report['date_begin'] ?? '0'),

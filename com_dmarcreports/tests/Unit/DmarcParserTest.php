@@ -151,6 +151,23 @@ XML;
         );
     }
 
+    public function testFingerprintIncludesPolicyDomain(): void
+    {
+        // A reporter may legitimately reuse the same report id and window for
+        // different policy domains. The global fingerprint must stay distinct
+        // per policy domain, otherwise the second domain's report is dropped as
+        // a duplicate.
+        $base = ['org_name' => 'acme', 'report_id' => 'r-1', 'date_begin' => 0];
+
+        $one = ['policy' => ['domain' => 'example.com']] + $base;
+        $two = ['policy' => ['domain' => 'example.org']] + $base;
+
+        $this->assertNotSame(
+            DmarcParser::fingerprint($one),
+            DmarcParser::fingerprint($two)
+        );
+    }
+
     public function testRejectsDoctypeToPreventXxe(): void
     {
         $this->expectException(\InvalidArgumentException::class);

@@ -230,6 +230,11 @@ class IngestController extends BaseController
         // new mailbox and skip its lower-UID reports. Re-read the identity under
         // a row lock and only advance the cursor when it still matches the
         // mailbox this poll read; otherwise leave the reset in place.
+        //
+        // Two polls of the same source can also finish out of order. Under the
+        // same lock, refuse to move the stored high-water UID backwards so an
+        // older poll cannot overwrite a newer poll's cursor and force already
+        // processed messages to be fetched again.
         $db->transactionStart();
 
         try {
@@ -241,8 +246,10 @@ class IngestController extends BaseController
             }
 
             if ($polledIdentity === null || !$this->identityChanged($db, $sourceId, $polledIdentity)) {
-                $row->uidvalidity = $uidvalidity;
-                $row->last_uid    = $lastUid;
+                if (!$this->cursorWouldRegress($db, $sourceId, $uidvalidity, $lastUid)) {
+                    $row->uidvalidity = $uidvalidity;
+                    $row->last_uid    = $lastUid;
+                }
             }
 
             $db->updateObject('#__dmarc_sources', $row, 'id');
@@ -271,6 +278,34 @@ class IngestController extends BaseController
         $current = $db->setQuery($query)->loadAssoc();
 
         return $current === null || SourceIdentity::changed($current, $polledIdentity);
+    }
+
+    /**
+     * Whether persisting this poll's cursor would move the stored high-water UID
+     * backwards, evaluated against the row locked in the caller's transaction.
+     * Two polls of the same source can finish out of order; the older one must
+     * not overwrite the newer one's cursor. When the stored UIDVALIDITY matches
+     * the poll's, the UID sequence is monotonic, so a last_uid that is not
+     * greater than the stored one is a stale finish and is left in place. A
+     * differing UIDVALIDITY means the mailbox UID space was reset, so the poll's
+     * freshly read values are accepted.
+     */
+    private function cursorWouldRegress(DatabaseInterface $db, int $sourceId, int $uidvalidity, int $lastUid): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName(['uidvalidity', 'last_uid']))
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $sourceId, ParameterType::INTEGER);
+
+        $current = $db->setQuery($query)->loadAssoc();
+
+        if ($current === null) {
+            return false;
+        }
+
+        return (int) $current['uidvalidity'] === $uidvalidity
+            && (int) $current['last_uid'] >= $lastUid;
     }
 
     /**
