@@ -167,9 +167,10 @@ Order as in `tests/test.env`:
 4. **Storage** - Reports and records are stored idempotently (dedupe by policy domain, reporter org, report id and report-window start date)
 5. **Action Center** - Recommendations are derived correctly from the parsed data
 6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
-7. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
-8. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-9. **Uninstall** - Component removal, table drop, verification
+7. **Export** - The CSV export's keyset pagination is driven against a seeded record set and returns every record exactly once, in order, without duplicating or skipping rows as it pages; the snapshot id ceiling excludes rows ingested mid-export; and the export controller keeps its CSRF-token and `core.manage` guards
+8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
+9. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+10. **Uninstall** - Component removal, table drop, verification
 
 A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
 

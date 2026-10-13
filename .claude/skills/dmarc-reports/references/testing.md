@@ -18,6 +18,7 @@ Driven by `shared/tests/run-tests.sh` via `tests/test.env` (`CONTAINER_NAME=com_
 | storage | `04-storage.php` | Idempotent store (dedupe by `report_hash`) |
 | action-center | `05-action-center.php` | Recommendations derived correctly from the data |
 | metrics | `06-metrics.php` | `Metrics` aggregator over a seeded DB: lifetime totals, rolling-window rates, new sources (including a source first seen in a second, contemporaneous report from another reporter), timeline |
+| export | `07-export.php` | CSV keyset pagination returns every record once in order with no duplication/skips across a growing set; id ceiling excludes rows ingested mid-export; controller keeps its token + `core.manage` guards |
 | backend-views | `shared-backend-views.php` | Renders each admin page: 200, no PHP/Joomla error, no untranslated key |
 | install-messages | `shared-install-messages.php` | Install/reinstall/update in en-GB/de-DE/fr-FR, no `[ERROR]`/`[WARNING]` |
 | uninstall | `10-uninstall.php` | Removal, table drop, verification |

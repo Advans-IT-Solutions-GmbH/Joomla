@@ -311,11 +311,16 @@ class IngestController extends BaseController
 
     /**
      * Whether persisting this poll's cursor would move the stored high-water UID
-     * backwards, evaluated against the row locked in the caller's transaction.
-     * Two polls of the same source can finish out of order; the older one must
-     * not overwrite the newer one's cursor. When the stored UIDVALIDITY matches
-     * the poll's, the UID sequence is monotonic, so a last_uid that is not
-     * greater than the stored one is a stale finish and is left in place. A
+     * strictly backwards, evaluated against the row locked in the caller's
+     * transaction. Two polls of the same source can finish out of order; the
+     * older one must not overwrite the newer one's cursor. When the stored
+     * UIDVALIDITY matches the poll's, the UID sequence is monotonic, so only a
+     * last_uid strictly below the stored one is a stale finish and is left in
+     * place. An equal last_uid is NOT a regression: it re-writes the same cursor
+     * value (a no-op for the cursor) while still allowing the run to persist an
+     * updated retry set — the below-cursor deferred-retry path intentionally
+     * returns the unchanged high-water UID, so treating equal as a regression
+     * would prevent a decoded UID from ever being cleared from the retry set. A
      * differing UIDVALIDITY means the mailbox UID space was reset, so the poll's
      * freshly read values are accepted.
      */
@@ -334,7 +339,7 @@ class IngestController extends BaseController
         }
 
         return (int) $current['uidvalidity'] === $uidvalidity
-            && (int) $current['last_uid'] >= $lastUid;
+            && (int) $current['last_uid'] > $lastUid;
     }
 
     /**
