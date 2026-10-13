@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\Model;
 
+use Advans\Component\Appointments\Administrator\Service\AvailabilityService;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
@@ -49,6 +50,11 @@ class EventtypeModel extends BaseDatabaseModel
         }
 
         return $item;
+    }
+
+    public function getSlots(\DateTimeImmutable $now, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return (new AvailabilityService($this->getDatabase()))->slots((array) $this->getItem(), $now, $from, $to);
     }
 
     public function getFields(int $eventId): array

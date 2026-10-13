@@ -16,7 +16,6 @@ use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
-use Advans\Component\Appointments\Administrator\Service\AvailabilityService;
 
 defined('_JEXEC') or die;
 
@@ -57,8 +56,8 @@ class HtmlView extends BaseHtmlView
 
         $this->month = new \DateTimeImmutable($date . '-01 00:00:00', $this->zone);
         $monthEnd = $this->month->modify('+1 month');
-        $slots = (new AvailabilityService($this->getModel()->getDatabase()))->slots(
-            (array) $this->item, $now, $this->month->setTimezone(new \DateTimeZone('UTC')), $monthEnd->setTimezone(new \DateTimeZone('UTC'))
+        $slots = $this->getModel()->getSlots(
+            $now, $this->month->setTimezone(new \DateTimeZone('UTC')), $monthEnd->setTimezone(new \DateTimeZone('UTC'))
         );
 
         foreach ($slots as $slot) {

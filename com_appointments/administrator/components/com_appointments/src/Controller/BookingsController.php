@@ -9,10 +9,14 @@
 namespace Advans\Component\Appointments\Administrator\Controller;
 
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
+use Advans\Component\Appointments\Administrator\Service\NotificationService;
+use Advans\Component\Appointments\Administrator\Service\NotificationException;
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
+use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
@@ -42,7 +46,7 @@ class BookingsController extends BaseController
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
 
-        $db = $this->getModel('Bookings')->getDatabase();
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
         $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
 
         foreach ($ids as $id) {
@@ -57,7 +61,11 @@ class BookingsController extends BaseController
 
         foreach ($ids as $id) {
             try {
-                (new BookingStore($db))->changeState($id, $state, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+                $booking = (new BookingStore($db))->changeState($id, $state, $now);
+                (new NotificationService($db))->send($booking, $state === 1 ? 'approved' : 'cancellation', $now);
+            } catch (NotificationException $e) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_MAIL_FAILED'), 'error');
             } catch (\DomainException $e) {
                 $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_ERROR_STATE'), 'error');
                 $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));

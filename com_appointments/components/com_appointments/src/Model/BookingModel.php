@@ -10,6 +10,8 @@ namespace Advans\Component\Appointments\Site\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
+use Advans\Component\Appointments\Administrator\Service\NotificationService;
+use Advans\Component\Appointments\Administrator\Service\NotificationException;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
@@ -24,9 +26,17 @@ class BookingModel extends BaseDatabaseModel
         $event = $events->getItem($eventId);
         $invitee = (new BookingInput())->validate($input, $events->getFields($eventId), $app->getLanguage()->getTag());
 
-        return (new BookingStore($this->getDatabase()))->create(
+        $booking = (new BookingStore($this->getDatabase()))->create(
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()
         );
+
+        try {
+            (new NotificationService($this->getDatabase()))->send($booking, (int) $booking['state'] === 0 ? 'pending' : 'confirmation', $now);
+        } catch (NotificationException $e) {
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_MAIL_FAILED'), 'error');
+        }
+
+        return $booking;
     }
 
     public function getItem(): object

@@ -85,8 +85,14 @@ The component registers its own update site during installation, so later versio
   and retains the database's unique active-slot constraint. The administrator can approve a
   pending appointment or cancel an appointment.
 
-Still to come: e-mail notifications with the calendar attachment,
-calendar subscription feeds, the reschedule, cancel and erasure links, and the conferencing links.
+- **Email and calendar invitations.** Confirmations, pending notices, approval and cancellation
+  notifications are sent to the invitee, each additional guest and the host through Joomla's
+  configured mail transport. Every message carries both the `text/calendar` and `application/ics`
+  attachments. UTC calendar entries retain their UID and increase their sequence on changes.
+  Notification failure never discards a saved booking: the page explicitly reports the mail problem.
+
+Still to come: calendar subscription feeds, the signed reschedule, cancel and erasure pages,
+reminders, automatic retention and conferencing integration.
 
 ## Configuration
 
@@ -108,6 +114,25 @@ open, submission returns to the same day with a friendly message and refreshed s
 Confirmation pages require the submitting browser's session and are not public booking lookups.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
+
+### Email templates
+
+The installer creates eight editable site-wide templates in each shipped language: confirmation,
+pending, approved, reschedule, cancellation, reminder, host notice and erasure notice.
+An event-specific template takes precedence over the published site-wide template for that purpose
+and language. If neither is available, the corresponding English template is used. Updating the
+component preserves existing templates rather than overwriting operator changes.
+
+Templates are plain text. Common placeholders include `{event_title}`, `{invitee_name}`,
+`{invitee_email}`, `{invitee_phone}`, `{guest_emails}`, `{host_name}`, `{host_email}`, `{location}`,
+`{conference_url}` and `{custom_fields.ID}`. `{start}`, `{end}` and `{timezone}` show the appointment
+in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings;
+`{start_utc}` and `{end_utc}` retain the original UTC values. `{state_label}` is localized.
+Use only single-line values in subjects.
+
+The invitee and guest messages always append the action-specific reschedule, cancellation and
+erasure links, even if a customized template omits their placeholders. The linked management pages
+are still being implemented. Feed credentials are never included in mail.
 
 ### Event types
 

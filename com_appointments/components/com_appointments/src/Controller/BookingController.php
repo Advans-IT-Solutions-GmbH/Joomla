@@ -14,10 +14,12 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
+use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
@@ -36,7 +38,7 @@ class BookingController extends BaseController
         $events->getItem($eventId);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $keys = new KeyProvider((string) $this->app->get('secret'));
-        $db = $this->getModel('Booking')->getDatabase();
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
         $data = $this->input->post->get('booking', [], 'array');
         $this->app->setUserState('com_appointments.booking.' . $eventId, $data);
 

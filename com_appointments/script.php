@@ -86,6 +86,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        $this->seedMailTemplates($parent);
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -175,6 +176,36 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db->execute();
 
         $this->linkUpdateSite($db, (int) $db->insertid(), $extensionId);
+    }
+
+    private function seedMailTemplates($parent): void
+    {
+        $source = $parent->getParent()->getPath('source');
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/DefaultTemplates.php';
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            $file = $source . '/administrator/language/' . $tag . '/com_appointments.ini';
+            $strings = parse_ini_file($file, false, INI_SCANNER_RAW);
+
+            if (!is_array($strings)) {
+                throw new \RuntimeException('The appointment template language source is unreadable.');
+            }
+
+            foreach (\Advans\Component\Appointments\Administrator\Helper\DefaultTemplates::KEYS as $purpose => [$subjectKey, $bodyKey]) {
+                if (!isset($strings[$subjectKey], $strings[$bodyKey])) {
+                    throw new \RuntimeException('A required appointment template translation is missing.');
+                }
+
+                $subject = $strings[$subjectKey];
+                $body = str_replace('\\n', "\n", $strings[$bodyKey]);
+                $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_templates')
+                    . ' (' . implode(',', $db->quoteName(['eventtype_id', 'purpose', 'language', 'subject', 'body', 'published'])) . ')'
+                    . ' VALUES (0,' . $db->quote($purpose) . ',' . $db->quote($tag) . ',' . $db->quote($subject) . ',' . $db->quote($body) . ',1)'
+                    . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('id') . ' = ' . $db->quoteName('id');
+                $db->setQuery($sql)->execute();
+            }
+        }
     }
 
     /**

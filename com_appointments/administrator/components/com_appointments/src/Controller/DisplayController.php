@@ -31,7 +31,7 @@ class DisplayController extends BaseController
      *
      * @var  string[]
      */
-    private const EDIT_VIEWS = ['schedule', 'blocked', 'eventtype', 'field'];
+    private const EDIT_VIEWS = ['schedule', 'blocked', 'eventtype', 'field', 'template'];
 
     public function display($cachable = false, $urlparams = [])
     {
@@ -56,6 +56,7 @@ class DisplayController extends BaseController
         if (\in_array($view, self::EDIT_VIEWS, true)) {
             $id = $this->input->getInt('id', 0);
             $asset = 'com_appointments';
+            $editAction = 'core.edit';
 
             if ($view === 'eventtype' && $id > 0) {
                 $asset .= '.eventtype.' . $id;
@@ -68,6 +69,18 @@ class DisplayController extends BaseController
                 }
 
                 $asset .= '.eventtype.' . (int) $item->eventtype_id;
+            } elseif ($view === 'template' && $id > 0) {
+                $item = $this->getModel('Template', 'Administrator')->getItem($id);
+
+                if (!$item) {
+                    throw new \Exception(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+                }
+
+                if ((int) $item->eventtype_id > 0) {
+                    $asset .= '.eventtype.' . (int) $item->eventtype_id;
+                } else {
+                    $editAction = 'core.options';
+                }
             }
 
             // An existing record exposes stored configuration, so reading it
@@ -75,7 +88,7 @@ class DisplayController extends BaseController
             // core.create alone; an OR over both would let a create-only user
             // read records they may not edit.
             $allowed = $id > 0
-                ? $user->authorise('core.edit', $asset)
+                ? $user->authorise($editAction, $asset)
                 : (
                     $user->authorise('core.create', 'com_appointments')
                     || $user->authorise('core.edit', 'com_appointments')
