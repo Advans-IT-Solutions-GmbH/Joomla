@@ -182,6 +182,14 @@ final class DnsDiagnostics
             }
         }
 
+        // RFC 7489 §6.3 permits each tag at most once; a record repeating a tag
+        // (for example "p=reject; p=none") is syntactically invalid. tags() keeps
+        // the last value for a repeated key, so without this check a conflicting
+        // record would be read as a healthy policy. Reject it as invalid instead.
+        if ($this->hasDuplicateTags($record)) {
+            $valid = false;
+        }
+
         $result['valid'] = $valid;
 
         return $result;
@@ -278,5 +286,36 @@ final class DnsDiagnostics
         }
 
         return $tags;
+    }
+
+    /**
+     * Whether a DMARC record repeats any tag name. RFC 7489 §6.3 allows each
+     * tag at most once, so a duplicate makes the record invalid. Detected
+     * separately from tags(), which collapses a repeated key to its last value.
+     */
+    private function hasDuplicateTags(string $record): bool
+    {
+        $seen = [];
+
+        foreach (explode(';', $record) as $part) {
+            if (!str_contains($part, '=')) {
+                continue;
+            }
+
+            [$key] = explode('=', $part, 2);
+            $key   = strtolower(trim($key));
+
+            if ($key === '') {
+                continue;
+            }
+
+            if (isset($seen[$key])) {
+                return true;
+            }
+
+            $seen[$key] = true;
+        }
+
+        return false;
     }
 }

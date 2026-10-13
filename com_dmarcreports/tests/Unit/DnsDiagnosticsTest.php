@@ -215,6 +215,23 @@ class DnsDiagnosticsTest extends TestCase
         $this->assertContains('dns_dmarc_invalid', $this->codes($diagnostics->inspect('example.org')));
     }
 
+    public function testDuplicateTagsInOneRecordAreReportedAsInvalid(): void
+    {
+        // RFC 7489 §6.3 permits each tag once: "p=reject; p=none" conflicts and
+        // must be rejected rather than silently read as the last value (p=none).
+        $diagnostics = new DnsDiagnostics($this->resolver([
+            '_dmarc.example.org' => ['v=DMARC1; p=reject; p=none; rua=mailto:dmarc@example.org'],
+            'example.org'        => ['v=spf1 -all'],
+        ]));
+        $result = $diagnostics->inspect('example.org');
+        $codes  = $this->codes($result);
+
+        $this->assertFalse($result['dmarc']['valid']);
+        $this->assertContains('dns_dmarc_invalid', $codes);
+        // The conflicting record must not be surfaced as a healthy policy.
+        $this->assertNotContains('dns_dmarc_policy_none', $codes);
+    }
+
     public function testVersionTokenLookalikeIsNotTreatedAsDmarcRecord(): void
     {
         // "v=DMARC10" must not satisfy the "v=DMARC1" version prefix check.
