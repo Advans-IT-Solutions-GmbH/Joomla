@@ -380,6 +380,38 @@ jobs:
               find "$dir" -name "*.txt" -exec cat {} \;
             fi
           done
+      # Confirming the integration results should not require downloading an
+      # artifact. Every suite's own pass/fail lines go into the run summary,
+      # grouped by lane, so a reviewer sees on one page what each of the three
+      # database and platform lanes actually asserted.
+      - name: Write the integration results into the run summary
+        if: always()
+        run: |
+          {
+            echo "## Integration results"
+            echo
+            echo "Lanes: Joomla 5.4 with MySQL 8, Joomla 6 with MySQL 8, Joomla 6 with MariaDB 10.6."
+            echo "The MariaDB lane runs the schema-sensitive suites only."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for dir in test-artifacts/*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            # The combined artifact of an earlier run of this job would nest.
+            [ "$name" = "all-test-logs" ] && continue
+
+            {
+              echo "<details><summary>${name}</summary>"
+              echo
+              echo '```'
+              find "$dir" -name '*.txt' -exec cat {} \;
+              echo '```'
+              echo
+              echo "</details>"
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
       - name: Upload combined logs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
