@@ -55,10 +55,17 @@ is a defect in the test.
 
 ## Integration — Docker against a real Joomla
 
-**Two lanes, exactly as every other extension.** `tests/Dockerfile` builds on
+**Two Joomla lanes, exactly as every other extension.** `tests/Dockerfile` builds on
 `joomla:5.4-php8.3-apache` and is used by `docker-compose.yml`; `tests/Dockerfile.joomla6` builds on
 `joomla:6-php8.4-apache` and is used by `docker-compose.joomla6.yml`. Both tags are moving tags, so
 no Joomla patch version is pinned.
+
+**Plus a MariaDB lane**, `docker-compose.mariadb.yml`, reusing `Dockerfile.joomla6` against
+`mariadb:10.6`. The component advertises MySQL or MariaDB, and the booking table relies on an
+indexed `STORED` generated column that has that form precisely because the two engines disagree
+about indexing a `VIRTUAL` one. Testing the schema on MySQL alone would leave the claim unproven.
+Only the schema-sensitive suites run there — installation, structure, uninstall — because the rest
+is engine independent and already covered.
 
 No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape of
 `com_dmarcreports`, which is also J2Commerce-free and has both lanes.
@@ -96,6 +103,13 @@ docker compose down -v
 docker compose -f docker-compose.joomla6.yml up -d
 CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all
 docker compose -f docker-compose.joomla6.yml down -v
+
+# MariaDB lane, schema-sensitive suites only
+docker compose -f docker-compose.mariadb.yml up -d
+for suite in installation structure uninstall; do
+  CONTAINER_NAME=com_appointments_mariadb_test ./run-tests.sh "$suite"
+done
+docker compose -f docker-compose.mariadb.yml down -v
 ```
 
 CI sets `TEST_STRICT_SKIP=1`, so a skipped test fails. Reproduce that locally before pushing.

@@ -116,6 +116,42 @@ class StructureTest
             return $firstConfirmed && $secondRefused && $thirdAccepted;
         });
 
+        $this->test('A pending booking holds the slot as well', function () {
+            // State 0 is slot-holding by design: a request that is waiting for
+            // the host's approval must not be overtaken. A regression that
+            // generated state_active for confirmed bookings only would pass the
+            // test above while letting two people request one slot.
+            $utc = new \DateTimeZone('UTC');
+            $reference = new \DateTimeImmutable('now', $utc);
+            $now = $reference->format('Y-m-d H:i:s');
+            $start = $reference->add(new \DateInterval('P15D'))->format('Y-m-d H:i:s');
+            $end = $reference->add(new \DateInterval('P15DT20M'))->format('Y-m-d H:i:s');
+            $table = "{$this->dbPrefix}appointments_bookings";
+
+            $insert = function (string $uid, int $state) use ($table, $start, $end, $now): bool {
+                try {
+                    return (bool) $this->db->query(
+                        "INSERT INTO {$table} (uid, eventtype_id, host_user_id, start_utc, end_utc, state, created_utc, modified_utc)"
+                        . " VALUES ('{$uid}', 9903, 0, '{$start}', '{$end}', {$state}, '{$now}', '{$now}')"
+                    );
+                } catch (\mysqli_sql_exception $e) {
+                    return false;
+                }
+            };
+
+            $this->db->query("DELETE FROM {$table} WHERE eventtype_id = 9903");
+
+            $pending = $insert('structure-pending-1', 0);
+            // A confirmed booking must not overtake a pending request.
+            $confirmedRefused = !$insert('structure-pending-2', 1);
+            // A second pending request for the same slot is refused too.
+            $pendingRefused = !$insert('structure-pending-3', 0);
+
+            $this->db->query("DELETE FROM {$table} WHERE eventtype_id = 9903");
+
+            return $pending && $confirmedRefused && $pendingRefused;
+        });
+
         $this->test('A reschedule moves the booking and keeps its calendar identity', function () {
             // A reschedule updates the row: one UID, one row, a raised sequence.
             // Moving onto a slot another active booking holds has to fail on the

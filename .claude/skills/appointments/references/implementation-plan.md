@@ -143,6 +143,8 @@ it:
 
 - `AGENTS.md` — the list of generic extensions in this repository.
 - `CLAUDE.md` — the architecture tree and the skills list.
+- `.github/copilot-instructions.md` — the skills list, which applies to Copilot as well. A skill
+  that is registered for the other agents but not here is instruction drift like any other.
 - `.claude/skills/joomla-extensions/references/repo-structure.md` — the extension table, the
   per-extension structure notes and the workflow table.
 - `.claude/skills/joomla-extensions/references/testing.md` — the local test commands for the new

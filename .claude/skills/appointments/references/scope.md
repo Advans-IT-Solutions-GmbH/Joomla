@@ -64,7 +64,14 @@ have to exist, not a configuration anyone has to use:
 - Consent checkbox with a configurable text and a link to the site's own privacy notice.
 
 ### Booking lifecycle
-- Confirm immediately, or require host approval before the slot is held (configurable per event type).
+- Confirm immediately, or require the host's approval before the booking counts as confirmed
+  (configurable per event type).
+- **A slot is held from the moment it is requested, approval or not.** `pending` and `confirmed` are
+  both slot-holding states, which is what `state_active` in `references/data-model.md` expresses.
+  Leaving a slot free while it waits for approval would let a second visitor book it and then force
+  the host to turn one of them away after the fact, and it would make the invitee's own confirmation
+  mail a promise the component cannot keep. A pending booking is therefore released only by a
+  refusal or a cancellation, both of which set `cancelled` and free the slot again.
 - Reschedule by the invitee through a signed link, subject to the same availability rules.
 - Cancel by the invitee through a signed link, with an optional reason.
 - Cancel and reschedule by the host from the administrator interface.

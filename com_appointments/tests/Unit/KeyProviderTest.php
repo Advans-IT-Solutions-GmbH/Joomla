@@ -22,13 +22,43 @@ final class KeyProviderTest extends TestCase
         $this->assertSame(32, \strlen($key));
     }
 
+    /**
+     * Known derivation vectors, computed once from the documented formula
+     * hash_hmac('sha256', 'com_appointments:' . $purpose, $siteSecret, true).
+     *
+     * These pin the algorithm, the label and the argument order, which is the
+     * only thing that actually protects the links already sitting in people's
+     * mailboxes. Changing any of them changes every key on every installation
+     * and silently invalidates every reschedule, cancel and erasure link ever
+     * issued. If a change here is really wanted, it needs a migration that
+     * keeps the old keys verifiable, not a new expected value in this test.
+     */
+    private const VECTORS = [
+        KeyProvider::PURPOSE_SIGNED_LINK => '00042ab814d87e1a175199f8766f06a54535ba8172f79520e952d595c7302ddf',
+        KeyProvider::PURPOSE_RATE_LIMIT  => 'c9af6e0ac0767c861994cc66eacdcd2b6a60012cebd5f2ccb2c252d5c89f2207',
+    ];
+
+    public function testKeyMatchesTheKnownDerivationVector(): void
+    {
+        $provider = new KeyProvider(self::SECRET);
+
+        foreach (self::VECTORS as $purpose => $expected) {
+            $this->assertSame(
+                $expected,
+                bin2hex($provider->key($purpose)),
+                "The derived key for '$purpose' changed. Every link already sent would stop working."
+            );
+        }
+    }
+
     public function testKeyIsStableForTheSameSecretAndPurpose(): void
     {
         $first  = (new KeyProvider(self::SECRET))->key(KeyProvider::PURPOSE_SIGNED_LINK);
         $second = (new KeyProvider(self::SECRET))->key(KeyProvider::PURPOSE_SIGNED_LINK);
 
         // A link that was signed yesterday must still verify today, so the key
-        // may never contain a random or time-dependent part.
+        // may never contain a random or time-dependent part. The vector test
+        // above covers stability across versions, this one within a run.
         $this->assertSame($first, $second);
     }
 

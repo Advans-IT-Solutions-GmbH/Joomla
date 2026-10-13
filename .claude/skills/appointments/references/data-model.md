@@ -125,7 +125,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `eventtype_id` | `INT UNSIGNED NOT NULL` | |
 | `host_user_id` | `INT UNSIGNED NOT NULL` | copied at booking time |
 | `start_utc`, `end_utc` | `DATETIME NOT NULL` | the meeting itself, buffers excluded |
-| `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled |
+| `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled. 0 and 1 both hold the slot, see `references/scope.md`, "Booking lifecycle" |
 | `invitee_name` | `VARCHAR(255)` | nullable after anonymisation |
 | `invitee_email` | `VARCHAR(255)` | |
 | `invitee_phone` | `VARCHAR(64)` | |

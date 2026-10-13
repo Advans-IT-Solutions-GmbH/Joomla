@@ -170,6 +170,7 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
 | DMARC Reports | `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all` |
 | Appointments | `CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all` |
+| Appointments MariaDB (`docker-compose.mariadb.yml`, schema-sensitive suites only) | `CONTAINER_NAME=com_appointments_mariadb_test ./run-tests.sh structure` |
 | AJAX Forms | `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all` |
 | AJAX Forms `tests-j2c4/`, `tests-j2c6/` | `./run-tests.sh all` (own `test.env` with the right container) |
 
