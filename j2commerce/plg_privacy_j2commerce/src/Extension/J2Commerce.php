@@ -131,6 +131,31 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Whether an account address is the request address (byte-exact after trimming and lower
+     * case). An empty request address (direct call without a request) is no contradiction.
+     */
+    public static function accountMatchesRequest(string $accountEmail, string $requestEmail): bool
+    {
+        self::loadHelperClasses();
+
+        return trim($requestEmail) === ''
+            || ConsentRepository::normaliseAddress($accountEmail) === ConsentRepository::normaliseAddress($requestEmail);
+    }
+
+    /**
+     * Warn the administrator (and the log) about an account of another address.
+     */
+    protected function reportAccountMismatch(string $key, string $accountEmail, string $requestEmail): void
+    {
+        Log::add('Privacy request: the account address does not match the request address', Log::WARNING, 'plg_privacy_j2commerce');
+        $app = $this->feedbackApplication();
+
+        if ($app !== null && method_exists($app, 'enqueueMessage')) {
+            $app->enqueueMessage(Text::sprintf($key, $accountEmail, $requestEmail), 'warning');
+        }
+    }
+
+    /**
      * SQL condition for the records of a privacy request: the records of the account ($userId,
      * if any) and the guest records (user_id 0) whose e-mail column holds one of the request's
      * addresses, compared case-insensitively. Records of another account never match, also when
@@ -154,8 +179,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $emails = self::requestEmails($emails);
 
+        // Byte-exact after normalisation: under the column collation "muller@" would also match
+        // the order of "müller@", another person (ConsentRepository::exactAddressExpression()).
         if ($emails !== []) {
-            $parts[] = '(' . $db->quoteName($prefix . 'user_id') . ' = 0 AND LOWER(TRIM(' . $db->quoteName($prefix . $emailColumn) . ')) IN ('
+            $parts[] = '(' . $db->quoteName($prefix . 'user_id') . ' = 0 AND '
+                . ConsentRepository::exactAddressExpression($db, $db->quoteName($prefix . $emailColumn)) . ' IN ('
                 . implode(',', array_map([$db, 'quote'], $emails)) . '))';
         }
 
@@ -329,6 +357,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             // the guest orders are then found through the e-mail address of the request.
             $user         = $eventOrUser->getUser();
             $requestEmail = (string) ($eventOrUser->getRequest()->email ?? '');
+
+            // Joomla finds the account with the column collation, which equates "muller@" and
+            // "müller@": such an account belongs to another person and is not exported here.
+            if ($user && !self::accountMatchesRequest((string) $user->email, $requestEmail)) {
+                $this->reportAccountMismatch('PLG_PRIVACY_J2COMMERCE_EXPORT_ACCOUNT_MISMATCH', (string) $user->email, $requestEmail);
+                $user = null;
+            }
 
             if (!$user && self::requestEmails([$requestEmail]) === []) {
                 return;
@@ -571,19 +606,21 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Default: the account e-mail. A privacy request passes its addresses (request address
         // first); every subscriber record of these addresses is exported.
+        self::loadHelperClasses();
+
         foreach ($emails ?? [(string) ($user->email ?? '')] as $email) {
-            $email = (string) $email;
+            $email = ConsentRepository::normaliseAddress((string) $email);
 
             if ($email === '') {
                 continue;
             }
 
-            // Load subscriber record
+            // Load subscriber record (byte-exact, see ownerCondition())
             try {
                 $query = $this->createDbQuery()
                     ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
                     ->from($db->quoteName($prefix . 'user'))
-                    ->where($db->quoteName('email') . ' = :email')
+                    ->where(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')) . ' = :email')
                     ->bind(':email', $email);
 
                 foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
@@ -773,18 +810,23 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        self::loadHelperClasses();
         $db     = $this->getDatabase();
-        $emails = array_values(array_unique(array_filter(array_map('strval', $emails ?? [(string) ($user->email ?? '')]), 'strlen')));
+        $emails = array_values(array_unique(array_filter(
+            array_map(static fn ($email): string => ConsentRepository::normaliseAddress((string) $email), $emails ?? [(string) ($user->email ?? '')]),
+            'strlen'
+        )));
 
         if ($emails === []) {
             return;
         }
 
         try {
+            // Byte-exact, see ownerCondition().
             $query   = $this->createDbQuery()
                 ->select('id')
                 ->from($db->quoteName($prefix . 'user'))
-                ->whereIn($db->quoteName('email'), $emails, ParameterType::STRING);
+                ->whereIn(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')), $emails, ParameterType::STRING);
             $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
         } catch (\Exception $e) {
             return;
@@ -1174,23 +1216,36 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Joomla 5: Event object
         if ($eventOrRequest instanceof CanRemoveDataEvent) {
             $user = $eventOrRequest->getUser();
-            $status = $this->checkCanRemoveData($user);
+            $status = $this->checkCanRemoveData($user, (string) ($eventOrRequest->getRequest()->email ?? ''));
             $eventOrRequest->addResult($status);
             return;
         }
 
         // Joomla 4: Direct parameters
-        return $this->checkCanRemoveData($user);
+        return $this->checkCanRemoveData($user, $eventOrRequest instanceof RequestTable ? (string) $eventOrRequest->email : '');
     }
 
     /**
      * Check if user data can be removed
+     *
+     * @param   User|null  $user          Account Joomla found for the request address
+     * @param   string     $requestEmail  E-mail address of the request ('' when unknown)
      */
-    protected function checkCanRemoveData(?User $user): Status
+    protected function checkCanRemoveData(?User $user, string $requestEmail = ''): Status
     {
         $status = new Status();
 
         if (!$user) {
+            return $status;
+        }
+
+        // Joomla finds the account with the column collation, which equates "muller@" and
+        // "müller@". Such an account belongs to another person: the request is refused, so that
+        // neither this plugin nor Joomla's user plugin changes that account.
+        if (!self::accountMatchesRequest((string) $user->email, $requestEmail)) {
+            $status->canRemove = false;
+            $status->reason    = Text::sprintf('PLG_PRIVACY_J2COMMERCE_REMOVAL_ACCOUNT_MISMATCH', (string) $user->email, $requestEmail);
+
             return $status;
         }
 
@@ -1218,13 +1273,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     {
         // Joomla 5: Event object
         if ($eventOrRequest instanceof RemoveDataEvent) {
-            $user = $eventOrRequest->getUser();
-            $this->processDataRemoval($user, (string) ($eventOrRequest->getRequest()->email ?? ''));
+            $user    = $eventOrRequest->getUser();
+            $request = $eventOrRequest->getRequest();
+            $this->processDataRemoval($user, (string) ($request->email ?? ''), (int) ($request->id ?? 0));
             return;
         }
 
         // Joomla 4: Direct parameters
-        $this->processDataRemoval($user, $eventOrRequest instanceof RequestTable ? (string) $eventOrRequest->email : '');
+        $this->processDataRemoval(
+            $user,
+            $eventOrRequest instanceof RequestTable ? (string) $eventOrRequest->email : '',
+            $eventOrRequest instanceof RequestTable ? (int) $eventOrRequest->id : 0
+        );
     }
 
     /**
@@ -1247,8 +1307,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      *
      * @param User|null $user          User object (null: no Joomla account for the request address)
      * @param string    $requestEmail  E-mail address of the privacy request
+     * @param int       $requestId     ID of the privacy request (0: unknown), named in the action log
      */
-    protected function processDataRemoval(?User $user, string $requestEmail = ''): void
+    protected function processDataRemoval(?User $user, string $requestEmail = '', int $requestId = 0): void
     {
         // Username and account e-mail as captured in onPrivacyCanRemoveData(): Joomla's privacy
         // user plugin may already have pseudonymised this User object (same ordering, lower
@@ -1260,6 +1321,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         unset($this->accountsBeforeRemoval[$userId]);
         $username      = $account['username'];
         $accountEmail  = $account['email'];
+
+        // An account of another address (see checkCanRemoveData()) is never processed.
+        if ($user && !self::accountMatchesRequest($accountEmail, $requestEmail)) {
+            Log::add('Removal skipped: the account address does not match the request address', Log::WARNING, 'plg_privacy_j2commerce');
+
+            return;
+        }
+
         $emails        = self::requestEmails([$requestEmail, $accountEmail]);
 
         if ($userId <= 0 && $emails === []) {
@@ -1273,8 +1342,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $retained      = $check['orders'];
         $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
 
-        // Log the deletion request
-        $this->logActivity('data_deletion_requested', $userId, $summary);
+        // Log the deletion request: the entry names the request and the counts; its text comes
+        // from the language key in the language of the person reading the User Actions Log.
+        $this->logActivity('data_deletion_requested', $userId, '', [
+            'requestid' => $requestId > 0 ? (string) $requestId : '-',
+            'retained'  => (string) \count($retained),
+            'lifetime'  => (string) \count($check['lifetime_expired'] ?? []),
+        ]);
 
         if ($user) {
             $this->sendAdminNotification('data_deletion', $user, $summary, $username);
@@ -1304,11 +1378,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         });
 
         if ($this->params->get('delete_addresses', 1)) {
-            $this->logActivity('all_addresses_deleted', $userId);
+            $this->logActivity('all_addresses_deleted', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
 
         if ($this->params->get('anonymize_orders', 1)) {
-            $this->logActivity('orders_anonymized', $userId, 'Orders outside retention period anonymized');
+            $this->logActivity('orders_anonymized', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
 
         // Consent records of an earlier template override (also guest records with the user's
@@ -2088,7 +2162,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * @param int    $userId  User ID
      * @param string $details Additional details
      */
-    protected function logActivity(string $action, int $userId, string $details = ''): void
+    protected function logActivity(string $action, int $userId, string $details = '', array $data = []): void
     {
         if (!$this->params->get('activity_logging', 0)) {
             return;
@@ -2096,7 +2170,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Add to Joomla action log
         Log::add(
-            sprintf('Privacy action: %s for user %d. %s', $action, $userId, $details),
+            sprintf('Privacy action: %s for user %d. %s', $action, $userId, trim($details . ($data !== [] ? ' ' . json_encode($data) : ''))),
             Log::INFO,
             'plg_privacy_j2commerce'
         );
@@ -2129,7 +2203,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 ])
                 ->values(
                     $db->quote($logKey) . ',' .
-                    $db->quote(json_encode(['action' => $action, 'details' => $details])) . ',' .
+                    $db->quote(json_encode(['action' => $action, 'details' => $details] + $data)) . ',' .
                     $db->quote(Factory::getDate()->toSql()) . ',' .
                     $db->quote('plg_privacy_j2commerce') . ',' .
                     (int) $userId . ',' .
@@ -2350,7 +2424,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->where($db->quoteName('status') . ' = 0')
                     ->where($db->quoteName('confirm_token') . ' <> ' . $db->quote(''))
                     ->where($db->quoteName('confirm_token_created_at') . ' IS NOT NULL')
-                    ->where('LOWER(TRIM(' . $db->quoteName('email') . ')) = :email')
+                    // Byte-exact, see ownerCondition(): "dürchtest@" must not reach the request of "durchtest@".
+                    ->where(ConsentRepository::exactAddressExpression($db, $db->quoteName('email')) . ' = :email')
                     ->bind(':email', $emails[0])
                     ->order($db->quoteName('id') . ' DESC')
                     ->setLimit(self::CONFIRM_HASH_CHECKS)
@@ -2541,7 +2616,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
 
             $user = $this->getApplication()->getIdentity();
-            $this->logActivity('address_deleted', $userId, 'Address ID: ' . $addressId);
+            $this->logActivity('address_deleted', $userId, '', ['addressid' => (string) $addressId]);
             $this->sendAdminNotification('address_deleted', $user, 'Address ID: ' . $addressId);
 
             return ['success' => true];

@@ -97,6 +97,45 @@ final class ConsentRepository
     public const ADDRESS_CHARS = '[^\s@<>()\[\]{}",;:\\\\]';
 
     /**
+     * An e-mail address as it is compared: trimmed and lower case (Unicode).
+     */
+    public static function normaliseAddress(string $email): string
+    {
+        return mb_strtolower(trim($email), 'UTF-8');
+    }
+
+    /**
+     * SQL expression of an e-mail column, trimmed and lower case, for a byte-exact comparison
+     * with values normalised by normaliseAddress().
+     *
+     * The column collation must not decide: under utf8mb4_unicode_ci and utf8mb4_general_ci
+     * "muller@example.com" equals "müller@example.com" and "strasse" equals "stra&szlig;e", which are
+     * different addresses of different people. On MySQL and MariaDB the expression is converted
+     * to utf8mb4 (also for utf8mb3 tables of J2Store) and compared with utf8mb4_bin. PostgreSQL
+     * compares deterministically by default and gets no COLLATE.
+     *
+     * @param   string  $quotedColumn  Column, already quoted (for example $db->quoteName('o.user_email'))
+     */
+    public static function exactAddressExpression(DatabaseInterface $db, string $quotedColumn): string
+    {
+        return self::exactText($db, 'LOWER(TRIM(' . $quotedColumn . '))');
+    }
+
+    /**
+     * $expression compared byte-exact (see exactAddressExpression()), for = and LIKE.
+     */
+    public static function exactText(DatabaseInterface $db, string $expression): string
+    {
+        $serverType = method_exists($db, 'getServerType') ? strtolower((string) $db->getServerType()) : 'mysql';
+
+        if ($serverType === 'postgresql') {
+            return $expression;
+        }
+
+        return 'CONVERT(' . $expression . ' USING utf8mb4) COLLATE utf8mb4_bin';
+    }
+
+    /**
      * Whether $email (trimmed, lower case) is a request address: local part "@" domain with a dot,
      * only ADDRESS_CHARS, no leading or trailing dot, at most 320 bytes.
      */
@@ -845,14 +884,15 @@ final class ConsentRepository
         }
 
         // One token identifies one order; nothing else of that e-mail address is looked up.
-        $query = $this->createQuery()
+        $normalisedEmail = self::normaliseAddress($guestEmail);
+        $query           = $this->createQuery()
             ->select($this->db->quoteName('order_id'))
             ->from($this->db->quoteName($table))
             ->where($this->db->quoteName('user_id') . ' = 0')
             ->where($this->db->quoteName('token') . ' = :token')
-            ->where($this->db->quoteName('user_email') . ' = :email')
+            ->where(self::exactAddressExpression($this->db, $this->db->quoteName('user_email')) . ' = :email')
             ->bind(':token', $guestToken)
-            ->bind(':email', $guestEmail)
+            ->bind(':email', $normalisedEmail)
             ->setLimit(1);
 
         $this->db->setQuery($query);
@@ -874,14 +914,16 @@ final class ConsentRepository
      */
     private function addressPrefilter(string $email): string
     {
-        $email  = mb_strtolower(trim($email), 'UTF-8');
+        $email  = self::normaliseAddress($email);
         $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
+        $body   = self::exactText($this->db, 'LOWER(' . $this->db->quoteName('body') . ')');
         $likes  = [];
 
+        // Byte-exact: under the column collation "@example.com" would also preselect
+        // "@exämple.com" (the exact decision is made in PHP anyway).
         foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
             foreach (['@', '&#64;'] as $at) {
-                $likes[] = 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
-                    . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+                $likes[] = $body . ' LIKE ' . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
             }
         }
 

@@ -1377,6 +1377,198 @@ class DataIsolationTest
         }
     }
 
+    /**
+     * Addresses that the column collation (utf8mb4_unicode_ci / general_ci) treats as equal but
+     * that belong to different people: muller/müller, strasse/straße, resume/résumé. The request
+     * of A must never reach the data of B (export, retention, removal, consents, confirmation),
+     * while the same address in other letter case still matches.
+     */
+    private function testCollationPairs(): void
+    {
+        echo "\n--- Addresses equal only under the column collation (accents, sharp s) ---\n";
+
+        if (!class_exists('GuestRequestTestPlugin')) {
+            $this->test('Plugin class loadable for the collation pairs', false);
+            return;
+        }
+
+        $suffix   = (string) time() . random_int(100, 999);
+        $expired  = gmdate('Y-m-d H:i:s', strtotime('-12 years'));
+        $recent   = gmdate('Y-m-d H:i:s', strtotime('-1 year'));
+        $pairs    = [
+            'muller'  => ['durchtest-muller-' . $suffix . '@example.com', 'durchtest-müller-' . $suffix . '@example.com'],
+            'strasse' => ['strasse-' . $suffix . '@example.com', "stra\u{00DF}e-" . $suffix . '@example.com'],
+            'resume'  => ['resume-' . $suffix . '@example.com', 'résumé-' . $suffix . '@example.com'],
+        ];
+        $orders    = [];
+        $legacy    = [];
+        $consents  = [];
+        $addresses = [];
+        $requests  = [];
+        $logIds    = [];
+
+        // Upper case only where it cannot change letters (mb_strtoupper('\u{00DF}') is 'SS').
+        $upperDomain = static fn (string $email): string => str_replace('@example.com', '@EXAMPLE.COM', $email);
+
+        try {
+            foreach ($pairs as $name => [$a, $b]) {
+                $orders[$name . '_a_recent']  = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-AR-' . $suffix, 0, $a, $recent, 'Anna');
+                $orders[$name . '_b_recent']  = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-BR-' . $suffix, 0, $b, $recent, 'Berta');
+                $orders[$name . '_b_expired'] = $this->insertGuestTestOrder('COLL-' . strtoupper($name) . '-BE-' . $suffix, 0, $b, $expired, 'Berta');
+                $consents[$name]              = $this->insertGuestTestConsent($orders[$name . '_b_recent'], '203.0.113.80');
+                $legacy[$name]                = $this->insertGuestTestLegacyConsent($b);
+
+                $address = (object) [
+                    'user_id' => 0, 'first_name' => 'Berta', 'last_name' => 'Muster', 'address_1' => 'Seeweg 2',
+                    'city' => 'Bern', 'zip' => '3000', 'email' => $b, 'type' => 'billing',
+                ];
+                $this->db->insertObject('#__' . $this->tp . '_addresses', $address, $this->tp . '_address_id');
+                $addresses[$name] = (int) $this->db->insertid();
+            }
+
+            // Same address, other letter case: must still match.
+            $caseAddress            = 'Case.Kunde-' . $suffix . '@Example.COM';
+            $orders['case_expired'] = $this->insertGuestTestOrder('COLL-CASE-E-' . $suffix, 0, $caseAddress, $expired, 'Cora');
+
+            $plugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['activity_logging' => 1])]);
+            $plugin->setDatabase($this->db);
+            $numberOf = fn (string $pk): string => (string) $this->db->setQuery(
+                'SELECT order_id FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE ' . $this->tp . '_order_id = ' . (int) $pk
+            )->loadResult();
+
+            foreach ($pairs as $name => [$a, $b]) {
+                // Export of A.
+                $event = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $this->guestTestRequest($a), 'user' => null]);
+                $plugin->onPrivacyExportRequest($event);
+                $domains  = array_merge(...array_values(array_filter($event->getArgument('result', []) ?? [], 'is_array')));
+                $exported = array_map($numberOf, $this->guestTestDomainValues($domains, 'orders', 'order_id'));
+                $this->test("[$name] export of A: only A's order, none of B",
+                    $exported === [$orders[$name . '_a_recent']], json_encode($exported));
+                $this->test("[$name] export of A: B's address, legacy record and checkout consent are not exported",
+                    !in_array((string) $addresses[$name], $this->guestTestDomainItems($domains, 'addresses'), true)
+                    && !in_array((string) $legacy[$name], $this->guestTestDomainItems($domains, 'legacy_consents'), true)
+                    && !in_array((string) $consents[$name], $this->guestTestDomainItems($domains, 'checkout_consents'), true));
+
+                // Retention of A.
+                $retained = array_column($plugin->call('checkRetentionPeriod', 0, [$a])['orders'], 'order_number');
+                $this->test("[$name] retention of A: only A's recent order", $retained === [$orders[$name . '_a_recent']], json_encode($retained));
+
+                // Removal of A (request ID named in the User Actions Log).
+                $request     = $this->guestTestRequest($a);
+                $request->id = 990000 + count($logIds);
+                $logIds[]    = $request->id;
+                $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
+
+                $bExpired = $this->loadGuestTestOrder($orders[$name . '_b_expired']);
+                $this->test("[$name] removal of A: B's expired order is not anonymized",
+                    $bExpired && $bExpired->user_email === $b && $bExpired->billing_first_name === 'Berta', json_encode($bExpired, JSON_UNESCAPED_UNICODE));
+                $addressLeft = (int) $this->db->setQuery(
+                    'SELECT COUNT(*) FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . $addresses[$name]
+                )->loadResult();
+                $this->test("[$name] removal of A: B's address is kept", $addressLeft === 1);
+                $legacySubject = (string) $this->db->setQuery('SELECT subject FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $legacy[$name])->loadResult();
+                $this->test("[$name] removal of A: B's legacy consent record untouched", $legacySubject === 'PLG_PRIVACY_J2COMMERCE');
+                $consentBody = (string) $this->db->setQuery('SELECT body FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $consents[$name])->loadResult();
+                $this->test("[$name] removal of A: B's checkout consent keeps its evidence", str_contains($consentBody, '203.0.113.80'));
+
+                // Confirmation: B's code with A's address is refused.
+                $token = md5('collation-' . $name . random_int(1, PHP_INT_MAX));
+                $row   = (object) [
+                    'email' => $b, 'requested_at' => gmdate('Y-m-d H:i:s'), 'status' => 0, 'request_type' => 'export',
+                    'confirm_token' => \Joomla\CMS\User\UserHelper::hashPassword($token), 'confirm_token_created_at' => gmdate('Y-m-d H:i:s'),
+                ];
+                $this->db->insertObject('#__privacy_requests', $row, 'id');
+                $requests[] = (int) $row->id;
+                $state      = fn (): int => (int) $this->db->setQuery('SELECT status FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id = ' . (int) $row->id)->loadResult();
+                $this->test("[$name] confirmation with A's address and B's code is refused", $plugin->confirmPrivacyRequest($a, $token) === 'failed' && $state() === 0);
+                $this->test("[$name] confirmation with B's address in upper case and B's code is accepted",
+                    $plugin->confirmPrivacyRequest($upperDomain($b), $token) === 'confirmed' && $state() === 1);
+            }
+
+            // Same address in other letter case still matches.
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest(strtolower($caseAddress)),
+                'user'    => null,
+            ]));
+            $caseOrder = $this->loadGuestTestOrder($orders['case_expired']);
+            $this->test('Other letter case of the same address: the expired guest order is anonymized',
+                $caseOrder && $caseOrder->user_email === 'anonymized@deleted.invalid', json_encode($caseOrder));
+
+            // Action log: language key with the request ID and counts, no English text.
+            $entry = $this->db->setQuery(
+                'SELECT message_language_key, message FROM ' . $this->db->quoteName('#__action_logs')
+                . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                . ' AND ' . $this->db->quoteName('message') . ' LIKE ' . $this->db->quote('%"requestid":"' . $logIds[0] . '"%')
+                . ' AND ' . $this->db->quoteName('message_language_key') . ' = ' . $this->db->quote('PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED')
+            )->loadObject();
+            $message = $entry ? (json_decode((string) $entry->message, true) ?: []) : [];
+            $this->test('Action log of the removal: language key with request ID and counts, no English details',
+                ($message['requestid'] ?? '') === (string) $logIds[0] && ($message['retained'] ?? '') === '1' && ($message['details'] ?? 'x') === '',
+                json_encode($message));
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
+                $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
+                $this->test("$tag: the removal log text names the request, kept and lifetime orders",
+                    str_contains((string) ($values['PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED'] ?? ''), '{requestid}')
+                    && str_contains((string) ($values['PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED'] ?? ''), '{retained}')
+                    && str_contains((string) ($values['PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED'] ?? ''), '{lifetime}'));
+            }
+
+            // Joomla finds accounts with the column collation: an account of B for a request of A
+            // must neither be removed nor exported by this plugin.
+            [$a, $b]        = $pairs['muller'];
+            $account        = new \Joomla\CMS\User\User();
+            $account->id    = 9931;
+            $account->email = $b;
+            $orders['account_b'] = $this->insertGuestTestOrder('COLL-ACC-' . $suffix, 9931, $b, $recent, 'Berta');
+
+            $status = $plugin->call('checkCanRemoveData', $account, $a);
+            $this->test('Account of B found for a removal request of A: the request is refused with a reason',
+                $status->canRemove === false && str_contains((string) $status->reason, $b));
+            $this->test('Account of B for a removal request of B in other letter case: allowed',
+                $plugin->call('checkCanRemoveData', $account, $upperDomain($b))->canRemove === true);
+
+            $event = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $this->guestTestRequest($a), 'user' => $account]);
+            $plugin->onPrivacyExportRequest($event);
+            $domains  = array_merge(...array_values(array_filter($event->getArgument('result', []) ?? [], 'is_array')));
+            $exported = array_map($numberOf, $this->guestTestDomainValues($domains, 'orders', 'order_id'));
+            $this->test('Account of B found for an export request of A: neither B\'s account orders nor account data are exported',
+                !in_array($orders['account_b'], $exported, true) && !in_array('joomla_user', array_map(fn ($d) => $d->name, $domains), true),
+                json_encode($exported));
+        } catch (\Throwable $e) {
+            $this->test('Collation pair tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $orderList = implode(',', array_map([$this->db, 'quote'], array_values($orders)));
+
+            if ($orderList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+            }
+
+            $consentList = implode(',', array_map('intval', array_merge(array_values($consents), array_values($legacy))));
+
+            if ($consentList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id IN (' . $consentList . ')')->execute();
+            }
+
+            foreach ($addresses as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') . ' WHERE ' . $this->tp . '_address_id = ' . (int) $id)->execute();
+            }
+
+            if ($requests !== []) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_requests') . ' WHERE id IN (' . implode(',', $requests) . ')')->execute();
+            }
+
+            foreach ($logIds as $id) {
+                $this->db->setQuery(
+                    'DELETE FROM ' . $this->db->quoteName('#__action_logs') . ' WHERE ' . $this->db->quoteName('extension') . ' = ' . $this->db->quote('plg_privacy_j2commerce')
+                    . ' AND ' . $this->db->quoteName('message') . ' LIKE ' . $this->db->quote('%"requestid":"' . $id . '"%')
+                )->execute();
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
 
     public function run(): bool
@@ -1388,6 +1580,7 @@ class DataIsolationTest
         $this->testDeleteUserAddressIdorGuard();
         $this->testCheckRetentionPeriod();
         $this->testGuestRequests();
+        $this->testCollationPairs();
         $this->testRequestConfirmation();
         $this->testAdminRequestMailLink();
         $this->testConfirmationPageHttp();
