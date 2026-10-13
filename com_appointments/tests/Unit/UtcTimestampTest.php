@@ -72,6 +72,18 @@ final class UtcTimestampTest extends TestCase
         ];
     }
 
+    public function testIsTimestampAnswersTheSameQuestionWithoutAnInstant(): void
+    {
+        // Used on a value that is still in somebody's local time, before the
+        // form filter converts it: whether a date and time exist has the same
+        // answer in every zone.
+        $this->assertTrue(UtcTimestamp::isTimestamp('2026-06-02 10:30:00'));
+        $this->assertTrue(UtcTimestamp::isTimestamp('2026-06-02 10:30'));
+        $this->assertFalse(UtcTimestamp::isTimestamp('2026-02-31 10:00:00'));
+        $this->assertFalse(UtcTimestamp::isTimestamp('tomorrow'));
+        $this->assertFalse(UtcTimestamp::isTimestamp(''));
+    }
+
     public function testToSqlConvertsToUtc(): void
     {
         $zurich = new \DateTimeImmutable('2026-06-02 12:30:00', new \DateTimeZone('Europe/Zurich'));

@@ -170,7 +170,7 @@ class BlockedAdminTest
                     && $stored['start_utc'] === '2026-06-02 12:00:00';
             });
 
-            $this->post('blocked.save', $editToken, [
+            $html = $this->post('blocked.save', $editToken, [
                 'jform[id]'        => (string) $secondId,
                 'jform[user_id]'   => (string) $this->adminId,
                 'jform[title]'     => self::TITLE,
@@ -178,23 +178,17 @@ class BlockedAdminTest
                 'jform[end_utc]'   => '2026-06-02 16:00:00',
             ]);
 
-            $this->test('An impossible date never becomes an inconsistent period', function () {
-                // 2026-02-31 does not exist. Joomla's own user_utc filter
-                // normalises it to a real instant before the table is reached,
-                // so through this form it cannot be stored verbatim; what has to
-                // hold is that whatever is stored is still a consistent period.
-                // UtcTimestampTest covers the paths that bypass that filter,
-                // where an impossible value is refused outright.
+            $this->test('A date that does not exist is refused, not normalised', function () use ($html) {
+                // 2026-02-31 does not exist. Joomla's own user_utc filter would
+                // read it as the 3rd of March, so the controller refuses it on
+                // the submitted text, before the conversion, while the
+                // operator's own input still exists.
                 $stored = $this->fixture();
 
-                if ($stored === null) {
-                    return false;
-                }
-
-                $start = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', (string) $stored['start_utc'], new \DateTimeZone('UTC'));
-                $end   = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', (string) $stored['end_utc'], new \DateTimeZone('UTC'));
-
-                return $start !== false && $end !== false && $start < $end;
+                return $stored !== null
+                    // Untouched: no normalised March date reached the row.
+                    && $stored['start_utc'] === '2026-06-02 12:00:00'
+                    && stripos($html, 'is not a date and a time that exist') !== false;
             });
         } finally {
             $this->restoreAdminZone();

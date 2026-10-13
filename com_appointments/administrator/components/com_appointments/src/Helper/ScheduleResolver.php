@@ -98,9 +98,16 @@ final class ScheduleResolver
         foreach ($dateOverrides as $rule) {
             $date = (string) ($rule['specific_date'] ?? '');
 
-            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            // The shape alone is not enough. 2026-02-31 has the right shape and
+            // PHP would quietly read it as the 3rd of March when the windows of
+            // that date are built, so the override would land on a date nobody
+            // asked for, or, since the key never matches a real date in the
+            // range, be ignored without a word.
+            if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts)
+                || !checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])
+            ) {
                 throw new \InvalidArgumentException(
-                    sprintf('A date-specific rule needs a date as Y-m-d, got "%s".', $date)
+                    sprintf('A date-specific rule needs a date that exists, got "%s".', $date)
                 );
             }
 

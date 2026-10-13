@@ -97,6 +97,47 @@ final class ScheduleResolverTest extends TestCase
         new ScheduleResolver(self::ZONE, [['weekday' => 8, 'start_time' => '10:00', 'end_time' => '11:00']]);
     }
 
+    public function testADateThatDoesNotExistIsRejected(): void
+    {
+        // 2026-02-31 has the right shape. Accepting it would either move the
+        // override to the 3rd of March or, because the key never matches a real
+        // date, drop it without a word.
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ScheduleResolver(
+            self::ZONE,
+            [],
+            [['specific_date' => '2026-02-31', 'start_time' => '10:00', 'end_time' => '11:00']]
+        );
+    }
+
+    public function testADateWithTheWrongShapeIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ScheduleResolver(
+            self::ZONE,
+            [],
+            [['specific_date' => '31.02.2026', 'start_time' => '10:00', 'end_time' => '11:00']]
+        );
+    }
+
+    public function testALeapDayIsAccepted(): void
+    {
+        // 2028 is a leap year, so the 29th of February exists and must not be
+        // caught by the check above.
+        $resolver = new ScheduleResolver(
+            self::ZONE,
+            [],
+            [['specific_date' => '2028-02-29', 'start_time' => '10:00', 'end_time' => '11:00']]
+        );
+
+        $this->assertSame(
+            ['2028-02-29 09:00-2028-02-29 10:00'],
+            $this->asStrings($resolver->windowsForDate('2028-02-29'))
+        );
+    }
+
     public function testAnUnusableTimeIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);

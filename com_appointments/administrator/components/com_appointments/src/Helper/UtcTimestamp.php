@@ -76,6 +76,18 @@ final class UtcTimestamp
     }
 
     /**
+     * Whether the value is an exact timestamp at all.
+     *
+     * Used on a value that is still in somebody's local time, before Joomla's
+     * form filter converts it: the question "is this a real date and time" has
+     * the same answer in every zone, so the same strict reading answers it.
+     */
+    public static function isTimestamp(string $value): bool
+    {
+        return self::parse($value) !== null;
+    }
+
+    /**
      * The database form of an instant.
      */
     public static function toSql(\DateTimeImmutable $moment): string
