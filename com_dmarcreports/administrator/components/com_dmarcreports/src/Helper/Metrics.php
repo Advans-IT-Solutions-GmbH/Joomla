@@ -457,10 +457,11 @@ final class Metrics
 
     /**
      * Volume-weighted DMARC pass rate across every record whose report window
-     * begins in the half-open interval (startTs, endTs], or null when no mail
-     * falls in that window. Bucketing by the report's own start time keeps the
+     * ends in the half-open interval (startTs, endTs], or null when no mail
+     * falls in that window. Bucketing by the report's own end time keeps the
      * two compared windows non-overlapping regardless of how many reporters
-     * contribute, so the comparison stays like-for-like.
+     * contribute, and matches the date_end anchor the windows are measured from,
+     * so the comparison stays like-for-like.
      */
     private function windowPassRate(int $domainId, int $startTs, int $endTs): ?float
     {
@@ -471,11 +472,13 @@ final class Metrics
 
     /**
      * Volume, DMARC-passing volume and would-be-rejected volume across every
-     * record whose report window begins in the half-open interval
-     * (startTs, endTs]. Bucketing by the report's own start time keeps compared
+     * record whose report window ends in the half-open interval
+     * (startTs, endTs]. Bucketing by the report's own end time keeps compared
      * windows non-overlapping regardless of how many reporters contribute, and
-     * lets the Action Center reason about the current window rather than the
-     * accumulated lifetime.
+     * matches the date_end anchor the windows are measured from, so the newest
+     * report always falls inside the current window even when it spans more than
+     * one window's length. This lets the Action Center reason about the current
+     * window rather than the accumulated lifetime.
      *
      * @return array{total: int, pass: int, reject_under_p: int}
      */
@@ -497,8 +500,8 @@ final class Metrics
             ->join('INNER', $this->db->quoteName('#__dmarc_records', 'rec'),
                 $this->db->quoteName('rec.report_id') . ' = ' . $this->db->quoteName('rep.id'))
             ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
-            ->where($this->db->quoteName('rep.date_begin') . ' > :startTs')
-            ->where($this->db->quoteName('rep.date_begin') . ' <= :endTs')
+            ->where($this->db->quoteName('rep.date_end') . ' > :startTs')
+            ->where($this->db->quoteName('rep.date_end') . ' <= :endTs')
             ->bind(':domainId', $domainId, ParameterType::INTEGER)
             ->bind(':startTs', $startTs, ParameterType::INTEGER)
             ->bind(':endTs', $endTs, ParameterType::INTEGER);
@@ -831,10 +834,13 @@ final class Metrics
     /**
      * Window volume, DMARC-passing volume and would-be-rejected volume for every
      * supplied domain, keyed by domain id, over the half-open interval
-     * (anchor - $offsetStart, anchor - $offsetEnd] where the anchor is each
-     * domain's own newest report end date. One grouped query joined to a derived
-     * per-domain anchor table serves all domains, replacing the former per-domain
-     * windowTotals() calls. Domains with no reports are absent from the result.
+     * (anchor - $offsetStart, anchor - $offsetEnd] measured on each report's end
+     * date, where the anchor is each domain's own newest report end date. One
+     * grouped query joined to a derived per-domain anchor table serves all
+     * domains, replacing the former per-domain windowTotals() calls. Bucketing on
+     * date_end matches the anchor, so the newest report always falls inside the
+     * current window even when it spans more than one window's length. Domains
+     * with no reports are absent from the result.
      *
      * @param   array<int, int>  $domainIds
      *
@@ -881,8 +887,8 @@ final class Metrics
                 $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id')
             )
             ->where($this->db->quoteName('rep.domain_id') . ' IN (' . $in . ')')
-            ->where($this->db->quoteName('rep.date_begin') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetStart . ')')
-            ->where($this->db->quoteName('rep.date_begin') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetEnd . ')')
+            ->where($this->db->quoteName('rep.date_end') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetStart . ')')
+            ->where($this->db->quoteName('rep.date_end') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $offsetEnd . ')')
             ->group($this->db->quoteName('rep.domain_id'));
 
         $map = [];

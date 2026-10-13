@@ -126,6 +126,52 @@ class MetricsTest
             return false;
         });
 
+        // The dashboard Action Center renders from actionMetricsForAll(), the
+        // bulk sibling of domainMetrics() that resolves every domain's rolling
+        // windows, new sources and unaligned senders in a fixed set of grouped
+        // queries. Its derived-table and window-function SQL differs from the
+        // per-domain path, so it is exercised here for parity against the same
+        // seed rather than trusting that the detail-view tests cover it.
+        $all    = $metrics->actionMetricsForAll($metrics->domainSummaries());
+        $action = $all[$this->domainId] ?? [];
+
+        $this->test('Bulk action metrics expose the seeded domain', function () use ($action) {
+            return $action !== [] && (int) ($action['domain_id'] ?? 0) === $this->domainId;
+        });
+
+        $this->test('Bulk lifetime totals match the detail view', function () use ($action, $bundle) {
+            return (int) ($action['total'] ?? -1) === (int) $bundle['total']
+                && (int) ($action['dmarc_pass'] ?? -1) === (int) $bundle['dmarc_pass']
+                && abs((float) ($action['pass_rate'] ?? -1) - (float) $bundle['pass_rate']) < 0.01;
+        });
+
+        $this->test('Bulk current window matches the detail view', function () use ($action, $bundle) {
+            return (int) ($action['window_total'] ?? -1) === (int) $bundle['window_total']
+                && (int) ($action['window_reject_under_p'] ?? -1) === (int) $bundle['window_reject_under_p']
+                && $action['pass_rate_window'] !== null
+                && abs((float) $action['pass_rate_window'] - (float) $bundle['pass_rate_window']) < 0.01;
+        });
+
+        $this->test('Bulk previous window matches the detail view', function () use ($action, $bundle) {
+            return $action['pass_rate_prev'] !== null
+                && $bundle['pass_rate_prev'] !== null
+                && abs((float) $action['pass_rate_prev'] - (float) $bundle['pass_rate_prev']) < 0.01;
+        });
+
+        $this->test('Bulk new sources match the current-window sources', function () use ($action) {
+            $ips = array_map(static fn (array $s): string => $s['ip'], $action['new_sources'] ?? []);
+
+            return in_array('10.0.0.3', $ips, true)
+                && in_array('10.0.0.4', $ips, true)
+                && !in_array('10.0.0.1', $ips, true);
+        });
+
+        $this->test('Bulk unaligned senders surface a failing source', function () use ($action) {
+            $ips = array_map(static fn (array $s): string => $s['ip'], $action['unaligned_sources'] ?? []);
+
+            return in_array('10.0.0.2', $ips, true);
+        });
+
         $this->cleanup();
 
         echo "\n=== Metrics Test Summary ===\n";
