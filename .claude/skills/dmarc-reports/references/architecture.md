@@ -10,7 +10,8 @@ Standard Joomla 5/6 administrator MVC component, namespace `Advans\Component\Dma
   Does not pass a dispatcher in constructors or call `setDispatcher()` (Joomla sets it on load).
 - `src/Extension/` — the component entry/boot class.
 - `forms/domain.xml`, `forms/source.xml` — JForm definitions for the domain and source editors.
-- `access.xml` — ACL actions; component options live inline in `com_dmarcreports.xml` `<config>`.
+- `access.xml` — ACL actions; `config.xml` — component options (the manifest installs it and
+  Joomla loads its `<config>`/`<fieldset>` fields into the component Options screen).
 - `src/Rule/RangeRule.php` — a server-side `FormRule` (`validate="range"`, prefix declared with
   `addruleprefix` on `config.xml` and `forms/source.xml`) that re-checks numeric bounds the HTML5
   `min`/`max` only enforce in the browser. It backs the config thresholds/timeouts/limits and the

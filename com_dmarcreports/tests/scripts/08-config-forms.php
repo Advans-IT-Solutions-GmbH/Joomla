@@ -136,6 +136,23 @@ class ConfigFormsTest
                 && $this->extractToken($domainForm['body']) !== null;
         });
 
+        // A legacy/hand-edited default_policy_target that predates the config
+        // range rule (e.g. "drop") must not leak into the add form: DomainModel
+        // clamps it so the new-domain default is the configured reject fallback,
+        // not the first list option. Write the invalid value straight into the
+        // stored params (com_config would reject it) and reload the add form.
+        $policySnapshot = $this->readExtensionParams();
+        $this->writeExtensionParamValue('default_policy_target', 'drop');
+        $clampForm   = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=domain.add', [], true);
+        $this->token = $this->extractToken($clampForm['body']) ?: $this->token;
+        $this->restoreExtensionParams($policySnapshot);
+
+        $this->test('Invalid persisted default policy falls back to reject on the add form', function () use ($clampForm) {
+            return $clampForm['code'] === 200
+                && preg_match('/value="reject"[^>]*selected/i', $clampForm['body']) === 1
+                && preg_match('/value="none"[^>]*selected/i', $clampForm['body']) !== 1;
+        });
+
         $validDomain = $this->tag . '.example';
         $this->saveDomain(['domain' => $validDomain, 'title' => 'CI valid']);
         $this->test('Save writes a new domain row', function () use ($validDomain) {
@@ -399,6 +416,22 @@ class ConfigFormsTest
     {
         $json = $this->db->real_escape_string($params);
         $this->db->query("UPDATE {$this->dbPrefix}extensions SET params = '{$json}' WHERE element = 'com_dmarcreports' AND type = 'component'");
+    }
+
+    /**
+     * Set a single stored param to a value com_config would never persist (to
+     * simulate a legacy/hand-edited row), leaving the other params intact.
+     */
+    private function writeExtensionParamValue(string $key, string $value): void
+    {
+        $params = json_decode($this->readExtensionParams(), true);
+
+        if (!\is_array($params)) {
+            $params = [];
+        }
+
+        $params[$key] = $value;
+        $this->restoreExtensionParams((string) json_encode($params));
     }
 
     /** First line of a body, dropping a leading UTF-8 BOM if present. */

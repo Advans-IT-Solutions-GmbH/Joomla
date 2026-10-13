@@ -44,10 +44,12 @@ class RangeRule extends FormRule
         $value = (string) $value;
 
         // An empty value is accepted here: this rule only bounds values that are
-        // actually present. Presence is signalled by the field's required flag,
-        // and every consumer reads these options via Registry::get($key, $default),
-        // which returns the declared default for an empty/missing value, so an
-        // emptied option falls back to a safe in-range default rather than 0.
+        // actually present. Presence is signalled by the field's required flag.
+        // An emptied option is not repaired at read time by Registry::get(),
+        // which returns the stored empty string rather than the default; instead
+        // ActionCenter::threshold() and IngestController::boundedConfig() treat an
+        // empty, non-numeric or out-of-range value as the declared default, so an
+        // emptied option falls back to a safe in-range value rather than 0.
         if ($value === '') {
             return true;
         }
