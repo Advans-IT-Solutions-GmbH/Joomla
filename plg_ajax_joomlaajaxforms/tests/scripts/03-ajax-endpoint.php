@@ -682,7 +682,7 @@ class AjaxEndpointTest
         $definitions = $this->baseUrlDefinitions($source, $unreadable);
 
         if ($unreadable !== null) {
-            return ['the script cannot be read reliably: ' . $unreadable];
+            return [$unreadable];
         }
 
         if (count($definitions) !== 1) {
@@ -824,8 +824,10 @@ class AjaxEndpointTest
      * script, found in its token stream: start and end byte offset of the
      * whole definition and the tokens of the function body. A copy inside a
      * comment or a string literal is a single comment or string token and is
-     * never found. $unreadable names the reason when the token stream cannot
-     * be trusted (inline HTML or a closing PHP tag), otherwise it is null.
+     * never found, and so is a baseUrl of any object other than the config
+     * object of JoomlaAjaxForms. $unreadable names the reason when the token
+     * stream cannot be trusted (inline HTML or a closing PHP tag) or that
+     * config object is not found once, otherwise it is null.
      *
      * @return array<int, array{start:int, end:int, body:array<int, mixed>}>
      */
@@ -841,7 +843,7 @@ class AjaxEndpointTest
             $position   += strlen(is_array($token) ? $token[1] : $token);
 
             if (is_array($token) && in_array($token[0], [T_CLOSE_TAG, T_INLINE_HTML], true)) {
-                $unreadable = 'PHP tokenizer left code mode at byte ' . max(0, $offsets[$i]);
+                $unreadable = 'the script cannot be read reliably: PHP tokenizer left code mode at byte ' . max(0, $offsets[$i]);
 
                 return [];
             }
@@ -860,13 +862,101 @@ class AjaxEndpointTest
             return is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
         };
 
+        // The brace that closes the one opened at $open, or null.
+        $closing = static function (int $open) use ($tokens, $text): ?int {
+            $depth = 0;
+
+            for ($i = $open, $n = count($tokens); $i < $n; $i++) {
+                $t = $text($i);
+
+                if ($t === '{' || $t === '${') {
+                    $depth++;
+                } elseif ($t === '}' && --$depth === 0) {
+                    return $i;
+                }
+            }
+
+            return null;
+        };
+
+        // Direct members of an object literal: significant tokens at depth 1
+        // between $open and $close.
+        $members = static function (int $open, int $close) use ($significant, $text): array {
+            $depth  = 0;
+            $direct = [];
+
+            foreach ($significant as $i) {
+                if ($i < $open || $i > $close) {
+                    continue;
+                }
+
+                $t = $text($i);
+
+                if ($t === '{' || $t === '${' || $t === '(' || $t === '[') {
+                    $depth++;
+                } elseif ($t === '}' || $t === ')' || $t === ']') {
+                    $depth--;
+                } elseif ($depth === 1) {
+                    $direct[] = $i;
+                }
+            }
+
+            return $direct;
+        };
+
+        // Scope: only a baseUrl that is a direct member of the config object,
+        // which itself is a direct member of the object assigned to
+        // "const|var|let JoomlaAjaxForms". A property of any other object is
+        // a decoy and never counts, because the script reads
+        // JoomlaAjaxForms.config.baseUrl.
+        $count   = count($significant);
+        $objects = [];
+
+        for ($k = 1; $k + 2 < $count; $k++) {
+            $prev = $tokens[$significant[$k - 1]];
+            $name = $tokens[$significant[$k]];
+
+            if (is_array($name) && $name[0] === T_STRING && $name[1] === 'JoomlaAjaxForms'
+                && ((is_array($prev) && $prev[0] === T_CONST) || in_array($text($significant[$k - 1]), ['var', 'let'], true))
+                && $text($significant[$k + 1]) === '=' && $text($significant[$k + 2]) === '{'
+            ) {
+                $objects[] = $significant[$k + 2];
+            }
+        }
+
+        if (count($objects) !== 1 || ($objectClose = $closing($objects[0])) === null) {
+            $unreadable = 'expected one object assigned to JoomlaAjaxForms, found ' . count($objects);
+
+            return [];
+        }
+
+        $configs = [];
+
+        foreach ($members($objects[0], $objectClose) as $i) {
+            $pos = array_search($i, $significant, true);
+
+            if (is_array($tokens[$i]) && $tokens[$i][0] === T_STRING && $tokens[$i][1] === 'config'
+                && $text($significant[$pos + 1]) === ':' && $text($significant[$pos + 2]) === '{'
+            ) {
+                $configs[] = $significant[$pos + 2];
+            }
+        }
+
+        if (count($configs) !== 1 || ($configClose = $closing($configs[0])) === null) {
+            $unreadable = 'expected one config object in JoomlaAjaxForms, found ' . count($configs);
+
+            return [];
+        }
+
+        $inConfig = array_flip($members($configs[0], $configClose));
+
         $definitions = [];
-        $count       = count($significant);
 
         for ($k = 0; $k + 6 < $count; $k++) {
             $s = array_slice($significant, $k, 7);
 
-            if (!is_array($tokens[$s[0]]) || $tokens[$s[0]][0] !== T_STRING || $tokens[$s[0]][1] !== 'baseUrl'
+            if (!isset($inConfig[$s[0]])
+                || !is_array($tokens[$s[0]]) || $tokens[$s[0]][0] !== T_STRING || $tokens[$s[0]][1] !== 'baseUrl'
                 || $text($s[1]) !== ':' || $text($s[2]) !== '('
                 || !is_array($tokens[$s[3]]) || $tokens[$s[3]][0] !== T_FUNCTION
                 || $text($s[4]) !== '(' || $text($s[5]) !== ')' || $text($s[6]) !== '{'
@@ -943,6 +1033,12 @@ class AjaxEndpointTest
             'single-line block comment' => $replace('/* ' . $copy . ' */ x: 1'),
             'line comment'              => $replace('// ' . $copy . "\n x: 1"),
             'string literal'            => $replace('x: "' . $copy . '"'),
+            // The real function moved to a decoy object: the script still
+            // reads JoomlaAjaxForms.config.baseUrl, which is then undefined.
+            'decoy object'              => $replace('x: 1') . "\nvar Decoy = { " . $real . " };\n",
+            'decoy config object'       => $replace('x: 1') . "\nvar Decoy = { config: { " . $real . " } };\n",
+            'nested deeper in config'   => $replace('sub: { ' . $real . ' }'),
+            'renamed property'          => $replace('url' . substr($real, strlen('baseUrl'))),
             'escaped ampersand'         => $replace(str_replace('&plugin', '&amp;plugin', $real)),
         ];
 
