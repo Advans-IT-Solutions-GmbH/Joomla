@@ -1,0 +1,265 @@
+<?php
+/**
+ * @package     DMARC Reports Component
+ * @subpackage  Administrator
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+namespace Advans\Component\DmarcReports\Administrator\Helper;
+
+defined('_JEXEC') or die;
+
+/**
+ * Parser for RFC 8460 SMTP TLS Reporting (TLS-RPT) JSON reports.
+ *
+ * Like {@see DmarcParser} this class has no Joomla dependency: it turns one
+ * TLS-RPT JSON document into a normalised array and never touches the database,
+ * the filesystem or the network, which keeps it fully unit testable and safe to
+ * run on untrusted input. A report bundles one or more policy results, each with
+ * success/failure session counts and optional per-failure detail rows.
+ *
+ * @since  1.1.0
+ */
+final class TlsRptParser
+{
+    /**
+     * Upper bound for a report date-range timestamp (2100-01-01 UTC). A value
+     * beyond this is treated as malformed rather than a real Unix timestamp.
+     */
+    private const MAX_TIMESTAMP = 4102444800;
+
+    /**
+     * Clock-skew allowance for a report's end timestamp, in seconds.
+     */
+    private const MAX_CLOCK_SKEW = 172800;
+
+    /**
+     * Maximum stored length of a domain value, matching the VARCHAR(190) column.
+     */
+    private const MAX_DOMAIN_LENGTH = 190;
+
+    /**
+     * Maximum stored length of a metadata value, matching VARCHAR(255) columns.
+     */
+    private const MAX_METADATA_LENGTH = 255;
+
+    /**
+     * Maximum number of policy blocks accepted from a single report.
+     */
+    private const MAX_POLICIES = 1000;
+
+    /**
+     * Maximum number of failure-detail rows accepted across a single report. A
+     * permitted document can pack a very large number of tiny detail rows, each
+     * materialised as a nested PHP array; legitimate reports stay far below this.
+     */
+    private const MAX_FAILURES = 100000;
+
+    /**
+     * Parse-failure codes carried on the thrown InvalidArgumentException so a
+     * caller can classify the failure without matching on the English text.
+     */
+    public const ERROR_EMPTY      = 1;
+    public const ERROR_JSON       = 2;
+    public const ERROR_NOT_REPORT = 4;
+
+    /**
+     * Parse one TLS-RPT report document.
+     *
+     * @param   string  $json  The raw JSON of a single TLS-RPT report.
+     *
+     * @return  array<string, mixed>  Normalised report data.
+     *
+     * @throws  \InvalidArgumentException  When the document is not a usable report.
+     */
+    public static function parse(string $json): array
+    {
+        $json = trim($json);
+
+        if ($json === '') {
+            throw new \InvalidArgumentException('Empty TLS-RPT report document.', self::ERROR_EMPTY);
+        }
+
+        if (strpos($json, "\0") !== false) {
+            throw new \InvalidArgumentException('TLS-RPT reports must be UTF-8 JSON without NUL bytes.', self::ERROR_JSON);
+        }
+
+        try {
+            $data = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new \InvalidArgumentException('The TLS-RPT report JSON could not be parsed.', self::ERROR_JSON);
+        }
+
+        if (!\is_array($data)) {
+            throw new \InvalidArgumentException('The document is not a TLS-RPT report.', self::ERROR_NOT_REPORT);
+        }
+
+        $range = \is_array($data['date-range'] ?? null) ? $data['date-range'] : [];
+        $begin = self::timestamp($range['start-datetime'] ?? null);
+        $end   = self::timestamp($range['end-datetime'] ?? null);
+
+        $report = [
+            'org_name'     => self::clip((string) ($data['organization-name'] ?? ''), self::MAX_METADATA_LENGTH),
+            'contact_info' => self::clip((string) ($data['contact-info'] ?? ''), self::MAX_METADATA_LENGTH),
+            'report_id'    => self::clip((string) ($data['report-id'] ?? ''), self::MAX_METADATA_LENGTH),
+            'date_begin'   => $begin,
+            'date_end'     => $end,
+            'policies'     => [],
+        ];
+
+        if ($report['report_id'] === '') {
+            throw new \InvalidArgumentException('The TLS-RPT report is missing a report id.', self::ERROR_NOT_REPORT);
+        }
+
+        $policies = $data['policies'] ?? null;
+
+        if (!\is_array($policies) || $policies === []) {
+            throw new \InvalidArgumentException('The TLS-RPT report carries no policy results.', self::ERROR_NOT_REPORT);
+        }
+
+        $failureBudget = self::MAX_FAILURES;
+        $seen          = 0;
+
+        foreach ($policies as $policy) {
+            if (++$seen > self::MAX_POLICIES) {
+                break;
+            }
+
+            if (!\is_array($policy)) {
+                continue;
+            }
+
+            $report['policies'][] = self::parsePolicy($policy, $failureBudget);
+        }
+
+        if ($report['policies'] === []) {
+            throw new \InvalidArgumentException('The TLS-RPT report carries no usable policy results.', self::ERROR_NOT_REPORT);
+        }
+
+        return $report;
+    }
+
+    /**
+     * @param   array<string, mixed>  $policy
+     * @param   int                   $failureBudget  Remaining detail rows allowed
+     *                                                across the whole report.
+     *
+     * @return  array<string, mixed>
+     */
+    private static function parsePolicy(array $policy, int &$failureBudget): array
+    {
+        $block   = \is_array($policy['policy'] ?? null) ? $policy['policy'] : [];
+        $summary = \is_array($policy['summary'] ?? null) ? $policy['summary'] : [];
+
+        $policyDomain = (string) DomainName::canonicalize((string) ($block['policy-domain'] ?? ''));
+
+        $result = [
+            'policy_type'   => self::clip(strtolower((string) ($block['policy-type'] ?? '')), 20),
+            'policy_domain' => $policyDomain,
+            'success_count' => self::count($summary['total-successful-session-count'] ?? 0),
+            'failure_count' => self::count($summary['total-failure-session-count'] ?? 0),
+            'failures'      => [],
+        ];
+
+        $details = $policy['failure-details'] ?? null;
+
+        if (!\is_array($details)) {
+            return $result;
+        }
+
+        foreach ($details as $detail) {
+            if ($failureBudget <= 0) {
+                break;
+            }
+
+            if (!\is_array($detail)) {
+                continue;
+            }
+
+            $failureBudget--;
+            $result['failures'][] = [
+                'result_type'          => self::clip((string) ($detail['result-type'] ?? ''), 60),
+                'sending_mta_ip'       => self::clip((string) ($detail['sending-mta-ip'] ?? ''), 45),
+                'receiving_mx_host'    => self::clip((string) ($detail['receiving-mx-hostname'] ?? ''), 190),
+                'receiving_ip'         => self::clip((string) ($detail['receiving-ip'] ?? ''), 45),
+                'failed_session_count' => self::count($detail['failed-session-count'] ?? 0),
+                'additional_info'      => self::clip((string) ($detail['additional-information'] ?? ''), 1024),
+                'failure_reason_code'  => self::clip((string) ($detail['failure-reason-code'] ?? ''), 190),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Content fingerprint used to deduplicate a report across repeated imports.
+     * Length-prefix every field so distinct reports cannot collide through an
+     * ambiguous delimiter, mirroring {@see DmarcParser::fingerprint()}.
+     *
+     * @param   array<string, mixed>  $report
+     */
+    public static function fingerprint(array $report): string
+    {
+        $fields = [
+            strtolower((string) ($report['org_name'] ?? '')),
+            (string) ($report['report_id'] ?? ''),
+            (string) ($report['date_begin'] ?? '0'),
+            (string) ($report['date_end'] ?? '0'),
+        ];
+
+        $canonical = '';
+
+        foreach ($fields as $field) {
+            $canonical .= \strlen($field) . ':' . $field . '|';
+        }
+
+        return hash('sha256', $canonical);
+    }
+
+    /**
+     * Convert an RFC 3339 / ISO 8601 date-time string to a Unix timestamp,
+     * rejecting an implausible value. Returns 0 when the value is unusable.
+     */
+    private static function timestamp($value): int
+    {
+        if (!\is_string($value) || $value === '') {
+            return 0;
+        }
+
+        $ts = strtotime($value);
+
+        if ($ts === false || $ts < 0 || $ts > self::MAX_TIMESTAMP + self::MAX_CLOCK_SKEW) {
+            return 0;
+        }
+
+        return $ts;
+    }
+
+    /**
+     * Coerce an untrusted session-count value to a non-negative integer.
+     */
+    private static function count($value): int
+    {
+        if (\is_int($value)) {
+            return $value < 0 ? 0 : $value;
+        }
+
+        if (\is_string($value) && preg_match('/^\d+$/', $value)) {
+            return (int) $value;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Trim a value to at most $max characters so it fits its database column.
+     */
+    private static function clip(string $value, int $max): string
+    {
+        $value = trim($value);
+
+        return function_exists('mb_substr') ? mb_substr($value, 0, $max) : substr($value, 0, $max);
+    }
+}
