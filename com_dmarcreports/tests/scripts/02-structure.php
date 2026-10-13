@@ -142,8 +142,11 @@ class StructureTest
                 }
 
                 foreach ($xml->xpath('/config/fieldset/field[@name="' . $numeric . '"]') as $field) {
+                    // A non-coercing filter is required so the range rule judges
+                    // the lexical value the operator typed; filter="integer"
+                    // would round "50.5"/"1e2" into range before validation.
                     return (string) $field['validate'] === 'range'
-                        && (string) $field['filter'] === 'integer'
+                        && (string) $field['filter'] === 'raw'
                         && (string) $field['message'] !== '';
                 }
 
@@ -160,7 +163,7 @@ class StructureTest
 
             foreach ($xml->xpath('//field[@name="port"]') as $field) {
                 return (string) $field['validate'] === 'range'
-                    && (string) $field['filter'] === 'integer'
+                    && (string) $field['filter'] === 'raw'
                     && (string) $field['message'] !== '';
             }
 

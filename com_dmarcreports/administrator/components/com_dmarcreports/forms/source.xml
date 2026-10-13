@@ -56,7 +56,7 @@
             min="1"
             max="65535"
             validate="range"
-            filter="integer"
+            filter="raw"
             message="COM_DMARCREPORTS_SOURCE_ERROR_INVALID_PORT" />
 
         <field
