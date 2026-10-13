@@ -97,6 +97,152 @@ final class ConsentRepository
     public const ADDRESS_CHARS = '[^\s@<>()\[\]{}",;:\\\\]';
 
     /**
+     * An e-mail address as it is compared: trimmed and lower case (Unicode, locale-independent).
+     * This is the only place where addresses are lower-cased for a decision; the database never
+     * decides whether two addresses are equal.
+     */
+    public static function normaliseAddress(string $email): string
+    {
+        return mb_strtolower(trim($email), 'UTF-8');
+    }
+
+    /**
+     * Whether the database is PostgreSQL (else MySQL or MariaDB, the other servers Joomla runs on).
+     */
+    private static function isPostgres(DatabaseInterface $db): bool
+    {
+        return method_exists($db, 'getServerType') && strtolower((string) $db->getServerType()) === 'postgresql';
+    }
+
+    /**
+     * SQL condition that preselects rows whose column may hold one of $emails: a lossless superset
+     * under any collation, server locale and Unicode version, never the decision. The decision is
+     * normaliseAddress($value) === $email in PHP (addressValues()): under utf8mb4_unicode_ci and
+     * general_ci "muller@example.com" equals "müller@example.com" (another person), PostgreSQL
+     * lower-cases by the server locale, and database case tables are older than PHP's (Georgian
+     * U+1C90).
+     *
+     * Two parts, without any database casing of non-ASCII letters:
+     * - Values made of ASCII characters only: for them every casing agrees (ASCII lower case), so
+     *   the ASCII lower case of the column must equal a request address. MySQL/MariaDB: LOWER()
+     *   under utf8mb4_bin; PostgreSQL: LOWER() under the "C" collation (ASCII only, no locale).
+     * - Values with any non-ASCII character (more bytes than characters): always candidates. They
+     *   are rare in e-mail addresses, and the caller's conditions keep the set small.
+     *
+     * @param   string    $quotedColumn  Column, already quoted
+     * @param   string[]  $emails        Normalised addresses
+     */
+    public static function addressPrefilter(DatabaseInterface $db, string $quotedColumn, array $emails): string
+    {
+        $emails = array_values(array_unique(array_filter(array_map('strval', $emails), 'strlen')));
+
+        if ($emails === []) {
+            return '1 = 0';
+        }
+
+        $value = 'TRIM(' . $quotedColumn . ')';
+        $ascii = array_values(array_filter($emails, static fn (string $email): bool => !preg_match('/[^\x00-\x7F]/', $email)));
+        $parts = [self::nonAsciiCondition($db, $value)];
+
+        if ($ascii !== []) {
+            $list    = implode(',', array_map([$db, 'quote'], $ascii));
+            $parts[] = self::isPostgres($db)
+                ? 'LOWER(' . $value . ' COLLATE "C") IN (' . $list . ')'
+                : 'LOWER(CONVERT(' . $value . ' USING utf8mb4) COLLATE utf8mb4_bin) IN (' . $list . ')';
+        }
+
+        return '(' . implode(' OR ', $parts) . ')';
+    }
+
+    /**
+     * SQL condition: $expression contains a character whose comparison the database cannot be
+     * trusted with, so the value is always a candidate: a non-ASCII character (more bytes than
+     * characters) or a control character (tab, line break, NUL: PHP's trim() removes them, SQL
+     * TRIM() only removes spaces).
+     */
+    private static function nonAsciiCondition(DatabaseInterface $db, string $expression): string
+    {
+        return self::isPostgres($db)
+            ? '(OCTET_LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ') OR ' . $expression . " ~ '[[:cntrl:]]')"
+            : '(LENGTH(' . $expression . ') <> CHAR_LENGTH(' . $expression . ') OR ' . $expression . " REGEXP '[[:cntrl:]]')";
+    }
+
+    /**
+     * SQL condition matching exactly the given stored values (byte-exact after SQL TRIM), for
+     * values found by addressValues(). MySQL/MariaDB compare with utf8mb4_bin; PostgreSQL compares
+     * deterministically by default.
+     *
+     * @param   string    $quotedColumn  Column, already quoted
+     * @param   string[]  $values        Stored values (trimmed)
+     */
+    public static function exactValuesCondition(DatabaseInterface $db, string $quotedColumn, array $values): string
+    {
+        $values = array_values(array_unique(array_map('strval', $values)));
+
+        if ($values === []) {
+            return '1 = 0';
+        }
+
+        $column = self::isPostgres($db)
+            ? 'TRIM(' . $quotedColumn . ')'
+            : 'CONVERT(TRIM(' . $quotedColumn . ') USING utf8mb4) COLLATE utf8mb4_bin';
+
+        return $column . ' IN (' . implode(',', array_map([$db, 'quote'], $values)) . ')';
+    }
+
+    /**
+     * The stored values (trimmed, as SQL TRIM returns them) of $column in $table that are one of
+     * $emails after normaliseAddress(): preselected with addressPrefilter(), decided in PHP, read
+     * in batches of BATCH_SIZE rows so that a large table never has to fit into memory at once.
+     *
+     * @param   string    $keyColumn  Primary key of $table (batch order)
+     * @param   string[]  $emails     Normalised addresses
+     * @param   string[]  $where      Further conditions (already quoted)
+     *
+     * @return  string[]
+     */
+    public static function addressValues(DatabaseInterface $db, string $table, string $keyColumn, string $column, array $emails, array $where = []): array
+    {
+        $wanted = array_flip(array_values(array_filter(array_map('strval', $emails), 'strlen')));
+
+        if ($wanted === []) {
+            return [];
+        }
+
+        $quoted = $db->quoteName($column);
+        $key    = $db->quoteName($keyColumn);
+        $values = [];
+        $lastId = 0;
+
+        do {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select([$key . ' AS ' . $db->quoteName('row_key'), 'TRIM(' . $quoted . ') AS ' . $db->quoteName('value')])
+                ->from($db->quoteName($table))
+                ->where(self::addressPrefilter($db, $quoted, array_keys($wanted)))
+                ->where($key . ' > ' . (int) $lastId)
+                ->order($key . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+
+            foreach ($where as $condition) {
+                $query->where($condition);
+            }
+
+            $rows = $db->setQuery($query)->loadObjectList() ?: [];
+
+            foreach ($rows as $row) {
+                $lastId = max($lastId, (int) $row->row_key);
+                $value  = (string) $row->value;
+
+                if (isset($wanted[self::normaliseAddress($value)])) {
+                    $values[$value] = true;
+                }
+            }
+        } while (\count($rows) === self::BATCH_SIZE);
+
+        return array_map('strval', array_keys($values));
+    }
+
+    /**
      * Whether $email (trimmed, lower case) is a request address: local part "@" domain with a dot,
      * only ADDRESS_CHARS, no leading or trailing dot, at most 320 bytes.
      */
@@ -160,7 +306,7 @@ final class ConsentRepository
 
         $wanted = array_flip($emails);
         $likes  = array_map(
-            fn (string $email): string => $this->addressPrefilter($email),
+            fn (string $email): string => $this->bodyPrefilter($email),
             $emails
         );
         $rows   = [];
@@ -638,7 +784,7 @@ final class ConsentRepository
                 // Under a case-sensitive collation "Anna@Example.com" in the body would otherwise
                 // never reach the case-insensitive check below.
                 foreach ($emails as $email) {
-                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->addressPrefilter($email) . ')';
+                    $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ' . $this->bodyPrefilter($email) . ')';
                 }
 
                 $query->where('(' . implode(' OR ', $scope) . ')');
@@ -844,19 +990,24 @@ final class ConsentRepository
             return [];
         }
 
-        // One token identifies one order; nothing else of that e-mail address is looked up.
+        // One token identifies one order; nothing else of that e-mail address is looked up. The
+        // address is compared in PHP (normaliseAddress()), not under the column collation.
         $query = $this->createQuery()
-            ->select($this->db->quoteName('order_id'))
+            ->select($this->db->quoteName(['order_id', 'user_email']))
             ->from($this->db->quoteName($table))
             ->where($this->db->quoteName('user_id') . ' = 0')
             ->where($this->db->quoteName('token') . ' = :token')
-            ->where($this->db->quoteName('user_email') . ' = :email')
-            ->bind(':token', $guestToken)
-            ->bind(':email', $guestEmail)
-            ->setLimit(1);
+            ->bind(':token', $guestToken);
 
         $this->db->setQuery($query);
-        $orderId = (string) $this->db->loadResult();
+        $orderId = '';
+
+        foreach ($this->db->loadObjectList() ?: [] as $row) {
+            if (self::normaliseAddress((string) $row->user_email) === self::normaliseAddress($guestEmail)) {
+                $orderId = (string) $row->order_id;
+                break;
+            }
+        }
 
         if (!self::isValidOrderId($orderId)) {
             return [];
@@ -868,24 +1019,34 @@ final class ConsentRepository
     }
 
     /**
-     * SQL preselection of bodies that may contain $email. Only the domain is compared ("@" or
-     * its entity "&#64;" plus the domain, lower case): the local part may be stored raw or with
-     * HTML entities in several forms. The exact decision is bodyHasAddress().
+     * SQL preselection of bodies that may contain $email, lossless like addressPrefilter(): bodies
+     * with any non-ASCII or control character or an HTML entity are candidates; otherwise the ASCII lower case of the body must
+     * contain "@" or its entity "&#64;" plus the domain (only for an ASCII domain: a non-ASCII
+     * domain can only be stored in a body with non-ASCII characters). The local part may be stored
+     * raw or with HTML entities in several forms. The decision is bodyHasAddress() in PHP.
      */
-    private function addressPrefilter(string $email): string
+    private function bodyPrefilter(string $email): string
     {
-        $email  = mb_strtolower(trim($email), 'UTF-8');
+        $email  = self::normaliseAddress($email);
         $domain = (string) substr($email, (int) strrpos($email, '@') + 1);
-        $likes  = [];
+        $body   = $this->db->quoteName('body');
+        // Bodies with an HTML entity anywhere are candidates too: addressTokens() decodes them, so
+        // "user@ex&#97;mple.com" can be the address although the plain domain is not in the text.
+        $parts  = [self::nonAsciiCondition($this->db, $body), $body . ' LIKE ' . $this->db->quote('%&%')];
 
-        foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
-            foreach (['@', '&#64;'] as $at) {
-                $likes[] = 'LOWER(' . $this->db->quoteName('body') . ') LIKE '
-                    . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+        if (!preg_match('/[^\x00-\x7F]/', $domain)) {
+            $lower = self::isPostgres($this->db)
+                ? 'LOWER(' . $body . ' COLLATE "C")'
+                : 'LOWER(CONVERT(' . $body . ' USING utf8mb4) COLLATE utf8mb4_bin)';
+
+            foreach (array_unique([$domain, htmlspecialchars($domain, ENT_QUOTES, 'UTF-8')]) as $form) {
+                foreach (['@', '&#64;'] as $at) {
+                    $parts[] = $lower . ' LIKE ' . $this->db->quote('%' . $this->db->escape($at . $form, true) . '%', false);
+                }
             }
         }
 
-        return '(' . implode(' OR ', $likes) . ')';
+        return '(' . implode(' OR ', $parts) . ')';
     }
 
     private function likeMarker(string $orderId): string

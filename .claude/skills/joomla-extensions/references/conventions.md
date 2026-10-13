@@ -14,7 +14,8 @@ refactor(privacy): extract anonymization into separate method
 ```
 
 Scope is the extension identifier as used by the release/publish workflows: `privacy`,
-`importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`, `dmarcreports`.
+`importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`, `dmarcreports`,
+`moddmarcreports`, `appointments`.
 
 ## PHP
 
@@ -71,7 +72,9 @@ Scope is the extension identifier as used by the release/publish workflows: `pri
    name carries the tag, and translate every value. Keep the keys and the `printf` placeholders.
 2. Register the files where the manifest lists them. Extensions with `<folder>language</folder>`
    (Privacy with its sub-plugins, OSMap, Product Compare) need nothing else. Import/Export, Cleanup,
-   DMARC Reports and AJAX Forms list each file in `<languages>`: add one `<language tag="xx-XX">` line per file.
+   DMARC Reports, DMARC Reports Dashboard Module, Appointments and AJAX Forms list each file in
+   `<languages>`: add one `<language tag="xx-XX">` line per file. Appointments has two such blocks,
+   one for the administrator files and one for the site files.
    These stay on `<languages>` on purpose: installed sites have copies in the global
    `administrator/language/<tag>/` folder, which Joomla loads before the extension folder, and a
    switch would leave those copies behind unchanged.

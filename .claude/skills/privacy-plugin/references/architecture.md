@@ -24,7 +24,7 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │       ├── createJoomlaProfileDomain()     — if include_joomla_data
 │       ├── createJoomlaActionLogsDomain()  — if include_joomla_data
 │       └── createAcyMailingDomain()        — only if AcyMailing tables exist
-├── onPrivacyCanRemoveData()      — never blocks; captures username + account e-mail per user ID
+├── onPrivacyCanRemoveData()      — blocks only an account of a different address; captures username + account e-mail per user ID
 │   └── checkCanRemoveData()
 ├── onPrivacyRemoveData()         — anonymize/delete
 │   └── processDataRemoval()      — uses the captured account data and the request e-mail

@@ -508,6 +508,57 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * Addresses equal only under the column collation (accents, sharp s) belong to different
+     * people: a request of A neither exports nor deletes the subscriber B. The same address in
+     * other letter case still matches.
+     */
+    private function testCollationPairs(): void
+    {
+        echo "\n--- Export and removal: addresses equal only under the column collation ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null) {
+            $this->strictSkip('collation pairs', 'AcyMailing tables or plugin missing');
+
+            return;
+        }
+
+        $suffix = (string) random_int(10000, 99999);
+        $pairs  = [
+            'muller'  => ['acym-muller-' . $suffix . '@example.com', 'acym-müller-' . $suffix . '@example.com'],
+            'strasse' => ['acym-strasse-' . $suffix . '@example.com', "acym-stra\u{00DF}e-" . $suffix . '@example.com'],
+            'resume'  => ['acym-resume-' . $suffix . '@example.com', 'acym-résumé-' . $suffix . '@example.com'],
+        ];
+        $ids    = [];
+        $export = new \ReflectionMethod($plugin, 'createAcyMailingDomain');
+        $remove = new \ReflectionMethod($plugin, 'removeAcyMailingData');
+        $export->setAccessible(true);
+        $remove->setAccessible(true);
+
+        try {
+            foreach ($pairs as $name => [$a, $b]) {
+                $ids[] = $subB = $this->insertSubscriber($prefix, $b, 'Subscriber B');
+                $this->test("[$name] subscriber B inserted", $subB > 0);
+
+                $this->test("[$name] export of A finds no subscriber", $export->invoke($plugin, null, [$a]) === null);
+                $remove->invoke($plugin, null, [$a]);
+                $this->test("[$name] removal of A keeps subscriber B", $this->countRows($prefix . 'user', 'id', $subB) === 1);
+
+                $domain = $export->invoke($plugin, null, [str_replace('@example.com', '@EXAMPLE.COM', $b)]);
+                $this->test("[$name] export of B in other letter case finds subscriber B", $domain !== null);
+            }
+        } catch (\Throwable $e) {
+            $this->test('collation pairs ran without error', false, $e->getMessage());
+        } finally {
+            foreach ($ids as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . (int) $id)->execute();
+            }
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -577,6 +628,7 @@ class AcyMailingIntegrationTest
         $this->testDeletion();
         $this->testRemovalAfterPseudonymisation();
         $this->testExportBothAddresses();
+        $this->testCollationPairs();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";
