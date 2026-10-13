@@ -59,6 +59,16 @@ final class DnsDiagnostics
                 // is missing (it may not be) or claim it is covered (it may not
                 // be), it prompts the admin to verify the organizational
                 // domain's DMARC record.
+                //
+                // Choosing the softer prompt here is deliberate: without a PSL a
+                // multi-label registrable name under a compound public suffix
+                // (for example example.co.uk) cannot be told apart from a true
+                // subdomain. Erring towards the prompt is the safer failure mode
+                // because the opposite default would emit a missing-record
+                // finding and suggest publishing "p=none" at a genuine
+                // subdomain, which overrides and weakens the organizational
+                // domain's "sp" policy. Under-prompting a rare registrable name
+                // beats handing out advice that relaxes enforcement.
                 $findings[] = ['code' => 'dns_dmarc_subdomain_check', 'severity' => 1, 'params' => [$domain]];
             } else {
                 $findings[] = ['code' => 'dns_dmarc_missing', 'severity' => 3, 'params' => [$domain]];

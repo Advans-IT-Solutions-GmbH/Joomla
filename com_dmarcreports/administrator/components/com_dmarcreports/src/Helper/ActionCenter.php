@@ -94,8 +94,10 @@ final class ActionCenter
                 $items[] = self::item('enforced', 'policy', 0, $domainId, [$domain]);
             } else {
                 // p=reject with pct<100 only subjects that share of mail to the
-                // policy; the rest falls through to quarantine, so this is not
-                // full enforcement and must not be reported as "done".
+                // policy; under RFC 7489 receivers are only asked to treat the
+                // remainder as though p=quarantine applied (a SHOULD, so it is
+                // receiver-dependent), which is not full enforcement and must
+                // not be reported as "done".
                 $items[] = self::item('partial_enforcement', 'policy', 2, $domainId, [$domain, $policyPct]);
             }
         } elseif ($policy === 'quarantine' && $policyPct < 100) {
