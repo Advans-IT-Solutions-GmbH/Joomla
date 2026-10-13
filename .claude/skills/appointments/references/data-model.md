@@ -142,7 +142,6 @@ Index `(user_id, start_utc, end_utc)`.
 | `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
 | `anonymised_utc` | `DATETIME NULL` | set when the personal fields are erased |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
-| `created_ip` | `VARBINARY(16) NULL` | anti-bot only, erased with the booking |
 
 Indexes:
 - Unique `uid`.
@@ -160,6 +159,12 @@ Indexes:
 There is deliberately **no `asset_id`** on this table. A booking inherits the permissions of its
 event type; see `references/scope.md`, "Administration". Adding one later would mean an `#__assets`
 row per booking, an extra insert in the hot path and an orphan asset after every erasure.
+
+There is also deliberately **no IP address column**. The anti-bot timing check compares the render
+time of the form with the submission time and persists nothing, and the rate limiter keeps only a
+keyed hash in `#__appointments_ratelimit` with a one-day retention. A column here would keep the raw
+address for the life of the booking and break the promise in
+`references/privacy-and-deletion.md`.
 
 ### Rescheduling updates the row
 

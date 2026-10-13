@@ -127,7 +127,8 @@ all three in version 1:
 - A retention task that anonymises or deletes bookings a configurable number of days after they
   ended.
 
-No IP address is stored beyond the anti-bot timing check, and that is purged with the booking.
+No IP address is stored at all. The anti-bot timing check persists nothing, and the rate limiter
+keeps only a keyed hash with a one-day retention.
 
 ## Explicitly out of scope for version 1
 

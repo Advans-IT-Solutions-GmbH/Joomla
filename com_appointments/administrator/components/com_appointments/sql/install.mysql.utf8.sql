@@ -163,8 +163,12 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- the subscription feed, where two VEVENTs with one UID are not valid. The
 -- unique slot index below also does the work for free: moving a booking onto a
 -- slot another active booking already holds fails the UPDATE.
--- `created_ip` exists for the anti-bot timing check only and is erased together
--- with the rest of the personal data.
+-- There is no IP address column, deliberately. The anti-bot timing check
+-- compares the moment the form was rendered with the moment it was submitted
+-- and persists nothing, and the rate limiter keeps only a hash keyed with
+-- KeyProvider, in #__appointments_ratelimit, which the retention task empties
+-- after a day. A column here would keep the raw address for the life of the
+-- booking, which the component's privacy contract rules out.
 --
 -- `conference_state` is NULL for an event type without a conference, `ok` once
 -- a link exists and `failed` when the provider could not produce one.
@@ -218,7 +222,6 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `anonymised_utc` DATETIME DEFAULT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
-    `created_ip` VARBINARY(16) DEFAULT NULL,
     `checked_out` INT UNSIGNED DEFAULT NULL,
     `checked_out_time` DATETIME DEFAULT NULL,
     PRIMARY KEY (`id`),
