@@ -311,10 +311,13 @@ class ScheduleModel extends AdminModel
                 continue;
             }
 
-            // A calendar field can hand over a full timestamp; only the date
-            // part of it describes an override.
-            $date = substr($date, 0, 10);
-
+            // The whole value is validated, not its first ten characters. An
+            // override is a bare date, and the calendar field is pinned to
+            // submit exactly that and converts nothing on the way, so there is
+            // no timestamp suffix left to cut off. Cutting one off anyway would
+            // accept any crafted value whose first ten characters happen to be
+            // a date, such as 2026-12-24garbage, and store a date the operator
+            // never submitted.
             if (!$this->isRealDate($date)) {
                 $this->setError(Text::_('COM_APPOINTMENTS_SCHEDULE_ERROR_DATE'));
 

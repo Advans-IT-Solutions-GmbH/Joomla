@@ -86,6 +86,34 @@ final class SlotEngineTest extends TestCase
         return [['weekday' => 2, 'start_time' => '10:00', 'end_time' => '12:00']];
     }
 
+    public function testTheInjectedClockMayCarryAnyTimeZone(): void
+    {
+        // The engine is handed instants, and the zone an argument carries is a
+        // presentation detail of the caller. A Europe/Zurich clock used to
+        // reach AvailabilityWindow through the minimum notice, which accepts
+        // only UTC, so the engine threw instead of answering.
+        $engine = $this->engine($this->tuesdayMorning(), new SlotRules(20, 30, 0, 0, 30));
+        $zone   = new \DateTimeZone(self::ZONE);
+
+        $local = $engine->findSlots(
+            new \DateTimeImmutable('2026-06-02 10:30', $zone),
+            new \DateTimeImmutable('2026-06-02 00:00', $zone),
+            new \DateTimeImmutable('2026-06-03 00:00', $zone)
+        );
+
+        // The same question asked in UTC has to give the same answer, because
+        // it is the same question. Both are the same three instants.
+        $utc = $engine->findSlots(
+            $this->utc('2026-06-02 08:30'),
+            $this->utc('2026-06-01 22:00'),
+            $this->utc('2026-06-02 22:00')
+        );
+
+        // 10:30 plus half an hour of notice leaves 11:00 and 11:30.
+        $this->assertSame(['2026-06-02 11:00', '2026-06-02 11:30'], $this->asLocal($local));
+        $this->assertSame($this->asLocal($utc), $this->asLocal($local));
+    }
+
     public function testAMeetingMayNotRunIntoAClosedDayJustPastTheRange(): void
     {
         // The range given to the engine is a range of *start* times, and a

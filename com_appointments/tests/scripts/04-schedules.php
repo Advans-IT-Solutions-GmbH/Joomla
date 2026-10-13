@@ -161,6 +161,20 @@ class ScheduleAdminTest
             return $this->ruleCount($scheduleId) === $before && $before === 2;
         });
 
+        // The override date carries no time-zone filter, so nothing normalises
+        // it on the way in. The whole value therefore has to be validated: a
+        // value whose first ten characters happen to be a date must not be cut
+        // down to them and stored as a date nobody submitted.
+        $fields = $this->validFields();
+        $fields['jform[id]'] = (string) $scheduleId;
+        $fields['jform[date_overrides][0][specific_date]'] = '2026-12-24garbage';
+        $html = $this->post('schedule.save', $this->tokenFromEditForm($scheduleId) ?? $token, $fields);
+
+        $this->test('An override date with a suffix is refused, not truncated', function () use ($scheduleId, $html) {
+            return stripos($html, 'needs a valid date') !== false
+                && $this->ruleCount($scheduleId) === 2;
+        });
+
         // --- The edit view is behind core.edit, whatever its spelling -------
         // Reaching view=schedule directly would show and save a stored
         // schedule without the task controllers' permission checks, so

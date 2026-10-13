@@ -93,6 +93,16 @@ final class SlotEngine
         array $busy = [],
         array $capCounts = []
     ): array {
+        // An instant is an instant: the zone an argument happens to carry is a
+        // presentation detail of the caller, not information about the moment.
+        // The engine's own invariant is that every window it builds is in UTC,
+        // and `$now` in particular comes from wherever the caller got its
+        // clock, so a Europe/Zurich instant used to reach AvailabilityWindow
+        // through the minimum notice and make it throw rather than answer.
+        $now     = self::asUtc($now);
+        $fromUtc = self::asUtc($fromUtc);
+        $toUtc   = self::asUtc($toUtc);
+
         $range = $this->bookableRange($now, $fromUtc, $toUtc);
 
         if ($range === null) {
@@ -152,6 +162,16 @@ final class SlotEngine
      * The intersection of the requested range, the minimum notice and the
      * horizon, or null when nothing is left of it.
      */
+    /**
+     * The same instant, read in UTC.
+     */
+    private static function asUtc(\DateTimeImmutable $moment): \DateTimeImmutable
+    {
+        return $moment->getTimezone()->getName() === 'UTC'
+            ? $moment
+            : $moment->setTimezone(new \DateTimeZone('UTC'));
+    }
+
     private function bookableRange(
         \DateTimeImmutable $now,
         \DateTimeImmutable $fromUtc,
