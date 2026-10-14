@@ -16,6 +16,7 @@ use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
 use Advans\Component\DmarcReports\Administrator\Helper\ReportArchive;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
+use Advans\Component\DmarcReports\Administrator\Helper\SourcePollLock;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -57,6 +58,14 @@ final class SourcePoller
      */
     public const STATUS_ERROR = 'error';
 
+    /**
+     * Outcome of a poll: another poll of the same source already held the
+     * advisory lock, so this run did nothing. The owning run reads the cursor,
+     * streams the mailbox and advances the cursor; skipping here is how a manual
+     * import and the scheduler task avoid double-processing the same messages.
+     */
+    public const STATUS_SKIPPED = 'skipped';
+
     private DatabaseInterface $db;
 
     public function __construct(?DatabaseInterface $db = null)
@@ -78,6 +87,71 @@ final class SourcePoller
     public function poll(object $source, bool $allowAutoCreate): array
     {
         $sourceId = (int) $source->id;
+
+        if ($sourceId <= 0) {
+            // A sentinel/unsaved source has no row to lock, reload or record a
+            // run against, so there is nothing to poll.
+            return [
+                'status'  => self::STATUS_ERROR,
+                'message' => Text::_('COM_DMARCREPORTS_INGEST_FAILED'),
+                'blocked' => 0,
+                'summary' => [],
+            ];
+        }
+
+        // Claim this source BEFORE reading its cursor. A concurrent manual import
+        // and scheduler task otherwise both read the same uidvalidity/last_uid,
+        // stream and delete the same messages and overwrite each other's retry
+        // set, because the transaction-scoped SourceLock only guards the final
+        // cursor write — after the slow IMAP fetch. The advisory lock is held
+        // across the whole poll and released in the finally below (or on
+        // connection drop), so a crashed run never wedges the source.
+        $lockName = SourcePollLock::lockName($this->db, $sourceId);
+
+        if (!SourcePollLock::acquire($this->db, $lockName)) {
+            return [
+                'status'  => self::STATUS_SKIPPED,
+                'message' => Text::_('COM_DMARCREPORTS_INGEST_SKIPPED_LOCKED'),
+                'blocked' => 0,
+                'summary' => [],
+            ];
+        }
+
+        try {
+            // Re-read the row under the claim so this poll uses the freshest
+            // cursor and bound domain, not values another poll advanced between
+            // the source being listed and this claim being taken.
+            $source = $this->reloadSource($sourceId);
+
+            if ($source === null) {
+                // Deleted between listing and claiming; nothing to process.
+                return [
+                    'status'  => self::STATUS_SKIPPED,
+                    'message' => Text::_('COM_DMARCREPORTS_INGEST_SKIPPED_LOCKED'),
+                    'blocked' => 0,
+                    'summary' => [],
+                ];
+            }
+
+            return $this->runPoll($source, $sourceId, $allowAutoCreate);
+        } finally {
+            SourcePollLock::release($this->db, $lockName);
+        }
+    }
+
+    /**
+     * Stream one claimed source through the ingestor and record the run. Called
+     * only while this poll holds the source's advisory lock.
+     *
+     * @param   object  $source           The freshly reloaded `#__dmarc_sources` row.
+     * @param   int     $sourceId         The source id (already validated positive).
+     * @param   bool    $allowAutoCreate  Whether an unknown policy domain may be
+     *                                     auto-registered (requires core.create).
+     *
+     * @return  array{status:string, message:string, blocked:int, summary:array<string,int|string>}
+     */
+    private function runPoll(object $source, int $sourceId, bool $allowAutoCreate): array
+    {
         $domainId = (int) $source->domain_id;
 
         // Decide whether this poll forces the source's bound domain onto every
@@ -206,6 +280,22 @@ final class SourcePoller
             ->order($db->quoteName('s.id') . ' ASC');
 
         return $db->setQuery($query)->loadObjectList() ?: [];
+    }
+
+    /**
+     * Re-read a single source row by id. Returns null when the row no longer
+     * exists. Used to refresh the cursor under the poll's advisory lock.
+     */
+    private function reloadSource(int $sourceId): ?object
+    {
+        $db    = $this->db;
+        $query = $this->createDbQuery($db)
+            ->select('*')
+            ->from($db->quoteName('#__dmarc_sources'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $sourceId, ParameterType::INTEGER);
+
+        return $db->setQuery($query)->loadObject() ?: null;
     }
 
     /**
