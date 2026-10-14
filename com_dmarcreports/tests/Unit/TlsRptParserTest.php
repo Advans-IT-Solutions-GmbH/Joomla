@@ -100,16 +100,46 @@ class TlsRptParserTest extends TestCase
         TlsRptParser::parse($this->sample(['policies' => []]));
     }
 
-    public function testNegativeSessionCountsAreClamped(): void
+    public function testNegativeSessionCountIsRejected(): void
     {
+        // A present negative count is malformed and must reject the whole
+        // report rather than normalise to zero, so a corrected retransmission
+        // can later repair the metrics.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => -5, 'total-failure-session-count' => 0],
+                ],
+            ],
+        ]));
+    }
+
+    public function testNonNumericSessionCountIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 1, 'total-failure-session-count' => 'abc'],
+                ],
+            ],
+        ]));
+    }
+
+    public function testAbsentSessionCountsDefaultToZero(): void
+    {
+        // A summary without counts is valid: the absent keys default to zero and
+        // must not be mistaken for malformed values.
         $report = TlsRptParser::parse($this->sample([
             'policies' => [
                 [
                     'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'example.org'],
-                    'summary' => [
-                        'total-successful-session-count' => -5,
-                        'total-failure-session-count'    => 'abc',
-                    ],
+                    'summary' => [],
                 ],
             ],
         ]));
@@ -304,6 +334,27 @@ class TlsRptParserTest extends TestCase
                     'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
                 ],
                 'not-an-object',
+            ],
+        ]));
+    }
+
+    public function testNonObjectFailureDetailRejectsTheWholeReport(): void
+    {
+        // A non-object entry in failure-details must reject the whole report for
+        // the same reason as a non-object policy: a partial import would be
+        // persisted under the report's permanent fingerprint.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
+                    'failure-details' => [
+                        ['result-type' => 'certificate-expired', 'failed-session-count' => 1],
+                        'not-an-object',
+                    ],
+                ],
             ],
         ]));
     }

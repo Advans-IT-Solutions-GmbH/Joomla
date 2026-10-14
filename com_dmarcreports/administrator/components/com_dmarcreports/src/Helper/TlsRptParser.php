@@ -226,7 +226,11 @@ final class TlsRptParser
             }
 
             if (!\is_array($detail)) {
-                continue;
+                // Reject rather than silently skip a malformed failure entry:
+                // the surviving rows would still be stored under the report's
+                // permanent fingerprint, so a corrected copy could never replace
+                // the partial import. Mirror the policy and budget handling.
+                throw new \InvalidArgumentException('A TLS-RPT failure detail is not an object.', self::ERROR_NOT_REPORT);
             }
 
             $failureBudget--;
@@ -289,18 +293,26 @@ final class TlsRptParser
     }
 
     /**
-     * Coerce an untrusted session-count value to a non-negative integer. A digit
-     * string larger than the signed integer PHP binds (and the database stores)
-     * is rejected rather than saturated, so a crafted count cannot overflow the
-     * running totals and keep an IMAP UID retrying forever. Mirrors the DMARC
-     * parser's out-of-range rejection.
+     * Validate an untrusted session-count value as a non-negative integer. An
+     * absent key reaches this method as the callers' int 0 default and is kept.
+     * A present but malformed value — a negative integer, a non-numeric or
+     * negative string, a float or a boolean — is rejected rather than coerced to
+     * zero: normalising it would store understated totals under the report's
+     * permanent fingerprint, so a corrected retransmission could never repair
+     * the metrics. A digit string beyond the signed-integer range is likewise
+     * rejected rather than saturated. Mirrors the DMARC parser's rejection of
+     * missing, non-numeric and out-of-range counts.
      *
-     * @throws  \InvalidArgumentException  When a numeric string is out of range.
+     * @throws  \InvalidArgumentException  When the value is not a valid count.
      */
     private static function count($value): int
     {
         if (\is_int($value)) {
-            return $value < 0 ? 0 : $value;
+            if ($value < 0) {
+                throw new \InvalidArgumentException('A TLS-RPT session count is negative.', self::ERROR_NOT_REPORT);
+            }
+
+            return $value;
         }
 
         if (\is_string($value) && preg_match('/^\d+$/', $value)) {
@@ -311,7 +323,7 @@ final class TlsRptParser
             return (int) $value;
         }
 
-        return 0;
+        throw new \InvalidArgumentException('A TLS-RPT session count is not a valid non-negative integer.', self::ERROR_NOT_REPORT);
     }
 
     /**

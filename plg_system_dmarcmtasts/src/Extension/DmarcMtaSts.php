@@ -125,8 +125,8 @@ final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
 
         try {
             $db    = $this->getDatabase();
-            $query = $db->createQuery()
-                ->select($db->quoteName('id'))
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('id'))
                 ->from($db->quoteName('#__dmarc_domains'))
                 ->where($db->quoteName('domain') . ' = :domain')
                 ->where($db->quoteName('published') . ' = 1')

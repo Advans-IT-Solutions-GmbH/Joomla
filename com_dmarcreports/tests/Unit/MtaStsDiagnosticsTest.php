@@ -267,6 +267,36 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('mtasts_publish', $this->codes($result));
     }
 
+    public function testMultipleStsRecordsAreReportedAsPublish(): void
+    {
+        // RFC 8461 allows exactly one _mta-sts record; two valid records are an
+        // invalid configuration, so no trusted id is derived and publish
+        // guidance is emitted rather than trusting the first.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123', 'v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_publish', $this->codes($result));
+    }
+
+    public function testMultipleTlsRptRecordsAreReportedAsPublish(): void
+    {
+        // RFC 8460 allows exactly one _smtp._tls record; a duplicate makes the
+        // configuration invalid even when both carry the expected rua.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => [
+                'v=TLSRPTv1; rua=mailto:tls@example.org',
+                'v=TLSRPTv1; rua=mailto:tls@example.org',
+            ],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('tlsrpt_publish', $this->codes($result));
+    }
+
     public function testEveryFindingIsTaggedMtaStsCategory(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([

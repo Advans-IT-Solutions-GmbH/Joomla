@@ -205,19 +205,23 @@ final class MtaStsDiagnostics
             return [$this->finding('tlsrpt_publish', 1, [$host, $record])];
         }
 
+        $versioned = [];
+
         foreach ($records as $txt) {
             $value = ltrim((string) $txt);
 
-            if (!self::startsWithVersion($value, 'v=tlsrptv1')) {
-                continue;
+            if (self::startsWithVersion($value, 'v=tlsrptv1')) {
+                $versioned[] = $value;
             }
+        }
 
-            // A record carrying the right version but a different rua points
-            // reports at an obsolete or wrong address, so treat it as drift
-            // rather than consistent. Compare the normalized rua target set.
-            if (self::ruaTargets($value) === self::ruaTargets($record)) {
-                return [];
-            }
+        // RFC 8460 requires exactly one TLS-RPT TXT record. Zero means reporting
+        // is not published yet; more than one is an invalid configuration that
+        // receivers reject, so only a single record whose rua targets match the
+        // generated one counts as consistent. A different rua points reports at
+        // an obsolete or wrong address, so treat it as drift.
+        if (\count($versioned) === 1 && self::ruaTargets($versioned[0]) === self::ruaTargets($record)) {
+            return [];
         }
 
         return [$this->finding('tlsrpt_publish', 1, [$host, $record])];
@@ -277,19 +281,24 @@ final class MtaStsDiagnostics
     }
 
     /**
-     * Extract the id value from the first valid `_mta-sts` TXT record, or null
-     * when no `v=STSv1` record with a non-empty id is present.
+     * Extract the id value when exactly one valid `_mta-sts` TXT record with a
+     * non-empty id is present, or null when none, several, or an id-less record
+     * is published (an ambiguous or RFC-invalid configuration).
      *
      * @param   string[]  $records
      */
     private function stsRecordId(array $records): ?string
     {
+        $ids = [];
+
         foreach ($records as $txt) {
             $value = trim((string) $txt);
 
             if (!self::startsWithVersion($value, 'v=stsv1')) {
                 continue;
             }
+
+            $id = '';
 
             foreach (explode(';', $value) as $part) {
                 if (!str_contains($part, '=')) {
@@ -299,16 +308,28 @@ final class MtaStsDiagnostics
                 [$key, $val] = explode('=', $part, 2);
 
                 if (strtolower(trim($key)) === 'id') {
-                    $id = trim($val);
+                    $candidate = trim($val);
 
-                    if ($id !== '') {
-                        return $id;
+                    if ($candidate !== '') {
+                        $id = $candidate;
+
+                        break;
                     }
                 }
             }
+
+            $ids[] = $id;
         }
 
-        return null;
+        // RFC 8461 requires exactly one _mta-sts TXT record. Zero records, more
+        // than one, or a single record without a usable id cannot yield a
+        // trusted id; the caller then reports a publish reminder rather than
+        // trusting an ambiguous or invalid configuration.
+        if (\count($ids) !== 1 || $ids[0] === '') {
+            return null;
+        }
+
+        return $ids[0];
     }
 
     /**
