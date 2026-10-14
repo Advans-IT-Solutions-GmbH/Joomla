@@ -149,6 +149,10 @@ try {
     $wrong = $http->request($feedPath('event', $event, str_repeat('0', 64)));
     $check($http->status === 404 && $noStore($http->headers) && !str_contains($wrong, $booking['invitee_email'])
         && !str_contains($wrong, $booking['uid']), 'Wrong credential gets generic 404 with no participant data');
+    foreach ([['token' => $eventToken], ['scope' => 'event', 'token' => $eventToken]] as $missing) {
+        $error = $http->request('/index.php?option=com_appointments&task=feed.download&' . http_build_query($missing));
+        $check($http->status === 404 && $error === $wrong, 'Missing scope or ID receives the same generic 404, not a typed-input error');
+    }
     foreach ([['event', $event, 'bad'], ['host', $fixture->host, $eventToken], ['event', $event, $hostToken],
         ['event', 2147483647, $eventToken], ['invalid', $event, $eventToken]] as [$scope, $id, $token]) {
         $error = $http->request($feedPath($scope, $id, $token));

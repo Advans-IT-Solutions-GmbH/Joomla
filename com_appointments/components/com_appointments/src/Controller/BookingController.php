@@ -33,7 +33,7 @@ class BookingController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
 
-        $eventId = $this->input->getInt('id');
+        $eventId = $this->input->getInt('id', 0);
         $events = $this->getModel('Eventtype');
         $events->getItem($eventId);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
@@ -47,8 +47,8 @@ class BookingController extends BaseController
         }
 
         if (!(new FormGuard($keys))->verify(
-            $eventId, $this->input->post->getInt('rendered_at'), $sessionToken,
-            $this->input->post->getString('form_signature'), $this->input->post->getString('website'),
+            $eventId, $this->input->post->getInt('rendered_at', 0), $sessionToken,
+            $this->input->post->getString('form_signature', ''), $this->input->post->getString('website', ''),
             $this->input->post->getInt('consent') === 1, $now
         )) {
             return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_FORM');
@@ -88,8 +88,8 @@ class BookingController extends BaseController
         $keys = new KeyProvider((string) $this->app->get('secret'));
         $url = 'index.php?option=com_appointments&view=manage&id=' . $this->input->getInt('id')
             . '&action=' . $model->action() . '&signature=' . urlencode($model->signature());
-        $month = $this->input->getString('month');
-        $zone = $this->input->getString('timezone');
+        $month = $this->input->getString('month', '');
+        $zone = $this->input->getString('timezone', '');
         if ($month !== '') {
             $url .= '&month=' . urlencode($month) . '&timezone=' . urlencode($zone);
         }
@@ -109,7 +109,7 @@ class BookingController extends BaseController
             return false;
         }
         $this->app->setUserState('com_appointments.cancel_reason', $reason);
-        $start = UtcTimestamp::parse($this->input->post->getString('start'));
+        $start = UtcTimestamp::parse($this->input->post->getString('start', ''));
         if ($model->action() === 'reschedule' && !in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 'error');
             return false;

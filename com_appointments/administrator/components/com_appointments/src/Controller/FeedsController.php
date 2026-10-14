@@ -30,7 +30,7 @@ class FeedsController extends BaseController
         if ($this->input->getMethod() !== 'POST' || $this->input->post->get($token, '', 'alnum') !== '1') {
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
-        $scope = $this->input->post->getString('scope');
+        $scope = $this->input->post->getString('scope', '');
         $id = $this->input->post->getInt('id');
         if (!in_array($scope, ['event', 'host'], true) || $id < 1) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND'), 404);

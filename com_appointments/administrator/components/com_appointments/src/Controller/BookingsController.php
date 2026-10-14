@@ -89,7 +89,7 @@ class BookingsController extends BaseController
         }
         $model = $this->getModel('Booking', 'Administrator', ['ignore_request' => true]);
         $model->getItem($id);
-        $value = $this->input->post->getString('start');
+        $value = $this->input->post->getString('start', '');
         if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/D', $value) !== 1) {
             throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_START_INVALID'), 400);
         }

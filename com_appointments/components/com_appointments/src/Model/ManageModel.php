@@ -38,7 +38,7 @@ class ManageModel extends BaseDatabaseModel
 
     public function signature(): string
     {
-        return Factory::getApplication()->getInput()->getString('signature');
+        return Factory::getApplication()->getInput()->getString('signature', '');
     }
 
     public function completed(): bool

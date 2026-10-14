@@ -39,7 +39,7 @@ class FeedController extends BaseController
         $token = $this->input->get('token', '', 'raw');
         try {
             $calendar = (new FeedService($db))->download(
-                $this->input->getString('scope'), $this->input->getInt('id'),
+                $this->input->getString('scope', ''), $this->input->getInt('id', 0),
                 is_string($token) ? $token : '', $now
             );
         } catch (\DomainException $e) {
@@ -53,7 +53,7 @@ class FeedController extends BaseController
         $this->app->setHeader('Content-Type', 'text/calendar; charset=UTF-8; method=PUBLISH', true);
         $this->app->setHeader('Content-Disposition', 'inline; filename="' . $calendar['filename'] . '"', true);
         $this->app->setHeader('ETag', $calendar['etag'], true);
-        if (FeedCalendar::matches($this->input->server->getString('HTTP_IF_NONE_MATCH'), $calendar['etag'])) {
+        if (FeedCalendar::matches($this->input->server->getString('HTTP_IF_NONE_MATCH', ''), $calendar['etag'])) {
             $this->respond(304, '', false);
             return;
         }
