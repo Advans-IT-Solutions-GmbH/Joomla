@@ -129,11 +129,26 @@ final class TlsRptIngestor
         $this->db->transactionStart();
 
         try {
-            if (!DomainLock::lock($this->db, $primaryDomainId)) {
-                $this->db->transactionRollback();
-                $summary['skipped']++;
+            // Lock every monitored domain this report writes to, not only the
+            // primary one: the loop below inserts policy and failure rows for
+            // each resolved secondary domain, so a concurrent delete of any of
+            // them must not interleave into an orphan row. Acquiring the locks
+            // in ascending id order matches DomainLock::lockMany()'s index-order
+            // acquisition in the delete cascade, so the two paths cannot
+            // deadlock. Abort the whole report if any parent disappeared.
+            $lockDomainIds = array_values(array_unique(array_filter(
+                array_map('intval', $policyDomainIds),
+                static fn ($id) => $id > 0
+            )));
+            sort($lockDomainIds, SORT_NUMERIC);
 
-                return;
+            foreach ($lockDomainIds as $lockDomainId) {
+                if (!DomainLock::lock($this->db, $lockDomainId)) {
+                    $this->db->transactionRollback();
+                    $summary['skipped']++;
+
+                    return;
+                }
             }
 
             $effectiveSourceId = $sourceId;

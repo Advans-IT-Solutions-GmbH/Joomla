@@ -125,12 +125,56 @@ class DomainModel extends AdminModel
             // {@see DomainLock} for the shared protocol.
             DomainLock::lockMany($db, $ids);
 
-            foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_tlsrpt_failures', '#__dmarc_tlsrpt_policies', '#__dmarc_tlsrpt_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
+            // TLS-RPT reports are multi-domain: the report row belongs to its
+            // primary domain while its policy and failure children may belong to
+            // secondary domains. Collect the reports owned by the domains being
+            // deleted so their children can be removed by report_id as well, not
+            // only by their own domain_id. Otherwise deleting a primary domain
+            // would drop the report row but leave its secondary children with a
+            // dangling report_id, which a later re-import would double-count.
+            $reportIdQuery = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__dmarc_tlsrpt_reports'))
+                ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);
+            $tlsReportIds = array_values(array_filter(
+                array_map('intval', (array) $db->setQuery($reportIdQuery)->loadColumn()),
+                static fn ($id) => $id > 0
+            ));
+
+            // Child tables whose every row carries the domain_id of its single
+            // owning domain are cleared by a plain domain_id match.
+            foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_actions', '#__dmarc_sources'] as $table) {
                 $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
                     ->delete($db->quoteName($table))
                     ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);
                 $db->setQuery($query)->execute();
             }
+
+            // TLS-RPT policy and failure rows are removed both when they belong
+            // to a deleted domain (this domain as a secondary tenant of a report
+            // that survives) and when their parent report belongs to a deleted
+            // domain (its secondary children, whatever their own domain_id). The
+            // id lists are validated integers, so inlining them is injection-safe
+            // and keeps the OR condition portable. See {@see TlsRptIngestor}.
+            foreach (['#__dmarc_tlsrpt_failures', '#__dmarc_tlsrpt_policies'] as $table) {
+                $conditions = [$db->quoteName('domain_id') . ' IN (' . implode(',', $ids) . ')'];
+
+                if ($tlsReportIds !== []) {
+                    $conditions[] = $db->quoteName('report_id') . ' IN (' . implode(',', $tlsReportIds) . ')';
+                }
+
+                $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                    ->delete($db->quoteName($table))
+                    ->where('(' . implode(' OR ', $conditions) . ')');
+                $db->setQuery($query)->execute();
+            }
+
+            // The TLS-RPT report rows owned by the deleted domains go last, once
+            // their children are gone.
+            $reportDelete = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->delete($db->quoteName('#__dmarc_tlsrpt_reports'))
+                ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);
+            $db->setQuery($reportDelete)->execute();
 
             // Remove the domains inside the same transaction so children are
             // only ever committed together with their parent rows.
