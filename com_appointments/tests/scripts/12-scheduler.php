@@ -69,7 +69,9 @@ try {
     $check(AppointmentsMail::messagesSince($before) === [], 'Pending approval does not receive a confirmed-appointment reminder');
     $setParams(['reminder_offsets' => 'invalid']);
     $run('reminders', 100, false);
-    $check(AppointmentsMail::messagesSince($before) === [], 'Invalid reminder configuration produces an explicit failed task, not a successful silent fallback');
+    $reminders = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool =>
+        str_contains(AppointmentsMail::decoded($mime), 'UID:' . $created['booking']['uid']));
+    $check($reminders === [], 'Invalid reminder configuration never sends an appointment reminder; Scheduler failure notices are separate');
     $setParams(['reminder_offsets' => '120', 'retention_days' => 365, 'audit_retention_years' => 3]);
 
     $oldIds = [];

@@ -12,6 +12,7 @@ $eventIds = [];
 $templateIds = [];
 $groupId = 0;
 $userId = 0;
+$componentRules = $db->query("SELECT rules FROM {$prefix}assets WHERE name='com_appointments'")->fetch_assoc()['rules'];
 $failed = 0;
 $check = static function (bool $ok, string $label) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $label . "\n";
@@ -192,6 +193,12 @@ try {
     $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params) VALUES ('{$tag}','{$tag}','{$tag}@example.invalid','{$hash}',0,0,UTC_TIMESTAMP(),'{}')");
     $userId = (int) $db->insert_id;
     $db->query("INSERT INTO {$prefix}user_usergroup_map (user_id,group_id) VALUES ({$userId},{$groupId})");
+    $accessRules = json_decode($componentRules, true, 512, JSON_THROW_ON_ERROR);
+    foreach (['core.manage', 'core.create'] as $action) {
+        $accessRules[$action][(string) $groupId] = 1;
+    }
+    $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string(json_encode($accessRules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR))
+        . "' WHERE name='com_appointments'");
     foreach ([$eventA => 1, $eventB => 0] as $eventId => $editable) {
         $rules = $db->real_escape_string(json_encode([
             'core.edit' => [(string) $groupId => $editable],
@@ -209,6 +216,7 @@ try {
         putenv('JOOMLA_ADMIN_PASSWORD=' . $password);
         $restricted->login();
     } finally {
+        $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string($componentRules) . "' WHERE name='com_appointments'");
         putenv($originalUsername === false ? 'JOOMLA_ADMIN_USERNAME' : 'JOOMLA_ADMIN_USERNAME=' . $originalUsername);
         putenv($originalPassword === false ? 'JOOMLA_ADMIN_PASSWORD' : 'JOOMLA_ADMIN_PASSWORD=' . $originalPassword);
     }

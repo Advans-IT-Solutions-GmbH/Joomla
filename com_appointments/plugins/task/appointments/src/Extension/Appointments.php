@@ -63,7 +63,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     {
         try {
             $this->getApplication()->bootComponent('com_appointments');
-            $params = $event->getArgument('params');
+            $params = $event->getArgument('subject')->get('params');
             $params = $params instanceof Registry ? $params : new Registry($params);
             $size = filter_var($params->get('batch_size', 100), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1000]]);
             if ($size === false) {

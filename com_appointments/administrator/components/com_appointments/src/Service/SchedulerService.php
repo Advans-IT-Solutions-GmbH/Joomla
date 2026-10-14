@@ -107,18 +107,19 @@ final class SchedulerService
         }
         $db = $this->db;
         $query = $this->query()->select($db->quoteName('b.id'))->from($db->quoteName('#__appointments_bookings', 'b'))
-            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'),
-                $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '
+                . $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->where($db->quoteName('b.anonymised_utc') . ' IS NULL')
             ->where($db->quoteName('b.end_utc') . ' < DATE_SUB(' . $db->quote($this->time($now))
                 . ', INTERVAL COALESCE(' . $db->quoteName('e.retention_days') . ',' . $days . ') DAY)')
             ->order($db->quoteName('b.end_utc') . ' ASC')->order($db->quoteName('b.id') . ' ASC')->setLimit($batchSize);
         $ids = $db->setQuery($query)->loadColumn();
-        $result = ['bookings' => 0, 'audit' => 0, 'rate_limits' => 0];
+        $result = ['bookings' => 0, 'audit' => 0, 'rate_limits' => 0, 'failed' => 0];
         $store = new BookingStore($db);
         foreach ($ids as $id) {
             $erasure = $store->erase((int) $id, $now, 'retention', $mode === 'delete', retentionDays: $days);
             $result['bookings'] += $erasure['changed'] ? 1 : 0;
+            $result['failed'] += !empty($erasure['_conference_cleanup_error']) ? 1 : 0;
         }
 
         $cutoff = $now->modify('-' . $years . ' years');

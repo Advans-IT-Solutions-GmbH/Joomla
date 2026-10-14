@@ -5,6 +5,7 @@ require_once '/var/www/html/configuration.php';
 defined('_JEXEC') || define('_JEXEC', 1);
 $helper = '/var/www/html/administrator/components/com_appointments/src/Helper/';
 require_once $helper . 'KeyProvider.php';
+require_once $helper . 'UtcTimestamp.php';
 require_once $helper . 'SignedLink.php';
 
 final class AppointmentsFixture
