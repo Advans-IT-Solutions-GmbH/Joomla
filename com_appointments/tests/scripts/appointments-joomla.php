@@ -11,5 +11,6 @@ $container->alias('session', 'session.web.site')
     ->alias(\Joomla\Session\SessionInterface::class, 'session.web.site');
 $application = $container->get(\Joomla\CMS\Application\SiteApplication::class);
 \Joomla\CMS\Factory::$application = $application;
+$application->createExtensionNamespaceMap();
 $application->bootComponent('com_appointments');
 $joomlaDb = $container->get(\Joomla\Database\DatabaseInterface::class);

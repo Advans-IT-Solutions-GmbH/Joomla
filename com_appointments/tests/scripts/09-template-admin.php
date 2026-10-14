@@ -216,7 +216,6 @@ try {
         putenv('JOOMLA_ADMIN_PASSWORD=' . $password);
         $restricted->login();
     } finally {
-        $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string($componentRules) . "' WHERE name='com_appointments'");
         putenv($originalUsername === false ? 'JOOMLA_ADMIN_USERNAME' : 'JOOMLA_ADMIN_USERNAME=' . $originalUsername);
         putenv($originalPassword === false ? 'JOOMLA_ADMIN_PASSWORD' : 'JOOMLA_ADMIN_PASSWORD=' . $originalPassword);
     }
@@ -257,6 +256,7 @@ try {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
 } finally {
+    $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string($componentRules) . "' WHERE name='com_appointments'");
     foreach (array_filter($templateIds) as $id) {
         $db->query("DELETE FROM {$prefix}appointments_templates WHERE id=" . (int) $id);
     }
