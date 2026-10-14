@@ -279,8 +279,9 @@ in the recipient's zone, with the invitee's stored locale or the host's Joomla p
 `{start_utc}` and `{end_utc}` retain the original UTC values. `{state_label}` is localized.
 Use only single-line values in subjects.
 
-The invitee and guest messages always append the action-specific reschedule, cancellation and
-erasure links, even if a customized template omits their placeholders. Feed credentials are never included in mail.
+Only primary-invitee messages append the action-specific reschedule, cancellation and erasure
+links, even if a customized template omits their placeholders. Guests and the host do not receive
+these management capabilities. Feed credentials are never included in mail.
 
 ### Managing an appointment and deleting data
 
@@ -457,6 +458,16 @@ com_appointments/
 The binding [implementation plan](../.claude/skills/appointments/references/implementation-plan.md)
 defines each stage's binding acceptance criteria. Versions are managed by the repository's two-stage
 [release workflow](../README.md#releases), never set manually.
+
+## Manual Acceptance Testing
+
+The [manual acceptance plan](tests/manual/README.md) contains 228 identified cases and a complete
+end-to-end scenario, including negative, boundary, concurrency and fault cases, real calendar
+clients, conferencing and all three erasure paths. Use its
+[blank report template](tests/manual/report-template.md) to record the actual tested commit and
+observations privately. The plan records no completed manual tests; green CI does not replace
+human acceptance. Generic test instructions are public; completed reports and sensitive evidence
+must remain in access-controlled storage. The packager excludes the entire `tests/` directory.
 
 ## Automated Testing
 

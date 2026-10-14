@@ -4,6 +4,17 @@ Two levels, as everywhere in this repository. Read
 `.claude/skills/joomla-extensions/references/testing.md` first; only the component-specific parts
 are here.
 
+## Manual acceptance
+
+The complete, reusable [manual plan](../../../../com_appointments/tests/manual/README.md)
+contains 228 identified cases and the end-to-end acceptance scenario. It preserves positive,
+negative, boundary, concurrency, controlled-fault and integration coverage, including real
+calendar clients, conferencing and the three erasure paths. Use the
+[blank report template](../../../../com_appointments/tests/manual/report-template.md) in private
+storage; record the actual tested commit and never publish credentials, real data or raw evidence.
+The plan itself claims no executed manual tests. Human acceptance and the required exact-head
+Copilot recommendation remain separate gates.
+
 ## PHPUnit — the domain logic
 
 The slot engine, the ICS writer, the signed links, the feed token and the conference providers are
