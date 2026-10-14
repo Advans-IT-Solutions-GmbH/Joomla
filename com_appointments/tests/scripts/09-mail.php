@@ -15,7 +15,7 @@ $check = static function (bool $ok, string $message) use (&$failed): void {
     $failed += $ok ? 0 : 1;
 };
 $spool = static fn (): array => glob('/tmp/appointments-mail/*.eml') ?: [];
-$originalConfiguration = null;
+$rejectDelivery = '/tmp/appointments-mail/reject-delivery';
 $utc = new DateTimeZone('UTC');
 $now = new DateTimeImmutable('now', $utc);
 $day = $now->modify('+2 days')->format('Y-m-d');
@@ -109,20 +109,21 @@ try {
     $client = new AppointmentsHttp('http://localhost', 'mail-failure');
     [$browser, $path, $form] = $client->bookingForm($event, $day . ' 12:00:00');
     sleep(2);
-    $originalConfiguration = file_get_contents('/var/www/html/configuration.php');
-    $disabled = preg_replace('/public\s+\$mailonline\s*=\s*[^;]*;/', 'public $mailonline = false;', $originalConfiguration, 1, $count);
-    if ($count !== 1 || file_put_contents('/var/www/html/configuration.php', $disabled) === false) {
-        throw new RuntimeException('Cannot configure the mail-failure acceptance case.');
+    if (file_put_contents($rejectDelivery, 'reject') === false) {
+        throw new RuntimeException('Cannot configure the test transport to reject delivery.');
     }
+    $before = $spool();
     $html = $browser->request($path, $form);
-    $check(str_contains($html, 'Appointment received') && str_contains($html, 'Your appointment was saved, but'),
+    $saved = $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 12:00:00'")->fetch_row()[0];
+    $check((int) $saved === 1 && $before === $spool()
+        && str_contains($html, 'Appointment received') && str_contains($html, 'Your appointment was saved, but'),
         'Mail failure explicitly preserves the saved booking and warns against duplicate booking');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
 } finally {
-    if ($originalConfiguration !== null) {
-        file_put_contents('/var/www/html/configuration.php', $originalConfiguration);
+    if (is_file($rejectDelivery) && !unlink($rejectDelivery)) {
+        throw new RuntimeException('Cannot restore the test mail transport.');
     }
     if ($event) {
         $db->query("DELETE FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}");

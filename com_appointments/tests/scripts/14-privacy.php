@@ -48,8 +48,9 @@ try {
     $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => null]);
     $blockedPlugin->onPrivacyCanRemoveData($canRemove);
     $status = $canRemove->getArgument('result')[0];
-    $check(!$status->canRemove && str_contains($status->reason, 'Configured retention obligation')
-        && $fixture->row($firstId)['invitee_email'] !== null, 'Configured legal reason explicitly blocks removal without silently retaining data');
+    $check(!$status->canRemove, 'Configured legal reason explicitly blocks removal');
+    $check(str_contains($status->reason, 'Configured retention obligation'), 'Removal refusal displays the configured legal reason');
+    $check($fixture->row($firstId)['invitee_email'] !== null, 'Checking legal blocking does not silently remove data');
     $params['removal_block_reason'] = '';
     \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')->loadArray($params);
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
