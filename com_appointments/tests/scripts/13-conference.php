@@ -83,6 +83,26 @@ try {
     }
 
     $check(str_contains(strtolower(strip_tags($options)), 'overlap'), 'Fixed-room options honestly warn about overlapping appointments');
+    require __DIR__ . '/appointments-joomla.php';
+    $config = simplexml_load_file('/var/www/html/administrator/components/com_appointments/config.xml');
+    $rangeFields = $config->xpath('//field[@validate="range"]');
+    $rangeForm = new \Joomla\CMS\Form\Form('appointments-config-range');
+    $rangeForm->load('<form addruleprefix="Advans\Component\Appointments\Administrator\Rule">'
+        . implode('', array_map(static fn ($field) => $field->asXML(), $rangeFields)) . '</form>');
+    $defaults = [];
+    foreach ($rangeFields as $field) {
+        $defaults[(string) $field['name']] = (string) $field['default'];
+    }
+    $check($rangeForm->validate($rangeForm->filter($defaults)), 'Joomla accepts every numeric configuration default');
+    foreach ($rangeFields as $field) {
+        $name = (string) $field['name'];
+        foreach (['invalid', '', '3.5', (int) $field['min'] - 1, (int) $field['max'] + 1] as $invalid) {
+            $submitted = array_replace($defaults, [$name => $invalid]);
+            $filtered = $rangeForm->filter($submitted);
+            $check($filtered[$name] === $invalid && !$rangeForm->validate($filtered),
+                'Joomla rejects invalid raw numeric configuration without coercion: ' . $name);
+        }
+    }
     $event = $fixture->event();
     $db->query("UPDATE {$prefix}appointments_eventtypes SET location_type='conference',location_text='Fixture fallback location' WHERE id={$event}");
     $form = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();

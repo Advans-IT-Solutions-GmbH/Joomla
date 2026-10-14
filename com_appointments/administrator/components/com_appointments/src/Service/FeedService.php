@@ -21,21 +21,20 @@ final class FeedService
     {
     }
 
-    /**
-     * Deliberately load and serialize the same calendar for correct, wrong and
-     * malformed credentials of a scope/id. Do not turn authentication into a
-     * shortcut around the expensive work (or expose its contents on failure).
-     *
-     * @return array{body: string, etag: string, filename: string}|null
-     */
+    /** @return array{body: string, etag: string, filename: string}|null */
     public function download(string $scope, int $id, string $token, \DateTimeImmutable $now): ?array
     {
         $validScope = in_array($scope, ['event', 'host'], true);
         $scope = $validScope ? $scope : 'event';
         $id = $validScope && $id > 0 ? $id : 0;
         $credential = $this->credential($scope, $id);
+        $authenticated = FeedCalendar::verify((string) ($credential['feed_token'] ?? ''), $token);
+
+        if (!$authenticated || !$validScope || $id === 0) {
+            return null;
+        }
+
         $events = $this->events($scope, $id);
-        $invalid = null;
         try {
             $horizons = [];
             $end = $now->modify('+1 second');
@@ -48,15 +47,7 @@ final class FeedService
             $body = (new IcsWriter())->feed($entries, (string) ($credential['title'] ?? ''), $now, $end);
             $etag = FeedCalendar::etag($body, $horizons);
         } catch (\InvalidArgumentException $e) {
-            $invalid = $e;
-        }
-        $authenticated = FeedCalendar::verify((string) ($credential['feed_token'] ?? ''), $token);
-
-        if (!$authenticated || !$validScope || $id === 0) {
-            return null;
-        }
-        if ($invalid !== null) {
-            throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_DATA', 500, $invalid);
+            throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_DATA', 500, $e);
         }
 
         return ['body' => $body, 'etag' => $etag, 'filename' => 'appointments-' . $scope . '-' . $id . '.ics'];

@@ -66,6 +66,7 @@
             <folder>src</folder>
             <folder>tmpl</folder>
             <filename>access.xml</filename>
+            <filename>config.xml</filename>
             <filename>index.html</filename>
             <filename>LICENSE.txt</filename>
         </files>
@@ -79,75 +80,6 @@
             <language tag="fr-FR">fr-FR/com_appointments.sys.ini</language>
         </languages>
     </administration>
-
-    <config>
-        <fields name="params">
-            <fieldset name="basic">
-                <field
-                    name="autoload_language"
-                    type="hidden"
-                    default="1"
-                />
-                <field name="consent_text" type="textarea" label="COM_APPOINTMENTS_CONFIG_CONSENT" description="COM_APPOINTMENTS_CONFIG_CONSENT_DESC" filter="string" />
-                <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" filter="url" relative="true" />
-                <field name="erase_mode" type="list" label="COM_APPOINTMENTS_CONFIG_ERASE_MODE" description="COM_APPOINTMENTS_CONFIG_ERASE_MODE_DESC" default="anonymise" filter="cmd">
-                    <option value="anonymise">COM_APPOINTMENTS_CONFIG_ERASE_ANONYMISE</option>
-                    <option value="delete">COM_APPOINTMENTS_CONFIG_ERASE_DELETE</option>
-                </field>
-                <field name="reminder_offsets" type="text" label="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS" description="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS_DESC" default="1440,60" filter="string" />
-                <field name="public_site_url" type="url" label="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL" description="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL_DESC" filter="url" />
-                <field name="retention_days" type="number" label="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS" description="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS_DESC" default="365" min="0" max="65535" required="true" filter="integer" />
-                <field name="audit_retention_years" type="number" label="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION" description="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC" default="3" min="1" max="100" required="true" filter="integer" />
-                <field name="removal_block_reason" type="textarea" label="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK" description="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK_DESC" filter="string" />
-            </fieldset>
-
-            <fieldset name="conference" label="COM_APPOINTMENTS_CONFERENCE_SETTINGS" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
-                <field name="conference_provider" type="Conferenceprovider" label="COM_APPOINTMENTS_EVENTTYPE_PROVIDER" default="none" filter="cmd">
-                    <option value="none">JNONE</option>
-                    <option value="jitsi">COM_APPOINTMENTS_PROVIDER_JITSI</option>
-                    <option value="generic">COM_APPOINTMENTS_PROVIDER_GENERIC</option>
-                    <option value="fixed">COM_APPOINTMENTS_PROVIDER_FIXED</option>
-                </field>
-                <field name="conference_jitsi_base_url" type="url" label="COM_APPOINTMENTS_CONFERENCE_BASE_URL" filter="url" showon="conference_provider:jitsi" />
-                <field name="conference_jitsi_room_pattern" type="text" label="COM_APPOINTMENTS_CONFERENCE_ROOM_PATTERN" description="COM_APPOINTMENTS_CONFERENCE_ROOM_PATTERN_DESC" default="{prefix}-{alias}-{random}" filter="string" showon="conference_provider:jitsi" />
-                <field name="conference_jitsi_room_prefix" type="text" label="COM_APPOINTMENTS_CONFERENCE_ROOM_PREFIX" default="appointment" maxlength="64" filter="string" showon="conference_provider:jitsi" />
-                <field name="conference_jitsi_entropy" type="number" label="COM_APPOINTMENTS_CONFERENCE_ENTROPY" description="COM_APPOINTMENTS_CONFERENCE_ENTROPY_DESC" default="24" min="16" max="64" filter="integer" showon="conference_provider:jitsi" />
-                <field name="conference_jitsi_auth" type="list" label="COM_APPOINTMENTS_CONFERENCE_AUTH" default="none" filter="cmd" showon="conference_provider:jitsi">
-                    <option value="none">JNONE</option><option value="jwt">JWT</option>
-                </field>
-                <field name="conference_jitsi_jwt_secret" type="password" label="COM_APPOINTMENTS_CONFERENCE_JWT_SECRET" filter="raw" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_jwt_app_id" type="text" label="COM_APPOINTMENTS_CONFERENCE_APP_ID" filter="string" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_jwt_audience" type="text" label="COM_APPOINTMENTS_CONFERENCE_AUDIENCE" default="jitsi" filter="string" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_jwt_issuer" type="text" label="COM_APPOINTMENTS_CONFERENCE_ISSUER" filter="string" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_jwt_subject" type="text" label="COM_APPOINTMENTS_CONFERENCE_SUBJECT" filter="string" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_host_lead_minutes" type="number" label="COM_APPOINTMENTS_CONFERENCE_HOST_LEAD" default="30" min="0" max="1440" filter="integer" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_jitsi_grace_minutes" type="number" label="COM_APPOINTMENTS_CONFERENCE_GRACE" default="60" min="0" max="1440" filter="integer" showon="conference_provider:jitsi[AND]conference_jitsi_auth:jwt" />
-                <field name="conference_generic_template" type="text" label="COM_APPOINTMENTS_CONFERENCE_GENERIC_URL" description="COM_APPOINTMENTS_CONFERENCE_GENERIC_DESC" filter="string" showon="conference_provider:generic" />
-                <field name="conference_fixed_url" type="url" label="COM_APPOINTMENTS_CONFERENCE_FIXED_URL" filter="url" showon="conference_provider:fixed" />
-                <field name="fixed_warning" type="note" description="COM_APPOINTMENTS_CONFERENCE_FIXED_WARNING" class="alert alert-warning" showon="conference_provider:fixed" />
-                <field name="conference_allow_outbound" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFERENCE_ALLOW_OUTBOUND" description="COM_APPOINTMENTS_CONFERENCE_ALLOW_OUTBOUND_DESC" default="0" filter="integer">
-                    <option value="0">JNO</option><option value="1">JYES</option>
-                </field>
-            </fieldset>
-
-            <fieldset
-                name="permissions"
-                label="JCONFIG_PERMISSIONS_LABEL"
-                description="JCONFIG_PERMISSIONS_DESC"
-            >
-                <field
-                    name="rules"
-                    type="rules"
-                    label="JCONFIG_PERMISSIONS_LABEL"
-                    class="inputbox"
-                    validate="rules"
-                    filter="rules"
-                    component="com_appointments"
-                    section="component"
-                />
-            </fieldset>
-        </fields>
-    </config>
 
     <updateservers>
         <server type="extension" priority="1" name="Appointments Updates">

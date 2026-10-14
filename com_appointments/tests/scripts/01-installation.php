@@ -59,6 +59,16 @@ class InstallationTest
             return file_exists('/var/www/html/administrator/components/com_appointments/services/provider.php');
         });
 
+        $this->test('Administrator options form and safe defaults are installed', function () {
+            $config = simplexml_load_file('/var/www/html/administrator/components/com_appointments/config.xml');
+
+            return $config !== false && !isset($config->fields)
+                && (string) $config->xpath('//field[@name="erase_mode"]')[0]['default'] === 'anonymise'
+                && (string) $config->xpath('//field[@name="retention_days"]')[0]['default'] === '365'
+                && (string) $config->xpath('//field[@name="audit_retention_years"]')[0]['default'] === '3'
+                && (string) $config->xpath('//field[@name="conference_provider"]')[0]['default'] === 'none';
+        });
+
         $this->test('Site entry service exists', function () {
             return file_exists('/var/www/html/components/com_appointments/services/provider.php');
         });

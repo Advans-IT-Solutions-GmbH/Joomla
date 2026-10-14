@@ -32,3 +32,11 @@ if (!class_exists(Registry::class)) {
         }
     }
 }
+
+namespace Joomla\CMS\Form;
+
+if (!class_exists(FormRule::class)) {
+    class FormRule
+    {
+    }
+}

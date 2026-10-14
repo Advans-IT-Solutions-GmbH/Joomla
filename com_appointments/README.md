@@ -234,6 +234,8 @@ Configure web-server and reverse-proxy access logs to redact the `token` query p
 query strings on the feed endpoint; the component cannot control infrastructure access logs.
 Use HTTPS and private calendar clients. Feed responses are `noindex` and private/no-store, enforce
 a keyed request limit and return the same generic 404 for missing calendars and wrong credentials.
+Fixed-length credentials are compared in constant time before loading bookings or generating ICS;
+unauthenticated requests cannot trigger calendar-sized database or serialization work.
 
 Subscriptions are **read-only**: deleting a calendar entry does not cancel its booking. A
 15-minute refresh is requested, but the client controls when it actually refreshes. ETags allow
