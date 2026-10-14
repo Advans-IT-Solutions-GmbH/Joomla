@@ -43,7 +43,10 @@ management links or JWTs. A blank template is not permission to publish its comp
 
 ### 1.2 Test types
 
-The source plan's category codes are retained alongside all test IDs.
+All 228 IDs retain their original coverage. Existing source category codes are retained.
+The source omitted categories for `FF-01`-`FF-10` and `MA-01`-`MA-08`; their Type values below
+are classifications added here, not preserved source values. Slash-separated codes mean that
+every listed aspect must be exercised, not that the tester may choose one.
 
 | Code | Meaning |
 |---|---|
@@ -94,6 +97,36 @@ Not every combination requires a complete repeat of the test run.
 
 Record any version change during acceptance. After a code fix, rerun at least the affected case
 and adjacent regression cases.
+
+### 2.1.1 Mandatory coverage and conditional repetitions
+
+The default mandatory set is **all 228 identified cases**, plus all ten steps of section 18,
+on both Joomla/MySQL full-run environments above. Apply the narrower browser, language and
+JavaScript repetitions specified in the matrix in addition to those full runs.
+
+On Joomla 6/MariaDB, the mandatory repeat set is `IN-01`-`IN-10`, `ZE-10`-`ZE-11`,
+`KO-01`-`KO-12`, `LI-01`-`LI-12`, `DS-01`-`DS-16`, `AU-11`-`AU-18` and section 18.
+Other cases do not require an additional MariaDB repetition; they remain mandatory in both
+MySQL full runs. Cases requiring legacy, unsupported-platform or controlled-clock fixtures use
+separate isolated installations, with their results linked to the relevant run.
+
+Calendar-client repetitions of `KA-01`-`KA-06`, `FE-02`-`FE-03` and `FE-12` are mandatory
+for both Outlook Desktop and Thunderbird. The **only conditional exception** is the additional
+Apple Calendar repetition of those same nine cases: activate it if Apple Calendar support is
+claimed or its use is intended. Record that decision before execution, with the client/version
+and reason; do not change it afterwards to hide a failure. It never exempts a case from the
+default mandatory set or either required desktop client.
+
+If that Apple condition is false, record the additional Apple repetitions as **NOT RUN** with
+`condition inactive` and the reason. They do not block acceptance. If it is true, they are
+mandatory: **BLOCKED** or **NOT RUN** blocks acceptance. For all other mandatory executions,
+BLOCKED/NOT RUN also blocks acceptance; a passed CI job or missing equipment is not a substitute.
+Report an observed FAIL as FAIL and assess it under section 19, never as an inactive condition.
+
+Built-in providers (including Jitsi JWT, generic and fixed rooms), actual conference joining,
+clock/DST boundaries, fault injection, both databases, both required desktop clients and all
+three erasure paths cannot be opted out of for lack of configuration, access or equipment.
+Prepare the isolated fixtures or record BLOCKED; no other optional case set is implied.
 
 ### 2.2 Users
 
@@ -224,18 +257,18 @@ Perform these four steps for every field type:
 3. Submit an empty required field or an invalid value.
 4. Inspect booking detail, mail presentation and privacy export.
 
-| ID | Field type | Valid test value | Negative/boundary case | Expected result |
-|---|---|---|---|---|
-| FF-01 | Single-line text | `Test project ÄÖÜ` | Empty required field; very long input | Valid text preserved; empty required value refused; excess length handled predictably. |
-| FF-02 | Multiline text | Multiple lines with `&`, commas and accented characters | HTML/script text | Meaningful line breaks retained; no unauthorised HTML or script execution. |
-| FF-03 | Number | A valid number | Letters; configured boundary violations where applicable | Server-side validation matches field definition. |
-| FF-04 | Telephone | Country calling code and valid national number | Missing number; letters instead of a number | Country selector works; unusable required number refused. |
-| FF-05 | Email | Controlled test mailbox | `invalid@` | Valid address stored; invalid address refused. |
-| FF-06 | URL | `https://example.org/test` | `javascript:` or an invalid URL | Only permitted URL accepted; no executable link. |
-| FF-07 | Single selection | One configured option | Unconfigured option in a manipulated POST | Only configured choices accepted. |
-| FF-08 | Multiple selection | Two configured options | Unconfigured option or empty required selection | Valid selection stored completely; invalid selection refused. |
-| FF-09 | Checkbox | Checked | Unchecked required field | Required consent enforced. |
-| FF-10 | Date | Valid date | For example, 31 February | No silent normalisation to a different date. |
+| ID | Type | Field type | Valid test value | Negative/boundary case | Expected result |
+|---|---|---|---|---|---|
+| FF-01 | POS/NEG/GRZ | Single-line text | `Test project ÄÖÜ` | Empty required field; very long input | Valid text preserved; empty required value refused; excess length handled predictably. |
+| FF-02 | POS/NEG | Multiline text | Multiple lines with `&`, commas and accented characters | HTML/script text | Meaningful line breaks retained; no unauthorised HTML or script execution. |
+| FF-03 | POS/NEG/GRZ | Number | A valid number | Letters; configured boundary violations where applicable | Server-side validation matches field definition. |
+| FF-04 | POS/NEG | Telephone | Country calling code and valid national number | Missing number; letters instead of a number | Country selector works; unusable required number refused. |
+| FF-05 | POS/NEG | Email | Controlled test mailbox | `invalid@` | Valid address stored; invalid address refused. |
+| FF-06 | POS/NEG | URL | `https://example.org/test` | `javascript:` or an invalid URL | Only permitted URL accepted; no executable link. |
+| FF-07 | POS/NEG | Single selection | One configured option | Unconfigured option in a manipulated POST | Only configured choices accepted. |
+| FF-08 | POS/NEG | Multiple selection | Two configured options | Unconfigured option or empty required selection | Valid selection stored completely; invalid selection refused. |
+| FF-09 | POS/NEG | Checkbox | Checked | Unchecked required field | Required consent enforced. |
+| FF-10 | POS/NEG | Date | Valid date | For example, 31 February | No silent normalisation to a different date. |
 
 Additional field administration:
 
@@ -330,16 +363,16 @@ complete race freedom; the existing technical parallel tests are also required.
 
 Trigger every event below. Inspect content and **raw message source** for each recipient.
 
-| ID | Event | Expected main properties |
-|---|---|---|
-| MA-01 | Immediately confirmed booking | Invitee, permitted guests and host receive appropriate messages; calendar `REQUEST`, `CONFIRMED`, initial sequence 0. |
-| MA-02 | Booking requiring approval | Pending message; calendar `REQUEST`, `TENTATIVE`; slot remains held. |
-| MA-03 | Approval | Confirmation with same UID and increased sequence. |
-| MA-04 | Reschedule | New time, same UID, increased sequence; no second independent invitation. |
-| MA-05 | Cancellation | Same UID, increased sequence, `METHOD:CANCEL`, `STATUS:CANCELLED`. |
-| MA-06 | Reminder | Correct meeting/time zone; calendar attachments; no unintended booking change. |
-| MA-07 | Successful conference retry | Updated connection, same UID, increased sequence. |
-| MA-08 | Erasure of a future booking | Only the intended host cancellation; no former contact data, answers or erasure reasons. |
+| ID | Type | Event | Expected main properties |
+|---|---|---|---|
+| MA-01 | POS/INT | Immediately confirmed booking | Invitee, permitted guests and host receive appropriate messages; calendar `REQUEST`, `CONFIRMED`, initial sequence 0. |
+| MA-02 | POS/INT | Booking requiring approval | Pending message; calendar `REQUEST`, `TENTATIVE`; slot remains held. |
+| MA-03 | POS/INT | Approval | Confirmation with same UID and increased sequence. |
+| MA-04 | POS/INT | Reschedule | New time, same UID, increased sequence; no second independent invitation. |
+| MA-05 | POS/INT | Cancellation | Same UID, increased sequence, `METHOD:CANCEL`, `STATUS:CANCELLED`. |
+| MA-06 | POS/INT | Reminder | Correct meeting/time zone; calendar attachments; no unintended booking change. |
+| MA-07 | POS/INT | Successful conference retry | Updated connection, same UID, increased sequence. |
+| MA-08 | POS/INT | Erasure of a future booking | Only the intended host cancellation; no former contact data, answers or erasure reasons. |
 
 For **every message actually sent**, check:
 
@@ -642,7 +675,9 @@ Then repeat the core flow **with JavaScript disabled**.
 - Invitations, reschedules and cancellations exercised in real calendar clients.
 - JavaScript-free booking and management flow passes.
 - All three languages inspected.
-- No unresolved blocked mandatory cases.
+- The mandatory executions defined in section 2.1.1 have no BLOCKED or NOT RUN results;
+  only explicitly inactive Apple repetitions are exempt. Observed failures retain FAIL status
+  and require resolution or the explicit P2/P3 assessment above, never an applicability waiver.
 - Actual tested commit recorded unambiguously.
 - After required code fixes, affected cases and regression pass again, and CI is green on the new
   commit.
