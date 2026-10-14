@@ -100,7 +100,9 @@ final class AppointmentsHttp
     public function token(string $html): string
     {
         if (!preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $html, $match)) {
-            throw new RuntimeException('No form token was rendered.');
+            $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0];
+            throw new RuntimeException('No form token was rendered: HTTP ' . $this->status . ', '
+                . basename($caller['file']) . ':' . $caller['line'] . '.');
         }
 
         return $match[1];

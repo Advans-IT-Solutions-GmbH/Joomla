@@ -86,7 +86,10 @@ com_appointments/tests/scripts/
 ├── 10-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
 ├── 11-erasure.php           # the three deletion paths and the audit table
 ├── 12-feed.php              # token, 304, rotation, 404 on a wrong token
+├── 12-scheduler.php         # real Scheduler CLI, reminders, batches and retention
 ├── 13-conference.php        # link in mail, ICS and page; provider failure handled
+├── 14-privacy.php           # typed Joomla events, Unicode ownership and legal blocking
+├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 

@@ -34,6 +34,113 @@ class BookingsController extends BaseController
         return $this->transition(2);
     }
 
+    public function exportCsv(): void
+    {
+        $this->requireEditRequest();
+        $model = $this->getModel('Bookings', 'Administrator', ['ignore_request' => false]);
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $columns = ['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_email',
+            'invitee_phone', 'guest_emails', 'custom_fields', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc'];
+        $output = tmpfile();
+        if ($output === false) {
+            throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
+        }
+        try {
+            $db->transactionStart();
+            try {
+                if (fputcsv($output, $columns, ',', '"', '') === false) {
+                    throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
+                }
+                foreach ($model->exportRows() as $row) {
+                    $values = array_map(static fn ($key) =>
+                        \Advans\Component\Appointments\Administrator\Helper\CsvCell::safe(isset($row[$key]) ? (string) $row[$key] : null), $columns);
+                    if (fputcsv($output, $values, ',', '"', '') === false) {
+                        throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
+                    }
+                }
+                $db->transactionCommit();
+            } catch (\Throwable $e) {
+                $db->transactionRollback();
+                throw $e;
+            }
+            if (!rewind($output)) {
+                throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
+            }
+            $this->app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);
+            $this->app->setHeader('Content-Disposition', 'attachment; filename="appointments.csv"', true);
+            $this->app->setHeader('Cache-Control', 'private, no-store', true);
+            $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
+            $this->app->sendHeaders();
+            if (fpassthru($output) === false) {
+                throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
+            }
+        } finally {
+            fclose($output);
+        }
+        $this->app->close();
+    }
+
+    public function reschedule(): bool
+    {
+        $this->requireEditRequest();
+        $id = $this->input->post->getInt('id');
+        if ($id < 1) {
+            throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_START_INVALID'), 400);
+        }
+        $model = $this->getModel('Booking', 'Administrator', ['ignore_request' => true]);
+        $model->getItem($id);
+        $value = $this->input->post->getString('start');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/D', $value) !== 1) {
+            throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_START_INVALID'), 400);
+        }
+        $value = str_replace('T', ' ', $value) . (strlen($value) === 16 ? ':00' : '');
+        $start = \Advans\Component\Appointments\Administrator\Helper\UtcTimestamp::parse($value);
+        if ($start === null) {
+            throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_START_INVALID'), 400);
+        }
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking&id=' . $id, false));
+        try {
+            $booking = (new BookingStore($db))->reschedule($id, $start, $now);
+        } catch (\Advans\Component\Appointments\Administrator\Service\SlotTakenException $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_SLOT_TAKEN'), 'warning');
+            return false;
+        } catch (\DomainException $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_START_INVALID'), 'warning');
+            return false;
+        }
+        if (!empty($booking['_conference_error']) || !empty($booking['_conference_missing'])) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');
+            return false;
+        }
+        if (!empty($booking['_conference_cleanup_error'])) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+        }
+        if (($booking['conference_state'] ?? '') === 'failed') {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
+        }
+        try {
+            (new NotificationService($db))->send($booking, (int) $booking['state'] === 2 ? 'cancellation' : 'reschedule', $now);
+        } catch (NotificationException $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_MAIL_FAILED'), 'error');
+            return false;
+        }
+        $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_RESCHEDULED'), 'message');
+        return true;
+    }
+
+    private function requireEditRequest(): void
+    {
+        $token = Session::getFormToken();
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get($token, '', 'alnum') !== '1') {
+            throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
+        }
+        if (!$this->app->getIdentity()->authorise('core.manage', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+    }
+
     public function retryConference(): bool
     {
         $token = Session::getFormToken();

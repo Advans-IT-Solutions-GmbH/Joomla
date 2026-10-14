@@ -19,12 +19,16 @@ class HtmlView extends BaseHtmlView
 {
     protected $items = [];
     protected $pagination;
+    protected $state;
+    protected $events = [];
 
     public function display($tpl = null)
     {
         $model = $this->getModel();
         $this->items = $model->getItems();
         $this->pagination = $model->getPagination();
+        $this->state = $model->getState();
+        $this->events = $model->authorisedEvents();
 
         if ($model->getErrors()) {
             throw new \RuntimeException(implode("\n", $model->getErrors()), 500);
@@ -35,6 +39,7 @@ class HtmlView extends BaseHtmlView
         $toolbar->standardButton('approve')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_APPROVE'))->task('bookings.approve')->listCheck(true);
         $toolbar->standardButton('cancel')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CANCEL'))->task('bookings.cancel')->listCheck(true);
         $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
+        $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
         ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
 

@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
+use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\QueryInterface;
 
@@ -29,23 +30,41 @@ class DashboardModel extends BaseDatabaseModel
      */
     public function getCounts(): array
     {
-        return [
-            'eventtypes' => $this->countRows('#__appointments_eventtypes'),
-            'bookings'   => $this->countRows('#__appointments_bookings'),
-        ];
+        $rows = $this->getEventCounts();
+        return ['eventtypes' => count($rows), 'bookings' => array_sum(array_column($rows, 'bookings')),
+            'today' => array_sum(array_column($rows, 'today')), 'upcoming' => array_sum(array_column($rows, 'upcoming')),
+            'pending' => array_sum(array_column($rows, 'pending'))];
     }
 
-    /**
-     * @param   string  $table  The table name, with the `#__` prefix.
-     */
-    private function countRows(string $table): int
+    public function getEventCounts(): array
     {
-        $db    = $this->getDatabase();
-        $query = $this->createDbQuery($db)
-            ->select('COUNT(*)')
-            ->from($db->quoteName($table));
-
-        return (int) $db->setQuery($query)->loadResult();
+        $db = $this->getDatabase();
+        $model = Factory::getApplication()->bootComponent('com_appointments')->getMVCFactory()
+            ->createModel('Bookings', 'Administrator', ['ignore_request' => true]);
+        $events = $model->authorisedEvents();
+        if (!$events) {
+            return [];
+        }
+        $name = (string) Factory::getApplication()->get('offset', 'UTC');
+        if (!in_array($name, \DateTimeZone::listIdentifiers(), true)) {
+            throw new \RuntimeException(\Joomla\CMS\Language\Text::_('COM_APPOINTMENTS_SYSTEM_TIMEZONE_INVALID'), 500);
+        }
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $begin = $now->setTimezone(new \DateTimeZone($name))->setTime(0, 0);
+        $end = $begin->modify('+1 day')->setTime(0, 0);
+        $quoteTime = static fn (\DateTimeImmutable $time) => $db->quote($time->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s'));
+        $active = $db->quoteName('b.state') . ' IN (0,1)';
+        $query = $this->createDbQuery($db)->select($db->quoteName(['e.id', 'e.title']))
+            ->select('COUNT(b.id) AS bookings')
+            ->select('COALESCE(SUM(CASE WHEN ' . $active . ' AND b.start_utc >= ' . $quoteTime($begin)
+                . ' AND b.start_utc < ' . $quoteTime($end) . ' THEN 1 ELSE 0 END),0) AS today')
+            ->select('COALESCE(SUM(CASE WHEN ' . $active . ' AND b.start_utc >= ' . $quoteTime($now) . ' THEN 1 ELSE 0 END),0) AS upcoming')
+            ->select('COALESCE(SUM(CASE WHEN b.state = 0 THEN 1 ELSE 0 END),0) AS pending')
+            ->from($db->quoteName('#__appointments_eventtypes', 'e'))
+            ->join('LEFT', $db->quoteName('#__appointments_bookings', 'b') . ' ON b.eventtype_id = e.id')
+            ->where('e.id IN (' . implode(',', array_map(static fn ($event) => (int) $event['id'], $events)) . ')')
+            ->group($db->quoteName(['e.id', 'e.title']))->order($db->quoteName('e.title'));
+        return $db->setQuery($query)->loadAssocList();
     }
 
     /**

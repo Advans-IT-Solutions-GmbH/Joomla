@@ -17,10 +17,8 @@ e-mail delivery, iCalendar generation and the conference link. **No third-party 
 is required or contacted**, and the component works on a server whose outbound internet access is
 blocked.
 
-> **Status: in development.** The component is being built in stages. This file grows with the
-> implemented feature set and will document every shipped setting before the first release. The
-> sections below say what is implemented today and name what is still to come, so nothing here
-> should be read as a feature you can already use.
+> **Status: pre-release.** The features below are implemented in the component source. Installation
+> packages and version changes are published only through the repository's reviewed release workflow.
 
 ## Requirements
 
@@ -53,8 +51,8 @@ The component registers its own update site during installation, so later versio
 
 - The component skeleton with its administrator and site part, the full database schema, Joomla
   access control on the component, and the three shipped languages (`de-DE`, `en-GB`, `fr-FR`).
-- An administrator dashboard that shows the number of event types and bookings and an empty state
-  while nothing is configured yet.
+- An administrator dashboard with today's and upcoming active appointments, pending approvals,
+  per-event counts and an empty state. Statistics include only the operator's authorised events.
 - A public page that lists the bookable event types a visitor is allowed to see.
 - **Schedules.** A named weekly pattern with any number of intervals per weekday, in one time zone,
   plus date-specific entries that replace the weekly times of a single date or close it entirely.
@@ -110,6 +108,10 @@ The component registers its own update site during installation, so later versio
 - **Opt-in video conferencing.** Self-hosted Jitsi, a generic room URL and a fixed room work without
   remote API requests. Event-specific overrides, separate host/guest JWT links, persistent failure
   diagnostics and an administrator retry action preserve a saved booking even if provisioning fails.
+
+- **Booking administration.** Filter by event, status and UTC date range, search invitee names/email,
+  export a filtered CSV, inspect details and custom answers, and reschedule using the same locked
+  lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
 
 - **Joomla privacy integration.** The bundled privacy plugin exports readable booking records and
   removes matching records through Joomla's formal data-subject workflow, including guest invitees.
@@ -290,12 +292,34 @@ optional reason of at most 2,000 characters.
 of the booking row. Both remove the name, email, phone, invitee zone/language, guest addresses,
 custom answers, cancellation text and conference metadata. A future appointment is cancelled
 first. Its host-only cancellation contains just the slot and calendar identifiers, not the former
-invitee details or the erasure reason. Conference teardown is being wired in the conferencing
-stage.
+invitee details or the erasure reason. The provider is asked to release its room after the erasure
+transaction commits; teardown failures are reported without undoing erasure.
 
 The deletion audit stores only booking ID, action, path, timestamp and, for administrator actions,
-the acting operator's Joomla user ID. It contains no invitee data. Automatic audit retention and
-formal privacy requests are still being implemented.
+the acting operator's Joomla user ID. It contains no invitee data, but that staff identifier is
+accountability data and has its own retention. Staff data-subject requests about `actor_user_id`
+entries must be answered by the operator from `#__appointments_audit`; the invitee privacy export
+deliberately excludes that domain. The system check reports the oldest retained audit timestamp.
+
+### Booking administration and system checks
+
+The booking list and CSV use the same per-event edit permission. Filters combine event type, state
+(including pending `0`), an inclusive UTC start-date range and invitee name/email search. CSV export
+requires a token-protected POST and uses a consistent database snapshot with bounded read batches.
+Its columns include contacts, guest addresses and raw custom answers; protect downloaded files as
+personal data. Spreadsheet-like text is prefixed with an apostrophe to prevent formula execution.
+
+Open a start time to view booking details, readable custom answers, conference diagnostics and
+single-event ICS. Rescheduling takes a **UTC** date/time, revalidates current availability and keeps
+the original UID and approval state. Approval/cancellation require the event's state permission;
+erasure requires delete permission. Moderator links are shown only to the host or a component
+administrator, not to an ordinary event editor.
+
+**System checks** requires component options permission. It reports PHP/Joomla versions, the site
+time zone, configured mail transport, enabled bundled plugins, each routine's most recent enabled
+task and last run, invalid feed-credential counts and the oldest audit record. A configuration
+check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
+routines; a never-run task is explicitly shown as needing attention.
 
 ### Event types
 
@@ -310,7 +334,7 @@ formal privacy requests are still being implemented.
 | Fixed start/end | Explicit UTC timestamps, `YYYY-MM-DD HH:MM:SS`; start inclusive, end exclusive |
 | Daily/weekly limits | Per-event-type caps, with weeks starting Monday; zero means unlimited |
 | Location and instructions | Host-calls telephone, invitee-calls telephone, in-person, custom text or conference |
-| Conference provider | Jitsi, generic room URL or fixed room; public integration is in progress |
+| Conference provider | Inherit the component setting, disable, or select Jitsi, generic URL, fixed room or an installed adapter |
 | Require approval | Holds a pending request's slot until approval or cancellation |
 | Retention days | Per-event override; empty inherits the component setting, zero expires after the meeting ends |
 | Colour | Six-digit hexadecimal colour |
@@ -376,18 +400,18 @@ normalised or converted again. Correcting and saving restores the normal calenda
 6. Open the public menu item, choose a displayed zone, day and time, complete the form and consent.
 7. View bookings from the dashboard. Pending requests can be approved; cancellation releases the slot.
 
-Notification, calendar and self-service lifecycle integration is still in progress.
+8. Configure email templates, conference settings if required, calendar subscriptions and both
+   Scheduler routines. Review **System checks** and the site's own privacy notice before publishing.
 
 ## Signing keys
 
-Key derivation is implemented; the features that will use it are not. `KeyProvider` derives one key
-per purpose from the Joomla site secret of the installation, and the two purposes it defines are the
-signed links in the component's e-mails and the hashing of IP addresses in the rate-limit counters.
-Both of those arrive in later stages.
-
-The property that matters is already in place and covered by the unit suite: no key is stored in the
-database, printed into a page or written to a log, and no key changes when the component is updated,
-so a link that is already in someone's mailbox will keep working.
+`KeyProvider` derives component-purpose keys from the installation's Joomla site secret. Signed
+actions, anti-bot checks, keyed rate counters and conference room derivation use these keys without
+storing derived keys in the database, displaying them or logging them. Component updates do not
+change them. Booking changes invalidate action links through their revision; changing Joomla's
+site secret deliberately invalidates existing signatures and changes derived room identities.
+The independently random subscription credentials and optional operator JWT signing secret are
+different capabilities and have their own rotation/configuration paths.
 
 ## Uninstall
 
@@ -414,12 +438,13 @@ com_appointments/
 ├── components/com_appointments/         # Site services, models, views and LICENSE.txt
 ├── language/{de-DE,en-GB,fr-FR}/
 ├── media/com_appointments/              # Local assets only
+├── plugins/                            # Bundled Scheduler and privacy plugins with licenses
 ├── updates/update.xml                   # Managed by release workflow
 └── tests/                              # Unit tests and Docker integration harness
 ```
 
 The binding [implementation plan](../.claude/skills/appointments/references/implementation-plan.md)
-defines the remaining stages. Versions are managed by the repository's two-stage
+defines each stage's binding acceptance criteria. Versions are managed by the repository's two-stage
 [release workflow](../README.md#releases), never set manually.
 
 ## Automated Testing
@@ -445,6 +470,15 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Site page | Real HTTP responses for the public list, visibility filters and escaped output |
 | Schedules | Form submission, stored intervals, validation, publication permissions and deletion |
 | Blocked periods | Form submission, UTC conversion and invalid or ambiguous local-time rejection |
+| Event types / custom fields | Administrator CRUD, settings, publication and menu types |
+| Slots | Actual no-JavaScript choices match the pure engine, overrides and busy occupancy |
+| Booking | Contact validation, approval and identical/cross-event concurrency |
+| Mail / templates | Actual transport, both calendar MIME parts, recipient locales and scoped overrides |
+| Lifecycle / erasure | Signed actions, stable UID/sequence, exact erasure and minimal audit |
+| Feeds / Scheduler | Credentials, conditional responses, independent rotation, reminders and bounded retention |
+| Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
+| Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
+| Administration | Filters, CSV safety, reschedule, system checks and restricted event ACL |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |

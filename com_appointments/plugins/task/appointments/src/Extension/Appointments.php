@@ -77,7 +77,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         } catch (\Throwable $e) {
             // Database and transport exception messages can include personal data.
             // Report the failed task without copying those messages into its log.
-            $this->logTask('The appointments ' . $method . ' task failed. Check configuration and mail delivery.', 'error');
+            $this->logTask('The appointments ' . $method . ' task failed. Check configuration and mail delivery. '
+                . get_class($e) . ', code ' . (int) $e->getCode() . ', ' . basename($e->getFile()) . ':' . $e->getLine(), 'error');
 
             return Status::KNOCKOUT;
         }
