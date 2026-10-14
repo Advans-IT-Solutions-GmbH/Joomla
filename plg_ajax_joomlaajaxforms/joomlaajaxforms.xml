@@ -6,8 +6,8 @@
     <authorUrl>https://advans.ch</authorUrl>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
     <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
-    <creationDate>2026-08</creationDate>
-    <version>1.5.24</version>
+    <creationDate>2026-10</creationDate>
+    <version>1.6.0</version>
     <description>PLG_AJAX_JOOMLAAJAXFORMS_DESC</description>
     <scriptfile>script.php</scriptfile>
     <namespace path="src">Advans\Plugin\Ajax\JoomlaAjaxForms</namespace>
