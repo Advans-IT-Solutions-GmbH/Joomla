@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\EventScope;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Field\ListField;
 use Joomla\CMS\HTML\HTMLHelper;
+use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -26,7 +27,7 @@ class EventscopeField extends ListField
         $options = parent::getOptions();
         if ((string) $this->element['sitewide'] === 'true'
             && ($user->authorise('core.options', 'com_appointments') || $user->authorise('core.admin', 'com_appointments'))) {
-            $options[] = HTMLHelper::_('select.option', 0, 'COM_APPOINTMENTS_TEMPLATE_SITE_WIDE');
+            $options[] = HTMLHelper::_('select.option', 0, Text::_('COM_APPOINTMENTS_TEMPLATE_SITE_WIDE'));
         }
         foreach (EventScope::events(Factory::getContainer()->get(DatabaseInterface::class), $user) as $event) {
             $options[] = HTMLHelper::_('select.option', $event['id'], $event['title']);

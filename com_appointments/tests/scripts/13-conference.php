@@ -86,7 +86,8 @@ try {
     $check(str_contains(strtolower(strip_tags($options)), 'overlap'), 'Fixed-room options honestly warn about overlapping appointments');
     $config = simplexml_load_file('/var/www/html/administrator/components/com_appointments/config.xml');
     $rangeFields = $config->xpath('//field[@validate="range"]');
-    $rangeForm = new \Joomla\CMS\Form\Form('appointments-config-range');
+    $rangeForm = $container->get(\Joomla\CMS\Form\FormFactoryInterface::class)->createForm('appointments-config-range');
+    $rangeForm->setCurrentUser(new \Joomla\CMS\User\User());
     $rangeForm->load('<form addruleprefix="Advans\Component\Appointments\Administrator\Rule">'
         . implode('', array_map(static fn ($field) => $field->asXML(), $rangeFields)) . '</form>');
     $defaults = [];
@@ -96,12 +97,15 @@ try {
     $check($rangeForm->validate($rangeForm->filter($defaults)), 'Joomla accepts every numeric configuration default');
     foreach ($rangeFields as $field) {
         $name = (string) $field['name'];
-        foreach (['invalid', '', '3.5', (int) $field['min'] - 1, (int) $field['max'] + 1] as $invalid) {
+        foreach (['invalid', '3.5', (int) $field['min'] - 1, (int) $field['max'] + 1] as $invalid) {
             $submitted = array_replace($defaults, [$name => $invalid]);
             $filtered = $rangeForm->filter($submitted);
             $check($filtered[$name] === $invalid && !$rangeForm->validate($filtered),
                 'Joomla rejects invalid raw numeric configuration without coercion: ' . $name);
         }
+        $filtered = $rangeForm->filter(array_replace($defaults, [$name => '']));
+        $check($filtered[$name] === $defaults[$name] && $rangeForm->validate($filtered),
+            'Joomla restores the declared numeric default for an empty input: ' . $name);
     }
     $event = $fixture->event();
     $db->query("UPDATE {$prefix}appointments_eventtypes SET location_type='conference',location_text='Fixture fallback location' WHERE id={$event}");
@@ -277,7 +281,8 @@ try {
     }
 } catch (Throwable $error) {
     // Exception text may contain URLs, JWTs or database credentials.
-    echo "FAIL Conferencing acceptance did not complete.\n";
+    echo 'FAIL Conferencing acceptance did not complete: ' . get_class($error)
+        . ' in ' . basename($error->getFile()) . ':' . $error->getLine() . ".\n";
     $failed++;
 } finally {
     if ($originalParams !== null) {
