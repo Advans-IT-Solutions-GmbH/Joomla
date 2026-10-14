@@ -259,9 +259,9 @@ Perform these four steps for every field type:
 
 | ID | Type | Field type | Valid test value | Negative/boundary case | Expected result |
 |---|---|---|---|---|---|
-| FF-01 | POS/NEG/GRZ | Single-line text | `Test project ÄÖÜ` | Empty required field; very long input | Valid text preserved; empty required value refused; excess length handled predictably. |
+| FF-01 | POS/NEG/GRZ | Single-line text | `Test project ÄÖÜ`; exactly 255 `A` characters; exactly 255 `Ä` characters (separate submissions) | Empty required field; exactly 256 `A` characters; exactly 256 `Ä` characters | Nonempty values of up to 255 Unicode characters accepted unchanged; empty required or 256-character answers rejected with a validation error and no new booking, never silently truncated. |
 | FF-02 | POS/NEG | Multiline text | Multiple lines with `&`, commas and accented characters | HTML/script text | Meaningful line breaks retained; no unauthorised HTML or script execution. |
-| FF-03 | POS/NEG/GRZ | Number | A valid number | Letters; configured boundary violations where applicable | Server-side validation matches field definition. |
+| FF-03 | POS/NEG/GRZ | Number | `0`, `-1`, `1e308` (separate submissions) | Letters; `1e309`; `-1e309` | Finite numeric values accepted; nonnumeric and non-finite overflow values rejected with a validation error and no new booking. There is no configurable minimum or maximum. |
 | FF-04 | POS/NEG | Telephone | Country calling code and valid national number | Missing number; letters instead of a number | Country selector works; unusable required number refused. |
 | FF-05 | POS/NEG | Email | Controlled test mailbox | `invalid@` | Valid address stored; invalid address refused. |
 | FF-06 | POS/NEG | URL | `https://example.org/test` | `javascript:` or an invalid URL | Only permitted URL accepted; no executable link. |
@@ -269,6 +269,12 @@ Perform these four steps for every field type:
 | FF-08 | POS/NEG | Multiple selection | Two configured options | Unconfigured option or empty required selection | Valid selection stored completely; invalid selection refused. |
 | FF-09 | POS/NEG | Checkbox | Checked | Unchecked required field | Required consent enforced. |
 | FF-10 | POS/NEG | Date | Valid date | For example, 31 February | No silent normalisation to a different date. |
+
+For the FF-01 length boundaries and FF-03 numeric boundaries, submit controlled POST requests
+so browser `maxlength` or numeric validation cannot hide missing server validation. Use a fresh
+valid form token, otherwise valid booking data and an available slot for each submission.
+Inspect the saved answer after each accepted submission; for every rejected submission verify
+the explicit validation error and unchanged booking count.
 
 Additional field administration:
 
