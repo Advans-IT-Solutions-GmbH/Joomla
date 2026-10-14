@@ -36,8 +36,8 @@ abstract class EditController extends FormController
 
     protected function checkEditRequest($key = null, $urlVar = null): bool
     {
-        if (!$this->checkToken()) {
-            return false;
+        if (!$this->checkToken('post', false)) {
+            throw new \Exception(Text::_('JINVALID_TOKEN'), 403);
         }
 
         $key = $urlVar ?: ($key ?: $this->getModel()->getTable()->getKeyName());

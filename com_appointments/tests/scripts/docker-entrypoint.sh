@@ -35,6 +35,7 @@ fi
 
 if [ -f /var/www/html/configuration.php ]; then
     echo "Joomla is initialized, installing the component..."
+    php /usr/local/bin/appointments-configure-mail.php
     sleep 5
 
     echo "Installing extension via Joomla CLI..."

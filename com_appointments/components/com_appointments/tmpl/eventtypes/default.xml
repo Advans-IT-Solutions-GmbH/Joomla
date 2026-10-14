@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<metadata>
+    <layout title="COM_APPOINTMENTS_MENU_EVENTTYPES" option="COM_APPOINTMENTS_MENU_EVENTTYPES">
+        <message><![CDATA[COM_APPOINTMENTS_MENU_EVENTTYPES_DESC]]></message>
+    </layout>
+</metadata>

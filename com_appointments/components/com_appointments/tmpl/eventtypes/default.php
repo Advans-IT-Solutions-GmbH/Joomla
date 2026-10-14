@@ -8,6 +8,7 @@
  */
 
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -38,9 +39,9 @@ $durationKeys = [
                 $durationKey = $minutes === 1 ? $durationKeys['one'] : $durationKeys['many'];
                 ?>
                 <li class="com-appointments-list-item">
-                    <span class="com-appointments-list-title">
+                    <a class="com-appointments-list-title" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $item->id); ?>">
                         <?php echo htmlspecialchars($item->title, ENT_QUOTES, 'UTF-8'); ?>
-                    </span>
+                    </a>
                     <span class="com-appointments-duration">
                         <?php echo Text::sprintf($durationKey, $minutes); ?>
                     </span>

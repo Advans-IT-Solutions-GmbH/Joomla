@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fieldset name="details">
+        <field name="id" type="hidden" filter="integer" />
+        <field name="eventtype_id" type="Eventscope" label="COM_APPOINTMENTS_FIELD_EVENTTYPE" required="true" filter="integer"><option value="">JOPTION_SELECT</option></field>
+        <field name="label" type="text" label="COM_APPOINTMENTS_FIELD_LABEL" required="true" maxlength="255" />
+        <field name="description" type="textarea" label="JGLOBAL_DESCRIPTION" />
+        <field name="type" type="list" label="COM_APPOINTMENTS_FIELD_TYPE">
+            <option value="text">COM_APPOINTMENTS_FIELD_TEXT</option>
+            <option value="textarea">COM_APPOINTMENTS_FIELD_TEXTAREA</option>
+            <option value="number">COM_APPOINTMENTS_FIELD_NUMBER</option>
+            <option value="tel">COM_APPOINTMENTS_FIELD_TEL</option>
+            <option value="email">COM_APPOINTMENTS_FIELD_EMAIL</option>
+            <option value="url">COM_APPOINTMENTS_FIELD_URL</option>
+            <option value="radio">COM_APPOINTMENTS_FIELD_RADIO</option>
+            <option value="checkboxes">COM_APPOINTMENTS_FIELD_CHECKBOXES</option>
+            <option value="checkbox">COM_APPOINTMENTS_FIELD_CHECKBOX</option>
+            <option value="date">COM_APPOINTMENTS_FIELD_DATE</option>
+        </field>
+        <field name="options" type="textarea" label="COM_APPOINTMENTS_FIELD_OPTIONS" description="COM_APPOINTMENTS_FIELD_OPTIONS_DESC" />
+        <field name="required" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_FIELD_REQUIRED" default="0" filter="integer"><option value="0">JNO</option><option value="1">JYES</option></field>
+    </fieldset>
+    <fieldset name="state">
+        <field name="published" type="list" label="JSTATUS" default="1" filter="integer"><option value="1">JPUBLISHED</option><option value="0">JUNPUBLISHED</option></field>
+        <field name="ordering" type="number" label="JFIELD_ORDERING_LABEL" default="0" filter="integer" />
+    </fieldset>
+</form>

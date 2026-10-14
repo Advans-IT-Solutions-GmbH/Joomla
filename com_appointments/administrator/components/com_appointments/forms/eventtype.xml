@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fieldset name="details">
+        <field name="id" type="hidden" filter="integer" />
+        <field name="title" type="text" label="JGLOBAL_TITLE" required="true" maxlength="255" />
+        <field name="alias" type="text" label="JFIELD_ALIAS_LABEL" maxlength="255" />
+        <field name="description" type="editor" label="JGLOBAL_DESCRIPTION" filter="safehtml" />
+        <field name="schedule_id" type="sql" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" required="true" filter="integer" query="SELECT id, title FROM #__appointments_schedules ORDER BY title" key_field="id" value_field="title">
+            <option value="">JOPTION_SELECT</option>
+        </field>
+        <field name="host_user_id" type="user" label="COM_APPOINTMENTS_EVENTTYPE_HOST" required="true" filter="integer" />
+        <field name="duration_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_DURATION" min="1" max="65535" default="30" required="true" filter="integer" />
+        <field name="slot_step_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_STEP" min="1" max="65535" default="30" required="true" filter="integer" />
+        <field name="buffer_before_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_BUFFER_BEFORE" min="0" max="65535" default="0" filter="integer" />
+        <field name="buffer_after_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_BUFFER_AFTER" min="0" max="65535" default="0" filter="integer" />
+        <field name="min_notice_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_NOTICE" min="0" max="4294967295" default="0" filter="integer" />
+        <field name="horizon_days" type="number" label="COM_APPOINTMENTS_EVENTTYPE_HORIZON" description="COM_APPOINTMENTS_EVENTTYPE_HORIZON_DESC" min="0" max="65535" default="30" filter="integer" />
+        <field name="horizon_start_utc" type="text" label="COM_APPOINTMENTS_EVENTTYPE_FIXED_START" description="COM_APPOINTMENTS_EVENTTYPE_UTC_DESC" filter="string" />
+        <field name="horizon_end_utc" type="text" label="COM_APPOINTMENTS_EVENTTYPE_FIXED_END" description="COM_APPOINTMENTS_EVENTTYPE_UTC_DESC" filter="string" />
+        <field name="max_per_day" type="number" label="COM_APPOINTMENTS_EVENTTYPE_DAILY" min="0" max="65535" default="0" filter="integer" />
+        <field name="max_per_week" type="number" label="COM_APPOINTMENTS_EVENTTYPE_WEEKLY" min="0" max="65535" default="0" filter="integer" />
+        <field name="location_type" type="list" label="COM_APPOINTMENTS_EVENTTYPE_LOCATION" default="custom_text">
+            <option value="phone_host_calls">COM_APPOINTMENTS_LOCATION_PHONE_HOST</option>
+            <option value="phone_invitee_calls">COM_APPOINTMENTS_LOCATION_PHONE_INVITEE</option>
+            <option value="in_person">COM_APPOINTMENTS_LOCATION_IN_PERSON</option>
+            <option value="custom_text">COM_APPOINTMENTS_LOCATION_CUSTOM</option>
+            <option value="conference">COM_APPOINTMENTS_LOCATION_CONFERENCE</option>
+        </field>
+        <field name="location_text" type="textarea" label="COM_APPOINTMENTS_EVENTTYPE_LOCATION_TEXT" filter="string" />
+        <field name="requires_approval" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_EVENTTYPE_APPROVAL" default="0" filter="integer">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="retention_days" type="number" label="COM_APPOINTMENTS_EVENTTYPE_RETENTION" description="COM_APPOINTMENTS_EVENTTYPE_RETENTION_DESC" min="0" max="65535" />
+        <field name="colour" type="color" label="COM_APPOINTMENTS_EVENTTYPE_COLOUR" />
+    </fieldset>
+    <fields name="conference_params">
+        <fieldset name="conference">
+            <field name="conference_provider" type="Conferenceprovider" label="COM_APPOINTMENTS_EVENTTYPE_PROVIDER" default="" filter="cmd">
+                <option value="">COM_APPOINTMENTS_CONFERENCE_INHERIT</option>
+                <option value="none">JNONE</option>
+                <option value="jitsi">COM_APPOINTMENTS_PROVIDER_JITSI</option>
+                <option value="generic">COM_APPOINTMENTS_PROVIDER_GENERIC</option>
+                <option value="fixed">COM_APPOINTMENTS_PROVIDER_FIXED</option>
+            </field>
+            <field name="conference_fixed_url" type="url" label="COM_APPOINTMENTS_CONFERENCE_FIXED_URL" filter="url" />
+            <field name="conference_room_prefix" type="text" label="COM_APPOINTMENTS_CONFERENCE_ROOM_PREFIX" maxlength="64" filter="string" />
+            <field name="fixed_warning" type="note" description="COM_APPOINTMENTS_CONFERENCE_FIXED_WARNING" class="alert alert-warning" showon="conference_provider:fixed" />
+        </fieldset>
+    </fields>
+    <fieldset name="state">
+        <field name="published" type="list" label="JSTATUS" default="1" filter="integer"><option value="1">JPUBLISHED</option><option value="0">JUNPUBLISHED</option></field>
+        <field name="access" type="accesslevel" label="JFIELD_ACCESS_LABEL" default="1" filter="integer" />
+        <field name="language" type="contentlanguage" label="JFIELD_LANGUAGE_LABEL" default="*"><option value="*">JALL</option></field>
+        <field name="ordering" type="number" label="JFIELD_ORDERING_LABEL" default="0" filter="integer" />
+        <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" filter="rules" validate="rules" component="com_appointments" section="eventtype" />
+    </fieldset>
+</form>

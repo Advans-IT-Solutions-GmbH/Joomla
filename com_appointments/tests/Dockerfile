@@ -18,7 +18,10 @@ COPY extension.zip /tmp/extension.zip
 
 # Copy custom entrypoint.
 COPY scripts/docker-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
-RUN chmod +x /usr/local/bin/custom-entrypoint.sh
+COPY scripts/capture-mail.php /usr/local/bin/appointments-capture-mail
+COPY scripts/configure-mail.php /usr/local/bin/appointments-configure-mail.php
+RUN chmod +x /usr/local/bin/custom-entrypoint.sh /usr/local/bin/appointments-capture-mail \
+    && mkdir /tmp/appointments-mail && chmod 1777 /tmp/appointments-mail
 
 ENV EXTENSION_NAME="Appointments Component"
 

@@ -16,6 +16,10 @@
 
     <namespace path="src">Advans\Component\Appointments</namespace>
     <scriptfile>script.php</scriptfile>
+    <plugins>
+        <plugin group="task" element="appointments" folder="plugins/task/appointments" />
+        <plugin group="privacy" element="appointments" folder="plugins/privacy/appointments" />
+    </plugins>
 
     <install>
         <sql>
@@ -62,6 +66,7 @@
             <folder>src</folder>
             <folder>tmpl</folder>
             <filename>access.xml</filename>
+            <filename>config.xml</filename>
             <filename>index.html</filename>
             <filename>LICENSE.txt</filename>
         </files>
@@ -75,35 +80,6 @@
             <language tag="fr-FR">fr-FR/com_appointments.sys.ini</language>
         </languages>
     </administration>
-
-    <config>
-        <fields name="params">
-            <fieldset name="basic">
-                <field
-                    name="autoload_language"
-                    type="hidden"
-                    default="1"
-                />
-            </fieldset>
-
-            <fieldset
-                name="permissions"
-                label="JCONFIG_PERMISSIONS_LABEL"
-                description="JCONFIG_PERMISSIONS_DESC"
-            >
-                <field
-                    name="rules"
-                    type="rules"
-                    label="JCONFIG_PERMISSIONS_LABEL"
-                    class="inputbox"
-                    validate="rules"
-                    filter="rules"
-                    component="com_appointments"
-                    section="component"
-                />
-            </fieldset>
-        </fields>
-    </config>
 
     <updateservers>
         <server type="extension" priority="1" name="Appointments Updates">
