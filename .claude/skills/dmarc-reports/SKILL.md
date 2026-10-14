@@ -86,7 +86,7 @@ report data leaves the host.
 
 ## Data Model
 
-Five core `#__dmarc_*` tables plus two TLS-RPT tables (install/uninstall SQL in
+Five core `#__dmarc_*` tables plus three TLS-RPT tables (install/uninstall SQL in
 `administrator/components/com_dmarcreports/sql/`; the TLS-RPT tables are added by
 `sql/updates/mysql/1.1.0.sql` with `CREATE TABLE IF NOT EXISTS`, so updating an existing
 install never drops collected DMARC data):
@@ -99,6 +99,7 @@ install never drops collected DMARC data):
 | `#__dmarc_records` | One row per report record (source IP, count, disposition, SPF/DKIM result + alignment, header_from) |
 | `#__dmarc_actions` | Persisted Action Center items (`action_key`, severity, status, snooze) |
 | `#__dmarc_tlsrpt_reports` | One row per TLS-RPT report; fingerprint (unique) = dedupe key |
+| `#__dmarc_tlsrpt_policies` | One row per policy block in a report (policy type, policy domain, success/failure session counts) |
 | `#__dmarc_tlsrpt_failures` | One row per TLS failure detail (result type, receiving MX, sending MTA IP, session count) |
 
 ## Key Classes

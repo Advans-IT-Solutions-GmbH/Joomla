@@ -201,8 +201,19 @@ final class TlsRptParser
             throw new \InvalidArgumentException('A TLS-RPT policy is missing a valid policy domain.', self::ERROR_NOT_REPORT);
         }
 
+        // RFC 8460 makes policy-type mandatory. A missing or non-string value
+        // would otherwise be stored as an empty string, and because the report's
+        // content fingerprint deduplicates repeated imports, a corrected copy
+        // could never repair the row. Reject the whole report, mirroring the
+        // policy-domain handling above.
+        $policyType = $block['policy-type'] ?? null;
+
+        if (!\is_string($policyType) || trim($policyType) === '') {
+            throw new \InvalidArgumentException('A TLS-RPT policy is missing a valid policy-type.', self::ERROR_NOT_REPORT);
+        }
+
         $result = [
-            'policy_type'   => self::clip(strtolower((string) ($block['policy-type'] ?? '')), 20),
+            'policy_type'   => self::clip(strtolower($policyType), 20),
             'policy_domain' => $policyDomain,
             'success_count' => self::requiredCount($summary, 'total-successful-session-count'),
             'failure_count' => self::requiredCount($summary, 'total-failure-session-count'),
@@ -242,8 +253,19 @@ final class TlsRptParser
             }
 
             $failureBudget--;
+            // RFC 8460 makes result-type mandatory in every failure detail. An
+            // empty/non-string value stored as '' would, via the report's
+            // content fingerprint, permanently deduplicate a corrected copy, so
+            // reject the whole report rather than persist a detail row without
+            // the result that gives it meaning.
+            $resultType = $detail['result-type'] ?? null;
+
+            if (!\is_string($resultType) || trim($resultType) === '') {
+                throw new \InvalidArgumentException('A TLS-RPT failure detail is missing a valid result-type.', self::ERROR_NOT_REPORT);
+            }
+
             $result['failures'][] = [
-                'result_type'          => self::clip((string) ($detail['result-type'] ?? ''), 60),
+                'result_type'          => self::clip($resultType, 60),
                 'sending_mta_ip'       => self::clip((string) ($detail['sending-mta-ip'] ?? ''), 45),
                 'receiving_mx_host'    => self::clip((string) ($detail['receiving-mx-hostname'] ?? ''), 190),
                 'receiving_ip'         => self::clip((string) ($detail['receiving-ip'] ?? ''), 45),

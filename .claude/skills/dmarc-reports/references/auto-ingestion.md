@@ -56,8 +56,15 @@ the component options.
 `plg_task_dmarcreports/tests/`:
 
 - PHPUnit `Unit/` — `IngestSummary::aggregate()` totals and edge cases.
-- Integration `scripts/` — installation, structure, an automatic task run and its parallel/lock
-  behaviour (a second run while a lock is held does not double-process), installer messages,
-  uninstall. Runs on both the Joomla 5 and Joomla 6 stacks (`CONTAINER_NAME=…_j6_test`).
+- Integration `scripts/` — installation, structure, graceful degradation (the routine advertises and
+  no-ops when the component is absent), installer messages and uninstall. Runs on both the Joomla 5
+  and Joomla 6 stacks (`CONTAINER_NAME=…_j6_test`).
+
+The end-to-end scheduled run — the task driving the component's `SourcePoller` across active
+sources, and a second run against an unreachable source proving per-source error isolation — is
+exercised by the package suite (`pkg_dmarcreports/tests/scripts/04-auto-ingest.php`), where the
+component and plugin are installed together. The per-message lock discipline that keeps a manual
+poll safe next to the automatic task lives in the component's `SourcePoller`/`RowLock` and is
+covered there.
 
 The plugin ships no tables of its own; all storage is the component's.

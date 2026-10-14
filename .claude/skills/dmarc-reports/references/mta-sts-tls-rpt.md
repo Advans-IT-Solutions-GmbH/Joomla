@@ -85,6 +85,7 @@ Storage is kept **separate** from the DMARC aggregate data (added by
 | Table | Holds |
 |-------|-------|
 | `#__dmarc_tlsrpt_reports` | One row per TLS-RPT report; fingerprint (unique) = dedupe key |
+| `#__dmarc_tlsrpt_policies` | One policy block per row (policy type, policy domain, success/failure session counts) |
 | `#__dmarc_tlsrpt_failures` | One failure detail per row (result type, receiving MX, sending MTA IP, sessions) |
 
 ## Surfacing

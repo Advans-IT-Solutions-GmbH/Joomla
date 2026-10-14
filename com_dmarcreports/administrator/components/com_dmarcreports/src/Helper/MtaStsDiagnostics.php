@@ -257,8 +257,10 @@ final class MtaStsDiagnostics
         // version, a stale max_age or a changed mode/mx all mean the served
         // policy no longer matches what the record id promises. Comparing only
         // mode and mx would report a drifted policy as consistent, breaking the
-        // diagnostics contract.
-        if ($hosted['version'] !== 'stsv1'
+        // diagnostics contract. A policy that repeats a singleton field is
+        // malformed and reported as drift regardless of the kept value.
+        if ($hosted['malformed']
+            || $hosted['version'] !== 'stsv1'
             || $hosted['mode'] !== $mode
             || $hosted['max_age'] !== $maxAge
             || $hostedMx !== $mx) {
@@ -424,9 +426,13 @@ final class MtaStsDiagnostics
 
     /**
      * Parse a hosted MTA-STS policy body into the fields the generated policy
-     * fixes: its version tag, mode, MX host set and max_age.
+     * fixes: its version tag, mode, MX host set and max_age. A policy that
+     * repeats any singleton field (version, mode, max_age) is reported as
+     * malformed: RFC 8461 allows each of those exactly once, and silently
+     * keeping the last occurrence would let a crafted policy hide a drifted
+     * value behind a matching duplicate.
      *
-     * @return  array{version:string, mode:string, mx:string[], max_age:int}
+     * @return  array{version:string, mode:string, mx:string[], max_age:int, malformed:bool}
      */
     private function parsePolicy(string $body): array
     {
@@ -434,6 +440,7 @@ final class MtaStsDiagnostics
         $mode    = '';
         $mx      = [];
         $maxAge  = 0;
+        $counts  = ['version' => 0, 'mode' => 0, 'max_age' => 0];
 
         foreach (preg_split('~[\r\n]+~', $body) ?: [] as $line) {
             if (!str_contains($line, ':')) {
@@ -445,17 +452,27 @@ final class MtaStsDiagnostics
             $val         = strtolower(trim($val, " \t.\r\n"));
 
             if ($key === 'version') {
+                $counts['version']++;
                 $version = $val;
             } elseif ($key === 'mode') {
+                $counts['mode']++;
                 $mode = $val;
             } elseif ($key === 'mx' && $val !== '') {
                 $mx[] = $val;
-            } elseif ($key === 'max_age' && preg_match('~^\d+$~', $val)) {
-                $maxAge = (int) $val;
+            } elseif ($key === 'max_age') {
+                // Count every max_age line, even a malformed one, so a duplicate
+                // key is flagged regardless of whether its value parses.
+                $counts['max_age']++;
+
+                if (preg_match('~^\d+$~', $val)) {
+                    $maxAge = (int) $val;
+                }
             }
         }
 
-        return ['version' => $version, 'mode' => $mode, 'mx' => $mx, 'max_age' => $maxAge];
+        $malformed = $counts['version'] > 1 || $counts['mode'] > 1 || $counts['max_age'] > 1;
+
+        return ['version' => $version, 'mode' => $mode, 'mx' => $mx, 'max_age' => $maxAge, 'malformed' => $malformed];
     }
 
     /**

@@ -248,6 +248,91 @@ class TlsRptParserTest extends TestCase
         ]));
     }
 
+    public function testMissingPolicyTypeIsRejected(): void
+    {
+        // RFC 8460 makes policy-type mandatory. A policy that omits it must be
+        // rejected rather than stored with an empty type, because the report's
+        // content fingerprint would then permanently deduplicate a corrected
+        // retransmission, leaving the empty type unrepairable.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
+                ],
+            ],
+        ]));
+    }
+
+    public function testEmptyPolicyTypeIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => '   ', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
+                ],
+            ],
+        ]));
+    }
+
+    public function testNonStringPolicyTypeIsRejected(): void
+    {
+        // An array value must be rejected, not cast to the literal "Array".
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => ['sts'], 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
+                ],
+            ],
+        ]));
+    }
+
+    public function testMissingResultTypeInFailureDetailIsRejected(): void
+    {
+        // RFC 8460 makes result-type mandatory in every failure detail. A detail
+        // that omits it must reject the whole report rather than persist a
+        // failure row with an empty result, which the report fingerprint would
+        // then pin against a corrected copy.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
+                    'failure-details' => [
+                        ['failed-session-count' => 1],
+                    ],
+                ],
+            ],
+        ]));
+    }
+
+    public function testEmptyResultTypeInFailureDetailIsRejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
+                    'failure-details' => [
+                        ['result-type' => '   ', 'failed-session-count' => 1],
+                    ],
+                ],
+            ],
+        ]));
+    }
+
     public function testFingerprintIsStableAndContentSensitive(): void
     {
         $a = TlsRptParser::parse($this->sample());

@@ -80,6 +80,13 @@ final class SourcePoller
         $sourceId = (int) $source->id;
         $domainId = (int) $source->domain_id;
 
+        // Decide whether this poll forces the source's bound domain onto every
+        // report, or lets each report be attributed to its own policy domain so
+        // newly seen domains are registered. Forcing the bound id unconditionally
+        // would make task_auto_create/auto_create_domains a no-op for scheduled
+        // polling, because a forced domain always bypasses DomainRegistry.
+        $forcedDomainId = self::forcedDomainId($domainId, $allowAutoCreate);
+
         try {
             $client   = new ImapClient($this->boundedConfig('imap_timeout', 20, 5, 120));
             $limit    = $this->boundedConfig('max_messages_per_run', 200, 10, 2000);
@@ -105,8 +112,8 @@ final class SourcePoller
                     'last_uid'            => (int) ($source->last_uid ?? 0),
                     'deferred_uids'       => $this->parseUidList((string) ($source->deferred_uids ?? '')),
                 ],
-                function (array $message) use ($ingestor, $sourceId, $domainId, &$summary): string {
-                    return $ingestor->ingestMessage($message, $sourceId, $domainId, $summary);
+                function (array $message) use ($ingestor, $sourceId, $forcedDomainId, &$summary): string {
+                    return $ingestor->ingestMessage($message, $sourceId, $forcedDomainId, $summary);
                 }
             );
 
@@ -147,6 +154,29 @@ final class SourcePoller
 
             return ['status' => self::STATUS_ERROR, 'message' => $message, 'blocked' => 0, 'summary' => []];
         }
+    }
+
+    /**
+     * Decide the domain id to force onto every report a poll ingests.
+     *
+     * A source is bound to one monitored domain. By default that bound domain is
+     * forced onto every report the mailbox delivers (an aggregate report for an
+     * unrelated domain is skipped), so a single-tenant mailbox cannot
+     * cross-attribute reports. When automatic domain creation is enabled — a
+     * privileged opt-in gated by both the component option and core.create — the
+     * bound domain is NOT forced: each report is attributed to its own policy
+     * domain and a newly seen domain is registered by {@see DomainRegistry},
+     * which is the whole point of an aggregating mailbox. Returning 0 selects
+     * that resolve-from-report path; otherwise the bound id is forced.
+     *
+     * Exposed as a pure static so the forcing decision is unit-tested without an
+     * IMAP transport or database.
+     *
+     * @since  1.1.0
+     */
+    public static function forcedDomainId(int $boundDomainId, bool $allowAutoCreate): int
+    {
+        return $allowAutoCreate ? 0 : $boundDomainId;
     }
 
     /**

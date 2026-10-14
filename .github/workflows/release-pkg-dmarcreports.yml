@@ -145,8 +145,32 @@ jobs:
               [ -z "$baseline" ] && continue
 
               # Unchanged child directory since this baseline cannot regress the
-              # migration contract for that channel.
-              if git diff --quiet "$baseline" HEAD -- "$child/"; then
+              # migration contract for that channel. Compare only files that the
+              # bundled archive actually ships: mirror shared/build/build.sh's
+              # packaging exclusions so a change limited to tests, Docker or
+              # Composer/dev scaffolding — none of which reaches an install — does
+              # not falsely demand a version bump and block the release.
+              PKG_PATHSPECS=(
+                "$child/"
+                ":(exclude,glob)$child/tests/**"
+                ":(exclude,glob)$child/tests-*/**"
+                ":(exclude,glob)$child/**/Dockerfile"
+                ":(exclude,glob)$child/**/Dockerfile.*"
+                ":(exclude,glob)$child/**/docker-compose*.yml"
+                ":(exclude,glob)$child/**/docker-compose*.yaml"
+                ":(exclude,glob)$child/**/compose*.yml"
+                ":(exclude,glob)$child/**/compose*.yaml"
+                ":(exclude,glob)$child/**/.gitignore"
+                ":(exclude,glob)$child/**/node_modules/**"
+                ":(exclude,glob)$child/**/.phpunit.cache/**"
+                ":(exclude,glob)$child/**/vendor/**"
+                ":(exclude,glob)$child/**/phpunit.xml"
+                ":(exclude,glob)$child/**/composer.json"
+                ":(exclude,glob)$child/**/*.zip"
+                ":(exclude,glob)$child/build.env"
+              )
+
+              if git diff --quiet "$baseline" HEAD -- "${PKG_PATHSPECS[@]}"; then
                 continue
               fi
 

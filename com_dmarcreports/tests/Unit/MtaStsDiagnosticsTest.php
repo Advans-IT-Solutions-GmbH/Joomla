@@ -359,6 +359,37 @@ class MtaStsDiagnosticsTest extends TestCase
         }
     }
 
+    public function testDuplicateSingletonPolicyFieldIsReportedAsDrift(): void
+    {
+        // RFC 8461 allows each of version/mode/max_age exactly once. A policy
+        // that repeats mode — even when the last occurrence matches the expected
+        // enforce value — is malformed and must be reported as drift rather than
+        // silently accepted by keeping the last line.
+        $body = "version: STSv1\r\nmode: testing\r\nmode: enforce\r\nmx: mail.example.org\r\nmax_age: 604800";
+
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($body));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_policy_drift', $this->codes($result));
+    }
+
+    public function testDuplicateMaxAgeIsReportedAsDrift(): void
+    {
+        // A repeated max_age is malformed even when the last value is correct.
+        $body = "version: STSv1\r\nmode: enforce\r\nmx: mail.example.org\r\nmax_age: 86400\r\nmax_age: 604800";
+
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($body));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_policy_drift', $this->codes($result));
+    }
+
     public function testSummarizeDisabledReturnsNoDomains(): void
     {
         // When neither switch is on the System Check model passes enabled=false
