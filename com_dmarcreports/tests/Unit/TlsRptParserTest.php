@@ -131,15 +131,52 @@ class TlsRptParserTest extends TestCase
         ]));
     }
 
-    public function testAbsentSessionCountsDefaultToZero(): void
+    public function testMissingSessionCountIsRejected(): void
     {
-        // A summary without counts is valid: the absent keys default to zero and
-        // must not be mistaken for malformed values.
+        // RFC 8460 requires both session totals in every summary. A summary that
+        // omits one is rejected rather than defaulted to zero, so a corrected
+        // retransmission can repair the metrics instead of a partial import
+        // being pinned under the report's permanent fingerprint.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 5],
+                ],
+            ],
+        ]));
+    }
+
+    public function testMissingFailedSessionCountIsRejected(): void
+    {
+        // A failure detail must carry its failed-session-count; a missing count
+        // is rejected like a missing summary total.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
+                    'failure-details' => [
+                        ['result-type' => 'certificate-expired'],
+                    ],
+                ],
+            ],
+        ]));
+    }
+
+    public function testZeroSessionCountsAreAccepted(): void
+    {
+        // Zero is a legitimate TLS-RPT total (no sessions in the window) and
+        // must be preserved, unlike a missing or malformed value.
         $report = TlsRptParser::parse($this->sample([
             'policies' => [
                 [
                     'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'example.org'],
-                    'summary' => [],
+                    'summary' => ['total-successful-session-count' => 0, 'total-failure-session-count' => 0],
                 ],
             ],
         ]));

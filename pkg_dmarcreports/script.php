@@ -27,6 +27,23 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
+    /**
+     * Enforce the declared minimum Joomla and PHP versions before any files are
+     * copied. InstallerScript::preflight() compares them against the running
+     * platform and aborts with the translated core message when it is too old,
+     * so the package (and the extensions it bundles) is never installed below
+     * its supported baseline.
+     *
+     * @param   string  $type    install|update|discover_install
+     * @param   mixed   $parent  The installer parent.
+     *
+     * @return  bool
+     */
+    public function preflight($type, $parent)
+    {
+        return parent::preflight($type, $parent);
+    }
+
     public function postflight(string $type, object $parent): void
     {
         if ($type !== 'install' && $type !== 'update') {

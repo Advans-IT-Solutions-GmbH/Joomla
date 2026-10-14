@@ -18,6 +18,35 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Remove the <updateservers> block from every manifest inside a staged child
+# archive. The package ships a single update channel (its own <updateservers>
+# in pkg_dmarcreports.xml); a bundled child that kept its own block would
+# advertise an independent update stream and could be updated out of band,
+# drifting from the package. unzip/zip/perl are present on the CI runner.
+strip_update_servers() {
+    local archive
+    archive="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+    local work
+    work="$(mktemp -d)"
+
+    unzip -q "$archive" -d "$work"
+
+    # Child manifests live at the archive root; maxdepth 2 covers nested layouts.
+    while IFS= read -r -d '' manifest; do
+        if grep -q "<updateservers>" "$manifest"; then
+            perl -0pi -e 's{[ \t]*<updateservers>.*?</updateservers>\s*}{}gs' "$manifest"
+        fi
+    done < <(find "$work" -maxdepth 2 -name '*.xml' -print0)
+
+    rm -f "$archive"
+    (
+        cd "$work"
+        zip -r "$archive" . -x "*.DS_Store" > /dev/null
+    )
+
+    rm -rf "$work"
+}
+
 if [ ! -f "build.env" ]; then
     echo -e "${RED}Error: build.env not found${NC}"
     exit 1
@@ -75,6 +104,7 @@ for entry in "${SUB_DIRS[@]}"; do
     fi
 
     cp "$built" "$STAGE_PACKAGES/$stable"
+    strip_update_servers "$STAGE_PACKAGES/$stable"
     echo "Staged $(basename "$built") -> packages/$stable"
 done
 

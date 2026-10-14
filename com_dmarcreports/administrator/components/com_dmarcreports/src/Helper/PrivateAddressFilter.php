@@ -22,9 +22,11 @@ defined('_JEXEC') or die;
  * The check is deliberately a pure function over an already-resolved IP string
  * so it can be unit tested exhaustively without DNS. IPv4-mapped IPv6 addresses
  * (::ffff:a.b.c.d), IPv4-compatible addresses (::a.b.c.d) and NAT64
- * (64:ff9b::a.b.c.d) are unwrapped and judged by their embedded IPv4 value, and
- * 6to4 (2002::/16) is rejected outright, so a private destination cannot be
- * smuggled through a v6 form.
+ * (64:ff9b::a.b.c.d) are unwrapped and judged by their embedded IPv4 value. For
+ * native IPv6 the classifier fails closed to the global-unicast block 2000::/3
+ * and additionally rejects the IANA special-purpose prefixes carved out of it
+ * (2001::/23, 2001:db8::/32, 2002::/16 6to4, 2620:4f:8000::/48, 3fff::/20), so a
+ * private or internally routed destination cannot be smuggled through a v6 form.
  *
  * @since  1.1.0
  */
@@ -171,23 +173,29 @@ final class PrivateAddressFilter
         $first  = $bytes[0];
         $second = $bytes[1];
 
-        // fc00::/7 unique local addresses (ULA).
-        if (($first & 0xFE) === 0xFC) {
+        // Fail closed: only the global-unicast block 2000::/3 may be public, so
+        // every other prefix is rejected by this single gate instead of being
+        // allowed through by default. This covers loopback, ULA (fc00::/7),
+        // link-local (fe80::/10), deprecated site-local (fec0::/10), multicast
+        // (ff00::/8), the discard-only prefix (100::/64), SRv6 (5f00::/16) and
+        // the whole 0000::/8 and other IETF-reserved space in one check.
+        if (($first & 0xE0) !== 0x20) {
             return false;
         }
 
-        // fe80::/10 link-local.
-        if ($first === 0xFE && ($second & 0xC0) === 0x80) {
+        // Within 2000::/3, carve out the IANA special-purpose blocks that are
+        // not global unicast and may route internally, so a crafted target in
+        // one of them cannot bypass the SSRF guard.
+
+        // 2001::/23 IETF Protocol Assignments: Teredo (2001::/32), benchmarking
+        // (2001:2::/48), AMT, AS112-v6, ORCHIDv1/v2 (2001:10::/28, 2001:20::/28)
+        // and the PCP/DRIP anycasts all live in this block.
+        if ($first === 0x20 && $second === 0x01 && ($bytes[2] & 0xFE) === 0x00) {
             return false;
         }
 
-        // fec0::/10 deprecated site-local.
-        if ($first === 0xFE && ($second & 0xC0) === 0xC0) {
-            return false;
-        }
-
-        // ff00::/8 multicast.
-        if ($first === 0xFF) {
+        // 2001:db8::/32 documentation.
+        if ($first === 0x20 && $second === 0x01 && $bytes[2] === 0x0D && $bytes[3] === 0xB8) {
             return false;
         }
 
@@ -198,8 +206,14 @@ final class PrivateAddressFilter
             return false;
         }
 
-        // 2001:db8::/32 documentation.
-        if ($first === 0x20 && $second === 0x01 && $bytes[2] === 0x0D && $bytes[3] === 0xB8) {
+        // 2620:4f:8000::/48 Direct Delegation AS112 service.
+        if ($first === 0x26 && $second === 0x20 && $bytes[2] === 0x00 && $bytes[3] === 0x4F
+            && $bytes[4] === 0x80 && $bytes[5] === 0x00) {
+            return false;
+        }
+
+        // 3fff::/20 documentation (RFC 9637).
+        if ($first === 0x3F && ($second & 0xF0) === 0xF0) {
             return false;
         }
 

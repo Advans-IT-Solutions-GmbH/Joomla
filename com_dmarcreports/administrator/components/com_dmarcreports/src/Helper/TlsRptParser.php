@@ -206,8 +206,8 @@ final class TlsRptParser
         $result = [
             'policy_type'   => self::clip(strtolower((string) ($block['policy-type'] ?? '')), 20),
             'policy_domain' => $policyDomain,
-            'success_count' => self::count($summary['total-successful-session-count'] ?? 0),
-            'failure_count' => self::count($summary['total-failure-session-count'] ?? 0),
+            'success_count' => self::requiredCount($summary, 'total-successful-session-count'),
+            'failure_count' => self::requiredCount($summary, 'total-failure-session-count'),
             'failures'      => [],
         ];
 
@@ -239,7 +239,7 @@ final class TlsRptParser
                 'sending_mta_ip'       => self::clip((string) ($detail['sending-mta-ip'] ?? ''), 45),
                 'receiving_mx_host'    => self::clip((string) ($detail['receiving-mx-hostname'] ?? ''), 190),
                 'receiving_ip'         => self::clip((string) ($detail['receiving-ip'] ?? ''), 45),
-                'failed_session_count' => self::count($detail['failed-session-count'] ?? 0),
+                'failed_session_count' => self::requiredCount($detail, 'failed-session-count'),
                 'additional_info'      => self::clip((string) ($detail['additional-information'] ?? ''), 1024),
                 'failure_reason_code'  => self::clip((string) ($detail['failure-reason-code'] ?? ''), 190),
             ];
@@ -293,15 +293,35 @@ final class TlsRptParser
     }
 
     /**
-     * Validate an untrusted session-count value as a non-negative integer. An
-     * absent key reaches this method as the callers' int 0 default and is kept.
-     * A present but malformed value — a negative integer, a non-numeric or
-     * negative string, a float or a boolean — is rejected rather than coerced to
-     * zero: normalising it would store understated totals under the report's
-     * permanent fingerprint, so a corrected retransmission could never repair
-     * the metrics. A digit string beyond the signed-integer range is likewise
-     * rejected rather than saturated. Mirrors the DMARC parser's rejection of
-     * missing, non-numeric and out-of-range counts.
+     * Read a required session-count field from an untrusted summary or failure
+     * detail. RFC 8460 requires the session totals in every policy summary and a
+     * failed-session-count in every failure detail; a missing field is rejected
+     * rather than defaulted to zero, so understated metrics are never stored
+     * under the report's permanent fingerprint and a corrected retransmission
+     * can still be imported. A present value is validated by {@see self::count()}.
+     *
+     * @param   array<string, mixed>  $source
+     *
+     * @throws  \InvalidArgumentException  When the field is missing or invalid.
+     */
+    private static function requiredCount(array $source, string $key): int
+    {
+        if (!\array_key_exists($key, $source)) {
+            throw new \InvalidArgumentException('A required TLS-RPT session count is missing.', self::ERROR_NOT_REPORT);
+        }
+
+        return self::count($source[$key]);
+    }
+
+    /**
+     * Validate a present, untrusted session-count value as a non-negative
+     * integer. TLS-RPT counts may legitimately be zero, so only malformed values
+     * — a negative integer, a non-numeric or negative string, a float or a
+     * boolean — are rejected rather than coerced to zero: normalising one would
+     * store understated totals under the report's permanent fingerprint, so a
+     * corrected retransmission could never repair the metrics. A digit string
+     * beyond the signed-integer range is likewise rejected rather than saturated.
+     * Missing fields are caught earlier by {@see self::requiredCount()}.
      *
      * @throws  \InvalidArgumentException  When the value is not a valid count.
      */

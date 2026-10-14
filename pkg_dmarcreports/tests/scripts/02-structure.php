@@ -49,6 +49,37 @@ class StructureTest
                 || file_exists('/var/www/html/administrator/language/en-GB/com_dmarcreports.ini');
         });
 
+        // The package owns the single update channel: its own manifest keeps an
+        // <updateservers> block, while every bundled child manifest must have
+        // had its own block stripped by build.sh so the children cannot
+        // advertise an independent, drifting update stream.
+        $childManifests = [
+            '/var/www/html/administrator/components/com_dmarcreports/com_dmarcreports.xml',
+            '/var/www/html/administrator/modules/mod_dmarcreports/mod_dmarcreports.xml',
+            '/var/www/html/plugins/task/dmarcreports/dmarcreports.xml',
+            '/var/www/html/plugins/system/dmarcmtasts/dmarcmtasts.xml',
+        ];
+
+        foreach ($childManifests as $manifest) {
+            $this->test('Bundled child manifest has no update server: ' . basename($manifest), function () use ($manifest) {
+                if (!file_exists($manifest)) {
+                    throw new \RuntimeException('Manifest not installed: ' . $manifest);
+                }
+
+                return strpos((string) file_get_contents($manifest), '<updateservers>') === false;
+            });
+        }
+
+        $this->test('Package manifest keeps its update server', function () {
+            $manifest = '/var/www/html/administrator/manifests/packages/pkg_dmarcreports.xml';
+
+            if (!file_exists($manifest)) {
+                throw new \RuntimeException('Package manifest not installed: ' . $manifest);
+            }
+
+            return strpos((string) file_get_contents($manifest), '<updateservers>') !== false;
+        });
+
         echo "\n=== Package Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
