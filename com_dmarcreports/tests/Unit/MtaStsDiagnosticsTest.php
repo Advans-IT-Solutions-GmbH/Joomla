@@ -241,6 +241,32 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('tlsrpt_publish', $this->codes($result));
     }
 
+    public function testForgedTlsRptVersionIsNotAccepted(): void
+    {
+        // v=TLSRPTv10 must not satisfy the v=TLSRPTv1 token: the record is
+        // ignored and the missing TLS-RPT record is reported as publish.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv10; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('tlsrpt_publish', $this->codes($result));
+    }
+
+    public function testForgedStsVersionIsNotAccepted(): void
+    {
+        // v=STSv10 must not satisfy the v=STSv1 token: no record id is parsed,
+        // so the STS record counts as missing and publish guidance is emitted.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv10; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_publish', $this->codes($result));
+    }
+
     public function testEveryFindingIsTaggedMtaStsCategory(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([

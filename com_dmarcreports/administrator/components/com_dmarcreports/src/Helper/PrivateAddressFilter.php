@@ -21,8 +21,10 @@ defined('_JEXEC') or die;
  *
  * The check is deliberately a pure function over an already-resolved IP string
  * so it can be unit tested exhaustively without DNS. IPv4-mapped IPv6 addresses
- * (::ffff:a.b.c.d) are unwrapped and judged by their embedded IPv4 value so a
- * private destination cannot be smuggled through the v6 form.
+ * (::ffff:a.b.c.d), IPv4-compatible addresses (::a.b.c.d) and NAT64
+ * (64:ff9b::a.b.c.d) are unwrapped and judged by their embedded IPv4 value, and
+ * 6to4 (2002::/16) is rejected outright, so a private destination cannot be
+ * smuggled through a v6 form.
  *
  * @since  1.1.0
  */
@@ -59,6 +61,15 @@ final class PrivateAddressFilter
             // apply the same IPv4 rules so a private destination behind NAT64 is
             // rejected too.
             if (self::isNat64($packed)) {
+                return self::isPublicIpv4(substr($packed, 12, 4));
+            }
+
+            // ::a.b.c.d IPv4-compatible IPv6 (deprecated): first 96 bits zero,
+            // not the ::ffff: mapped form handled above. Judge by the embedded
+            // IPv4 so ::127.0.0.1 or ::10.0.0.1 cannot smuggle a private
+            // destination. This also covers :: and ::1 (0.0.0.0 / 0.0.0.1 are
+            // rejected by the IPv4 rules).
+            if (self::isIpv4Compatible($packed)) {
                 return self::isPublicIpv4(substr($packed, 12, 4));
             }
 
@@ -180,6 +191,13 @@ final class PrivateAddressFilter
             return false;
         }
 
+        // 2002::/16 6to4 embeds an arbitrary (possibly internal) IPv4 address in
+        // bytes 2-5; the gateway is attacker-chosen, so reject the whole range
+        // rather than try to vet the embedded address.
+        if ($first === 0x20 && $second === 0x02) {
+            return false;
+        }
+
         // 2001:db8::/32 documentation.
         if ($first === 0x20 && $second === 0x01 && $bytes[2] === 0x0D && $bytes[3] === 0xB8) {
             return false;
@@ -197,6 +215,17 @@ final class PrivateAddressFilter
     {
         return substr($packed, 0, 10) === str_repeat("\0", 10)
             && substr($packed, 10, 2) === "\xFF\xFF";
+    }
+
+    /**
+     * ::a.b.c.d IPv4-compatible IPv6 (deprecated): the first 96 bits are zero.
+     * The ::ffff: mapped form is excluded by isIpv4Mapped() running first.
+     *
+     * @param  string  $packed  Sixteen packed bytes.
+     */
+    private static function isIpv4Compatible(string $packed): bool
+    {
+        return substr($packed, 0, 12) === str_repeat("\0", 12);
     }
 
     /**

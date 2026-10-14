@@ -11,12 +11,14 @@ namespace Advans\Plugin\System\DmarcMtaSts\Extension;
 
 defined('_JEXEC') or die;
 
+use Advans\Component\DmarcReports\Administrator\Helper\DomainName;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
 use Advans\Plugin\System\DmarcMtaSts\Support\PolicyRequest;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Uri\Uri;
+use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Event\SubscriberInterface;
 
 /**
@@ -32,6 +34,8 @@ use Joomla\Event\SubscriberInterface;
  */
 final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
 {
+    use DatabaseAwareTrait;
+
     /**
      * @return string[]
      *
@@ -76,6 +80,15 @@ final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // The policy is generated from global component parameters, so without
+        // this check the plugin would serve it for the mta-sts. host of any
+        // domain pointed at this site, including ones the administrator never
+        // configured. Only a domain that is present and published in the
+        // monitored-domain table may receive a policy.
+        if (!$this->isMonitoredDomain($domain)) {
+            return;
+        }
+
         $policy = MtaStsPolicy::generate($params, $domain);
 
         if (!$policy['enabled'] || $policy['body'] === '') {
@@ -89,5 +102,40 @@ final class DmarcMtaSts extends CMSPlugin implements SubscriberInterface
         echo $policy['body'];
 
         $app->close();
+    }
+
+    /**
+     * Whether the host-derived base domain is a published monitored domain.
+     *
+     * The policy must only be served for domains the administrator actually
+     * monitors, so the derived domain is canonicalized to match the stored form
+     * and looked up in #__dmarc_domains with published = 1. A missing table
+     * (component not installed) or any database error fails closed: no policy is
+     * served.
+     *
+     * @since 1.0.0
+     */
+    private function isMonitoredDomain(string $domain): bool
+    {
+        $canonical = DomainName::canonicalize($domain);
+
+        if ($canonical === null) {
+            return false;
+        }
+
+        try {
+            $db    = $this->getDatabase();
+            $query = $db->createQuery()
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__dmarc_domains'))
+                ->where($db->quoteName('domain') . ' = :domain')
+                ->where($db->quoteName('published') . ' = 1')
+                ->bind(':domain', $canonical)
+                ->setLimit(1);
+
+            return (int) $db->setQuery($query)->loadResult() > 0;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

@@ -30,6 +30,7 @@ class MtaStsEndpointTest
         echo "=== Package MTA-STS Endpoint Tests ===\n\n";
 
         $this->enableSystemPlugin();
+        $this->ensureMonitoredDomain('example.com', 1);
         $this->configureParams('testing', 'mail.example.com', 604800, 1);
 
         $served = $this->fetch('mta-sts.example.com');
@@ -49,7 +50,21 @@ class MtaStsEndpointTest
         $disabled = $this->fetch('mta-sts.example.com');
         $this->test('policy not served while the feature is disabled', !str_contains($disabled, 'version: STSv1'));
 
+        // The policy is generated from the global component parameters, so it
+        // may only be served for a domain the administrator actually monitors
+        // and has published. Re-enable the feature and prove the domain gate.
+        $this->configureParams('testing', 'mail.example.com', 604800, 1);
+
+        $this->ensureMonitoredDomain('example.com', 0);
+        $unpublished = $this->fetch('mta-sts.example.com');
+        $this->test('policy not served for an unpublished monitored domain', !str_contains($unpublished, 'version: STSv1'), $unpublished);
+
+        $this->removeMonitoredDomain('example.com');
+        $unmonitored = $this->fetch('mta-sts.example.com');
+        $this->test('policy not served for a domain absent from the monitored table', !str_contains($unmonitored, 'version: STSv1'), $unmonitored);
+
         // Restore a clean state for the following suites.
+        $this->removeMonitoredDomain('example.com');
         $this->configureParams('testing', '', 604800, 0);
         $this->disableSystemPlugin();
 
@@ -78,6 +93,31 @@ class MtaStsEndpointTest
         $this->db->query(
             "UPDATE {$this->dbPrefix}extensions SET enabled = 0 "
             . "WHERE type = 'plugin' AND folder = 'system' AND element = 'dmarcmtasts'"
+        );
+    }
+
+    /**
+     * Insert or update a monitored domain with the given published flag so the
+     * domain gate in the system plugin can be exercised.
+     */
+    private function ensureMonitoredDomain(string $domain, int $published): void
+    {
+        $domain = $this->db->real_escape_string($domain);
+        $this->db->query(
+            "INSERT INTO {$this->dbPrefix}dmarc_domains (domain, published) "
+            . "VALUES ('{$domain}', {$published}) "
+            . "ON DUPLICATE KEY UPDATE published = VALUES(published)"
+        );
+    }
+
+    /**
+     * Remove a monitored domain so the "absent from the table" case is clean.
+     */
+    private function removeMonitoredDomain(string $domain): void
+    {
+        $domain = $this->db->real_escape_string($domain);
+        $this->db->query(
+            "DELETE FROM {$this->dbPrefix}dmarc_domains WHERE domain = '{$domain}'"
         );
     }
 

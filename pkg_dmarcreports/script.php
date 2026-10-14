@@ -38,6 +38,8 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
         $lang->load('pkg_dmarcreports', JPATH_ADMINISTRATOR);
         $lang->load('pkg_dmarcreports', $parent->getParent()->getPath('source'));
 
+        $this->installLicense($parent);
+
         // An update only confirms the new version; the first installation shows
         // the short orientation message that points at the next steps.
         if ($type === 'update') {
@@ -53,5 +55,37 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
         }
 
         $app->enqueueMessage(Text::_('PKG_DMARCREPORTS_POSTINSTALL_INTRO'), 'message');
+    }
+
+    /**
+     * Install the package's GPL-3.0 text next to its stored manifest.
+     *
+     * The package installer copies only the manifest and this script into
+     * administrator/manifests/packages/dmarcreports/; it never installs a plain
+     * file from the <files> list (that node only references the bundled
+     * sub-extension archives). Copying LICENSE.txt here is the package-aware way
+     * to guarantee the installed package carries the unmodified licence the
+     * manifest and every source header point at. It is removed automatically on
+     * uninstall when the package folder is deleted.
+     */
+    private function installLicense(object $parent): void
+    {
+        $installer = $parent->getParent();
+        $source    = (string) $installer->getPath('source');
+        $root      = (string) $installer->getPath('extension_root');
+
+        if ($source === '' || $root === '') {
+            return;
+        }
+
+        if (!is_dir($root)) {
+            @mkdir($root, 0755, true);
+        }
+
+        $license = $source . '/LICENSE.txt';
+
+        if (is_file($license) && is_dir($root)) {
+            copy($license, $root . '/LICENSE.txt');
+        }
     }
 }

@@ -87,6 +87,11 @@ class PrivateAddressFilterTest extends TestCase
             'ipv4-mapped loop'   => ['::ffff:127.0.0.1'],
             'ipv4-mapped priv'   => ['::ffff:10.0.0.1'],
             'nat64 private'      => ['64:ff9b::10.0.0.1'],
+            '6to4 loopback'      => ['2002:7f00:0001::'],
+            '6to4 private'       => ['2002:0a00:0001::'],
+            '6to4 public embed'  => ['2002:5db8:d822::'],
+            'ipv4-compat loop'   => ['::127.0.0.1'],
+            'ipv4-compat priv'   => ['::10.0.0.1'],
             'not an ip'          => ['example.com'],
             'empty'              => [''],
         ];

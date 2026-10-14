@@ -208,7 +208,7 @@ final class MtaStsDiagnostics
         foreach ($records as $txt) {
             $value = ltrim((string) $txt);
 
-            if (stripos($value, 'v=tlsrptv1') !== 0) {
+            if (!self::startsWithVersion($value, 'v=tlsrptv1')) {
                 continue;
             }
 
@@ -260,6 +260,23 @@ final class MtaStsDiagnostics
     }
 
     /**
+     * Check that a TXT record begins with the exact version token and that the
+     * token ends at a field delimiter, whitespace or the record end. Without the
+     * boundary a prefix match would wrongly accept forged versions such as
+     * `v=STSv10` or `v=TLSRPTv1BAD`.
+     */
+    private static function startsWithVersion(string $value, string $token): bool
+    {
+        if (strncasecmp($value, $token, \strlen($token)) !== 0) {
+            return false;
+        }
+
+        $next = substr($value, \strlen($token), 1);
+
+        return $next === '' || $next === ';' || ctype_space($next);
+    }
+
+    /**
      * Extract the id value from the first valid `_mta-sts` TXT record, or null
      * when no `v=STSv1` record with a non-empty id is present.
      *
@@ -270,7 +287,7 @@ final class MtaStsDiagnostics
         foreach ($records as $txt) {
             $value = trim((string) $txt);
 
-            if (stripos($value, 'v=stsv1') !== 0) {
+            if (!self::startsWithVersion($value, 'v=stsv1')) {
                 continue;
             }
 

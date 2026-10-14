@@ -2,6 +2,7 @@
 <extension type="package" method="upgrade">
     <name>PKG_DMARCREPORTS</name>
     <packagename>dmarcreports</packagename>
+    <blockChildUninstall>true</blockChildUninstall>
     <author>Advans IT Solutions GmbH</author>
     <creationDate>2026-08</creationDate>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
@@ -24,10 +25,6 @@
         <file type="module" id="mod_dmarcreports" client="administrator">mod_dmarcreports.zip</file>
         <file type="plugin" id="dmarcreports" group="task">plg_task_dmarcreports.zip</file>
         <file type="plugin" id="dmarcmtasts" group="system">plg_system_dmarcmtasts.zip</file>
-    </files>
-
-    <files>
-        <filename>LICENSE.txt</filename>
     </files>
 
     <languages folder="language">

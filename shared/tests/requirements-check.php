@@ -139,6 +139,33 @@ foreach ($xmlFiles as $path) {
     $base     = dirname($path);
     $declared = [];
 
+    // A package has no <files> install list for its own files: the package
+    // adapter only installs the bundled sub-extensions and copies the manifest
+    // (plus its script) into administrator/manifests/packages/<name>/. The
+    // package script therefore installs LICENSE.txt into that folder, so verify
+    // the file ships next to the manifest with the unmodified text and that the
+    // script actually installs it, rather than demanding a <files> entry that
+    // the adapter would try to install as a sub-extension.
+    if (preg_match('/<extension\b[^>]*\btype="package"/', $content)) {
+        $license = "$base/LICENSE.txt";
+
+        if (!is_file($license)) {
+            $fail("$path is a package but $license does not exist to install");
+        } elseif ($rootHash !== '' && hash_file('sha256', $license) !== $rootHash) {
+            $fail("$license differs from the repository root LICENSE.txt "
+                . '(every extension ships the unmodified GPL-3.0 text)');
+        }
+
+        $pkgScript = is_file("$base/script.php") ? (string) file_get_contents("$base/script.php") : '';
+
+        if (!str_contains($pkgScript, 'LICENSE.txt')) {
+            $fail("$path is a package but its script.php does not install LICENSE.txt "
+                . 'into the package folder, so the installed package has no license text');
+        }
+
+        continue;
+    }
+
     preg_match_all('#<files\b([^>]*)>(.*?)</files>#s', $content, $blocks, PREG_SET_ORDER);
 
     foreach ($blocks as $block) {
