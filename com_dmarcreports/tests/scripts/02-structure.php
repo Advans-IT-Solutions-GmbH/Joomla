@@ -51,6 +51,7 @@ class StructureTest
             'MtaStsDiagnostics helper' => $this->base . '/src/Helper/MtaStsDiagnostics.php',
             'PolicyFetcher iface'  => $this->base . '/src/Helper/PolicyFetcherInterface.php',
             'HttpPolicyFetcher helper' => $this->base . '/src/Helper/HttpPolicyFetcher.php',
+            'PrivateAddressFilter helper' => $this->base . '/src/Helper/PrivateAddressFilter.php',
             'TlsRptParser helper'  => $this->base . '/src/Helper/TlsRptParser.php',
             'Dashboard view'       => $this->base . '/src/View/Dashboard/HtmlView.php',
             'Install SQL'          => $this->base . '/sql/install.mysql.utf8.sql',
