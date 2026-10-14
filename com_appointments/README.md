@@ -107,12 +107,73 @@ The component registers its own update site during installation, so later versio
   bearer credential. Subscription responses support conditional requests, private caching and
   bounded history; booking-list ICS exports respect the event type's edit permission.
 
-Still to come: conferencing integration and the Joomla privacy-request plugin.
+- **Opt-in video conferencing.** Self-hosted Jitsi, a generic room URL and a fixed room work without
+  remote API requests. Event-specific overrides, separate host/guest JWT links, persistent failure
+  diagnostics and an administrator retry action preserve a saved booking even if provisioning fails.
+
+- **Joomla privacy integration.** The bundled privacy plugin exports readable booking records and
+  removes matching records through Joomla's formal data-subject workflow, including guest invitees.
+  Email ownership is exact after Unicode case normalisation; accent-insensitive database collations
+  cannot expose another person's booking. The minimal accountability audit is excluded from exports.
 
 ## Configuration
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Video conferencing
+
+Select a provider in **Options → Video conferencing**, then set the event's location to **Video
+conference**. An event can inherit the provider, disable it, choose another installed provider,
+override the fixed-room URL or override the room prefix. Saved event overrides are independent of
+the global settings.
+
+| Setting | Behaviour |
+|---|---|
+| Provider | None by default; Jitsi, generic URL and fixed room are bundled. |
+| Jitsi base URL | Absolute HTTPS URL of the operator's Jitsi server. |
+| Room pattern | `{prefix}`, `{alias}`, and mandatory `{random}`; default `{prefix}-{alias}-{random}`. |
+| Room prefix / entropy | Default `appointment` and 24 keyed random characters; at least 16. No invitee data. |
+| Authentication | None or JWT. Configure the signing secret, application ID, audience, issuer and subject to match the Jitsi server. |
+| Token timing | Guests enter from 15 minutes before the start. Moderator lead time defaults to 30 minutes; end grace defaults to 60 minutes. |
+| Generic URL | An absolute HTTPS template containing `{room}`; no API request. |
+| Fixed room | One permanent HTTPS link. Every booking reuses it, so close or overlapping meetings can collide. Use different event overrides or avoid overlaps. |
+| Outbound adapters | Disabled by default. Only explicitly selected, installed third-party adapters can make requests after opt-in; none are bundled. |
+
+The JWT secret is operator configuration, not invitee credentials. Restrict component options and
+database backups; never log JWT-bearing join URLs. Room names use an HMAC of the booking identity,
+not the public calendar UID. Only the host's message/calendar receives the moderator URL; guests
+and subscription feeds receive guest links. Calendar attachments and a mandatory joining footer
+are retained even with customised email templates.
+
+Provisioning runs after the booking transaction commits. Failure leaves the appointment saved,
+marks the missing link and stores a short redacted diagnostic. **Bookings → Retry conference link**
+retries selected authorised bookings; success raises the calendar sequence and sends updates.
+Rescheduling replaces time-bound tokens while preserving the booking UID. Cancellation and
+erasure remove conference metadata and ask the provider to release the previous room.
+
+Third-party plugins can register a provider with the component's DI-backed `ConferenceManager`,
+available through `bootComponent('com_appointments')->getConferenceManager()`. Use `register()`;
+provider names automatically appear in the selectors. Plugins can add their configuration using
+Joomla's `onContentPrepareForm` event and their provider's `getConfigForm()` fragment. Outbound
+providers must implement the bounded adapter contract: a five-second timeout and exactly one retry.
+`MeetingRequest` contains only a keyed room seed, event title, duration and UTC start/end, never
+invitee contact information.
+
+### Formal privacy requests
+
+Installation enables **Privacy - Appointments**; updates retain its enabled state and uninstall
+removes it. Joomla's confirmed export request includes all matching primary-invitee booking
+columns, decoded answers and their current field labels. Additional guests do not gain access to
+the primary invitee's contact details by appearing in a booking.
+
+Formal removal uses the same transaction, anonymisation/deletion mode and host-only future
+cancellation notice as the signed erase link. A nonempty **Legal reason to block formal removal**
+blocks matching Joomla removal requests and explains the reason to the administrator. This option
+does not alter signed self-service erasure or automatic retention; operators must configure those
+policies consistently with their legal obligations. Accent differences never establish ownership,
+and the request's email remains authoritative even if another privacy plugin has already changed
+the associated Joomla user object.
 
 ### Scheduler, reminders and retention
 

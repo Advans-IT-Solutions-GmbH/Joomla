@@ -15,7 +15,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=eventtype&layout=edit&id=' . (int) $this->item->id); ?>"
       method="post" name="adminForm" id="eventtype-form" class="form-validate">
     <div class="row">
-        <div class="col-lg-9"><?php echo $this->form->renderFieldset('details'); ?></div>
+        <div class="col-lg-9"><?php echo $this->form->renderFieldset('details'); ?><?php echo $this->form->renderFieldset('conference'); ?></div>
         <div class="col-lg-3"><?php echo $this->form->renderFieldset('state'); ?></div>
     </div>
     <input type="hidden" name="task" value="">

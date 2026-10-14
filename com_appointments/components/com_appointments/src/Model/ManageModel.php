@@ -130,14 +130,23 @@ class ManageModel extends BaseDatabaseModel
             $messageBooking = $store->reschedule((int) $booking->id, $start, $now, $this->links(), $this->signature(), $timezone);
             $purpose = 'reschedule';
         }
+        $outcome = $action === 'erase' ? $result : $messageBooking;
+        if (!empty($outcome['_conference_cleanup_error'])) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+        }
+        if (($messageBooking['conference_state'] ?? '') === 'failed') {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
+        }
         Factory::getApplication()->setUserState($this->receiptKey(), true);
 
-        if ($messageBooking !== null) {
+        if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
                 $notification->send($messageBooking, $purpose, $now, $action === 'erase');
             } catch (NotificationException $e) {
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'error');
             }
+        } elseif (!empty($messageBooking['_conference_error'])) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');
         }
     }
 

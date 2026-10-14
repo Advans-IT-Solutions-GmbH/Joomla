@@ -16,6 +16,7 @@ use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
 use Joomla\Database\DatabaseInterface;
+use Joomla\CMS\Component\ComponentHelper;
 
 defined('_JEXEC') or die;
 
@@ -150,12 +151,15 @@ final class BookingStore
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
 
-            return $booking + ['_changed' => true];
         } catch (\Throwable $e) {
             $db->transactionRollback();
 
             throw $e;
         }
+
+        $cleanup = $state === 2 ? $this->conference()->destroy($booking) : $booking;
+
+        return $cleanup + ['_changed' => true];
     }
 
     public function reschedule(int $bookingId, \DateTimeImmutable $start, \DateTimeImmutable $now, ?SignedLink $links = null, string $signature = '', ?string $timezone = null): array
@@ -185,6 +189,7 @@ final class BookingStore
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
             }
+            $previous = $booking;
             $end = $start->modify('+' . SlotRules::fromEventType($event)->getDurationSeconds() . ' seconds');
             if (UtcTimestamp::parse($end->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) === null) {
                 throw new SlotTakenException();
@@ -195,13 +200,17 @@ final class BookingStore
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['reminder_sent_utc'] = null;
             $booking['invitee_timezone'] = $timezone ?? $booking['invitee_timezone'];
+            $booking['conference_state'] = 'not_needed';
+            foreach (['conference_provider', 'conference_url', 'conference_room', 'conference_error'] as $field) {
+                $booking[$field] = null;
+            }
             $row = (object) ['id' => $bookingId, 'start_utc' => $booking['start_utc'], 'end_utc' => $booking['end_utc'],
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'reminder_sent_utc' => null,
-                'invitee_timezone' => $booking['invitee_timezone']];
+                'invitee_timezone' => $booking['invitee_timezone'], 'conference_state' => 'not_needed',
+                'conference_provider' => null, 'conference_url' => null, 'conference_room' => null, 'conference_error' => null];
             $db->updateObject('#__appointments_bookings', $row, 'id', true);
             $db->transactionCommit();
 
-            return $booking;
         } catch (\Throwable $e) {
             $db->transactionRollback();
             if ($this->isSlotDuplicate($e)) {
@@ -209,6 +218,14 @@ final class BookingStore
             }
             throw $e;
         }
+
+        $cleared = $this->conference()->destroy($previous);
+        if (!empty($cleared['_conference_missing']) || !empty($cleared['_conference_error'])) {
+            return $cleared;
+        }
+        $provisioned = $this->conference()->provision($cleared, $now);
+
+        return $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
     }
 
     public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null): array
@@ -273,12 +290,15 @@ final class BookingStore
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
             $db->insertObject('#__appointments_audit', $audit);
             $db->transactionCommit();
-
-            return ['changed' => true, 'notification' => $notification];
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
         }
+
+        $cleanup = $this->conference()->destroy($booking);
+
+        return ['changed' => true, 'notification' => $notification,
+            '_conference_cleanup_error' => !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error'])];
     }
 
     private function bookingHost(int $bookingId, bool $missingAllowed = false): int
@@ -293,6 +313,11 @@ final class BookingStore
         }
 
         return $host;
+    }
+
+    private function conference(): ConferenceService
+    {
+        return ConferenceService::forComponent($this->db);
     }
 
     private function lockedBooking(int $bookingId): ?array

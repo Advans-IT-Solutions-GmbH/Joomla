@@ -79,6 +79,22 @@ class UninstallTest
             return $plugins && $tasks && (int) $plugins['cnt'] === 0 && (int) $tasks['cnt'] === 0
                 && !is_dir('/var/www/html/plugins/task/appointments');
         });
+        $this->test('Bundled privacy plugin and installed languages removed', function () {
+            $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='privacy'");
+            $row = $result ? $result->fetch_assoc() : null;
+            if (!$row || (int) $row['cnt'] !== 0 || is_dir('/var/www/html/plugins/privacy/appointments')) {
+                return false;
+            }
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    if (is_file('/var/www/html/administrator/language/' . $tag . '/plg_privacy_appointments.' . $suffix)) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        });
 
         $this->test('Appointment tables dropped by the uninstall SQL', function () {
             // Every table created by the install schema must be gone, not just

@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Administrator\Controller;
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
 use Advans\Component\Appointments\Administrator\Service\NotificationService;
 use Advans\Component\Appointments\Administrator\Service\NotificationException;
+use Advans\Component\Appointments\Administrator\Service\ConferenceService;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Text;
@@ -31,6 +32,50 @@ class BookingsController extends BaseController
     public function cancel(): bool
     {
         return $this->transition(2);
+    }
+
+    public function retryConference(): bool
+    {
+        $token = Session::getFormToken();
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get($token, '', 'alnum') !== '1') {
+            throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
+        }
+        $user = $this->app->getIdentity();
+        if (!$user->authorise('core.manage', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
+        $rows = [];
+        foreach ($ids as $id) {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $booking = $db->setQuery($query->select('*')->from($db->quoteName('#__appointments_bookings'))
+                ->where($db->quoteName('id') . ' = ' . $id))->loadAssoc();
+            if (!$booking || !$user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $booking['eventtype_id'])) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+            $rows[] = $booking;
+        }
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
+        $success = true;
+        foreach ($rows as $booking) {
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+            $booking = ConferenceService::forComponent($db)->provision($booking, $now, true);
+            if (empty($booking['_conference_changed']) || !empty($booking['_conference_missing']) || !empty($booking['_conference_error'])) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
+                $success = false;
+                continue;
+            }
+            try {
+                (new NotificationService($db))->send($booking, 'reschedule', $now);
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRIED'), 'message');
+            } catch (NotificationException $e) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_MAIL_FAILED'), 'error');
+                $success = false;
+            }
+        }
+
+        return $success;
     }
 
     public function erase(): bool
@@ -61,6 +106,9 @@ class BookingsController extends BaseController
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         foreach ($ids as $id) {
             $result = (new BookingStore($db))->erase($id, $now, 'admin', $delete, (int) $user->id);
+            if (!empty($result['_conference_cleanup_error'])) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+            }
             if ($result['notification'] !== null) {
                 try {
                     (new NotificationService($db))->send($result['notification'], 'erasure_notice', $now, true);
@@ -106,7 +154,13 @@ class BookingsController extends BaseController
             try {
                 $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
                 $booking = (new BookingStore($db))->changeState($id, $state, $now);
-                if ($booking['_changed']) {
+                if (!empty($booking['_conference_cleanup_error'])) {
+                    $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+                }
+                if (!empty($booking['_conference_error'])) {
+                    $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');
+                }
+                if (!empty($booking['_changed']) && empty($booking['_conference_missing']) && empty($booking['_conference_error'])) {
                     (new NotificationService($db))->send($booking, $state === 1 ? 'approved' : 'cancellation', $now);
                 }
             } catch (NotificationException $e) {

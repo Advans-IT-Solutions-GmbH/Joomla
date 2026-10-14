@@ -128,7 +128,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     public function uninstall($parent)
     {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        foreach (['task'] as $group) {
+        foreach (['task', 'privacy'] as $group) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))

@@ -15,11 +15,18 @@ $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($zone);
 ?>
 <div class="com-appointments">
     <h1><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMED_HEADING'); ?></h1>
-    <p><?php echo Text::_((int) $this->item->state === 0 ? 'COM_APPOINTMENTS_BOOKING_PENDING' : 'COM_APPOINTMENTS_BOOKING_CONFIRMED'); ?></p>
+    <p><?php echo Text::_(match ((int) $this->item->state) {
+        0 => 'COM_APPOINTMENTS_BOOKING_PENDING',
+        1 => 'COM_APPOINTMENTS_BOOKING_CONFIRMED',
+        2 => 'COM_APPOINTMENTS_MANAGE_CANCELLED',
+    }); ?></p>
     <h2><?php echo $this->escape($this->item->title); ?></h2>
     <p><?php echo $this->escape($start->format('Y-m-d H:i') . ' ' . $zone->getName()); ?></p>
     <p><?php echo $this->escape((string) $this->item->location_text); ?></p>
     <?php if ($this->item->conference_url) : ?>
         <a href="<?php echo $this->escape($this->item->conference_url); ?>" rel="noreferrer noopener"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_JOIN'); ?></a>
+    <?php endif; ?>
+    <?php if ($this->item->conference_state === 'failed') : ?>
+        <p class="alert alert-warning"><?php echo Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'); ?></p>
     <?php endif; ?>
 </div>

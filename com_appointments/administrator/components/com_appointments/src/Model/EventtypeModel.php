@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Service\HostStore;
+use Advans\Component\Appointments\Administrator\Helper\Conference\FixedRoomProvider;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -17,6 +18,19 @@ defined('_JEXEC') or die;
 
 class EventtypeModel extends AdminModel
 {
+    public function getItem($pk = null)
+    {
+        $item = parent::getItem($pk);
+        if ($item) {
+            $item->conference_params = $item->conference_params === null ? []
+                : json_decode((string) $item->conference_params, true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($item->conference_params)) {
+                throw new \RuntimeException('The event conferencing settings are invalid.');
+            }
+        }
+
+        return $item;
+    }
     public function getTable($name = 'Eventtype', $prefix = 'Administrator', $options = [])
     {
         return parent::getTable($name, $prefix, $options);
@@ -61,7 +75,33 @@ class EventtypeModel extends AdminModel
 
     public function save($data)
     {
-        unset($data['feed_token'], $data['created_utc'], $data['modified_utc'], $data['asset_id'], $data['conference_params']);
+        unset($data['feed_token'], $data['created_utc'], $data['modified_utc'], $data['asset_id']);
+        $settings = $data['conference_params'] ?? [];
+        $providers = array_merge(['', 'inherit', 'none', 'jitsi', 'generic', 'fixed'],
+            Factory::getApplication()->bootComponent('com_appointments')->getConferenceManager()->getProviderNames());
+        if (!is_array($settings) || !in_array($settings['conference_provider'] ?? '', $providers, true)) {
+            $this->setError(Text::_('COM_APPOINTMENTS_CONFERENCE_CONFIG_INVALID'));
+
+            return false;
+        }
+        $settings = array_intersect_key($settings, array_flip(['conference_provider', 'conference_fixed_url', 'conference_room_prefix']));
+        if (!preg_match('/^[A-Za-z0-9_-]{0,64}$/D', (string) ($settings['conference_room_prefix'] ?? ''))) {
+            $this->setError(Text::_('COM_APPOINTMENTS_CONFERENCE_CONFIG_INVALID'));
+
+            return false;
+        }
+        if (!empty($settings['conference_fixed_url'])) {
+            try {
+                new FixedRoomProvider($settings['conference_fixed_url']);
+            } catch (\InvalidArgumentException $e) {
+                $this->setError(Text::_('COM_APPOINTMENTS_CONFERENCE_CONFIG_INVALID'));
+
+                return false;
+            }
+        }
+        $data['conference_params'] = json_encode($settings, JSON_THROW_ON_ERROR);
+        $provider = $settings['conference_provider'] ?? '';
+        $data['conference_provider'] = in_array($provider, ['jitsi', 'generic', 'fixed'], true) ? $provider : null;
 
         if (!Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
             unset($data['rules']);

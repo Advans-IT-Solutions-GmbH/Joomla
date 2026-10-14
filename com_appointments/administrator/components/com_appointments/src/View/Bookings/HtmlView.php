@@ -34,6 +34,7 @@ class HtmlView extends BaseHtmlView
         $toolbar = Toolbar::getInstance('toolbar');
         $toolbar->standardButton('approve')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_APPROVE'))->task('bookings.approve')->listCheck(true);
         $toolbar->standardButton('cancel')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CANCEL'))->task('bookings.cancel')->listCheck(true);
+        $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
         ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
 

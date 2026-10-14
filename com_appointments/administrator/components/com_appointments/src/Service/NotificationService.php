@@ -20,6 +20,7 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
+use Joomla\CMS\Mail\Exception\MailDisabledException;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 
@@ -38,8 +39,8 @@ final class NotificationService
         }
 
         $app = Factory::getApplication();
-        // Joomla intentionally returns true when global mail delivery is disabled.
-        // A booking notification must not report that no-op as delivered.
+        // Convert global mail disablement into the component's recoverable
+        // notification failure, not a page-level Joomla exception after saving.
         if (!$app->get('mailonline', true)) {
             Log::add('Appointment notification disabled: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
             throw new NotificationException('Appointment mail delivery is disabled.');
@@ -59,6 +60,7 @@ final class NotificationService
         }
         $recipients[] = [$event['host_email'], $hostLanguage, true];
         $failures = 0;
+        $conferences = ConferenceService::forComponent($this->db);
 
         foreach ($recipients as [$address, $tag, $isHost]) {
             try {
@@ -79,7 +81,14 @@ final class NotificationService
                 $template['subject'] = strtr($template['subject'], $presentation);
                 $template['body'] = strtr($template['body'], $presentation);
                 $links = $hostOnly || $isHost ? [] : $this->links($booking);
-                $message = (new MailComposer(new IcsWriter()))->compose($template, $booking, $event, $links, $now);
+                $recipientBooking = $booking;
+                if ($isHost && !empty($booking['conference_url'])) {
+                    $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
+                }
+                $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, $links, $now);
+                if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
+                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ': ' . $recipientBooking['conference_url'];
+                }
 
                 if (!$isHost && !$hostOnly) {
                     $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ': ' . $links['reschedule_url']
@@ -101,7 +110,7 @@ final class NotificationService
                 if (!$mailer->send()) {
                     throw new NotificationException('Mail delivery was rejected.');
                 }
-            } catch (NotificationException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException $e) {
+            } catch (NotificationException | MailDisabledException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException $e) {
                 // Transport exceptions can contain recipients, URLs or SMTP credentials.
                 // Keep diagnostics deliberately limited to an internal booking id and purpose.
                 Log::add('Appointment notification failed: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
