@@ -168,12 +168,25 @@
         />
 
         <field
+            name="tlsrpt_enable"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_CONFIG_TLSRPT_ENABLE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_TLSRPT_ENABLE_DESC"
+            default="0"
+            validate="options"
+        >
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <field
             name="tlsrpt_rua"
             type="text"
             label="COM_DMARCREPORTS_CONFIG_TLSRPT_RUA_LABEL"
             description="COM_DMARCREPORTS_CONFIG_TLSRPT_RUA_DESC"
             filter="string"
-            showon="mtasts_enable:1"
+            showon="tlsrpt_enable:1"
         />
     </fieldset>
 

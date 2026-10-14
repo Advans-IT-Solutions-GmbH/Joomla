@@ -121,8 +121,8 @@ class DetailModel extends BaseDatabaseModel
         $params    = ComponentHelper::getParams('com_dmarcreports');
         $generated = MtaStsPolicy::generate($params, (string) $metrics['domain']);
 
-        if (!$generated['enabled']) {
-            return ['enabled' => false, 'generated' => $generated, 'findings' => []];
+        if (!$generated['enabled'] && !$generated['tlsrpt_enabled']) {
+            return ['enabled' => false, 'tlsrpt_enabled' => false, 'generated' => $generated, 'findings' => []];
         }
 
         $withNetwork = (int) $params->get('dns_diagnostics', 0) === 1;

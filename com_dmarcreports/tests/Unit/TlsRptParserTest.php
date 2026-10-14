@@ -93,6 +93,32 @@ class TlsRptParserTest extends TestCase
         TlsRptParser::parse($this->sample(['report-id' => '']));
     }
 
+    public function testNonStringOrganizationNameIsRejected(): void
+    {
+        // An array value must be rejected, not cast to the literal "Array".
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample(['organization-name' => ['Reporter Inc.']]));
+    }
+
+    public function testEmptyContactInfoIsRejected(): void
+    {
+        // RFC 8460 requires a non-empty contact-info string.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample(['contact-info' => '   ']));
+    }
+
+    public function testMissingContactInfoIsRejected(): void
+    {
+        $report = json_decode($this->sample(), true, 64, JSON_THROW_ON_ERROR);
+        unset($report['contact-info']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse(json_encode($report, JSON_THROW_ON_ERROR));
+    }
+
     public function testReportWithoutPoliciesIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);

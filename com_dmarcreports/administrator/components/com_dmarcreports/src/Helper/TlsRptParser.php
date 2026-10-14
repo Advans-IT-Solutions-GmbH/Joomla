@@ -104,10 +104,12 @@ final class TlsRptParser
         // untrusted values feed the deduplication fingerprint (org name and
         // report id); clipping them would alias two distinct reports that only
         // differ past the column width, dropping the second as a duplicate.
-        // Mirror {@see DmarcParser}, which rejects rather than truncates.
-        $orgName     = trim((string) ($data['organization-name'] ?? ''));
-        $contactInfo = trim((string) ($data['contact-info'] ?? ''));
-        $reportId    = trim((string) ($data['report-id'] ?? ''));
+        // Mirror {@see DmarcParser}, which rejects rather than truncates. RFC
+        // 8460 requires each as a non-empty JSON string, so a missing key, a
+        // non-string value or an empty string is rejected before casting.
+        $orgName     = self::requiredString($data, 'organization-name');
+        $contactInfo = self::requiredString($data, 'contact-info');
+        $reportId    = self::requiredString($data, 'report-id');
 
         foreach (['organization-name' => $orgName, 'contact-info' => $contactInfo, 'report-id' => $reportId] as $label => $value) {
             if (self::length($value) > self::MAX_METADATA_LENGTH) {
@@ -126,10 +128,6 @@ final class TlsRptParser
             'date_end'     => $end,
             'policies'     => [],
         ];
-
-        if ($report['report_id'] === '') {
-            throw new \InvalidArgumentException('The TLS-RPT report is missing a report id.', self::ERROR_NOT_REPORT);
-        }
 
         // Reject an implausible date range before storage, matching the DMARC
         // parser's integrity checks: a missing or unparseable begin collapses to
@@ -311,6 +309,37 @@ final class TlsRptParser
         }
 
         return self::count($source[$key]);
+    }
+
+    /**
+     * Read a required identity string (organization-name, contact-info,
+     * report-id) from the untrusted report root. RFC 8460 requires each as a
+     * JSON string, so a missing key, a non-string value (an array, object,
+     * number or boolean) or an empty/whitespace-only string is rejected rather
+     * than coerced: a bare (string) cast would silently turn an array into the
+     * literal "Array" and accept a missing field as "", storing a bogus value
+     * under the report's permanent fingerprint.
+     *
+     * @param   array<string, mixed>  $data
+     *
+     * @throws  \InvalidArgumentException  When the field is missing, not a
+     *                                     string or empty.
+     */
+    private static function requiredString(array $data, string $key): string
+    {
+        $value = $data[$key] ?? null;
+
+        if (!\is_string($value)) {
+            throw new \InvalidArgumentException('The TLS-RPT report ' . $key . ' must be a string.', self::ERROR_NOT_REPORT);
+        }
+
+        $value = trim($value);
+
+        if ($value === '') {
+            throw new \InvalidArgumentException('The TLS-RPT report ' . $key . ' is missing.', self::ERROR_NOT_REPORT);
+        }
+
+        return $value;
     }
 
     /**

@@ -133,11 +133,12 @@ defined('_JEXEC') or die;
         <div class="card mb-4">
             <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_HEADING'); ?></h3></div>
             <div class="card-body">
-                <?php if (empty($this->mtasts['enabled'])) : ?>
+                <?php if (empty($this->mtasts['enabled']) && empty($this->mtasts['tlsrpt_enabled'])) : ?>
                     <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_DISABLED'); ?></div>
                 <?php else : $g = $this->mtasts['generated']; ?>
                 <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_MANUAL_STEP'); ?></p>
                 <dl class="row mb-0">
+                    <?php if (!empty($this->mtasts['enabled'])) : ?>
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_MODE'); ?></dt>
                     <dd class="col-sm-9"><code><?php echo htmlspecialchars((string) $g['mode']); ?></code></dd>
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_POLICY_URL'); ?></dt>
@@ -149,7 +150,8 @@ defined('_JEXEC') or die;
                             &rarr; <code><?php echo htmlspecialchars((string) $g['sts_record']); ?></code>
                         <?php endif; ?>
                     </dd>
-                    <?php if (!empty($g['tlsrpt_record'])) : ?>
+                    <?php endif; ?>
+                    <?php if (!empty($this->mtasts['tlsrpt_enabled']) && !empty($g['tlsrpt_record'])) : ?>
                     <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_TLSRPT_RECORD'); ?></dt>
                     <dd class="col-sm-9">
                         <code><?php echo htmlspecialchars((string) $g['tlsrpt_record_host']); ?></code>

@@ -34,7 +34,12 @@ recommended way to install the whole DMARC solution together.
 
 1. Create a scheduled task: System → Manage → Scheduled Tasks → New → **DMARC Reports - Automatic ingestion**.
 2. Set the execution rule (for example every 30 minutes).
-3. Optionally enable *Auto-create domains* in the task's parameters.
+3. Optionally enable automatic domain creation. This is a privileged action, so it only takes
+   effect when **both** switches are on: the component option
+   *Components → DMARC Reports → Options → Auto-create monitored domains* (`task_auto_create`,
+   which requires administrator rights to change) **and** the task's own *Auto-create domains*
+   parameter. If only the task parameter is enabled, the run logs a warning and creates no
+   domains; it keeps ingesting into the domains that already exist.
 
 ### Scheduler trigger — important
 

@@ -140,7 +140,7 @@ final class MtaStsPolicy
      * @param   string    $domain  The receiving domain (canonical, no trailing dot).
      *
      * @return  array{
-     *     enabled:bool, domain:string, mode:string, max_age:int, mx:string[],
+     *     enabled:bool, tlsrpt_enabled:bool, domain:string, mode:string, max_age:int, mx:string[],
      *     body:string, id:string,
      *     policy_host:string, well_known_url:string,
      *     sts_record_host:string, sts_record:string,
@@ -153,6 +153,7 @@ final class MtaStsPolicy
     {
         $domain  = strtolower(trim($domain, " \t\n\r\0\x0B."));
         $enabled = (int) $params->get('mtasts_enable', 0) === 1;
+        $tlsRpt  = (int) $params->get('tlsrpt_enable', 0) === 1;
         $mode    = self::normalizeMode((string) $params->get('mtasts_mode', self::MODE_TESTING));
         $maxAge  = (int) $params->get('mtasts_max_age', 604800);
         $mx      = self::normalizeMxList(self::splitLines((string) $params->get('mtasts_mx', '')));
@@ -163,6 +164,7 @@ final class MtaStsPolicy
 
         return [
             'enabled'            => $enabled,
+            'tlsrpt_enabled'     => $tlsRpt,
             'domain'             => $domain,
             'mode'               => $mode,
             'max_age'            => max(86400, min(31557600, $maxAge)),

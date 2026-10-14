@@ -53,52 +53,89 @@ final class MtaStsDiagnostics
      *                                              opt-in that gates DNS
      *                                              diagnostics.
      *
-     * @return  array{enabled:bool, generated:array<string,mixed>, findings:array<int, array{code:string, severity:int, params:array<int,mixed>}>}
+     * @return  array{enabled:bool, tlsrpt_enabled:bool, generated:array<string,mixed>, findings:array<int, array{code:string, severity:int, params:array<int,mixed>}>}
      */
     public function inspect(array $generated, bool $withNetwork): array
     {
-        $result = ['enabled' => (bool) ($generated['enabled'] ?? false), 'generated' => $generated, 'findings' => []];
+        $mtaStsEnabled = (bool) ($generated['enabled'] ?? false);
+        $tlsRptEnabled = (bool) ($generated['tlsrpt_enabled'] ?? false);
 
-        if (!$result['enabled']) {
-            return $result;
+        $result = [
+            'enabled'        => $mtaStsEnabled,
+            'tlsrpt_enabled' => $tlsRptEnabled,
+            'generated'      => $generated,
+            'findings'       => [],
+        ];
+
+        // MTA-STS policy hosting and TLS-RPT reporting are independent switches:
+        // either can be published without the other, so each pipeline runs only
+        // when its own switch is on.
+        if ($mtaStsEnabled) {
+            $result['findings'] = array_merge($result['findings'], $this->inspectMtaSts($generated, $withNetwork));
         }
 
+        if ($tlsRptEnabled) {
+            $result['findings'] = array_merge($result['findings'], $this->inspectTlsRpt($generated, $withNetwork));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Produce the MTA-STS (`_mta-sts` TXT + hosted policy) findings for one
+     * domain.
+     *
+     * @param   array<string, mixed>  $generated
+     *
+     * @return  array<int, array{code:string, severity:int, params:array<int,mixed>}>
+     */
+    private function inspectMtaSts(array $generated, bool $withNetwork): array
+    {
         $domain       = (string) ($generated['domain'] ?? '');
         $mx           = (array) ($generated['mx'] ?? []);
         $generatedId  = (string) ($generated['id'] ?? '');
         $stsHost      = (string) ($generated['sts_record_host'] ?? '');
         $stsRecord    = (string) ($generated['sts_record'] ?? '');
         $wellKnownUrl = (string) ($generated['well_known_url'] ?? '');
-        $tlsRptHost   = (string) ($generated['tlsrpt_record_host'] ?? '');
-        $tlsRptRecord = (string) ($generated['tlsrpt_record'] ?? '');
 
         // Without at least one MX host the component cannot build a policy body,
         // so there is nothing to publish or validate yet.
         if ($mx === [] || $generatedId === '') {
-            $result['findings'][] = $this->finding('mtasts_no_mx', 2, [$domain]);
-
-            return $result;
+            return [$this->finding('mtasts_no_mx', 2, [$domain])];
         }
 
         if (!$withNetwork) {
             // Lookups are opt-in. Still tell the administrator exactly what to
             // publish, at a softer severity because drift cannot be confirmed.
-            $result['findings'][] = $this->finding('mtasts_publish', 1, [$stsHost, $stsRecord, $wellKnownUrl]);
-
-            if ($tlsRptRecord !== '') {
-                $result['findings'][] = $this->finding('tlsrpt_publish', 1, [$tlsRptHost, $tlsRptRecord]);
-            }
-
-            return $result;
+            return [$this->finding('mtasts_publish', 1, [$stsHost, $stsRecord, $wellKnownUrl])];
         }
 
-        $result['findings'] = array_merge(
-            $result['findings'],
-            $this->inspectStsRecord($generated),
-            $this->inspectTlsRptRecord($tlsRptHost, $tlsRptRecord)
-        );
+        return $this->inspectStsRecord($generated);
+    }
 
-        return $result;
+    /**
+     * Produce the TLS-RPT (`_smtp._tls` TXT) findings for one domain.
+     *
+     * @param   array<string, mixed>  $generated
+     *
+     * @return  array<int, array{code:string, severity:int, params:array<int,mixed>}>
+     */
+    private function inspectTlsRpt(array $generated, bool $withNetwork): array
+    {
+        $tlsRptHost   = (string) ($generated['tlsrpt_record_host'] ?? '');
+        $tlsRptRecord = (string) ($generated['tlsrpt_record'] ?? '');
+
+        // TLS-RPT reporting is enabled but no reporting address is configured,
+        // so there is no record to publish yet.
+        if ($tlsRptRecord === '' || $tlsRptHost === '') {
+            return [];
+        }
+
+        if (!$withNetwork) {
+            return [$this->finding('tlsrpt_publish', 1, [$tlsRptHost, $tlsRptRecord])];
+        }
+
+        return $this->inspectTlsRptRecord($tlsRptHost, $tlsRptRecord);
     }
 
     /**

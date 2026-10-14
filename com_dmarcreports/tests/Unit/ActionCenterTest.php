@@ -673,4 +673,37 @@ class ActionCenterTest extends TestCase
         // Share is measured over the window total (25 / 500 = 5%), not lifetime.
         $this->assertSame(5.0, $wouldBe['params'][1]);
     }
+
+    public function testMtaStsFindingsFoldIntoTheDashboardActionCenter(): void
+    {
+        // The dashboard Action Center (and the dashboard module that consumes it)
+        // must surface the MTA-STS/TLS-RPT publish guidance, not only the
+        // drill-down. DashboardModel::domainFindings() passes the self-tagged
+        // "mtasts" findings as the third argument, exactly as the drill-down
+        // does, so they must be folded in, tagged to the domain and category.
+        $items = ActionCenter::generate(
+            [
+                'domain_id'      => 7,
+                'domain'         => 'example.org',
+                'total'          => 1000,
+                'current_policy' => 'reject',
+                'dmarc_pass'     => 1000,
+            ],
+            self::CONFIG,
+            [
+                ['code' => 'mtasts_publish', 'severity' => 2, 'category' => 'mtasts', 'params' => ['example.org']],
+                ['code' => 'tlsrpt_publish', 'severity' => 1, 'category' => 'mtasts', 'params' => ['example.org']],
+            ]
+        );
+
+        $mtasts = $this->find($items, 'mtasts_publish');
+        $this->assertNotNull($mtasts);
+        $this->assertSame('mtasts', $mtasts['category']);
+        $this->assertSame('mtasts_publish:7', $mtasts['action_key']);
+
+        $tlsrpt = $this->find($items, 'tlsrpt_publish');
+        $this->assertNotNull($tlsrpt);
+        $this->assertSame('mtasts', $tlsrpt['category']);
+        $this->assertSame('tlsrpt_publish:7', $tlsrpt['action_key']);
+    }
 }

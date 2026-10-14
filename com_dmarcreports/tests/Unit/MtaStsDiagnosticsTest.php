@@ -63,6 +63,7 @@ class MtaStsDiagnosticsTest extends TestCase
     {
         return array_merge([
             'enabled'            => true,
+            'tlsrpt_enabled'     => true,
             'domain'             => 'example.org',
             'mode'               => 'enforce',
             'max_age'            => 604800,
@@ -98,10 +99,42 @@ class MtaStsDiagnosticsTest extends TestCase
     public function testDisabledReturnsNoFindings(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
-        $result      = $diagnostics->inspect($this->generated(['enabled' => false]), true);
+        $result      = $diagnostics->inspect($this->generated(['enabled' => false, 'tlsrpt_enabled' => false]), true);
 
         $this->assertFalse($result['enabled']);
+        $this->assertFalse($result['tlsrpt_enabled']);
         $this->assertSame([], $result['findings']);
+    }
+
+    public function testTlsRptEnabledWithoutMtaStsStillInspects(): void
+    {
+        // TLS-RPT reporting must be configurable and monitored on its own, so a
+        // domain with MTA-STS off but TLS-RPT on still receives the _smtp._tls
+        // publish guidance and no MTA-STS findings.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $result      = $diagnostics->inspect(
+            $this->generated(['enabled' => false, 'tlsrpt_enabled' => true]),
+            false
+        );
+        $codes       = $this->codes($result);
+
+        $this->assertFalse($result['enabled']);
+        $this->assertTrue($result['tlsrpt_enabled']);
+        $this->assertContains('tlsrpt_publish', $codes);
+        $this->assertNotContains('mtasts_publish', $codes);
+    }
+
+    public function testMtaStsEnabledWithoutTlsRptEmitsNoTlsRptFinding(): void
+    {
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $result      = $diagnostics->inspect(
+            $this->generated(['enabled' => true, 'tlsrpt_enabled' => false]),
+            false
+        );
+        $codes       = $this->codes($result);
+
+        $this->assertContains('mtasts_publish', $codes);
+        $this->assertNotContains('tlsrpt_publish', $codes);
     }
 
     public function testMissingMxIsReported(): void
