@@ -11,9 +11,12 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
+use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Joomla\Filesystem\File;
+use Joomla\Filesystem\Folder;
 
 class Com_appointmentsInstallerScript extends InstallerScript
 {
@@ -86,6 +89,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        $this->seedMailTemplates($parent);
+        $this->installBundledPlugins($parent);
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -118,6 +123,77 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    public function uninstall($parent)
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        foreach (['task', 'privacy'] as $group) {
+            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('appointments'));
+            $id = (int) $db->setQuery($query)->loadResult();
+            if ($id > 0) {
+                foreach (['#__schemas', '#__extensions'] as $table) {
+                    $db->setQuery($this->createDbQuery($db)->delete($db->quoteName($table))
+                        ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
+                }
+            }
+            $folder = JPATH_PLUGINS . '/' . $group . '/appointments';
+            if (is_dir($folder) && !Folder::delete($folder)) {
+                throw new \RuntimeException('The bundled appointments plugin could not be removed.');
+            }
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/plg_' . $group . '_appointments.' . $suffix;
+                    if (is_file($file) && !File::delete($file)) {
+                        throw new \RuntimeException('The bundled appointments plugin language could not be removed.');
+                    }
+                }
+            }
+        }
+        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
+            ->where($db->quoteName('type') . ' IN (' . $db->quote('plg_task_appointments.reminders')
+                . ',' . $db->quote('plg_task_appointments.retention') . ')'))->execute();
+
+        return true;
+    }
+
+    private function installBundledPlugins($parent): void
+    {
+        $source = $parent->getParent()->getPath('source');
+        $manifest = $parent->getManifest();
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        foreach ($manifest->plugins->plugin as $entry) {
+            $group = (string) $entry['group'];
+            $element = (string) $entry['element'];
+            $folder = (string) $entry['folder'];
+            if (!in_array($group, ['task', 'privacy'], true) || $element !== 'appointments'
+                || $folder !== 'plugins/' . $group . '/appointments'
+                || !is_file($source . '/' . $folder . '/appointments.xml')) {
+                throw new \RuntimeException('The bundled appointments plugin package is invalid.');
+            }
+            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                ->where($db->quoteName('element') . ' = ' . $db->quote($element));
+            $existed = (int) $db->setQuery($query)->loadResult() > 0;
+            $installer = new Installer();
+            $installer->setDatabase($db);
+            if (!$installer->install($source . '/' . $folder)) {
+                throw new \RuntimeException('The bundled appointments plugin could not be installed.');
+            }
+            if (!$existed) {
+                $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__extensions'))
+                    ->set($db->quoteName('enabled') . ' = 1')
+                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                    ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
+                    ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
+            }
+        }
     }
 
     /**
@@ -175,6 +251,41 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db->execute();
 
         $this->linkUpdateSite($db, (int) $db->insertid(), $extensionId);
+    }
+
+    private function seedMailTemplates($parent): void
+    {
+        $source = $parent->getParent()->getPath('source');
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/DefaultTemplates.php';
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            $file = $source . '/administrator/language/' . $tag . '/com_appointments.ini';
+            // Recipient languages must work even without the corresponding Joomla language pack.
+            $localLanguage = JPATH_ADMINISTRATOR . '/components/com_appointments/language/' . $tag;
+            if (!Folder::create($localLanguage) || !File::copy($file, $localLanguage . '/com_appointments.ini')) {
+                throw new \RuntimeException('The appointment notification language could not be installed.');
+            }
+            $strings = parse_ini_file($file, false, INI_SCANNER_RAW);
+
+            if (!is_array($strings)) {
+                throw new \RuntimeException('The appointment template language source is unreadable.');
+            }
+
+            foreach (\Advans\Component\Appointments\Administrator\Helper\DefaultTemplates::KEYS as $purpose => [$subjectKey, $bodyKey]) {
+                if (!isset($strings[$subjectKey], $strings[$bodyKey])) {
+                    throw new \RuntimeException('A required appointment template translation is missing.');
+                }
+
+                $subject = $strings[$subjectKey];
+                $body = str_replace('\\n', "\n", $strings[$bodyKey]);
+                $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_templates')
+                    . ' (' . implode(',', $db->quoteName(['eventtype_id', 'purpose', 'language', 'subject', 'body', 'published'])) . ')'
+                    . ' VALUES (0,' . $db->quote($purpose) . ',' . $db->quote($tag) . ',' . $db->quote($subject) . ',' . $db->quote($body) . ',1)'
+                    . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('id') . ' = ' . $db->quoteName('id');
+                $db->setQuery($sql)->execute();
+            }
+        }
     }
 
     /**

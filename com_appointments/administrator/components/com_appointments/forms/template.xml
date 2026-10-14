@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fieldset name="details">
+        <field name="id" type="hidden" filter="integer" />
+        <field name="eventtype_id" type="Eventscope" sitewide="true" label="COM_APPOINTMENTS_TEMPLATE_SCOPE" description="COM_APPOINTMENTS_TEMPLATE_SCOPE_DESC" required="true" filter="integer">
+            <option value="">JOPTION_SELECT</option>
+        </field>
+        <field name="purpose" type="list" label="COM_APPOINTMENTS_TEMPLATE_PURPOSE" required="true">
+            <option value="">JOPTION_SELECT</option>
+            <option value="confirmation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CONFIRMATION</option>
+            <option value="pending">COM_APPOINTMENTS_TEMPLATE_PURPOSE_PENDING</option>
+            <option value="approved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_APPROVED</option>
+            <option value="reschedule">COM_APPOINTMENTS_TEMPLATE_PURPOSE_RESCHEDULE</option>
+            <option value="cancellation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CANCELLATION</option>
+            <option value="reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_REMINDER</option>
+            <option value="host_notice">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_NOTICE</option>
+            <option value="erasure_notice">COM_APPOINTMENTS_TEMPLATE_PURPOSE_ERASURE_NOTICE</option>
+        </field>
+        <field name="language" type="text" label="JFIELD_LANGUAGE_LABEL" description="COM_APPOINTMENTS_TEMPLATE_LANGUAGE_DESC" required="true" maxlength="7" />
+        <field name="subject" type="text" label="COM_APPOINTMENTS_TEMPLATE_SUBJECT" required="true" maxlength="255" filter="raw" />
+        <field name="body" type="textarea" label="COM_APPOINTMENTS_TEMPLATE_BODY" description="COM_APPOINTMENTS_TEMPLATE_BODY_DESC" required="true" rows="18" filter="raw" />
+    </fieldset>
+    <fieldset name="state">
+        <field name="published" type="list" label="JSTATUS" default="1" filter="integer">
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+    </fieldset>
+</form>

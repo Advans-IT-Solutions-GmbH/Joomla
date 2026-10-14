@@ -14,6 +14,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Extension\BootableExtensionInterface;
 use Joomla\CMS\Extension\MVCComponent;
 use Joomla\CMS\HTML\HTMLRegistryAwareTrait;
+use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceManager;
 use Psr\Container\ContainerInterface;
 
 /**
@@ -26,6 +27,12 @@ use Psr\Container\ContainerInterface;
 class AppointmentsComponent extends MVCComponent implements BootableExtensionInterface
 {
     use HTMLRegistryAwareTrait;
+    private ConferenceManager $conferenceManager;
+
+    public function getConferenceManager(): ConferenceManager
+    {
+        return $this->conferenceManager;
+    }
 
     /**
      * Booting the extension.
@@ -38,6 +45,6 @@ class AppointmentsComponent extends MVCComponent implements BootableExtensionInt
      */
     public function boot(ContainerInterface $container)
     {
-        // No boot-time services required.
+        $this->conferenceManager = $container->get(ConferenceManager::class);
     }
 }

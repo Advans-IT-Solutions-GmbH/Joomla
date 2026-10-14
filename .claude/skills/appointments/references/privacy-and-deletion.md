@@ -132,7 +132,10 @@ component gives the operator the mechanism; the legal text is theirs.
 
 ## What the component never does
 
-- It never stores a password, a token belonging to the invitee, or any credential.
+- It never stores an invitee's account password, login token or external account credential.
+  Opt-in Jitsi JWT authentication uses an operator-configured signing secret and a room-scoped
+  guest token in the stored joining URL, as specified in `references/conferencing.md`. These
+  are conference access capabilities, not invitee account credentials; never log joining URLs.
 - It never sends personal data to a third party. The conference adapters receive a room name and a
   start time, never the invitee's name, e-mail or phone number, unless the operator explicitly
   enables that for an adapter that needs it — and the setting states what is sent.

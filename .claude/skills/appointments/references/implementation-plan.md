@@ -129,9 +129,11 @@ the Copilot definition of done in `AGENTS.md` is met.
 
 ## Order of pull requests
 
-One pull request per stage, or group stages 1 to 3 and 4 to 6 if the reviewer prefers fewer. No
-stage touches shared infrastructure, so every pull request is confined to `com_appointments/`, the
-component's own workflow files and the instruction files listed below.
+Stages 1 and 2 were delivered separately. Stages 3–10 are delivered together in one feature
+branch and one pull request, in the logical order above, without an intermediate merge.
+Every stage retains its feature, test and acceptance requirements. No stage touches shared
+infrastructure, so the pull request is confined to `com_appointments/`, the component's own
+workflow files and the directly related repository documentation and instruction files below.
 
 Never merge your own pull request. Never edit `VERSION`, the manifest `<version>` or
 `updates/update.xml` by hand.

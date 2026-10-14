@@ -10,6 +10,8 @@
 defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Administrator\Extension\AppointmentsComponent;
+use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceManager;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Dispatcher\ComponentDispatcherFactoryInterface;
 use Joomla\CMS\Extension\ComponentInterface;
 use Joomla\CMS\Extension\Service\Provider\ComponentDispatcherFactory;
@@ -38,6 +40,9 @@ return new class implements ServiceProviderInterface {
     {
         $container->registerServiceProvider(new ComponentDispatcherFactory('\\Advans\\Component\\Appointments'));
         $container->registerServiceProvider(new MVCFactory('\\Advans\\Component\\Appointments'));
+        $container->share(ConferenceManager::class, static fn () => new ConferenceManager(
+            [], (bool) ComponentHelper::getParams('com_appointments')->get('conference_allow_outbound', false)
+        ));
 
         $container->set(
             ComponentInterface::class,

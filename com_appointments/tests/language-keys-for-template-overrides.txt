@@ -1,0 +1,4 @@
+# Joomla's inherited administrator list controller assembles these status keys.
+COM_APPOINTMENTS_N_ITEMS_PUBLISHED
+COM_APPOINTMENTS_N_ITEMS_UNPUBLISHED
+COM_APPOINTMENTS_N_ITEMS_DELETED

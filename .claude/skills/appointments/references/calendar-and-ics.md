@@ -213,8 +213,10 @@ The feed URL is a bearer secret: anyone holding it sees the bookings. Treat it a
 - Rotatable from the administrator interface, per feed. Rotation invalidates the old URL at once and
   the interface says so before rotating.
 - `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store` on the response.
-- Rate limited per IP. A wrong token returns `404`, not `403`, and takes the same time as a correct
-  one, so the endpoint cannot be probed.
+- Rate limited per IP. Authentication compares fixed-length tokens in constant time; wrong,
+  malformed and unknown credentials return the same generic `404`, not `403`. Authenticate before
+  loading bookings or generating the calendar, so unauthenticated requests cannot trigger
+  calendar-sized database/CPU work. Only authenticated requests perform representation generation.
 - The URL is never written into an e-mail, never logged, and never shown in a view that a
   lower-privileged user can reach.
 - The administrator interface states plainly that the link is a password and must not be shared.

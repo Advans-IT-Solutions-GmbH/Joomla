@@ -32,6 +32,13 @@ class InstallationTest
             $row = $result ? $result->fetch_assoc() : null;
             return $row && $row['enabled'] == 1;
         });
+        $this->test('Bundled Scheduler plugin and its license are installed', function () {
+            $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'");
+            $row = $result ? $result->fetch_assoc() : null;
+            return $row && (int) $row['enabled'] === 1
+                && is_file('/var/www/html/plugins/task/appointments/services/provider.php')
+                && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
+        });
 
         $this->test('Admin menu entry exists', function () {
             $result = $this->db->query("SELECT id FROM {$this->dbPrefix}menu WHERE link LIKE '%com_appointments%' AND client_id = 1");
@@ -50,6 +57,16 @@ class InstallationTest
 
         $this->test('Administrator entry service exists', function () {
             return file_exists('/var/www/html/administrator/components/com_appointments/services/provider.php');
+        });
+
+        $this->test('Administrator options form and safe defaults are installed', function () {
+            $config = simplexml_load_file('/var/www/html/administrator/components/com_appointments/config.xml');
+
+            return $config !== false && !isset($config->fields)
+                && (string) $config->xpath('//field[@name="erase_mode"]')[0]['default'] === 'anonymise'
+                && (string) $config->xpath('//field[@name="retention_days"]')[0]['default'] === '365'
+                && (string) $config->xpath('//field[@name="audit_retention_years"]')[0]['default'] === '3'
+                && (string) $config->xpath('//field[@name="conference_provider"]')[0]['default'] === 'none';
         });
 
         $this->test('Site entry service exists', function () {

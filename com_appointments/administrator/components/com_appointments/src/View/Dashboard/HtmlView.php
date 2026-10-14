@@ -28,10 +28,12 @@ class HtmlView extends BaseHtmlView
      * @var  array{eventtypes:int, bookings:int}
      */
     protected $counts = ['eventtypes' => 0, 'bookings' => 0];
+    protected $eventCounts = [];
 
     public function display($tpl = null)
     {
         $this->counts = $this->getModel()->getCounts();
+        $this->eventCounts = $this->getModel()->getEventCounts();
 
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_DASHBOARD_TITLE'), 'calendar');
 

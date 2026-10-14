@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<metadata>
+    <layout title="COM_APPOINTMENTS_MENU_EVENTTYPE" option="COM_APPOINTMENTS_MENU_EVENTTYPE">
+        <message><![CDATA[COM_APPOINTMENTS_MENU_EVENTTYPE_DESC]]></message>
+    </layout>
+    <fields name="request"><fieldset name="request">
+        <field name="id" type="sql" label="COM_APPOINTMENTS_MENU_EVENTTYPE" required="true" filter="integer" query="SELECT id, title FROM #__appointments_eventtypes ORDER BY title" key_field="id" value_field="title"><option value="">JOPTION_SELECT</option></field>
+    </fieldset></fields>
+</metadata>
