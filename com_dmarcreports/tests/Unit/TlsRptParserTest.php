@@ -267,4 +267,25 @@ class TlsRptParserTest extends TestCase
         $this->assertSame(50, $report['policies'][1]['success_count']);
         $this->assertSame('validation-failure', $report['policies'][1]['failures'][0]['result_type']);
     }
+
+    public function testPolicyWithoutValidDomainIsRejected(): void
+    {
+        // RFC 8460 requires every policy object to carry a valid policy-domain.
+        // A mixed report with one valid and one invalid domain must be rejected
+        // so the invalid policy is never stored under the valid report domain.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
+                ],
+                [
+                    'policy'  => ['policy-type' => 'tlsa', 'policy-domain' => 'https://not-a-domain'],
+                    'summary' => ['total-successful-session-count' => 5, 'total-failure-session-count' => 0],
+                ],
+            ],
+        ]));
+    }
 }

@@ -248,15 +248,21 @@ final class Metrics
      */
     public function tlsRptSummary(int $domainId): array
     {
+        // Reports and session totals are derived from the per-policy rows, each
+        // of which carries its own resolved domain. RFC 8460 lets one report
+        // bundle policies for several policy domains, so counting from the
+        // policy rows (rather than the single report-level domain) attributes
+        // every policy to its own domain's drill-down instead of only the
+        // report's primary domain.
         $summary = $this->query()
             ->select(
                 [
-                    'COUNT(*) AS reports',
+                    'COUNT(DISTINCT ' . $this->db->quoteName('report_id') . ') AS reports',
                     'COALESCE(SUM(' . $this->db->quoteName('success_count') . '), 0) AS success',
                     'COALESCE(SUM(' . $this->db->quoteName('failure_count') . '), 0) AS failure',
                 ]
             )
-            ->from($this->db->quoteName('#__dmarc_tlsrpt_reports'))
+            ->from($this->db->quoteName('#__dmarc_tlsrpt_policies'))
             ->where($this->db->quoteName('domain_id') . ' = :domainId')
             ->bind(':domainId', $domainId, ParameterType::INTEGER);
 

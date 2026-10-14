@@ -86,40 +86,50 @@ final class TlsRptIngestor
             return;
         }
 
-        $policyDomain = $this->firstPolicyDomain($report);
-
-        if ($forcedDomainId > 0) {
+        // Resolve each policy block to its own monitored domain. RFC 8460 lets
+        // one report bundle policies for several policy domains, so a single
+        // report-wide domain id would misattribute every secondary domain's
+        // sessions to the first one and hide them from their own drill-down.
+        if ($forcedDomainId > 0 && !$this->boundDomainMatchesReport($forcedDomainId, $report)) {
             // A mailbox bound to one monitored domain still delivers untrusted
             // content: a TLS-RPT report whose policy domain belongs to an
             // unrelated tenant would otherwise be attributed to this source and
             // skew its TLS metrics. Only honour the binding when every policy
             // domain shares an organizational domain with the bound one, exactly
             // as the DMARC path validates at Ingestor::boundDomainMatchesPolicy().
-            if (!$this->boundDomainMatchesReport($forcedDomainId, $report)) {
-                $summary['skipped']++;
-
-                return;
-            }
-
-            $domainId = $forcedDomainId;
-        } else {
-            $domainId = DomainRegistry::resolve($this->db, $policyDomain, $this->allowAutoCreate);
-        }
-
-        if ($domainId <= 0) {
-            // No usable policy domain, or an operator without core.create may not
-            // auto-register it. Skip rather than storing an orphan report.
             $summary['skipped']++;
 
             return;
         }
 
-        [$successCount, $failureCount] = $this->totals($report);
+        $policyDomainIds = $this->resolvePolicyDomains($report, $forcedDomainId);
+
+        $primaryDomainId = 0;
+        $primaryDomain   = '';
+
+        foreach ($report['policies'] as $index => $policy) {
+            if (($policyDomainIds[$index] ?? 0) > 0) {
+                $primaryDomainId = (int) $policyDomainIds[$index];
+                $primaryDomain   = (string) $policy['policy_domain'];
+                break;
+            }
+        }
+
+        if ($primaryDomainId <= 0) {
+            // No policy carried a usable domain, or an operator without
+            // core.create may not auto-register any of them. Skip rather than
+            // storing an orphan report.
+            $summary['skipped']++;
+
+            return;
+        }
+
+        [$successCount, $failureCount] = $this->totals($report, $policyDomainIds);
 
         $this->db->transactionStart();
 
         try {
-            if (!DomainLock::lock($this->db, $domainId)) {
+            if (!DomainLock::lock($this->db, $primaryDomainId)) {
                 $this->db->transactionRollback();
                 $summary['skipped']++;
 
@@ -133,18 +143,30 @@ final class TlsRptIngestor
                 $effectiveSourceId = 0;
             }
 
-            $reportId = $this->insertReport($report, $hash, $domainId, $effectiveSourceId, $policyDomain, $successCount, $failureCount);
+            $reportId = $this->insertReport($report, $hash, $primaryDomainId, $effectiveSourceId, $primaryDomain, $successCount, $failureCount);
 
             // Persist one row per policy block so a report bundling several
             // policies (for example an STS and a TLSA/no-policy result) keeps
             // each policy's type and its own success/failure counts, and link
             // every failure detail to the policy it was reported under rather
-            // than only to the aggregate report row.
-            foreach ($report['policies'] as $policy) {
-                $policyId = $this->insertPolicy($policy, $reportId, $domainId);
+            // than only to the aggregate report row. Each policy is filed under
+            // its own resolved domain so a multi-domain report drills down
+            // correctly for every tenant it covers.
+            foreach ($report['policies'] as $index => $policy) {
+                $policyDomainId = (int) ($policyDomainIds[$index] ?? 0);
+
+                if ($policyDomainId <= 0) {
+                    // This policy's domain is not monitored and could not be
+                    // auto-created; skip its rows rather than filing them under
+                    // an unrelated domain. The report is still stored for the
+                    // domains that did resolve.
+                    continue;
+                }
+
+                $policyId = $this->insertPolicy($policy, $reportId, $policyDomainId);
 
                 foreach ($policy['failures'] as $failure) {
-                    $this->insertFailure($failure, $reportId, $policyId, $domainId, (string) $policy['policy_domain']);
+                    $this->insertFailure($failure, $reportId, $policyId, $policyDomainId, (string) $policy['policy_domain']);
                 }
             }
 
@@ -176,17 +198,36 @@ final class TlsRptIngestor
     }
 
     /**
+     * Resolve each policy block to its monitored-domain id, keyed parallel to
+     * $report['policies']. A bound mailbox attributes every policy to the bound
+     * tenant (already validated to share its organizational domain); otherwise
+     * each policy's own domain is resolved and, where permitted, auto-created.
+     * An unresolved or empty domain yields 0 so the caller skips that policy's
+     * rows rather than filing them under an unrelated domain.
+     *
      * @param   array<string, mixed>  $report
+     *
+     * @return  array<int, int>
      */
-    private function firstPolicyDomain(array $report): string
+    private function resolvePolicyDomains(array $report, int $forcedDomainId): array
     {
-        foreach ($report['policies'] as $policy) {
-            if (($policy['policy_domain'] ?? '') !== '') {
-                return (string) $policy['policy_domain'];
+        $ids = [];
+
+        foreach ($report['policies'] as $index => $policy) {
+            $policyDomain = (string) ($policy['policy_domain'] ?? '');
+
+            if ($policyDomain === '') {
+                $ids[$index] = 0;
+
+                continue;
             }
+
+            $ids[$index] = $forcedDomainId > 0
+                ? $forcedDomainId
+                : DomainRegistry::resolve($this->db, $policyDomain, $this->allowAutoCreate);
         }
 
-        return '';
+        return $ids;
     }
 
     /**
@@ -260,22 +301,30 @@ final class TlsRptIngestor
     }
 
     /**
-     * Sum the success and failure session counts across every policy block with
-     * overflow-safe accumulation. Individual counts are already bounded to the
-     * storable integer range by {@see TlsRptParser}, but their sum could still
-     * pass PHP_INT_MAX; saturating there keeps the stored BIGINT UNSIGNED total
-     * non-negative instead of wrapping to a float or a negative value.
+     * Sum the success and failure session counts across every stored policy
+     * block with overflow-safe accumulation. Only policies that resolved to a
+     * monitored domain (their id in $policyDomainIds is positive) are counted,
+     * so the report row's totals match the rows actually persisted. Individual
+     * counts are already bounded to the storable integer range by
+     * {@see TlsRptParser}, but their sum could still pass PHP_INT_MAX; saturating
+     * there keeps the stored BIGINT UNSIGNED total non-negative instead of
+     * wrapping to a float or a negative value.
      *
      * @param   array<string, mixed>  $report
+     * @param   array<int, int>       $policyDomainIds  Resolved domain id per policy.
      *
      * @return  array{0:int, 1:int}
      */
-    private function totals(array $report): array
+    private function totals(array $report, array $policyDomainIds): array
     {
         $success = 0;
         $failure = 0;
 
-        foreach ($report['policies'] as $policy) {
+        foreach ($report['policies'] as $index => $policy) {
+            if ((int) ($policyDomainIds[$index] ?? 0) <= 0) {
+                continue;
+            }
+
             $success = self::addClamped($success, (int) ($policy['success_count'] ?? 0));
             $failure = self::addClamped($failure, (int) ($policy['failure_count'] ?? 0));
         }

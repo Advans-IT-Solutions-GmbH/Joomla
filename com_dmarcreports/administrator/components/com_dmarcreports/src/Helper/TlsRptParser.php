@@ -192,7 +192,16 @@ final class TlsRptParser
         $block   = \is_array($policy['policy'] ?? null) ? $policy['policy'] : [];
         $summary = \is_array($policy['summary'] ?? null) ? $policy['summary'] : [];
 
-        $policyDomain = (string) DomainName::canonicalize((string) ($block['policy-domain'] ?? ''));
+        // RFC 8460 requires every policy object to carry a valid policy-domain.
+        // A missing or malformed value canonicalizes to null; rejecting the whole
+        // report here prevents an invalid policy from being stored under the
+        // report's primary domain with an empty domain name. Mirrors the DMARC
+        // parser, which rejects a report whose published policy domain is invalid.
+        $policyDomain = DomainName::canonicalize((string) ($block['policy-domain'] ?? ''));
+
+        if ($policyDomain === null) {
+            throw new \InvalidArgumentException('A TLS-RPT policy is missing a valid policy domain.', self::ERROR_NOT_REPORT);
+        }
 
         $result = [
             'policy_type'   => self::clip(strtolower((string) ($block['policy-type'] ?? '')), 20),
