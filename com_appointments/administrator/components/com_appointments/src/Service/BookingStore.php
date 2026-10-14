@@ -200,13 +200,13 @@ final class BookingStore
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['reminder_sent_utc'] = null;
             $booking['invitee_timezone'] = $timezone ?? $booking['invitee_timezone'];
-            $booking['conference_state'] = 'not_needed';
+            $booking['conference_state'] = null;
             foreach (['conference_provider', 'conference_url', 'conference_room', 'conference_error'] as $field) {
                 $booking[$field] = null;
             }
             $row = (object) ['id' => $bookingId, 'start_utc' => $booking['start_utc'], 'end_utc' => $booking['end_utc'],
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'reminder_sent_utc' => null,
-                'invitee_timezone' => $booking['invitee_timezone'], 'conference_state' => 'not_needed',
+                'invitee_timezone' => $booking['invitee_timezone'], 'conference_state' => null,
                 'conference_provider' => null, 'conference_url' => null, 'conference_room' => null, 'conference_error' => null];
             $db->updateObject('#__appointments_bookings', $row, 'id', true);
             $db->transactionCommit();

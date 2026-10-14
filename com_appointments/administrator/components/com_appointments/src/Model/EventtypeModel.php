@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Service\HostStore;
 use Advans\Component\Appointments\Administrator\Helper\Conference\FixedRoomProvider;
+use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceException;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -91,9 +92,14 @@ class EventtypeModel extends AdminModel
             return false;
         }
         if (!empty($settings['conference_fixed_url'])) {
+            if (!is_string($settings['conference_fixed_url'])) {
+                $this->setError(Text::_('COM_APPOINTMENTS_CONFERENCE_CONFIG_INVALID'));
+
+                return false;
+            }
             try {
                 new FixedRoomProvider($settings['conference_fixed_url']);
-            } catch (\InvalidArgumentException $e) {
+            } catch (ConferenceException $e) {
                 $this->setError(Text::_('COM_APPOINTMENTS_CONFERENCE_CONFIG_INVALID'));
 
                 return false;

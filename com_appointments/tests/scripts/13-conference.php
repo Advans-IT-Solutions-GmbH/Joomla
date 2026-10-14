@@ -85,6 +85,14 @@ try {
     $check(str_contains(strtolower(strip_tags($options)), 'overlap'), 'Fixed-room options honestly warn about overlapping appointments');
     $event = $fixture->event();
     $db->query("UPDATE {$prefix}appointments_eventtypes SET location_type='conference',location_text='Fixture fallback location' WHERE id={$event}");
+    $form = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+    $originalConferenceParams = $form['conference_params'];
+    $form['conference_params'] = ['conference_provider' => 'fixed', 'conference_fixed_url' => 'http://meet.example.test/room'];
+    $html = $admin->submit('eventtype', $form);
+    $stored = $db->query("SELECT conference_params FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+    $check($admin->status === 200 && $stored['conference_params'] === $originalConferenceParams
+        && str_contains($html, 'The conferencing settings are invalid.'),
+        'Invalid fixed-room configuration is a translated form refusal, not an uncaught server error');
     $settings([
         'conference_provider' => 'jitsi', 'conference_jitsi_base_url' => 'https://meet.example.com',
         'conference_jitsi_auth' => 'none', 'conference_jitsi_room_prefix' => 'fixture',
