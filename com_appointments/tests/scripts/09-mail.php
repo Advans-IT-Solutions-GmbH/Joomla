@@ -36,14 +36,17 @@ $inspect = static function (array $before, array $booking, string $method, strin
             && str_contains($ics, 'STATUS:' . $status . "\r\n")
             && str_contains($ics, 'UID:' . $booking['uid'] . "\r\n")
             && str_contains($ics, 'SEQUENCE:' . $booking['sequence'] . "\r\n"), 'Actual calendar carries stable UID, state and sequence');
-        if (preg_match('/^To:.*(?:invitee|guest)@example\.test/mi', $unfolded)) {
-            $decoded = AppointmentsMail::decoded($mime);
+        $decoded = AppointmentsMail::decoded($mime);
+        if (preg_match('/^To:.*invitee@example\.test/mi', $unfolded)) {
             $check(str_contains($decoded, 'action=reschedule') && str_contains($decoded, 'action=cancel')
                 && str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
             if ($localizedSubject === 'Validé :') {
                 $decoded = AppointmentsMail::decoded($mime);
                 $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),
                     'French mandatory footer works independently of installed Joomla language packs');
+            } else {
+                $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
+                    && !str_contains($decoded, 'action=erase'), 'Guest and host notifications never contain the primary invitee bearer capabilities');
             }
         }
         if ($localizedSubject !== null && preg_match('/^Subject:\s*(.*)$/mi', $unfolded, $subject)) {

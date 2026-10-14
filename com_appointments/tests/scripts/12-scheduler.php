@@ -60,6 +60,11 @@ try {
         $check(str_contains($mime, 'Content-Type: text/calendar') && str_contains($mime, 'Content-Type: application/ics')
             && substr_count($decoded, 'BEGIN:VCALENDAR') === 2 && str_contains($decoded, 'UID:' . $created['booking']['uid']),
             'Reminder has both calendar parts with the existing booking UID');
+        $canManage = preg_match('/^To:.*invitee@example\.test/mi', $mime) === 1;
+        foreach (['reschedule', 'cancel', 'erase'] as $action) {
+            $check(str_contains($decoded, 'action=' . $action) === $canManage,
+                'Only the primary invitee receives the reminder ' . $action . ' capability');
+        }
     }
     $invitee = array_values(array_filter($messages, static fn (string $mime): bool => preg_match('/^To:.*invitee@example\.test/mi', $mime) === 1));
     $check($invitee && str_contains(AppointmentsMail::decoded($invitee[0]), 'http://localhost/index.php?option=com_appointments'),

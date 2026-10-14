@@ -53,16 +53,16 @@ final class NotificationService
         $recipients = [];
 
         if (!$hostOnly && !empty($booking['invitee_email'])) {
-            $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false];
+            $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true];
             foreach (preg_split('/\r\n|\r|\n/', trim((string) ($booking['guest_emails'] ?? '')), -1, PREG_SPLIT_NO_EMPTY) as $guest) {
-                $recipients[] = [$guest, $inviteeLanguage, false];
+                $recipients[] = [$guest, $inviteeLanguage, false, false];
             }
         }
-        $recipients[] = [$event['host_email'], $hostLanguage, true];
+        $recipients[] = [$event['host_email'], $hostLanguage, true, false];
         $failures = 0;
         $conferences = ConferenceService::forComponent($this->db);
 
-        foreach ($recipients as [$address, $tag, $isHost]) {
+        foreach ($recipients as [$address, $tag, $isHost, $canManage]) {
             try {
                 $recipientPurpose = $isHost && in_array($purpose, ['confirmation', 'pending'], true) ? 'host_notice' : $purpose;
                 $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
@@ -80,7 +80,7 @@ final class NotificationService
                 $presentation['{state_label}'] = $language->_($stateKey);
                 $template['subject'] = strtr($template['subject'], $presentation);
                 $template['body'] = strtr($template['body'], $presentation);
-                $links = $hostOnly || $isHost ? [] : $this->links($booking);
+                $links = $canManage ? $this->links($booking) : [];
                 $recipientBooking = $booking;
                 if ($isHost && !empty($booking['conference_url'])) {
                     $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
@@ -90,7 +90,7 @@ final class NotificationService
                     $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ': ' . $recipientBooking['conference_url'];
                 }
 
-                if (!$isHost && !$hostOnly) {
+                if ($canManage) {
                     $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ': ' . $links['reschedule_url']
                         . "\n" . $language->_('COM_APPOINTMENTS_MAIL_CANCEL') . ': ' . $links['cancel_url']
                         . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ': ' . $links['erase_url'];

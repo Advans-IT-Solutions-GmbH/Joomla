@@ -90,8 +90,10 @@ The component registers its own update site during installation, so later versio
   attachments. UTC calendar entries retain their UID and increase their sequence on changes.
   Notification failure never discards a saved booking: the page explicitly reports the mail problem.
 
-- **Signed appointment management and erasure.** The email links open a no-login confirmation
-  page. Rescheduling updates the existing booking and UID under the host lock; it cannot take an
+- **Signed appointment management and erasure.** Only the primary invitee receives the no-login
+  reschedule, cancellation and erasure capabilities, including in reminders. Guests and the host
+  receive calendar invitations without these bearer links. Rescheduling updates the existing
+  booking and UID under the host lock; it cannot take an
   overlapping slot from another event type. Cancellation releases the slot. Erasure clears all
   contact data, guests, answers, free text and conference metadata in one transaction, optionally
   deleting the row entirely. A future appointment triggers only a host cancellation with no former
