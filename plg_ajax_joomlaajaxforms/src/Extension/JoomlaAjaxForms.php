@@ -63,12 +63,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Intercept AJAX requests before Joomla's SEF redirect.
+     * Answer our own com_ajax JSON requests directly, when this event reaches
+     * the plugin at all (Joomla delivers onAfterRoute only to plugins that are
+     * already loaded at that point).
      *
-     * Joomla 5.x encodes & as &amp; in redirect Location headers,
-     * causing infinite 303 loops for com_ajax URLs with multiple
-     * query parameters. This handler detects our AJAX requests
-     * early and responds directly.
+     * The 303 redirect loop seen on multilingual sites (Location with &amp;
+     * instead of &) did not come from the router: it came from
+     * Session::checkToken(), which for a request without a session redirects
+     * to Route::_('index.php'). That route carries the current com_ajax query
+     * and is HTML-escaped by default, so every hop broke the parameters again.
+     * The plugin therefore never calls Session::checkToken() (see
+     * hasValidToken()), and tests/scripts/03-ajax-endpoint.php guards both.
      *
      * The direct answer mirrors the envelope com_ajax's JsonResponse would
      * have produced: a top-level success flag with message and messages, and
