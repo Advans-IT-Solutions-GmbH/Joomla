@@ -46,9 +46,28 @@ final class AppointmentsFeedHttp
         $body = curl_exec($curl);
         $error = curl_error($curl);
         $this->status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $redirects = (int) curl_getinfo($curl, CURLINFO_REDIRECT_COUNT);
         curl_close($curl);
         if ($body === false) {
             throw new RuntimeException('Feed HTTP request failed: ' . $error);
+        }
+        if (str_contains($path, 'task=feed.download')) {
+            // Never print a bearer URL, response body or participant information.
+            echo 'Feed HTTP diagnostic: ' . json_encode([
+                'status' => $this->status, 'redirects' => $redirects,
+                'content_type' => $this->headers['content-type'] ?? null,
+                'cache_control' => $this->headers['cache-control'] ?? null,
+                'robots' => $this->headers['x-robots-tag'] ?? null,
+                'content_length' => $this->headers['content-length'] ?? null,
+                'content_encoding' => $this->headers['content-encoding'] ?? null,
+                'disposition_inline' => str_starts_with($this->headers['content-disposition'] ?? '', 'inline;'),
+                'etag_present' => isset($this->headers['etag']),
+                'body_bytes' => strlen($body),
+                'calendar' => str_starts_with($body, "BEGIN:VCALENDAR\r\n"),
+                'publish' => str_contains($body, "METHOD:PUBLISH\r\n"),
+                'events' => substr_count($body, "BEGIN:VEVENT\r\n"),
+                'html' => stripos($body, '<!DOCTYPE html') !== false,
+            ], JSON_THROW_ON_ERROR) . "\n";
         }
 
         return $body;
@@ -79,6 +98,7 @@ final class AppointmentsFeedHttp
 $fixture = new AppointmentsFixture('feed');
 $failed = 0;
 $lowUser = 0;
+$componentRules = null;
 $check = static function (bool $ok, string $label) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $label . "\n";
     $failed += $ok ? 0 : 1;
@@ -212,15 +232,28 @@ try {
         . " VALUES ('{$tag}','{$tag}','{$tag}@example.test','{$hash}',0,0,UTC_TIMESTAMP(),'{}')");
     $lowUser = (int) $fixture->db->insert_id;
     $fixture->db->query("INSERT INTO {$fixture->prefix}user_usergroup_map (user_id,group_id) VALUES ({$lowUser},6)");
+    $componentRules = $fixture->db->query("SELECT rules FROM {$fixture->prefix}assets WHERE name='com_appointments'")->fetch_assoc()['rules'];
+    $rules = json_decode($componentRules, true, 512, JSON_THROW_ON_ERROR);
+    $rules['core.manage']['6'] = 1;
+    $rules['core.options']['6'] = 0;
+    $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='"
+        . $fixture->db->real_escape_string(json_encode($rules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR))
+        . "' WHERE name='com_appointments'");
     $low = new AppointmentsFeedHttp();
     $low->login($tag, $password);
     $denied = $low->request('/administrator/index.php?option=com_appointments&view=feeds');
     $check($low->status === 403 && !str_contains($denied, $newEventToken) && !str_contains($denied, $newHostToken),
         'Lower-privileged Manager cannot view credentials even with backend access');
-    $token = $low->token($low->request('/administrator/index.php'));
+    $allowed = $low->request('/administrator/index.php?option=com_appointments&view=templates');
+    $check($low->status === 200, 'Restricted Manager has explicit component management access but no options permission');
+    $token = $low->token($allowed);
     $low->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $token => 1]);
     $check($low->status === 403 && $tokens($event)[0] === $newEventToken, 'Lower-privileged Manager cannot rotate credentials');
 } finally {
+    if ($componentRules !== null) {
+        $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='" . $fixture->db->real_escape_string($componentRules)
+            . "' WHERE name='com_appointments'");
+    }
     if ($lowUser) {
         $fixture->db->query("DELETE FROM {$fixture->prefix}session WHERE userid={$lowUser}");
         $fixture->db->query("DELETE FROM {$fixture->prefix}user_usergroup_map WHERE user_id={$lowUser}");
