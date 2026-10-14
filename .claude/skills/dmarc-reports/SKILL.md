@@ -114,6 +114,7 @@ install never drops collected DMARC data):
 | `MtaStsPolicy` | RFC 8461 policy body + `_mta-sts`/`_smtp._tls` DNS record generation (`generate()`, static) |
 | `MtaStsDiagnostics` / `PolicyFetcherInterface` / `HttpPolicyFetcher` | Validate published `_mta-sts` record and hosted policy for drift (`inspect()`), gated on `dns_diagnostics` |
 | `DomainRegistry` | Resolve/attach domains during ingestion |
+| `DomainBinding` | Forced-source rule: store a report under the bound domain only for that domain or a subdomain of it (no PSL, so never a parent) |
 | `CryptoHelper` | Encrypt/decrypt the mailbox password with the Joomla secret |
 | `ActionCenter` / `ActionStatus` / `ActionPresenter` | Derive, persist and render recommendations |
 | `Metrics` | Per-domain volume / pass-rate / would-be-rejected calculations; `tlsRptSummary()` |
@@ -150,9 +151,11 @@ scheduler by default, or a real system/web cron for truly continuous operation).
 A `system`-group plugin that serves the generated MTA-STS policy (RFC 8461) dynamically at
 `/.well-known/mta-sts.txt`, so the published policy always matches the component options instead of a
 hand-maintained static file. It reads the component configuration and renders the body via the
-component's `MtaStsPolicy` helper. The one step it cannot do is DNS/host-level: the policy must be
+component's `MtaStsPolicy` helper. What it cannot do is DNS/host-level: the policy must be
 reachable at `https://mta-sts.<domain>/.well-known/mta-sts.txt` with valid TLS, which the component
-spells out to the administrator. Classes: `src/Extension/DmarcMtaSts.php`,
+spells out to the administrator, and the web server must route that exact path to `index.php`
+(Apache rule in `plg_system_dmarcmtasts/README.md`; the package's `06-mta-sts.php` installs it and
+requests the exact URL). Classes: `src/Extension/DmarcMtaSts.php`,
 `src/Support/PolicyRequest.php`. Full detail: `references/mta-sts-tls-rpt.md`.
 
 ## Package (`pkg_dmarcreports`)

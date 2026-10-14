@@ -348,10 +348,9 @@ final class Ingestor
             // content: a valid aggregate report for an unrelated domain would
             // otherwise be stored under this tenant and skew its volume, pass
             // rates and rollout recommendations. Only honour the binding when the
-            // report's policy domain belongs to the same organizational domain as
-            // the bound one (equal, or either a subdomain of the other under
-            // DMARC organizational-policy inheritance); a genuinely unrelated
-            // report is skipped rather than cross-attributed.
+            // report's policy domain is the bound domain or a subdomain of it
+            // (see DomainBinding); a parent, sibling or unrelated domain is
+            // skipped rather than cross-attributed.
             if (!$this->boundDomainMatchesPolicy($forcedDomainId, (string) ($report['policy']['domain'] ?? ''))) {
                 $summary['skipped']++;
 
@@ -463,21 +462,13 @@ final class Ingestor
 
     /**
      * Whether a mailbox's forced domain binding may accept a report carrying the
-     * given policy domain. Returns true only when the bound monitored domain and
-     * the report's policy domain share an organizational domain: identical, or
-     * either one a subdomain of the other (DMARC organizational-policy
-     * inheritance). The leading dot in the suffix test prevents a sibling such as
-     * evil-example.com from matching example.com. Without the Public Suffix List
-     * the exact organizational boundary cannot be proven, but the binding is
-     * operator-chosen, so this blocks the real risk — untrusted mailbox content
-     * for an unrelated domain being attributed to this tenant — while still
-     * accepting legitimate same-origin subdomain reports.
+     * given policy domain: the bound monitored domain itself or a subdomain of
+     * it, never a parent, sibling or unrelated domain. The rule lives in
+     * {@see DomainBinding} so the DMARC and TLS-RPT paths apply it identically.
      */
     private function boundDomainMatchesPolicy(int $domainId, string $policyDomain): bool
     {
-        $policyDomain = strtolower(trim($policyDomain));
-
-        if ($policyDomain === '') {
+        if (trim($policyDomain) === '') {
             return false;
         }
 
@@ -495,12 +486,7 @@ final class Ingestor
             return false;
         }
 
-        if ($bound === $policyDomain) {
-            return true;
-        }
-
-        return str_ends_with($policyDomain, '.' . $bound)
-            || str_ends_with($bound, '.' . $policyDomain);
+        return DomainBinding::accepts($bound, $policyDomain);
     }
 
     /**

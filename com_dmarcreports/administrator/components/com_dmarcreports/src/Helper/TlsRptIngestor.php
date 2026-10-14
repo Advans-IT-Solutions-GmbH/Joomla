@@ -95,8 +95,8 @@ final class TlsRptIngestor
             // content: a TLS-RPT report whose policy domain belongs to an
             // unrelated tenant would otherwise be attributed to this source and
             // skew its TLS metrics. Only honour the binding when every policy
-            // domain shares an organizational domain with the bound one, exactly
-            // as the DMARC path validates at Ingestor::boundDomainMatchesPolicy().
+            // domain is the bound domain or a subdomain of it, exactly as the
+            // DMARC path validates at Ingestor::boundDomainMatchesPolicy().
             $summary['skipped']++;
 
             return;
@@ -231,7 +231,7 @@ final class TlsRptIngestor
     /**
      * Resolve each policy block to its monitored-domain id, keyed parallel to
      * $report['policies']. A bound mailbox attributes every policy to the bound
-     * tenant (already validated to share its organizational domain); otherwise
+     * tenant (already validated as the bound domain or a subdomain of it); otherwise
      * each policy's own domain is resolved and, where permitted, auto-created.
      * An unresolved or empty domain yields 0 so the caller skips that policy's
      * rows rather than filing them under an unrelated domain.
@@ -264,8 +264,8 @@ final class TlsRptIngestor
     /**
      * Whether a mailbox's forced domain binding may accept this report. Returns
      * true only when the report carries at least one policy domain and every
-     * non-empty policy domain shares an organizational domain with the bound
-     * one (identical, or either a subdomain of the other). Empty policy domains
+     * non-empty policy domain is the bound domain or a subdomain of it (see
+     * {@see DomainBinding}; never a parent or sibling). Empty policy domains
      * carry no cross-tenant claim and are ignored. Mirrors the DMARC path's
      * {@see Ingestor::boundDomainMatchesPolicy()}.
      *
@@ -291,7 +291,7 @@ final class TlsRptIngestor
                 continue;
             }
 
-            if (!self::domainsShareOrg($bound, $policyDomain)) {
+            if (!DomainBinding::accepts($bound, $policyDomain)) {
                 return false;
             }
 
@@ -314,21 +314,6 @@ final class TlsRptIngestor
             ->bind(':id', $domainId, ParameterType::INTEGER);
 
         return strtolower(trim((string) $this->db->setQuery($query)->loadResult()));
-    }
-
-    /**
-     * Whether two lower-cased domains share an organizational domain: identical,
-     * or either one a subdomain of the other. The leading dot in the suffix test
-     * prevents a sibling such as evil-example.com from matching example.com.
-     */
-    private static function domainsShareOrg(string $bound, string $policyDomain): bool
-    {
-        if ($bound === $policyDomain) {
-            return true;
-        }
-
-        return str_ends_with($policyDomain, '.' . $bound)
-            || str_ends_with($bound, '.' . $policyDomain);
     }
 
     /**

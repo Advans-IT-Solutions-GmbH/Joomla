@@ -14,6 +14,7 @@ defined('_JEXEC') or define('_JEXEC', 1);
 $helperDir = dirname(__DIR__) . '/administrator/components/com_dmarcreports/src/Helper';
 
 require_once $helperDir . '/DomainName.php';
+require_once $helperDir . '/DomainBinding.php';
 require_once $helperDir . '/DmarcParser.php';
 require_once $helperDir . '/ReportArchive.php';
 require_once $helperDir . '/TlsReportArchive.php';

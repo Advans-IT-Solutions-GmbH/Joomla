@@ -160,9 +160,12 @@ final class SourcePoller
      * Decide the domain id to force onto every report a poll ingests.
      *
      * A source is bound to one monitored domain. By default that bound domain is
-     * forced onto every report the mailbox delivers (an aggregate report for an
-     * unrelated domain is skipped), so a single-tenant mailbox cannot
-     * cross-attribute reports. When automatic domain creation is enabled — a
+     * forced onto every report the mailbox delivers, but only a report for the
+     * bound domain itself or one of its subdomains is stored under it (see
+     * {@see \Advans\Component\DmarcReports\Administrator\Helper\DomainBinding});
+     * a report for a parent, sibling or unrelated domain is skipped, so a
+     * single-tenant mailbox cannot cross-attribute reports. When automatic
+     * domain creation is enabled — a
      * privileged opt-in gated by both the component option and core.create — the
      * bound domain is NOT forced: each report is attributed to its own policy
      * domain and a newly seen domain is registered by {@see DomainRegistry},

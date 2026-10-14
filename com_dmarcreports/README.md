@@ -85,7 +85,7 @@ Navigate to **Components → DMARC Reports** (`administrator/index.php?option=co
 ### Workflow
 
 1. **Add a domain** under **Domains** — the domain you want to monitor (for example `example.org`)
-2. **Add a report source** under **Sources** — the mailbox that receives the aggregate reports for that domain, with its IMAP settings
+2. **Add a report source** under **Sources** — the mailbox that receives the aggregate reports for that domain, with its IMAP settings. Unless automatic domain creation is enabled, a source only stores reports for its own domain or a subdomain of it (for example `mail.example.org`); a report for a parent, sibling or unrelated domain is skipped. Without a bundled Public Suffix List this is an exact-or-child rule, so bind the source to the registrable domain you own, never to a public suffix such as `co.uk`
 3. **Ingest reports** — trigger an on-demand IMAP fetch from the source, or upload a report file by hand
 4. **Read the Dashboard** — per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 5. **Act on the Action Center** — follow the prioritised recommendations before tightening policy
