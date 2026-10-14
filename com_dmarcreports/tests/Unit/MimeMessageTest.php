@@ -171,6 +171,57 @@ class MimeMessageTest extends TestCase
         $this->assertStringContainsString('<feedback>', $documents[0]);
     }
 
+    public function testExtractsRawTlsRptJsonAttachmentWithoutFilename(): void
+    {
+        // RFC 8460 TLS-RPT reports arrive as application/tlsrpt+json. Some
+        // reporters attach the JSON body with no filename, relying on
+        // Content-Disposition: attachment alone, exactly like the raw-XML DMARC
+        // case. Such a part must be surfaced so the TLS-RPT extractor can read
+        // it, not silently dropped.
+        $json = '{"organization-name":"Example","report-id":"1","policies":[]}';
+
+        $raw = "From: tlsrpt@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n"
+            . "\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: text/plain\r\n"
+            . "\r\n"
+            . "This is a TLS-RPT report.\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: application/tlsrpt+json\r\n"
+            . "Content-Disposition: attachment\r\n"
+            . "\r\n"
+            . $json . "\r\n"
+            . "--BOUND--\r\n";
+
+        $attachments = MimeMessage::attachments($raw);
+
+        $this->assertCount(1, $attachments);
+        $this->assertSame($json, $attachments[0]['content']);
+    }
+
+    public function testIgnoresInlineTlsRptJsonWithoutAttachmentDisposition(): void
+    {
+        // An inline application/tlsrpt+json part without an attachment
+        // disposition or filename must not be slurped as a report.
+        $raw = "From: tlsrpt@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n"
+            . "\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: text/plain\r\n"
+            . "\r\n"
+            . "Plain summary.\r\n"
+            . "--BOUND\r\n"
+            . "Content-Type: application/tlsrpt+json\r\n"
+            . "\r\n"
+            . "{\"organization-name\":\"inline\"}\r\n"
+            . "--BOUND--\r\n";
+
+        $this->assertSame([], MimeMessage::attachments($raw));
+    }
+
     public function testIgnoresInlineXmlWithoutAttachmentDisposition(): void
     {
         // An inline application/xml part (no attachment disposition, no filename)

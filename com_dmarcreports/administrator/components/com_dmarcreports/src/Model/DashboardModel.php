@@ -11,7 +11,6 @@ namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
-use Advans\Component\DmarcReports\Administrator\Helper\DnsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
@@ -29,10 +28,10 @@ defined('_JEXEC') or die;
  * ignored) so the administrator's progress is preserved. The DNS/policy publish
  * guidance for MTA-STS and TLS-RPT is pure string generation and is always
  * folded in, so the main Action Center and the dashboard module surface the one
- * manual DNS/host step without any network traffic. The live DNS and MTA-STS
- * drift lookups stay opt-in behind the "dns_diagnostics" switch, matching the
- * drill-down view, so the dashboard makes no outbound calls unless the operator
- * enabled diagnostics.
+ * manual DNS/host step. Rendering the dashboard never makes an outbound call:
+ * the live DNS and MTA-STS/TLS-RPT drift lookups stay in the drill-down view
+ * and the System Check, so a page that lists many domains cannot stall on a row
+ * of network timeouts.
  *
  * @since  1.0.0
  */
@@ -117,12 +116,6 @@ class DashboardModel extends BaseDatabaseModel
         $status  = new ActionStatus($this->getDb());
         $items   = [];
 
-        // Opt-in network diagnostics (the same switch the drill-down honours):
-        // only when enabled are the live DNS and MTA-STS drift lookups run per
-        // domain. The MTA-STS/TLS-RPT publish guidance needs no network and is
-        // always produced below.
-        $withNetwork = (int) $params->get('dns_diagnostics', 0) === 1;
-
         $summaries = $this->getSummaries();
 
         // Resolve the per-domain Action Center metrics for every domain in a
@@ -138,7 +131,7 @@ class DashboardModel extends BaseDatabaseModel
                 continue;
             }
 
-            $findings = $this->domainFindings((string) ($summary['domain'] ?? ''), $params, $withNetwork);
+            $findings = $this->domainFindings((string) ($summary['domain'] ?? ''), $params);
 
             foreach (ActionCenter::generate($domainMetrics, $config, $findings) as $item) {
                 $item['domain'] = $summary['domain'];
@@ -158,37 +151,31 @@ class DashboardModel extends BaseDatabaseModel
     }
 
     /**
-     * The DNS and MTA-STS/TLS-RPT findings for one domain, mirroring the merge
+     * The MTA-STS/TLS-RPT publish guidance for one domain, mirroring the merge
      * the drill-down performs in {@see DetailModel::getActions()} so the main
-     * Action Center and the dashboard module surface the same publish/drift
-     * actions. The MTA-STS/TLS-RPT publish guidance is pure string generation
-     * and always included; the live DNS and MTA-STS drift lookups run only when
-     * network diagnostics are enabled, keeping the dashboard free of outbound
-     * calls by default.
+     * Action Center and the dashboard module surface the same publish actions.
+     * This is pure string generation: it is always network-free, so rendering a
+     * dashboard that lists many domains never waits on DNS or HTTPS. The live
+     * DNS and MTA-STS/TLS-RPT drift lookups are performed only in the drill-down
+     * view and the System Check.
      *
      * @return array<int, array<string, mixed>>
      */
-    private function domainFindings(string $domain, Registry $params, bool $withNetwork): array
+    private function domainFindings(string $domain, Registry $params): array
     {
         if ($domain === '') {
             return [];
         }
 
-        $findings = [];
-
         $generated = MtaStsPolicy::generate($params, $domain);
 
-        if (!empty($generated['enabled']) || !empty($generated['tlsrpt_enabled'])) {
-            $mtasts   = (new MtaStsDiagnostics())->inspect($generated, $withNetwork);
-            $findings = array_merge($findings, (array) ($mtasts['findings'] ?? []));
+        if (empty($generated['enabled']) && empty($generated['tlsrpt_enabled'])) {
+            return [];
         }
 
-        if ($withNetwork) {
-            $dns      = (new DnsDiagnostics())->inspect($domain);
-            $findings = array_merge($findings, (array) ($dns['findings'] ?? []));
-        }
+        $mtasts = (new MtaStsDiagnostics())->inspect($generated, false);
 
-        return $findings;
+        return (array) ($mtasts['findings'] ?? []);
     }
 
     /**

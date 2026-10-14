@@ -119,18 +119,72 @@ final class MtaStsPolicy
      */
     public static function tlsRptRecord(string $rua): string
     {
-        $rua = trim($rua);
+        $endpoints = self::normalizeTlsRptEndpoints($rua);
 
-        if ($rua === '') {
+        if ($endpoints === []) {
             return '';
         }
 
-        // Accept a bare mail address or URI and normalize to a mailto: target.
-        if (!preg_match('~^(mailto:|https:)~i', $rua) && str_contains($rua, '@')) {
-            $rua = 'mailto:' . $rua;
+        return 'v=TLSRPTv1; rua=' . implode(',', $endpoints);
+    }
+
+    /**
+     * Normalize the configured TLS-RPT reporting addresses (RFC 8460 `rua`) into
+     * a list of valid `mailto:`/`https:` endpoints. Comma- or newline-separated
+     * entries are accepted, a bare mail address is promoted to `mailto:`, and
+     * any entry that is not a valid e-mail or HTTPS URI is dropped, so an invalid
+     * configuration yields an empty list (and therefore no published record)
+     * rather than a malformed TXT value.
+     *
+     * @return  string[]
+     *
+     * @since 1.1.0
+     */
+    private static function normalizeTlsRptEndpoints(string $rua): array
+    {
+        $out = [];
+
+        foreach (self::splitLines($rua) as $candidate) {
+            $endpoint = self::normalizeTlsRptEndpoint($candidate);
+
+            if ($endpoint !== '' && !in_array($endpoint, $out, true)) {
+                $out[] = $endpoint;
+            }
         }
 
-        return 'v=TLSRPTv1; rua=' . $rua;
+        return $out;
+    }
+
+    /**
+     * Validate and normalize one TLS-RPT endpoint, or return an empty string
+     * when it is neither a valid e-mail address nor a valid HTTPS URI.
+     *
+     * @since 1.1.0
+     */
+    private static function normalizeTlsRptEndpoint(string $value): string
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return '';
+        }
+
+        // Accept a bare mail address and normalize it to a mailto: target.
+        if (!preg_match('~^(mailto:|https:)~i', $value) && str_contains($value, '@')) {
+            $value = 'mailto:' . $value;
+        }
+
+        if (stripos($value, 'mailto:') === 0) {
+            $address = substr($value, 7);
+
+            return filter_var($address, FILTER_VALIDATE_EMAIL) ? 'mailto:' . $address : '';
+        }
+
+        if (stripos($value, 'https:') === 0) {
+            return filter_var($value, FILTER_VALIDATE_URL) ? $value : '';
+        }
+
+        return '';
     }
 
     /**

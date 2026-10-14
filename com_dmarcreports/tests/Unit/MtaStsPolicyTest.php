@@ -83,4 +83,36 @@ class MtaStsPolicyTest extends TestCase
     {
         $this->assertSame('', MtaStsPolicy::tlsRptRecord('   '));
     }
+
+    public function testTlsRptRecordKeepsHttpsEndpoint(): void
+    {
+        $this->assertSame(
+            'v=TLSRPTv1; rua=https://reports.example.org/tlsrpt',
+            MtaStsPolicy::tlsRptRecord('https://reports.example.org/tlsrpt')
+        );
+    }
+
+    public function testTlsRptRecordDropsInvalidEndpoints(): void
+    {
+        $this->assertSame('', MtaStsPolicy::tlsRptRecord('not-an-address'));
+        $this->assertSame('', MtaStsPolicy::tlsRptRecord('mailto:not an email'));
+        $this->assertSame('', MtaStsPolicy::tlsRptRecord('http://insecure.example.org/report'));
+        $this->assertSame('', MtaStsPolicy::tlsRptRecord('ftp://example.org'));
+    }
+
+    public function testTlsRptRecordKeepsOnlyValidOfMixedList(): void
+    {
+        $this->assertSame(
+            'v=TLSRPTv1; rua=mailto:tls@example.org',
+            MtaStsPolicy::tlsRptRecord('tls@example.org, garbage, mailto:also bad')
+        );
+    }
+
+    public function testTlsRptRecordCombinesMultipleValidEndpoints(): void
+    {
+        $this->assertSame(
+            'v=TLSRPTv1; rua=mailto:tls@example.org,https://reports.example.org/tlsrpt',
+            MtaStsPolicy::tlsRptRecord("tls@example.org\nhttps://reports.example.org/tlsrpt")
+        );
+    }
 }

@@ -122,13 +122,16 @@ final class MtaStsDiagnostics
      */
     private function inspectTlsRpt(array $generated, bool $withNetwork): array
     {
+        $domain       = (string) ($generated['domain'] ?? '');
         $tlsRptHost   = (string) ($generated['tlsrpt_record_host'] ?? '');
         $tlsRptRecord = (string) ($generated['tlsrpt_record'] ?? '');
 
-        // TLS-RPT reporting is enabled but no reporting address is configured,
-        // so there is no record to publish yet.
+        // TLS-RPT reporting is enabled but no valid reporting address is
+        // configured (the field is blank or every entry was rejected as an
+        // invalid mailto:/https: endpoint), so no record can be published and
+        // reports would silently never arrive. Tell the administrator to fix it.
         if ($tlsRptRecord === '' || $tlsRptHost === '') {
-            return [];
+            return [$this->finding('tlsrpt_missing_rua', 2, [$domain])];
         }
 
         if (!$withNetwork) {

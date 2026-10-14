@@ -62,6 +62,7 @@ final class ActionPresenter
             'mtasts_policy_drift'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_DRIFT_TITLE'),
             'mtasts_mode_testing'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_MODE_TESTING_TITLE'),
             'tlsrpt_publish'        => Text::_('COM_DMARCREPORTS_ACTION_TLSRPT_PUBLISH_TITLE'),
+            'tlsrpt_missing_rua'    => Text::_('COM_DMARCREPORTS_ACTION_TLSRPT_MISSING_RUA_TITLE'),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TITLE'),
         };
     }
@@ -106,6 +107,7 @@ final class ActionPresenter
             'mtasts_policy_drift'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_DRIFT_TEXT', ...self::pad($params, 1)),
             'mtasts_mode_testing'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_MODE_TESTING_TEXT', ...self::pad($params, 1)),
             'tlsrpt_publish'        => Text::sprintf('COM_DMARCREPORTS_ACTION_TLSRPT_PUBLISH_TEXT', ...self::pad($params, 2)),
+            'tlsrpt_missing_rua'    => Text::sprintf('COM_DMARCREPORTS_ACTION_TLSRPT_MISSING_RUA_TEXT', ...self::pad($params, 1)),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TEXT'),
         };
     }

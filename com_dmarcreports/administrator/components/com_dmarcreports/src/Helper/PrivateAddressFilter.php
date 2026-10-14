@@ -129,6 +129,12 @@ final class PrivateAddressFilter
             return false;
         }
 
+        // 192.88.99.0/24 deprecated 6to4 relay anycast (RFC 7526). Not globally
+        // routable as a destination and may be routed internally.
+        if ($a === 192 && $b === 88 && $c === 99) {
+            return false;
+        }
+
         // 198.18.0.0/15 benchmarking.
         if ($a === 198 && ($b === 18 || $b === 19)) {
             return false;

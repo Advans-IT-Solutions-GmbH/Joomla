@@ -239,6 +239,21 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('tlsrpt_publish', $this->codes($result));
     }
 
+    public function testEnabledTlsRptWithoutReportingAddressIsReported(): void
+    {
+        // TLS-RPT is enabled but no (valid) reporting address is configured, so
+        // the generated record is empty: there is nothing to publish and reports
+        // would silently never arrive. A dedicated missing-rua finding tells the
+        // administrator to set an address rather than staying silent.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $resultOffline = $diagnostics->inspect($this->generated(['tlsrpt_record' => '']), false);
+        $resultOnline  = $diagnostics->inspect($this->generated(['tlsrpt_record' => '']), true);
+
+        $this->assertContains('tlsrpt_missing_rua', $this->codes($resultOffline));
+        $this->assertContains('tlsrpt_missing_rua', $this->codes($resultOnline));
+        $this->assertNotContains('tlsrpt_publish', $this->codes($resultOffline));
+    }
+
     public function testStaleMaxAgeIsReportedAsDrift(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([
