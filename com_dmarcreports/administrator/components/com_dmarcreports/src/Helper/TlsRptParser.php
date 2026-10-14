@@ -167,7 +167,7 @@ final class TlsRptParser
 
         foreach ($policies as $policy) {
             if (!\is_array($policy)) {
-                continue;
+                throw new \InvalidArgumentException('A TLS-RPT policy result is not an object.', self::ERROR_NOT_REPORT);
             }
 
             $report['policies'][] = self::parsePolicy($policy, $failureBudget);

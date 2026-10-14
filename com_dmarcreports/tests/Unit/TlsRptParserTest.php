@@ -288,4 +288,23 @@ class TlsRptParserTest extends TestCase
             ],
         ]));
     }
+
+    public function testNonObjectPolicyEntryRejectsTheWholeReport(): void
+    {
+        // A non-object policy entry must reject the whole report rather than be
+        // silently skipped: the surviving policies would otherwise be stored and
+        // deduplicated under the real report id, permanently recording a partial
+        // import that a corrected copy can no longer replace.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'  => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary' => ['total-successful-session-count' => 10, 'total-failure-session-count' => 0],
+                ],
+                'not-an-object',
+            ],
+        ]));
+    }
 }
