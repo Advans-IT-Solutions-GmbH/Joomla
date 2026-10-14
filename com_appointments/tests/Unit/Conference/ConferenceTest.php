@@ -262,7 +262,18 @@ final class ConferenceTest extends TestCase
             ['https://meet.example.com/%252500'], ['https://meet.example.com/%5croom'],
             ['https://meet.example.com/<script>'], ['https://meet.example.com/%zz'],
             ['https://meet.example.com/' . str_repeat('x', 8192)],
+            ['https://meet.example.com/%' . str_repeat('25', 500000) . '00'],
+            ['https://meet.example.com/%' . str_repeat('25', 100) . '00'],
         ];
+    }
+
+    public function testUrlSizeBoundaryAndOrdinaryEncodingRemainSupported(): void
+    {
+        $prefix = 'https://meet.example.com/';
+        $url = $prefix . str_repeat('x', 8192 - strlen($prefix));
+        self::assertSame($url, ConferenceUrl::validate($url));
+        $encoded = $prefix . 'room?name=%C3%A9&next=%252Froom';
+        self::assertSame($encoded, ConferenceUrl::validate($encoded));
     }
 
     #[DataProvider('unsafeUrls')]

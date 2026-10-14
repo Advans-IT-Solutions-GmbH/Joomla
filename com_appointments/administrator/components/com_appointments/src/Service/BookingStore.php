@@ -284,7 +284,8 @@ final class BookingStore
                     ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
             } else {
                 unset($erased['state_active']);
-                $db->updateObject('#__appointments_bookings', (object) $erased, 'id', true);
+                $row = (object) $erased;
+                $db->updateObject('#__appointments_bookings', $row, 'id', true);
             }
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];

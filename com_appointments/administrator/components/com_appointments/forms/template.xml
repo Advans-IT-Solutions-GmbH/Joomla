@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
-<form>
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
-        <field name="eventtype_id" type="sql" label="COM_APPOINTMENTS_TEMPLATE_SCOPE" description="COM_APPOINTMENTS_TEMPLATE_SCOPE_DESC" required="true" filter="integer" query="SELECT id, title FROM #__appointments_eventtypes ORDER BY title" key_field="id" value_field="title">
+        <field name="eventtype_id" type="Eventscope" sitewide="true" label="COM_APPOINTMENTS_TEMPLATE_SCOPE" description="COM_APPOINTMENTS_TEMPLATE_SCOPE_DESC" required="true" filter="integer">
             <option value="">JOPTION_SELECT</option>
-            <option value="0">COM_APPOINTMENTS_TEMPLATE_SITE_WIDE</option>
         </field>
         <field name="purpose" type="list" label="COM_APPOINTMENTS_TEMPLATE_PURPOSE" required="true">
             <option value="">JOPTION_SELECT</option>

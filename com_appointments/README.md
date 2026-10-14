@@ -316,6 +316,10 @@ requires a token-protected POST and uses a consistent database snapshot with bou
 Its columns include contacts, guest addresses and raw custom answers; protect downloaded files as
 personal data. Spreadsheet-like text is prefixed with an apostrophe to prevent formula execution.
 
+Event, custom-field and email-template lists and event selectors use that same permission scope:
+an explicitly denied event's metadata is not disclosed. Site-wide templates additionally require
+component options or administrator permission. An editor with no permitted event sees no event rows.
+
 Open a start time to view booking details, readable custom answers, conference diagnostics and
 single-event ICS. Rescheduling takes a **UTC** date/time, revalidates current availability and keeps
 the original UID and approval state. Approval/cancellation require the event's state permission;

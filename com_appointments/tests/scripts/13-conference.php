@@ -2,6 +2,7 @@
 
 require __DIR__ . '/appointments-fixtures.php';
 require __DIR__ . '/appointments-mail.php';
+require __DIR__ . '/appointments-joomla.php';
 require_once '/var/www/html/administrator/components/com_appointments/src/Service/ConferenceService.php';
 
 use Advans\Component\Appointments\Administrator\Service\ConferenceService;
@@ -83,7 +84,6 @@ try {
     }
 
     $check(str_contains(strtolower(strip_tags($options)), 'overlap'), 'Fixed-room options honestly warn about overlapping appointments');
-    require __DIR__ . '/appointments-joomla.php';
     $config = simplexml_load_file('/var/www/html/administrator/components/com_appointments/config.xml');
     $rangeFields = $config->xpath('//field[@validate="range"]');
     $rangeForm = new \Joomla\CMS\Form\Form('appointments-config-range');

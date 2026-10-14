@@ -54,7 +54,7 @@ try {
     $slots = $compare($event, $day, 'UTC');
     $check(!in_array($day . ' 10:10:00', $slots, true), 'A real booking immediately disappears from the public slot choices');
     $closed = (new DateTimeImmutable($day, new DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
-    $fixture->db->query("INSERT INTO {$fixture->prefix}appointments_schedule_rules (schedule_id,specific_date,is_unavailable) VALUES ({$schedule},'{$closed}',1)");
+    $fixture->db->query("INSERT INTO {$fixture->prefix}appointments_schedule_rules (schedule_id,specific_date,is_unavailable,start_time,end_time) VALUES ({$schedule},'{$closed}',1,'00:00:00','00:00:00')");
     $check($compare($event, $closed, 'UTC') === [], 'An unavailable override produces no bookable form slot');
     foreach ([['month' => '2026-99'], ['timezone' => 'not-a-zone']] as $invalid) {
         $client->request('/index.php?' . http_build_query(array_replace(['option' => 'com_appointments', 'view' => 'eventtype',

@@ -18,7 +18,7 @@ class BookingModel extends BaseDatabaseModel
 {
     public function getItem(?int $id = null): ?object
     {
-        $id ??= Factory::getApplication()->getInput()->getInt('id');
+        $id ??= Factory::getApplication()->getInput()->getInt('id', 0);
         $user = Factory::getApplication()->getIdentity();
         if (!$user->authorise('core.manage', 'com_appointments')) {
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);

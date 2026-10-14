@@ -9,6 +9,8 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Joomla\CMS\MVC\Model\ListModel;
+use Joomla\CMS\Factory;
+use Advans\Component\Appointments\Administrator\Helper\EventScope;
 
 defined('_JEXEC') or die;
 
@@ -39,6 +41,13 @@ class TemplatesModel extends ListModel
             ->select($db->quoteName('e.title', 'eventtype_title'))
             ->from($db->quoteName('#__appointments_templates', 't'))
             ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('t.eventtype_id'));
+        $user = Factory::getApplication()->getIdentity();
+        $ids = array_map('intval', array_column(EventScope::events($db, $user), 'id'));
+        if ($user->authorise('core.manage', 'com_appointments')
+            && ($user->authorise('core.options', 'com_appointments') || $user->authorise('core.admin', 'com_appointments'))) {
+            $ids[] = 0;
+        }
+        $query->where($ids === [] ? '1 = 0' : $db->quoteName('t.eventtype_id') . ' IN (' . implode(',', $ids) . ')');
         $eventId = (int) $this->getState('filter.eventtype_id', -1);
 
         if ($eventId >= 0) {

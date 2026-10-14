@@ -9,6 +9,8 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Joomla\CMS\MVC\Model\ListModel;
+use Joomla\CMS\Factory;
+use Advans\Component\Appointments\Administrator\Helper\EventScope;
 
 defined('_JEXEC') or die;
 
@@ -39,6 +41,8 @@ class FieldsModel extends ListModel
             ->select($db->quoteName('e.title', 'eventtype_title'))
             ->from($db->quoteName('#__appointments_fields', 'f'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('f.eventtype_id'));
+        $ids = array_map('intval', array_column(EventScope::events($db, Factory::getApplication()->getIdentity()), 'id'));
+        $query->where($ids === [] ? '1 = 0' : $db->quoteName('f.eventtype_id') . ' IN (' . implode(',', $ids) . ')');
         $eventId = (int) $this->getState('filter.eventtype_id');
 
         if ($eventId > 0) {

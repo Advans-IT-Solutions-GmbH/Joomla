@@ -12,6 +12,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\ListModel;
 use Joomla\CMS\Language\Text;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Helper\EventScope;
 
 defined('_JEXEC') or die;
 
@@ -25,13 +26,7 @@ class BookingsModel extends ListModel
 
     public function authorisedEvents(): array
     {
-        $db = $this->getDatabase();
-        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['id', 'title']))->from($db->quoteName('#__appointments_eventtypes'))->order($db->quoteName('title'));
-        $user = Factory::getApplication()->getIdentity();
-
-        return array_values(array_filter($db->setQuery($query)->loadAssocList(), static fn ($row) =>
-            $user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $row['id'])));
+        return EventScope::events($this->getDatabase(), Factory::getApplication()->getIdentity());
     }
 
     protected function getListQuery()

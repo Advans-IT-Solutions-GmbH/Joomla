@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
-<form>
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
-        <field name="eventtype_id" type="sql" label="COM_APPOINTMENTS_FIELD_EVENTTYPE" required="true" filter="integer" query="SELECT id, title FROM #__appointments_eventtypes ORDER BY title" key_field="id" value_field="title"><option value="">JOPTION_SELECT</option></field>
+        <field name="eventtype_id" type="Eventscope" label="COM_APPOINTMENTS_FIELD_EVENTTYPE" required="true" filter="integer"><option value="">JOPTION_SELECT</option></field>
         <field name="label" type="text" label="COM_APPOINTMENTS_FIELD_LABEL" required="true" maxlength="255" />
         <field name="description" type="textarea" label="JGLOBAL_DESCRIPTION" />
         <field name="type" type="list" label="COM_APPOINTMENTS_FIELD_TYPE">

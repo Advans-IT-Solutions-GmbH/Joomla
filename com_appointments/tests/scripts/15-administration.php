@@ -11,6 +11,7 @@ $failed = 0;
 $groupId = 0;
 $userId = 0;
 $events = [];
+$templateIds = [];
 $tag = 'suite-admin-' . bin2hex(random_bytes(6));
 $componentRules = $db->query("SELECT rules FROM {$prefix}assets WHERE name='com_appointments'")->fetch_assoc()['rules'];
 $check = static function (bool $ok, string $message) use (&$failed): void {
@@ -43,6 +44,13 @@ try {
         $check($asset && (int) $asset['id'] > 0, 'Real event administration creates its permission asset');
     }
     [$eventA, $eventB] = $events;
+    foreach ([$eventA => 'allowed', $eventB => 'denied'] as $event => $scope) {
+        $db->query("INSERT INTO {$prefix}appointments_fields (eventtype_id,label,type,options) VALUES ({$event},'{$tag}-{$scope}-field','text','[]')");
+    }
+    foreach ([$eventA => 'allowed', $eventB => 'denied', 0 => 'sitewide'] as $event => $scope) {
+        $db->query("INSERT INTO {$prefix}appointments_templates (eventtype_id,purpose,language,subject,body) VALUES ({$event},'confirmation','en-US','{$tag}-{$scope}-template','Fixture')");
+        $templateIds[] = (int) $db->insert_id;
+    }
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
     $first = $fixture->booking($eventA, $day . ' 10:00:00', ['name' => '=1+1'])['booking'];
     $second = $fixture->booking($eventA, $day . ' 11:00:00', ['name' => $tag . '-allowed'])['booking'];
@@ -147,6 +155,27 @@ try {
     $dashboard = $restricted->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $deniedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventB}")->fetch_assoc()['title'];
     $check($restricted->status === 200 && !str_contains($dashboard, $deniedTitle), 'Dashboard statistics exclude denied event types');
+    $allowedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc()['title'];
+    foreach (['eventtypes' => [$allowedTitle, $deniedTitle], 'fields' => [$tag . '-allowed-field', $tag . '-denied-field'],
+        'templates' => [$tag . '-allowed-template', $tag . '-denied-template']] as $view => [$allowed, $denied]) {
+        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $check($restricted->status === 200 && str_contains($html, $allowed) && !str_contains($html, $denied)
+            && ($view !== 'templates' || !str_contains($html, $tag . '-sitewide-template')),
+            'Administrator list hides denied event metadata and site-wide template content: ' . $view);
+    }
+    foreach (['field', 'template'] as $view) {
+        $html = $restricted->request('/administrator/index.php?option=com_appointments&task=' . $view . '.add');
+        $check($restricted->status === 200 && str_contains($html, $allowedTitle) && !str_contains($html, $deniedTitle),
+            'Event selector exposes only authorised titles: ' . $view);
+    }
+    $denyAll = $db->real_escape_string(json_encode(['core.edit' => [(string) $groupId => 0]], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
+    $db->query("UPDATE {$prefix}assets SET rules='{$denyAll}' WHERE name='com_appointments.eventtype.{$eventA}'");
+    foreach (['eventtypes', 'fields', 'templates'] as $view) {
+        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $check($restricted->status === 200 && !str_contains($html, $allowedTitle) && !str_contains($html, $deniedTitle)
+            && !str_contains($html, $tag . '-allowed-field') && !str_contains($html, $tag . '-allowed-template')
+            && !str_contains($html, $tag . '-sitewide-template'), 'An empty event ACL scope returns no list rows: ' . $view);
+    }
     $restricted->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) $third['id']);
     $check($restricted->status === 403, 'Direct booking details require the event permission');
     $token = $restricted->token($listing($restricted));
@@ -182,6 +211,12 @@ try {
     $failed++;
 } finally {
     $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string($componentRules) . "' WHERE name='com_appointments'");
+    foreach ($templateIds as $templateId) {
+        $db->query("DELETE FROM {$prefix}appointments_templates WHERE id={$templateId}");
+    }
+    foreach ($events as $event) {
+        $db->query("DELETE FROM {$prefix}appointments_fields WHERE eventtype_id={$event}");
+    }
     foreach ($events as $event) {
         $row = $db->query("SELECT id FROM {$prefix}assets WHERE name='com_appointments.eventtype.{$event}'")->fetch_assoc();
         if ($row) {

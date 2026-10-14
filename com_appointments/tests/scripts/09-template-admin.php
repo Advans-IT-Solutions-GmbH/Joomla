@@ -246,7 +246,7 @@ try {
     $restricted->submit('template', array_replace($base, ['eventtype_id' => $eventB, 'language' => 'en-US']));
     $check($find($eventB, 'confirmation', 'en-US') === 0, 'Creation requires permission on the selected event scope');
 
-    $html = $http->request('/administrator/index.php?option=com_appointments&view=templates&filter_eventtype_id=0');
+    $html = $http->request('/administrator/index.php?option=com_appointments&view=templates&filter_eventtype_id=0&limit=100');
     $check($http->status === 200 && str_contains($html, $tag . ' fallback edited') && !str_contains($html, $tag . ' permitted'), 'Site-wide list filter uses the sentinel independently of all scopes');
     $html = $http->request('/administrator/index.php?option=com_appointments&view=templates&filter_eventtype_id=' . $eventA);
     $check($http->status === 200 && str_contains($html, $tag) && !str_contains($html, $tag . ' fallback edited'), 'Event-specific list filter excludes site-wide overrides');

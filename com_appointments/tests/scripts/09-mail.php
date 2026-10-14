@@ -44,10 +44,10 @@ $inspect = static function (array $before, array $booking, string $method, strin
                 $decoded = AppointmentsMail::decoded($mime);
                 $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),
                     'French mandatory footer works independently of installed Joomla language packs');
-            } else {
-                $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
-                    && !str_contains($decoded, 'action=erase'), 'Guest and host notifications never contain the primary invitee bearer capabilities');
             }
+        } else {
+            $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
+                && !str_contains($decoded, 'action=erase'), 'Guest and host notifications never contain the primary invitee bearer capabilities');
         }
         if ($localizedSubject !== null && preg_match('/^Subject:\s*(.*)$/mi', $unfolded, $subject)) {
             $localized = $localized || str_contains(iconv_mime_decode(trim($subject[1]), 0, 'UTF-8'), $localizedSubject);
