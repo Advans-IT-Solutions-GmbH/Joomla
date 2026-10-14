@@ -118,6 +118,43 @@ class TlsRptParserTest extends TestCase
         $this->assertSame(0, $report['policies'][0]['failure_count']);
     }
 
+    public function testReportExceedingPolicyCapIsRejected(): void
+    {
+        $policies = [];
+
+        for ($i = 0; $i <= 1000; $i++) {
+            $policies[] = [
+                'policy'  => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                'summary' => ['total-successful-session-count' => 1, 'total-failure-session-count' => 0],
+            ];
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample(['policies' => $policies]));
+    }
+
+    public function testReportExceedingFailureBudgetIsRejected(): void
+    {
+        $details = [];
+
+        for ($i = 0; $i <= 100000; $i++) {
+            $details[] = ['result-type' => 'certificate-expired', 'failed-session-count' => 1];
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
+        TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
+                    'failure-details' => $details,
+                ],
+            ],
+        ]));
+    }
+
     public function testFingerprintIsStableAndContentSensitive(): void
     {
         $a = TlsRptParser::parse($this->sample());

@@ -206,6 +206,11 @@ class SourceModel extends AdminModel
                 ->whereIn($db->quoteName('source_id'), $ids);
             $db->setQuery($tlsQuery)->execute();
 
+            // Remove the source rows inside the same transaction, after their
+            // provenance has been unbound, so a source is only ever deleted
+            // together with the report references that pointed at it.
+            $result = parent::delete($pks);
+
             if ($result === false) {
                 $db->transactionRollback();
 

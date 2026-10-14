@@ -154,14 +154,18 @@ final class TlsRptParser
             throw new \InvalidArgumentException('The TLS-RPT report carries no policy results.', self::ERROR_NOT_REPORT);
         }
 
+        // Reject rather than truncate an over-sized report: a silently clipped
+        // report would be stored and deduplicated under the real report id with
+        // incomplete session totals, permanently recording wrong figures and
+        // blocking a corrected re-import. Mirror the DMARC parser, which rejects
+        // reports that exceed its resource ceilings.
+        if (\count($policies) > self::MAX_POLICIES) {
+            throw new \InvalidArgumentException('The TLS-RPT report exceeds the supported number of policies.', self::ERROR_NOT_REPORT);
+        }
+
         $failureBudget = self::MAX_FAILURES;
-        $seen          = 0;
 
         foreach ($policies as $policy) {
-            if (++$seen > self::MAX_POLICIES) {
-                break;
-            }
-
             if (!\is_array($policy)) {
                 continue;
             }
@@ -206,7 +210,10 @@ final class TlsRptParser
 
         foreach ($details as $detail) {
             if ($failureBudget <= 0) {
-                break;
+                // Reject rather than silently drop detail rows: a truncated
+                // report would still be stored under its real identity with an
+                // incomplete failure list. Mirror the policy-cap handling above.
+                throw new \InvalidArgumentException('The TLS-RPT report exceeds the supported number of failure details.', self::ERROR_NOT_REPORT);
             }
 
             if (!\is_array($detail)) {

@@ -37,7 +37,12 @@ jobs:
         run: |
           TAG_PREFIX="pkgdmarcreports-v"
           XML_FILE="pkg_dmarcreports/pkg_dmarcreports.xml"
+          # The package bundles four sub-extensions, so a release-worthy change
+          # may land in any of them, not only the package manifest. Scan every
+          # bundled path so a fix or feature in a sub-extension still bumps the
+          # administrator-facing package stream.
           EXT_PATH="pkg_dmarcreports/"
+          EXT_PATHS=("$EXT_PATH" com_dmarcreports/ mod_dmarcreports/ plg_task_dmarcreports/ plg_system_dmarcmtasts/)
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -50,11 +55,11 @@ jobs:
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
 
             if [ -n "$LAST_TAG" ]; then
-              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
-              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "${EXT_PATHS[@]}")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "${EXT_PATHS[@]}")
             else
-              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
-              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "${EXT_PATHS[@]}")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "${EXT_PATHS[@]}")
             fi
 
             if [ -z "$SUBJECTS" ]; then

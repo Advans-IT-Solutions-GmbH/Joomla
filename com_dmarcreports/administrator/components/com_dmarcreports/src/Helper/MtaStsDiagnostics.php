@@ -147,6 +147,7 @@ final class MtaStsDiagnostics
     {
         $domain       = (string) ($generated['domain'] ?? '');
         $mode         = (string) ($generated['mode'] ?? '');
+        $maxAge       = (int) ($generated['max_age'] ?? 0);
         $mx           = array_map('strval', (array) ($generated['mx'] ?? []));
         $wellKnownUrl = (string) ($generated['well_known_url'] ?? '');
 
@@ -162,7 +163,15 @@ final class MtaStsDiagnostics
         $hostedMx = $hosted['mx'];
         sort($hostedMx);
 
-        if ($hosted['mode'] !== $mode || $hostedMx !== $mx) {
+        // Compare every field the generated policy fixes: a wrong or missing
+        // version, a stale max_age or a changed mode/mx all mean the served
+        // policy no longer matches what the record id promises. Comparing only
+        // mode and mx would report a drifted policy as consistent, breaking the
+        // diagnostics contract.
+        if ($hosted['version'] !== 'stsv1'
+            || $hosted['mode'] !== $mode
+            || $hosted['max_age'] !== $maxAge
+            || $hostedMx !== $mx) {
             return [$this->finding('mtasts_policy_drift', 2, [$wellKnownUrl])];
         }
 
@@ -197,12 +206,57 @@ final class MtaStsDiagnostics
         }
 
         foreach ($records as $txt) {
-            if (stripos(ltrim((string) $txt), 'v=tlsrptv1') === 0) {
+            $value = ltrim((string) $txt);
+
+            if (stripos($value, 'v=tlsrptv1') !== 0) {
+                continue;
+            }
+
+            // A record carrying the right version but a different rua points
+            // reports at an obsolete or wrong address, so treat it as drift
+            // rather than consistent. Compare the normalized rua target set.
+            if (self::ruaTargets($value) === self::ruaTargets($record)) {
                 return [];
             }
         }
 
         return [$this->finding('tlsrpt_publish', 1, [$host, $record])];
+    }
+
+    /**
+     * Extract the normalized, sorted set of `rua` targets from a TLS-RPT TXT
+     * record so a published record can be compared against the generated one by
+     * reporting destination rather than by exact string.
+     *
+     * @return  string[]
+     */
+    private static function ruaTargets(string $record): array
+    {
+        $targets = [];
+
+        foreach (explode(';', $record) as $part) {
+            if (!str_contains($part, '=')) {
+                continue;
+            }
+
+            [$key, $val] = explode('=', $part, 2);
+
+            if (strtolower(trim($key)) !== 'rua') {
+                continue;
+            }
+
+            foreach (explode(',', $val) as $target) {
+                $target = strtolower(trim($target));
+
+                if ($target !== '') {
+                    $targets[] = $target;
+                }
+            }
+        }
+
+        sort($targets);
+
+        return $targets;
     }
 
     /**
@@ -241,14 +295,17 @@ final class MtaStsDiagnostics
     }
 
     /**
-     * Parse a hosted MTA-STS policy body into its mode and MX host set.
+     * Parse a hosted MTA-STS policy body into the fields the generated policy
+     * fixes: its version tag, mode, MX host set and max_age.
      *
-     * @return  array{mode:string, mx:string[]}
+     * @return  array{version:string, mode:string, mx:string[], max_age:int}
      */
     private function parsePolicy(string $body): array
     {
-        $mode = '';
-        $mx   = [];
+        $version = '';
+        $mode    = '';
+        $mx      = [];
+        $maxAge  = 0;
 
         foreach (preg_split('~[\r\n]+~', $body) ?: [] as $line) {
             if (!str_contains($line, ':')) {
@@ -259,14 +316,18 @@ final class MtaStsDiagnostics
             $key         = strtolower(trim($key));
             $val         = strtolower(trim($val, " \t.\r\n"));
 
-            if ($key === 'mode') {
+            if ($key === 'version') {
+                $version = $val;
+            } elseif ($key === 'mode') {
                 $mode = $val;
             } elseif ($key === 'mx' && $val !== '') {
                 $mx[] = $val;
+            } elseif ($key === 'max_age' && preg_match('~^\d+$~', $val)) {
+                $maxAge = (int) $val;
             }
         }
 
-        return ['mode' => $mode, 'mx' => $mx];
+        return ['version' => $version, 'mode' => $mode, 'mx' => $mx, 'max_age' => $maxAge];
     }
 
     /**

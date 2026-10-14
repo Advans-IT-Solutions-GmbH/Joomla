@@ -206,6 +206,41 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('tlsrpt_publish', $this->codes($result));
     }
 
+    public function testStaleMaxAgeIsReportedAsDrift(): void
+    {
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'], 86400)));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_policy_drift', $this->codes($result));
+    }
+
+    public function testMissingVersionIsReportedAsDrift(): void
+    {
+        $body = "mode: enforce\r\nmx: mail.example.org\r\nmax_age: 604800";
+
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($body));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_policy_drift', $this->codes($result));
+    }
+
+    public function testTlsRptRuaMismatchIsReportedAsPublish(): void
+    {
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:stale@elsewhere.example'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('tlsrpt_publish', $this->codes($result));
+    }
+
     public function testEveryFindingIsTaggedMtaStsCategory(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([
