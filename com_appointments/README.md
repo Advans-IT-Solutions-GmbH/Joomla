@@ -71,7 +71,8 @@ The component registers its own update site during installation, so later versio
 - **Event types and custom fields.** Configure the duration, slot grid, buffers, notice, horizon,
   limits, location, host, schedule, publication, access, content language, ordering and retention
   through the administrator. Custom fields support every form type listed below. Each event type
-  has its own Joomla permission asset and independently generated feed credential.
+  has its own Joomla permission asset and independently generated feed credential. An event type's
+  host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
   manager. Direct links enforce publication, access and content language too.
 - **Public booking.** A server-rendered month grid, available days, slot choices and an explicit
@@ -218,6 +219,8 @@ task prevents both personal-data retention and metadata cleanup from being enfor
 
 Open **Components → Appointments → Calendar feeds** with component management and options
 permission. Copy an event-type URL or a host URL into your calendar client's subscription settings.
+Event credentials also require edit permission for that event. A combined host credential is
+available and rotatable only when you may edit every event type included in that host's feed.
 Each credential controls only that feed; rotating a host URL does not rotate its event-type URLs,
 and vice versa. Rotation requires explicit confirmation and revokes the old URL immediately.
 Replace the URL in the calendar client afterwards. Normal event-type edits cannot restore an old

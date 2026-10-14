@@ -72,6 +72,14 @@ try {
     $check($admin->status === 200 && $moved['uid'] === $first['uid'] && (int) $moved['sequence'] === 1
         && $moved['start_utc'] === $day . ' 14:00:00' && (int) $moved['state'] === 0,
         'Administrator reschedule preserves UID and pending state, raises sequence and moves in place');
+    $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . $id);
+    $html = $admin->request('/administrator/index.php?option=com_appointments', [
+        'task' => 'bookings.reschedule', 'id' => $id, 'start' => $day . 'T11:00', $admin->token($detail) => 1,
+    ]);
+    $unchanged = $fixture->row($id);
+    $check($admin->status === 200 && str_contains($html, 'unavailable or was just taken')
+        && $unchanged['start_utc'] === $moved['start_utc'] && $unchanged['uid'] === $moved['uid']
+        && $unchanged['sequence'] === $moved['sequence'], 'Occupied administrator reschedule is a friendly refusal with no calendar revision');
     $admin->request('/administrator/index.php?option=com_appointments', [
         'task' => 'bookings.reschedule', 'id' => $id, 'start' => $day . 'T15:00',
     ]);
@@ -151,6 +159,24 @@ try {
     $check($restricted->status === 403, 'Single-booking ICS export also enforces event permission');
     $restricted->request('/administrator/index.php?option=com_appointments&view=system');
     $check($restricted->status === 403, 'System configuration diagnostics require options permission');
+
+    $before = $fixture->row($id);
+    $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc();
+    $eventRow['host_user_id'] = $userId;
+    $eventRow['conference_params'] = [];
+    $html = $admin->submit('eventtype', $eventRow);
+    $host = (int) $db->query("SELECT host_user_id FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc()['host_user_id'];
+    $check($admin->status === 200 && str_contains($html, 'host cannot be changed')
+        && $host === $fixture->host && $fixture->row($id) === $before,
+        'Host reassignment with retained bookings is explicitly refused without changing ownership or calendar data');
+    $emptyEvent = $fixture->event();
+    $events[] = $emptyEvent;
+    $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$emptyEvent}")->fetch_assoc();
+    $eventRow['host_user_id'] = $userId;
+    $eventRow['conference_params'] = [];
+    $admin->submit('eventtype', $eventRow);
+    $host = (int) $db->query("SELECT host_user_id FROM {$prefix}appointments_eventtypes WHERE id={$emptyEvent}")->fetch_assoc()['host_user_id'];
+    $check($admin->status === 200 && $host === $userId, 'An event type without bookings may still be assigned to another valid host');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

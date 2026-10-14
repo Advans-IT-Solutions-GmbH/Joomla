@@ -31,7 +31,7 @@ class FeedsController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
         $scope = $this->input->post->getString('scope', '');
-        $id = $this->input->post->getInt('id');
+        $id = $this->input->post->getInt('id', 0);
         if (!in_array($scope, ['event', 'host'], true) || $id < 1) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND'), 404);
         }
@@ -42,6 +42,13 @@ class FeedsController extends BaseController
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_CONFIRM'), 400);
         }
         $service = new FeedService(Factory::getContainer()->get(DatabaseInterface::class));
+        if ($scope === 'host') {
+            foreach ($service->hostEventIds($id) as $eventId) {
+                if (!$user->authorise('core.edit', 'com_appointments.eventtype.' . $eventId)) {
+                    throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+                }
+            }
+        }
         try {
             $service->rotate($scope, $id, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
         } catch (\DomainException $e) {
@@ -59,7 +66,7 @@ class FeedsController extends BaseController
         if (!$user->authorise('core.manage', 'com_appointments')) {
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
-        $id = $this->input->getInt('id');
+        $id = $this->input->getInt('id', 0);
         $service = new FeedService(Factory::getContainer()->get(DatabaseInterface::class));
         $eventId = $service->bookingEventId($id);
         if ($id < 1 || $eventId < 1) {

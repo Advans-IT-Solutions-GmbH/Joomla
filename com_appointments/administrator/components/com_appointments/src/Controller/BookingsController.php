@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Service\BookingStore;
 use Advans\Component\Appointments\Administrator\Service\NotificationService;
 use Advans\Component\Appointments\Administrator\Service\NotificationException;
 use Advans\Component\Appointments\Administrator\Service\ConferenceService;
+use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Text;
@@ -103,7 +104,7 @@ class BookingsController extends BaseController
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking&id=' . $id, false));
         try {
             $booking = (new BookingStore($db))->reschedule($id, $start, $now);
-        } catch (\Advans\Component\Appointments\Administrator\Service\SlotTakenException $e) {
+        } catch (SlotTakenException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_SLOT_TAKEN'), 'warning');
             return false;
         } catch (\DomainException $e) {

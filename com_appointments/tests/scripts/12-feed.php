@@ -99,6 +99,7 @@ $fixture = new AppointmentsFixture('feed');
 $failed = 0;
 $lowUser = 0;
 $componentRules = null;
+$assetIds = [];
 $check = static function (bool $ok, string $label) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $label . "\n";
     $failed += $ok ? 0 : 1;
@@ -119,6 +120,18 @@ $noStore = static fn (array $headers): bool => str_contains($headers['cache-cont
 try {
     $event = $fixture->event();
     $otherEvent = $fixture->event();
+    $editor = new AppointmentsHttp('http://localhost', 'feed-event-assets');
+    $editor->login();
+    foreach ([$event, $otherEvent] as $eventId) {
+        $row = $fixture->db->query("SELECT * FROM {$fixture->prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc();
+        $row['conference_params'] = [];
+        $editor->submit('eventtype', $row);
+        $asset = $fixture->db->query("SELECT id FROM {$fixture->prefix}assets WHERE name='com_appointments.eventtype.{$eventId}'")->fetch_assoc();
+        if (!$asset) {
+            throw new RuntimeException('The feed permission fixture asset was not created.');
+        }
+        $assetIds[] = (int) $asset['id'];
+    }
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
     $created = $fixture->booking($event, $day . ' 10:00:00', ['guests' => 'guest@example.test']);
     $other = $fixture->booking($otherEvent, $day . ' 12:00:00')['booking'];
@@ -253,6 +266,21 @@ try {
     $token = $low->token($allowed);
     $low->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $token => 1]);
     $check($low->status === 403 && $tokens($event)[0] === $newEventToken, 'Lower-privileged Manager cannot rotate credentials');
+    $rules['core.options']['6'] = 1;
+    $rules['core.edit']['6'] = 1;
+    $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='"
+        . $fixture->db->real_escape_string(json_encode($rules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR))
+        . "' WHERE name='com_appointments'");
+    $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='{\"core.edit\":{\"6\":0}}'"
+        . " WHERE name='com_appointments.eventtype.{$otherEvent}'");
+    $page = $low->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $check($low->status === 200 && str_contains($page, $newEventToken)
+        && !str_contains($page, $newHostToken) && !str_contains($page, $otherToken),
+        'Options permission does not expose a combined host credential containing an explicitly denied event');
+    $token = $low->token($page);
+    $low->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $token => 1]);
+    $check($low->status === 403 && $tokens($event)[1] === $newHostToken,
+        'Host rotation also requires access to every event in that combined feed');
 } finally {
     if ($componentRules !== null) {
         $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='" . $fixture->db->real_escape_string($componentRules)
@@ -262,6 +290,12 @@ try {
         $fixture->db->query("DELETE FROM {$fixture->prefix}session WHERE userid={$lowUser}");
         $fixture->db->query("DELETE FROM {$fixture->prefix}user_usergroup_map WHERE user_id={$lowUser}");
         $fixture->db->query("DELETE FROM {$fixture->prefix}users WHERE id={$lowUser}");
+    }
+    if ($assetIds !== []) {
+        require __DIR__ . '/appointments-joomla.php';
+        foreach ($assetIds as $assetId) {
+            $check((new \Joomla\CMS\Table\Asset($joomlaDb))->delete($assetId), 'Feed permission asset cleanup preserves nested-set bounds');
+        }
     }
     $fixture->cleanup();
 }

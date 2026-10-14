@@ -13,14 +13,20 @@ $prefix = $fixture->prefix;
 $originalParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
 $tasks = [];
 $auditIds = [];
+$deletedBookingIds = [];
 $bucket = bin2hex(random_bytes(32));
-$run = static function (string $routine, int $size = 100, bool $expectSuccess = true) use ($db, $prefix, &$tasks, $check): void {
+$createTask = static function (string $routine, int $size) use ($db, $prefix, &$tasks): int {
     $time = gmdate('Y-m-d H:i:s');
     $params = $db->real_escape_string(json_encode(['batch_size' => $size]));
     $type = $db->real_escape_string('plg_task_appointments.' . $routine);
     $db->query("INSERT INTO {$prefix}scheduler_tasks (title,type,execution_rules,cron_rules,state,last_exit_code,times_executed,times_failed,priority,ordering,params,note,created,created_by) VALUES ('Appointments test','{$type}','{\"rule-type\":\"manual\"}','{\"type\":\"manual\",\"exp\":\"\"}',1,0,0,0,0,0,'{$params}','','{$time}',0)");
     $id = (int) $db->insert_id;
     $tasks[] = $id;
+
+    return $id;
+};
+$run = static function (string $routine, int $size = 100, bool $expectSuccess = true) use ($db, $prefix, $createTask, $check): void {
+    $id = $createTask($routine, $size);
     exec('cd /var/www/html && HTTP_HOST=localhost php cli/joomla.php scheduler:run --id=' . $id . ' 2>&1', $output, $exit);
     echo implode("\n", $output) . "\n";
     $row = $db->query("SELECT times_executed,last_exit_code FROM {$prefix}scheduler_tasks WHERE id={$id}")->fetch_assoc();
@@ -118,12 +124,101 @@ try {
     $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_ratelimit WHERE bucket='{$bucket}'")->fetch_assoc()['n'] === 1
         && $db->query("SELECT window_utc FROM {$prefix}appointments_ratelimit WHERE bucket='{$bucket}'")->fetch_assoc()['window_utc'] === $freshWindow,
         'One-day rate cleanup deletes only an expired window, not a current window of the same bucket');
+
+    $race = $fixture->booking($event, $day . ' 14:00:00')['booking'];
+    $raceId = (int) $race['id'];
+    $expired = gmdate('Y-m-d H:i:s', time() - 400 * 86400);
+    $db->query("UPDATE {$prefix}appointments_bookings SET start_utc='{$expired}',end_utc='{$expired}' WHERE id={$raceId}");
+    $raceTask = $createTask('retention', 100);
+    $outputFile = tempnam(sys_get_temp_dir(), 'appointments-retention-');
+    if ($outputFile === false) {
+        throw new RuntimeException('Could not allocate the retention worker output file.');
+    }
+    $worker = null;
+    $locked = false;
+    try {
+        $db->begin_transaction();
+        $locked = true;
+        $db->query("SELECT user_id FROM {$prefix}appointments_hosts WHERE user_id={$fixture->host} FOR UPDATE");
+        $worker = proc_open('cd /var/www/html && HTTP_HOST=localhost php cli/joomla.php scheduler:run --id=' . $raceTask,
+            [0 => ['file', '/dev/null', 'r'], 1 => ['file', $outputFile, 'w'], 2 => ['file', $outputFile, 'a']], $pipes);
+        if (!is_resource($worker)) {
+            throw new RuntimeException('Could not start the retention race worker.');
+        }
+        $waiting = false;
+        $deadline = microtime(true) + 30;
+        do {
+            foreach ($db->query('SHOW FULL PROCESSLIST')->fetch_all(MYSQLI_ASSOC) as $process) {
+                $sql = (string) ($process['Info'] ?? '');
+                if (str_contains($sql, $prefix . 'appointments_hosts') && str_contains($sql, 'FOR UPDATE')) {
+                    $waiting = true;
+                    break;
+                }
+            }
+            if (!$waiting) {
+                usleep(50000);
+            }
+        } while (!$waiting && microtime(true) < $deadline && proc_get_status($worker)['running']);
+        $check($waiting, 'Retention selected the expired candidate and is actually waiting on the host lock');
+        $start = $db->real_escape_string($race['start_utc']);
+        $end = $db->real_escape_string($race['end_utc']);
+        $db->query("UPDATE {$prefix}appointments_bookings SET start_utc='{$start}',end_utc='{$end}',"
+            . "sequence=sequence+1,modified_utc=DATE_ADD(modified_utc,INTERVAL 1 SECOND) WHERE id={$raceId}");
+        $db->commit();
+        $locked = false;
+        $deadline = microtime(true) + 60;
+        while (proc_get_status($worker)['running'] && microtime(true) < $deadline) {
+            usleep(50000);
+        }
+        if (proc_get_status($worker)['running']) {
+            throw new RuntimeException('The retention race worker did not finish after releasing its host lock.');
+        }
+        proc_close($worker);
+        $worker = null;
+        $task = $db->query("SELECT times_executed,last_exit_code FROM {$prefix}scheduler_tasks WHERE id={$raceTask}")->fetch_assoc();
+        $row = $fixture->row($raceId);
+        $check((int) $task['times_executed'] === 1 && (int) $task['last_exit_code'] === 0
+            && $row['anonymised_utc'] === null && $row['invitee_email'] === $race['invitee_email']
+            && $row['start_utc'] === $race['start_utc'] && $row['uid'] === $race['uid']
+            && (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_audit WHERE booking_id={$raceId}")->fetch_assoc()['n'] === 0,
+            'A stale retention candidate rescheduled under the host lock keeps its data and UID without an erasure audit');
+    } finally {
+        if ($locked) {
+            $db->rollback();
+        }
+        if (is_resource($worker)) {
+            if (proc_get_status($worker)['running']) {
+                proc_terminate($worker);
+            }
+            proc_close($worker);
+        }
+        unlink($outputFile);
+    }
+
+    $deletion = $fixture->booking($event, $day . ' 14:30:00')['booking'];
+    $deletionId = (int) $deletion['id'];
+    $deletedBookingIds[] = $deletionId;
+    $expired = gmdate('Y-m-d H:i:s', time() - 400 * 86400);
+    $db->query("UPDATE {$prefix}appointments_bookings SET start_utc='{$expired}',end_utc='{$expired}' WHERE id={$deletionId}");
+    $setParams(['erase_mode' => 'delete']);
+    $before = AppointmentsMail::snapshot();
+    $run('retention');
+    $audit = $db->query("SELECT action,path,actor_user_id FROM {$prefix}appointments_audit WHERE booking_id={$deletionId}")->fetch_all(MYSQLI_ASSOC);
+    $check($fixture->row($deletionId) === null && count($audit) === 1 && $audit[0]['action'] === 'delete'
+        && $audit[0]['path'] === 'retention' && $audit[0]['actor_user_id'] === null
+        && AppointmentsMail::messagesSince($before) === [], 'Retention delete mode removes the expired row with one minimal audit and no historical mail');
+    $run('retention');
+    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_audit WHERE booking_id={$deletionId}")->fetch_assoc()['n'] === 1,
+        'Repeated retention deletion does not duplicate the audit');
 } catch (Throwable $e) {
     $check(false, 'Scheduler integration failed: ' . $e->getMessage());
 } finally {
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
     foreach ($tasks as $task) {
         $db->query("DELETE FROM {$prefix}scheduler_tasks WHERE id={$task}");
+    }
+    foreach ($deletedBookingIds as $id) {
+        $db->query("DELETE FROM {$prefix}appointments_audit WHERE booking_id={$id}");
     }
     $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket='{$bucket}'");
     $fixture->cleanup();

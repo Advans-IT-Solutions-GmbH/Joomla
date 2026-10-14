@@ -113,11 +113,14 @@ final class FeedService
     }
 
     /** Caller must require component manage/options before invoking this method. */
-    public function hostCredentials(\DateTimeImmutable $now): array
+    public function hostCredentials(\DateTimeImmutable $now, array $authorisedHosts): array
     {
         $db = $this->db;
+        $authorisedHosts = array_values(array_filter(array_map('intval', $authorisedHosts), static fn ($id) => $id > 0));
         $query = $this->query()->select('DISTINCT ' . $db->quoteName('host_user_id'))
-            ->from($db->quoteName('#__appointments_eventtypes'))->order($db->quoteName('host_user_id'));
+            ->from($db->quoteName('#__appointments_eventtypes'))
+            ->where($authorisedHosts === [] ? '1 = 0' : $db->quoteName('host_user_id') . ' IN (' . implode(',', $authorisedHosts) . ')')
+            ->order($db->quoteName('host_user_id'));
         $ids = $db->setQuery($query)->loadColumn();
         foreach ($ids as $id) {
             (new HostStore($db))->ensure((int) $id, $now);
@@ -130,6 +133,16 @@ final class FeedService
             ->order($db->quoteName('u.name'));
 
         return $db->setQuery($query)->loadAssocList();
+    }
+
+    public function hostEventIds(int $id): array
+    {
+        $db = $this->db;
+        $query = $this->query()->select($db->quoteName('id'))
+            ->from($db->quoteName('#__appointments_eventtypes'))
+            ->where($db->quoteName('host_user_id') . ' = ' . $id);
+
+        return array_map('intval', $db->setQuery($query)->loadColumn());
     }
 
     public function bookingEventId(int $id): int

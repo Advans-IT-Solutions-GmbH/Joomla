@@ -94,8 +94,9 @@ class BookingsModel extends ListModel
             }
             $this->setState('filter.' . $key, $value);
         }
-        if ($this->getState('filter.from') !== '' && $this->getState('filter.to') !== ''
-            && $this->getState('filter.from') > $this->getState('filter.to')) {
+        $from = $this->state->get('filter.from', '');
+        $to = $this->state->get('filter.to', '');
+        if ($from !== '' && $to !== '' && $from > $to) {
             throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_FILTER_INVALID'), 400);
         }
     }

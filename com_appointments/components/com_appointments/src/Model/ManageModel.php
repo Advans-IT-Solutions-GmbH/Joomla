@@ -52,7 +52,7 @@ class ManageModel extends BaseDatabaseModel
             return null;
         }
         $app = Factory::getApplication();
-        $id = $app->getInput()->getInt('id');
+        $id = $app->getInput()->getInt('id', 0);
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select('b.*')->select($db->quoteName('e.title'))->from($db->quoteName('#__appointments_bookings', 'b'))

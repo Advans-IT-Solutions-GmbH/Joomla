@@ -28,16 +28,27 @@ class FeedsModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName('id'))->from($db->quoteName('#__appointments_eventtypes'));
-        $ids = array_values(array_filter($db->setQuery($query)->loadColumn(),
-            static fn ($id) => $user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $id)));
+        $query->select($db->quoteName(['id', 'host_user_id']))->from($db->quoteName('#__appointments_eventtypes'));
+        $ids = [];
+        $hosts = [];
+        $deniedHosts = [];
+        foreach ($db->setQuery($query)->loadAssocList() as $event) {
+            $host = (int) $event['host_user_id'];
+            if ($user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $event['id'])) {
+                $ids[] = (int) $event['id'];
+                $hosts[$host] = $host;
+            } else {
+                $deniedHosts[$host] = true;
+            }
+        }
+        $hosts = array_values(array_diff_key($hosts, $deniedHosts));
         $service = new FeedService($db);
         $items = [];
         foreach ($service->eventCredentials($ids) as $row) {
             $items[] = ['scope' => 'event', 'id' => (int) $row['id'], 'title' => $row['title'],
                 'url' => $this->url('event', (int) $row['id'], $row['feed_token'])];
         }
-        foreach ($service->hostCredentials(new \DateTimeImmutable('now', new \DateTimeZone('UTC'))) as $row) {
+        foreach ($service->hostCredentials(new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $hosts) as $row) {
             $items[] = ['scope' => 'host', 'id' => (int) $row['user_id'], 'title' => $row['title'],
                 'url' => $this->url('host', (int) $row['user_id'], $row['feed_token'])];
         }

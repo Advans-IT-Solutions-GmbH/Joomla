@@ -117,10 +117,55 @@ class EventtypeModel extends AdminModel
 
         $data['retention_days'] = ($data['retention_days'] ?? '') === '' ? null : (int) $data['retention_days'];
         $db = $this->getDatabase();
+        $id = (int) ($data['id'] ?? 0);
+        $newHost = (int) ($data['host_user_id'] ?? 0);
+        $oldHost = 0;
+        if ($id > 0) {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('host_user_id'))->from($db->quoteName('#__appointments_eventtypes'))
+                ->where($db->quoteName('id') . ' = ' . $id);
+            $oldHost = (int) $db->setQuery($query)->loadResult();
+        }
         $db->transactionStart();
 
         try {
-            (new HostStore($db))->ensure((int) ($data['host_user_id'] ?? 0), new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $hosts = array_unique(array_filter([$oldHost, $newHost], static fn ($host) => $host > 0));
+            sort($hosts);
+            foreach ($hosts as $host) {
+                if ($host === $newHost) {
+                    (new HostStore($db))->ensure($newHost, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                }
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $query->select($db->quoteName('user_id'))->from($db->quoteName('#__appointments_hosts'))
+                    ->where($db->quoteName('user_id') . ' = ' . $host);
+                $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+            }
+            if ($newHost < 1) {
+                throw new \InvalidArgumentException('A host must be a Joomla user.');
+            }
+            if ($id > 0) {
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $query->select($db->quoteName('host_user_id'))->from($db->quoteName('#__appointments_eventtypes'))
+                    ->where($db->quoteName('id') . ' = ' . $id);
+                $currentHost = (int) $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+                if ($currentHost !== $oldHost) {
+                    $db->transactionRollback();
+                    $this->setError(Text::_('COM_APPOINTMENTS_EVENTTYPE_ERROR_RELOAD'));
+
+                    return false;
+                }
+                if ($currentHost !== $newHost) {
+                    $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                    $query->select($db->quoteName('id'))->from($db->quoteName('#__appointments_bookings'))
+                        ->where($db->quoteName('eventtype_id') . ' = ' . $id)->setLimit(1);
+                    if ($db->setQuery((string) $query . ' FOR UPDATE')->loadResult()) {
+                        $db->transactionRollback();
+                        $this->setError(Text::_('COM_APPOINTMENTS_EVENTTYPE_ERROR_HOST_BOOKINGS'));
+
+                        return false;
+                    }
+                }
+            }
 
             if (!parent::save($data)) {
                 $db->transactionRollback();

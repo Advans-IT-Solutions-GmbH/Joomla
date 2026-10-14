@@ -23,7 +23,7 @@ class EventtypeModel extends BaseDatabaseModel
     public function getItem(?int $id = null): object
     {
         $app = Factory::getApplication();
-        $id ??= $app->getInput()->getInt('id');
+        $id ??= $app->getInput()->getInt('id', 0);
         $levels = $app->getIdentity()->getAuthorisedViewLevels();
 
         if ($id < 1 || $levels === []) {
