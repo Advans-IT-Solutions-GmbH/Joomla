@@ -104,6 +104,22 @@ final class TlsRptIngestor
 
         $policyDomainIds = $this->resolvePolicyDomains($report, $forcedDomainId);
 
+        // Refuse to store a partially resolved report. If even one policy block
+        // cannot be filed under a monitored domain (not monitored yet, or the
+        // operator lacks the privilege to auto-create it), committing the report
+        // now would persist it under its report-wide fingerprint while silently
+        // dropping that policy's sessions. Replaying the same report after the
+        // missing domain is added would then be treated as a duplicate, so the
+        // skipped sessions could never be imported. Defer the whole report
+        // instead so a later run imports every policy once all domains resolve.
+        foreach ($report['policies'] as $index => $policy) {
+            if ((int) ($policyDomainIds[$index] ?? 0) <= 0) {
+                $summary['skipped']++;
+
+                return;
+            }
+        }
+
         $primaryDomainId = 0;
         $primaryDomain   = '';
 

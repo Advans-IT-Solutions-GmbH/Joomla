@@ -92,6 +92,57 @@ jobs:
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "Version: $CURRENT → $NEW ($BUMP)"
 
+      - name: Verify bundled child version bumps
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          # The package bundles each child's built archive, which carries that
+          # child's own manifest <version>. Joomla only runs a child's schema
+          # migration when its bundled manifest version increases, so a
+          # child-only schema change that ships without its own version bump
+          # would publish a new package whose child manifest is unchanged and
+          # never trigger the migration on existing installs. Fail here until
+          # every child changed since the last package tag has received its own
+          # version bump through its release workflow, keeping the package's
+          # migration contract intact.
+          TAG_PREFIX="pkgdmarcreports-v"
+          LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
+
+          if [ -z "$LAST_TAG" ]; then
+            echo "::notice::No previous package tag; skipping child version-bump check for the first release."
+            exit 0
+          fi
+
+          declare -A CHILD_MANIFESTS=(
+            ["com_dmarcreports"]="com_dmarcreports/com_dmarcreports.xml"
+            ["mod_dmarcreports"]="mod_dmarcreports/mod_dmarcreports.xml"
+            ["plg_task_dmarcreports"]="plg_task_dmarcreports/dmarcreports.xml"
+            ["plg_system_dmarcmtasts"]="plg_system_dmarcmtasts/dmarcmtasts.xml"
+          )
+
+          STALE=""
+          for child in "${!CHILD_MANIFESTS[@]}"; do
+            if git diff --quiet "$LAST_TAG" HEAD -- "$child/"; then
+              continue
+            fi
+
+            manifest="${CHILD_MANIFESTS[$child]}"
+            OLD_VER=$(git show "$LAST_TAG:$manifest" 2>/dev/null | grep -oP '(?<=<version>)[^<]+' | head -1 || true)
+            NEW_VER=$(grep -oP '(?<=<version>)[^<]+' "$manifest" | head -1 || true)
+
+            echo "$child: changed since $LAST_TAG — manifest version $OLD_VER -> $NEW_VER"
+
+            if [ -n "$OLD_VER" ] && [ "$OLD_VER" = "$NEW_VER" ]; then
+              STALE="$STALE $child"
+            fi
+          done
+
+          if [ -n "$STALE" ]; then
+            echo "::error::These bundled children changed since $LAST_TAG without a manifest version bump:$STALE. Run each child's release workflow first so its schema migration triggers on update, then re-run the package release."
+            exit 1
+          fi
+
+          echo "All changed children carry a bumped manifest version."
+
       - name: Update version in files
         if: steps.version.outputs.bump != 'none'
         run: |

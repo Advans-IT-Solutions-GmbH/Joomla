@@ -211,8 +211,18 @@ final class TlsRptParser
 
         $details = $policy['failure-details'] ?? null;
 
-        if (!\is_array($details)) {
+        if ($details === null) {
+            // RFC 8460 makes failure-details optional, so an absent (or null)
+            // field legitimately means "no detail rows".
             return $result;
+        }
+
+        if (!\is_array($details)) {
+            // A present but non-array failure-details value is malformed. Reject
+            // rather than store the report with its summary counts but no detail
+            // rows: the report hash would then permanently deduplicate a
+            // corrected copy, so the detail rows could never be imported.
+            throw new \InvalidArgumentException('A TLS-RPT report has a malformed failure-details value.', self::ERROR_NOT_REPORT);
         }
 
         foreach ($details as $detail) {

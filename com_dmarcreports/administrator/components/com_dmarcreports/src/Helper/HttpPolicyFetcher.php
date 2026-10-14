@@ -171,6 +171,24 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
     }
 
     /**
+     * Bracket every IPv6 literal so a comma-joined CURLOPT_RESOLVE entry stays
+     * parseable. IPv4 addresses are returned unchanged.
+     *
+     * @param   string[]  $addresses  Validated public IPs.
+     *
+     * @return  string[]
+     *
+     * @since   1.1.0
+     */
+    private static function bracketResolveAddresses(array $addresses): array
+    {
+        return array_map(
+            static fn (string $ip): string => strpos($ip, ':') !== false ? '[' . $ip . ']' : $ip,
+            $addresses
+        );
+    }
+
+    /**
      * Perform the pinned HTTPS GET and return the body only on HTTP 200.
      *
      * @param  string[]  $addresses  Validated public IPs to pin the host to.
@@ -192,6 +210,12 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
         $body    = '';
         $maxSize = self::MAX_POLICY_BYTES;
 
+        // libcurl's CURLOPT_RESOLVE host:port:addr syntax is comma-separated, so
+        // every IPv6 literal must be bracketed to keep its own colons from being
+        // read as field separators; otherwise a dual-stack host's AAAA address
+        // makes the whole entry unparseable and the fetch fails on IPv6 hosts.
+        $resolveAddresses = self::bracketResolveAddresses($addresses);
+
         try {
             curl_setopt_array($handle, [
                 \CURLOPT_URL            => $url,
@@ -204,7 +228,7 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
                 \CURLOPT_PROTOCOLS      => \CURLPROTO_HTTPS,
                 // Pin the host to the addresses we validated so a concurrent DNS
                 // change cannot rebind it to a private address before connect.
-                \CURLOPT_RESOLVE        => [$host . ':443:' . implode(',', $addresses)],
+                \CURLOPT_RESOLVE        => [$host . ':443:' . implode(',', $resolveAddresses)],
                 // Buffer the body through a bounded callback so an
                 // attacker-controlled host cannot exhaust memory with a huge
                 // response: abort the transfer once the small policy ceiling is

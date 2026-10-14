@@ -401,11 +401,13 @@ class TlsRptParserTest extends TestCase
         ]));
     }
 
-    public function testNonObjectFailureDetailRejectsTheWholeReport(): void
+    public function testNonArrayFailureDetailsRejectsTheWholeReport(): void
     {
-        // A non-object entry in failure-details must reject the whole report for
-        // the same reason as a non-object policy: a partial import would be
-        // persisted under the report's permanent fingerprint.
+        // A present failure-details value that is not an array (for example a
+        // string or number) is malformed. It must reject the whole report
+        // rather than be treated as absent: storing the summary counts without
+        // the detail rows would pin a partial import under the report's
+        // permanent fingerprint so a corrected copy could never replace it.
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionCode(TlsRptParser::ERROR_NOT_REPORT);
         TlsRptParser::parse($this->sample([
@@ -413,12 +415,38 @@ class TlsRptParserTest extends TestCase
                 [
                     'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
                     'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 1],
-                    'failure-details' => [
-                        ['result-type' => 'certificate-expired', 'failed-session-count' => 1],
-                        'not-an-object',
-                    ],
+                    'failure-details' => 'certificate-expired',
                 ],
             ],
         ]));
+    }
+
+    public function testAbsentFailureDetailsIsAccepted(): void
+    {
+        // An absent failure-details field is legitimate (no detail rows) and
+        // must still parse, unlike a present malformed value.
+        $report = json_decode($this->sample(), true, 64, JSON_THROW_ON_ERROR);
+        unset($report['policies'][0]['failure-details']);
+
+        $parsed = TlsRptParser::parse(json_encode($report, JSON_THROW_ON_ERROR));
+
+        $this->assertCount(1, $parsed['policies']);
+        $this->assertSame([], $parsed['policies'][0]['failures']);
+    }
+
+    public function testNullFailureDetailsIsAccepted(): void
+    {
+        // An explicit null failure-details is treated the same as an absent one.
+        $report = TlsRptParser::parse($this->sample([
+            'policies' => [
+                [
+                    'policy'          => ['policy-type' => 'sts', 'policy-domain' => 'example.org'],
+                    'summary'         => ['total-successful-session-count' => 1, 'total-failure-session-count' => 0],
+                    'failure-details' => null,
+                ],
+            ],
+        ]));
+
+        $this->assertSame([], $report['policies'][0]['failures']);
     }
 }
