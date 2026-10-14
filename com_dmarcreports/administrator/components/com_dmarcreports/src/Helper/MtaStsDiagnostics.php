@@ -82,8 +82,58 @@ final class MtaStsDiagnostics
     }
 
     /**
-     * Produce the MTA-STS (`_mta-sts` TXT + hosted policy) findings for one
-     * domain.
+     * Roll several monitored domains up into the System Check view's MTA-STS /
+     * TLS-RPT section. This is pure aggregation over {@see inspect()}: the
+     * caller supplies each domain's generated artifacts (built from the
+     * component parameters via {@see MtaStsPolicy::generate()}), so this method
+     * performs no database access and no parameter parsing and can be unit
+     * tested with plain arrays and injected resolver/fetcher fakes. The
+     * {@see $withNetwork} flag carries the same `dns_diagnostics` opt-in that
+     * gates the per-domain diagnostics, so the System Check never performs a
+     * live lookup the operator has not enabled.
+     *
+     * @param   bool                         $enabled       Whether MTA-STS or TLS-RPT is switched on at all.
+     * @param   array<int, array<string, mixed>>  $generated  Per-domain output of {@see MtaStsPolicy::generate()}.
+     * @param   bool                         $withNetwork   When false no DNS/HTTP lookup is performed.
+     *
+     * @return  array{enabled:bool, network:bool, domains:array<int, array{domain:string, findings:array<int, array{code:string, severity:int, params:array<int,mixed>}>}>}
+     */
+    public function summarize(bool $enabled, array $generated, bool $withNetwork): array
+    {
+        $rows = [];
+
+        foreach ($generated as $item) {
+            $item = (array) $item;
+
+            // Neither switch applies to this domain's generated artifacts;
+            // nothing to monitor, so it is omitted from the roll-up.
+            if (empty($item['enabled']) && empty($item['tlsrpt_enabled'])) {
+                continue;
+            }
+
+            $domain = (string) ($item['domain'] ?? '');
+
+            if ($domain === '') {
+                continue;
+            }
+
+            $result = $this->inspect($item, $withNetwork);
+
+            $rows[] = [
+                'domain'   => $domain,
+                'findings' => $result['findings'],
+            ];
+        }
+
+        return [
+            'enabled' => $enabled,
+            'network' => $withNetwork,
+            'domains' => $rows,
+        ];
+    }
+
+    /**
+     * Inspect the generated MTA-STS artifacts for a single domain.
      *
      * @param   array<string, mixed>  $generated
      *

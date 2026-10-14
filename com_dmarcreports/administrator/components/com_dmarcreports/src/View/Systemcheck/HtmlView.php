@@ -26,9 +26,13 @@ class HtmlView extends BaseHtmlView
     /** @var array<int, array<string, mixed>> */
     protected $checks = [];
 
+    /** @var array{enabled:bool, network:bool, domains:array<int, array<string, mixed>>} */
+    protected $mtasts = ['enabled' => false, 'network' => false, 'domains' => []];
+
     public function display($tpl = null)
     {
         $this->checks = $this->getModel()->getChecks();
+        $this->mtasts = $this->getModel()->getMtaStsChecks();
 
         ToolbarHelper::title(Text::_('COM_DMARCREPORTS_SYSTEMCHECK_TITLE'), 'health');
         ToolbarHelper::link(

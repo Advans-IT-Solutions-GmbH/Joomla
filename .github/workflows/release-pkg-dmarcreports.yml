@@ -98,50 +98,81 @@ jobs:
           # The package bundles each child's built archive, which carries that
           # child's own manifest <version>. Joomla only runs a child's schema
           # migration when its bundled manifest version increases, so a
-          # child-only schema change that ships without its own version bump
-          # would publish a new package whose child manifest is unchanged and
-          # never trigger the migration on existing installs. Fail here until
-          # every child changed since the last package tag has received its own
-          # version bump through its release workflow, keeping the package's
-          # migration contract intact.
-          TAG_PREFIX="pkgdmarcreports-v"
-          LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
-
-          if [ -z "$LAST_TAG" ]; then
-            echo "::notice::No previous package tag; skipping child version-bump check for the first release."
-            exit 0
-          fi
-
+          # child-only schema change shipped without its own version bump would
+          # reach existing installs — whether they were installed standalone or
+          # through an earlier package — without ever triggering the migration.
+          #
+          # Validate every bundled child against two baselines: its own latest
+          # standalone release tag and the latest package tag. If the child
+          # changed since either baseline without a manifest version bump, fail
+          # until the child's release workflow has bumped it. A child with no
+          # prior tag of a given kind has no existing installs from that channel
+          # to migrate, so that baseline is simply skipped — the first package
+          # release is NOT waved through wholesale, each child is still checked
+          # against its standalone lineage.
           declare -A CHILD_MANIFESTS=(
             ["com_dmarcreports"]="com_dmarcreports/com_dmarcreports.xml"
             ["mod_dmarcreports"]="mod_dmarcreports/mod_dmarcreports.xml"
             ["plg_task_dmarcreports"]="plg_task_dmarcreports/dmarcreports.xml"
             ["plg_system_dmarcmtasts"]="plg_system_dmarcmtasts/dmarcmtasts.xml"
           )
+          declare -A CHILD_TAG_PREFIXES=(
+            ["com_dmarcreports"]="dmarcreports-v"
+            ["mod_dmarcreports"]="moddmarcreports-v"
+            ["plg_task_dmarcreports"]="task-dmarcreports-v"
+            ["plg_system_dmarcmtasts"]="system-dmarcmtasts-v"
+          )
+
+          PKG_TAG=$(git tag -l "pkgdmarcreports-v*" --sort=-v:refname | head -1)
+
+          manifest_version() {
+            # $1 = git ref or empty (empty => working tree), $2 = manifest path
+            if [ -z "$1" ]; then
+              grep -oP '(?<=<version>)[^<]+' "$2" | head -1 || true
+            else
+              git show "$1:$2" 2>/dev/null | grep -oP '(?<=<version>)[^<]+' | head -1 || true
+            fi
+          }
 
           STALE=""
           for child in "${!CHILD_MANIFESTS[@]}"; do
-            if git diff --quiet "$LAST_TAG" HEAD -- "$child/"; then
-              continue
-            fi
-
             manifest="${CHILD_MANIFESTS[$child]}"
-            OLD_VER=$(git show "$LAST_TAG:$manifest" 2>/dev/null | grep -oP '(?<=<version>)[^<]+' | head -1 || true)
-            NEW_VER=$(grep -oP '(?<=<version>)[^<]+' "$manifest" | head -1 || true)
+            NEW_VER=$(manifest_version "" "$manifest")
 
-            echo "$child: changed since $LAST_TAG — manifest version $OLD_VER -> $NEW_VER"
+            CHILD_TAG=$(git tag -l "${CHILD_TAG_PREFIXES[$child]}*" --sort=-v:refname | head -1)
 
-            if [ -n "$OLD_VER" ] && [ "$OLD_VER" = "$NEW_VER" ]; then
-              STALE="$STALE $child"
-            fi
+            for baseline in "$CHILD_TAG" "$PKG_TAG"; do
+              [ -z "$baseline" ] && continue
+
+              # Unchanged child directory since this baseline cannot regress the
+              # migration contract for that channel.
+              if git diff --quiet "$baseline" HEAD -- "$child/"; then
+                continue
+              fi
+
+              OLD_VER=$(manifest_version "$baseline" "$manifest")
+
+              # The child did not exist at this baseline (no manifest there), so
+              # there is nothing from that channel to migrate.
+              [ -z "$OLD_VER" ] && continue
+
+              echo "$child: changed since $baseline — manifest version $OLD_VER -> $NEW_VER"
+
+              if [ "$OLD_VER" = "$NEW_VER" ]; then
+                case " $STALE " in
+                  *" $child "*) ;;
+                  *) STALE="$STALE $child" ;;
+                esac
+              fi
+            done
           done
 
           if [ -n "$STALE" ]; then
-            echo "::error::These bundled children changed since $LAST_TAG without a manifest version bump:$STALE. Run each child's release workflow first so its schema migration triggers on update, then re-run the package release."
+            echo "::error::These bundled children changed since a prior release tag without a manifest version bump:$STALE. Run each child's release workflow first so its schema migration triggers on update, then re-run the package release."
             exit 1
           fi
 
-          echo "All changed children carry a bumped manifest version."
+          echo "All changed children carry a bumped manifest version relative to their release baselines."
 
       - name: Update version in files
         if: steps.version.outputs.bump != 'none'

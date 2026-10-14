@@ -358,4 +358,77 @@ class MtaStsDiagnosticsTest extends TestCase
             $this->assertSame('mtasts', $finding['category']);
         }
     }
+
+    public function testSummarizeDisabledReturnsNoDomains(): void
+    {
+        // When neither switch is on the System Check model passes enabled=false
+        // and an empty generated list; the roll-up must report the feature as
+        // off and surface no per-domain rows.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $summary     = $diagnostics->summarize(false, [], true);
+
+        $this->assertFalse($summary['enabled']);
+        $this->assertTrue($summary['network']);
+        $this->assertSame([], $summary['domains']);
+    }
+
+    public function testSummarizeSkipsDomainsWithNothingToPublish(): void
+    {
+        // A domain whose generated artifacts have both switches off (e.g. no MX,
+        // reporting disabled) contributes no monitoring rows even though the
+        // feature is globally enabled.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $summary     = $diagnostics->summarize(true, [
+            $this->generated(['enabled' => false, 'tlsrpt_enabled' => false]),
+        ], false);
+
+        $this->assertTrue($summary['enabled']);
+        $this->assertSame([], $summary['domains']);
+    }
+
+    public function testSummarizeReportsPerDomainFindingsOffline(): void
+    {
+        // Enabled feature, network off: every monitored domain appears with the
+        // "publish these records" guidance and no live lookup is attempted.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $summary     = $diagnostics->summarize(true, [
+            $this->generated(['domain' => 'a.example']),
+            $this->generated(['domain' => 'b.example']),
+        ], false);
+
+        $this->assertTrue($summary['enabled']);
+        $this->assertFalse($summary['network']);
+        $this->assertCount(2, $summary['domains']);
+        $this->assertSame('a.example', $summary['domains'][0]['domain']);
+        $this->assertSame('b.example', $summary['domains'][1]['domain']);
+
+        $codes = array_map(static fn (array $f): string => $f['code'], $summary['domains'][0]['findings']);
+        $this->assertContains('mtasts_publish', $codes);
+        $this->assertContains('tlsrpt_publish', $codes);
+    }
+
+    public function testSummarizeConsistentDomainHasEmptyFindings(): void
+    {
+        // A fully consistent enforce deployment yields an empty findings list,
+        // which the System Check view renders as a green "consistent" badge.
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+            '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+        ]), $this->fetcher($this->policyBody('enforce', ['mail.example.org'])));
+        $summary = $diagnostics->summarize(true, [$this->generated()], true);
+
+        $this->assertTrue($summary['network']);
+        $this->assertCount(1, $summary['domains']);
+        $this->assertSame([], $summary['domains'][0]['findings']);
+    }
+
+    public function testSummarizeSkipsEmptyDomainName(): void
+    {
+        $diagnostics = new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null));
+        $summary     = $diagnostics->summarize(true, [
+            $this->generated(['domain' => '']),
+        ], false);
+
+        $this->assertSame([], $summary['domains']);
+    }
 }

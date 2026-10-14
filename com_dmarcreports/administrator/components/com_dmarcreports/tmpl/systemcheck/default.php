@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use Advans\Component\DmarcReports\Administrator\Helper\ActionPresenter;
 use Advans\Component\DmarcReports\Administrator\Helper\EnvironmentCheck;
 use Joomla\CMS\Language\Text;
 
@@ -84,6 +85,52 @@ $detailFor = static function (string $id, array $params): string {
                     <?php endforeach; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <?php $mtasts = $this->mtasts; ?>
+    <div class="card mt-4">
+        <div class="card-header">
+            <h2 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_HEADING'); ?></h2>
+        </div>
+        <div class="card-body">
+            <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_INTRO'); ?></p>
+            <?php if (empty($mtasts['enabled'])) : ?>
+                <p class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_DISABLED'); ?></p>
+            <?php elseif (empty($mtasts['domains'])) : ?>
+                <p class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_NO_DOMAINS'); ?></p>
+            <?php else : ?>
+                <?php if (empty($mtasts['network'])) : ?>
+                    <div class="alert alert-info"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_NETWORK_OFF'); ?></div>
+                <?php endif; ?>
+                <?php foreach ($mtasts['domains'] as $row) : ?>
+                    <?php
+                    $domain   = (string) ($row['domain'] ?? '');
+                    $findings = (array) ($row['findings'] ?? []);
+                    ?>
+                    <div class="mb-3">
+                        <h3 class="h5"><?php echo htmlspecialchars($domain); ?></h3>
+                        <?php if ($findings === []) : ?>
+                            <span class="badge bg-success">
+                                <?php echo htmlspecialchars(Text::_('COM_DMARCREPORTS_SYSTEMCHECK_MTASTS_CONSISTENT')); ?>
+                            </span>
+                        <?php else : ?>
+                            <ul class="list-unstyled mb-0">
+                                <?php foreach ($findings as $finding) : ?>
+                                    <?php $severity = (int) ($finding['severity'] ?? 0); ?>
+                                    <li class="mb-2">
+                                        <span class="badge bg-<?php echo ActionPresenter::severityClass($severity); ?> me-1">
+                                            <?php echo htmlspecialchars(ActionPresenter::severityLabel($severity)); ?>
+                                        </span>
+                                        <strong><?php echo htmlspecialchars(ActionPresenter::title($finding)); ?></strong>
+                                        <div class="text-muted"><?php echo htmlspecialchars(ActionPresenter::text($finding)); ?></div>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </div>
 </div>
