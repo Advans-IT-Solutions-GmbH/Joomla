@@ -45,6 +45,12 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
      */
     private int $timeout;
 
+    /**
+     * @var int Maximum number of policy bytes to buffer before aborting.
+     * @since 1.1.0
+     */
+    private const MAX_POLICY_BYTES = 65536;
+
     public function __construct(int $timeout = 10)
     {
         $this->timeout = max(1, $timeout);
@@ -183,10 +189,12 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
             return null;
         }
 
+        $body    = '';
+        $maxSize = self::MAX_POLICY_BYTES;
+
         try {
             curl_setopt_array($handle, [
                 \CURLOPT_URL            => $url,
-                \CURLOPT_RETURNTRANSFER => true,
                 \CURLOPT_FOLLOWLOCATION => false,
                 \CURLOPT_PORT           => 443,
                 \CURLOPT_CONNECTTIMEOUT => $this->timeout,
@@ -197,20 +205,33 @@ final class HttpPolicyFetcher implements PolicyFetcherInterface
                 // Pin the host to the addresses we validated so a concurrent DNS
                 // change cannot rebind it to a private address before connect.
                 \CURLOPT_RESOLVE        => [$host . ':443:' . implode(',', $addresses)],
+                // Buffer the body through a bounded callback so an
+                // attacker-controlled host cannot exhaust memory with a huge
+                // response: abort the transfer once the small policy ceiling is
+                // exceeded.
+                \CURLOPT_WRITEFUNCTION  => static function ($ch, string $chunk) use (&$body, $maxSize): int {
+                    $body .= $chunk;
+
+                    if (\strlen($body) > $maxSize) {
+                        return -1;
+                    }
+
+                    return \strlen($chunk);
+                },
             ]);
 
-            $body = curl_exec($handle);
-            $code = (int) curl_getinfo($handle, \CURLINFO_RESPONSE_CODE);
+            $result = curl_exec($handle);
+            $code   = (int) curl_getinfo($handle, \CURLINFO_RESPONSE_CODE);
         } catch (\Throwable) {
             return null;
         } finally {
             curl_close($handle);
         }
 
-        if ($body === false || $code !== 200) {
+        if ($result === false || $code !== 200) {
             return null;
         }
 
-        return (string) $body;
+        return $body;
     }
 }

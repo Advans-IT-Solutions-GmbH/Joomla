@@ -13,6 +13,7 @@ defined('_JEXEC') or die;
 
 use Advans\Component\DmarcReports\Administrator\Service\SourcePoller;
 use Advans\Plugin\Task\DmarcReports\Support\IngestSummary;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -89,8 +90,25 @@ final class DmarcReports extends CMSPlugin implements SubscriberInterface
         // Component strings are used in the per-source run messages.
         Factory::getApplication()->getLanguage()->load('com_dmarcreports', JPATH_ADMINISTRATOR);
 
-        $params         = $event->getArgument('params');
-        $allowAutoCreate = (int) ($params->auto_create_domains ?? 0) === 1;
+        $params              = $event->getArgument('params');
+        $taskWantsAutoCreate = (int) ($params->auto_create_domains ?? 0) === 1;
+
+        // Auto-creation of monitored domains is a privileged action guarded in
+        // the component by core.create. A Scheduler task parameter must not
+        // bypass that, so the capability only takes effect when it is also
+        // enabled in the component options, which require administrator rights
+        // to change.
+        $componentAllowsAutoCreate = (int) ComponentHelper::getParams('com_dmarcreports')
+            ->get('task_auto_create', 0) === 1;
+
+        $allowAutoCreate = $taskWantsAutoCreate && $componentAllowsAutoCreate;
+
+        if ($taskWantsAutoCreate && !$componentAllowsAutoCreate) {
+            $this->logTask(
+                'Automatic domain creation is requested by the task but disabled in the component options; ignoring it',
+                'warning'
+            );
+        }
 
         try {
             $poller  = new SourcePoller($this->getDatabase());

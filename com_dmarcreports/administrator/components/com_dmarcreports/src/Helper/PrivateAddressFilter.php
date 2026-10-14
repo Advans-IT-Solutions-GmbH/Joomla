@@ -74,7 +74,7 @@ final class PrivateAddressFilter
     private static function isPublicIpv4(string $packed): bool
     {
         $bytes = array_values(unpack('C4', $packed));
-        [$a, $b] = [$bytes[0], $bytes[1]];
+        [$a, $b, $c] = [$bytes[0], $bytes[1], $bytes[2]];
 
         // 0.0.0.0/8 "this network" / unspecified.
         if ($a === 0) {
@@ -106,19 +106,28 @@ final class PrivateAddressFilter
             return false;
         }
 
-        // 192.168.0.0/16 private, plus 192.0.0.0/24 (IETF) and 192.0.2.0/24
-        // (TEST-NET-1) documentation/reserved blocks.
-        if ($a === 192 && ($b === 168 || $b === 0)) {
+        // 192.168.0.0/16 private.
+        if ($a === 192 && $b === 168) {
             return false;
         }
 
-        // 198.18.0.0/15 benchmarking and 198.51.100.0/24 (TEST-NET-2).
-        if ($a === 198 && ($b === 18 || $b === 19 || $b === 51)) {
+        // 192.0.0.0/24 (IETF protocol assignments) and 192.0.2.0/24 (TEST-NET-1).
+        if ($a === 192 && $b === 0 && ($c === 0 || $c === 2)) {
+            return false;
+        }
+
+        // 198.18.0.0/15 benchmarking.
+        if ($a === 198 && ($b === 18 || $b === 19)) {
+            return false;
+        }
+
+        // 198.51.100.0/24 TEST-NET-2.
+        if ($a === 198 && $b === 51 && $c === 100) {
             return false;
         }
 
         // 203.0.113.0/24 TEST-NET-3.
-        if ($a === 203 && $b === 0) {
+        if ($a === 203 && $b === 0 && $c === 113) {
             return false;
         }
 
@@ -158,6 +167,11 @@ final class PrivateAddressFilter
 
         // fe80::/10 link-local.
         if ($first === 0xFE && ($second & 0xC0) === 0x80) {
+            return false;
+        }
+
+        // fec0::/10 deprecated site-local.
+        if ($first === 0xFE && ($second & 0xC0) === 0xC0) {
             return false;
         }
 

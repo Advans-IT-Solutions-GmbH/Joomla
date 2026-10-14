@@ -99,6 +99,19 @@
             <option value="0">JNO</option>
             <option value="1">JYES</option>
         </field>
+
+        <field
+            name="task_auto_create"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_CONFIG_TASK_AUTO_CREATE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_TASK_AUTO_CREATE_DESC"
+            default="0"
+            validate="options"
+        >
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
     </fieldset>
 
     <fieldset name="mtasts" label="COM_DMARCREPORTS_CONFIG_MTASTS_FIELDSET">

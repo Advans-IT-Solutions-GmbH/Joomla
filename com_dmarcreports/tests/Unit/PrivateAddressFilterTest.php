@@ -45,6 +45,9 @@ class PrivateAddressFilterTest extends TestCase
             'ipv4 public'            => ['93.184.216.34'],
             'ipv4 public 2'         => ['8.8.8.8'],
             'ipv4 just above cgnat' => ['100.128.0.1'],
+            'ipv4 near testnet1'    => ['192.0.1.1'],
+            'ipv4 near testnet2'    => ['198.51.99.1'],
+            'ipv4 near testnet3'    => ['203.0.112.1'],
             'ipv6 public'           => ['2606:2800:220:1:248:1893:25c8:1946'],
             'ipv6 public google'    => ['2001:4860:4860::8888'],
         ];
@@ -78,6 +81,7 @@ class PrivateAddressFilterTest extends TestCase
             'ipv6 ula fc'        => ['fc00::1'],
             'ipv6 ula fd'        => ['fd12:3456:789a::1'],
             'ipv6 link-local'    => ['fe80::1'],
+            'ipv6 site-local'    => ['fec0::1'],
             'ipv6 multicast'     => ['ff02::1'],
             'ipv6 documentation' => ['2001:db8::1'],
             'ipv4-mapped loop'   => ['::ffff:127.0.0.1'],
