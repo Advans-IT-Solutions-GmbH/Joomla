@@ -5,9 +5,9 @@ name: Collect Results
 # Runs on every pull request to main. It determines which extension build &
 # test workflows are triggered by the changed files (from their own
 # pull_request.paths filters), waits for those runs on the pull request head
-# commit and fails unless every one of them succeeded. A pull request that
-# triggers no extension workflow passes immediately, so documentation-only
-# changes are never blocked by a missing required check.
+# commit and fails unless every one of them succeeded. Workflows without path
+# filters, including Security Scan, are required even on documentation-only PRs.
+# Security Scan must also have successfully executed all expected scanner jobs.
 #
 # The extension workflows deliberately do not use the job name
 # "Collect Results", so a failing extension run can never be hidden behind a
@@ -41,7 +41,7 @@ jobs:
           sparse-checkout: |
             .github
 
-      - name: Wait for and evaluate triggered extension workflows
+      - name: Wait for and evaluate required pull request workflows
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
