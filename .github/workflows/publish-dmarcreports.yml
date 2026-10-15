@@ -65,7 +65,7 @@ jobs:
           if [ -z "$PREV_TAG" ]; then
             echo "changelog=Initial release" >> $GITHUB_OUTPUT
           else
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges -- com_dmarcreports/ | grep -v '\[skip ci\]' | grep -v '^- release:' | head -20 || true)
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges -- com_dmarcreports/ | awk '!/\[skip ci\]/ && !/^- release:/ { if (count++ < 20) print }')
             if [ -z "$CHANGELOG" ]; then
               CHANGELOG="- Bug fixes and improvements"
             fi
