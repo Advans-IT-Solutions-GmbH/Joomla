@@ -25,6 +25,7 @@ require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';
 require_once $helperDir . '/SourceIdentity.php';
+require_once $helperDir . '/ReportProvenance.php';
 require_once $helperDir . '/SourcePollLock.php';
 require_once $helperDir . '/PolicyFetcherInterface.php';
 require_once $helperDir . '/PrivateAddressFilter.php';

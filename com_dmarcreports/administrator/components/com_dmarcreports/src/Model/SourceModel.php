@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
+use Advans\Component\DmarcReports\Administrator\Helper\ReportProvenance;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Factory;
@@ -191,20 +192,12 @@ class SourceModel extends AdminModel
             // record its report unbound instead of leaving dangling provenance.
             SourceLock::lockMany($db, $ids);
 
-            $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
-                ->update($db->quoteName('#__dmarc_reports'))
-                ->set($db->quoteName('source_id') . ' = 0')
-                ->whereIn($db->quoteName('source_id'), $ids);
-            $db->setQuery($query)->execute();
-
-            // TLS-RPT reports carry the same source provenance, so unbind them
-            // in the same transaction; otherwise a deleted source would leave
-            // dangling source_id references in the TLS-RPT table.
-            $tlsQuery = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
-                ->update($db->quoteName('#__dmarc_tlsrpt_reports'))
-                ->set($db->quoteName('source_id') . ' = 0')
-                ->whereIn($db->quoteName('source_id'), $ids);
-            $db->setQuery($tlsQuery)->execute();
+            // Unbind the provenance of every report (DMARC and TLS-RPT) that
+            // points at these sources in the same transaction; otherwise a
+            // deleted source would leave dangling source_id references. The set
+            // of provenance-bearing tables is owned by {@see ReportProvenance}
+            // so the domain-cascade delete stays in lockstep with this path.
+            ReportProvenance::unbindSources($db, $ids);
 
             // Remove the source rows inside the same transaction, after their
             // provenance has been unbound, so a source is only ever deleted

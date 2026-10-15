@@ -10,6 +10,8 @@
 namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
+use Advans\Component\DmarcReports\Administrator\Helper\ReportProvenance;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -140,6 +142,30 @@ class DomainModel extends AdminModel
                 array_map('intval', (array) $db->setQuery($reportIdQuery)->loadColumn()),
                 static fn ($id) => $id > 0
             ));
+
+            // A source bound to a domain being deleted may, with auto-creation
+            // enabled, have imported reports whose own domain_id is a SURVIVING
+            // domain: both DMARC and TLS-RPT reports are keyed by their policy
+            // domain, not by the source's bound domain. Deleting such a source
+            // by domain_id below would leave those surviving reports with a
+            // dangling source_id. Collect the sources owned by the deleted
+            // domains, lock them so an in-flight ingestion observes them as
+            // deleted and records its report unbound, and reset the provenance
+            // of every report that points at them to the 0 sentinel (the value
+            // used for manual uploads), exactly as SourceModel::delete() does.
+            $sourceIdQuery = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__dmarc_sources'))
+                ->whereIn($db->quoteName('domain_id'), $ids, ParameterType::INTEGER);
+            $sourceIds = array_values(array_filter(
+                array_map('intval', (array) $db->setQuery($sourceIdQuery)->loadColumn()),
+                static fn ($id) => $id > 0
+            ));
+
+            if ($sourceIds !== []) {
+                SourceLock::lockMany($db, $sourceIds);
+                ReportProvenance::unbindSources($db, $sourceIds);
+            }
 
             // Child tables whose every row carries the domain_id of its single
             // owning domain are cleared by a plain domain_id match.
