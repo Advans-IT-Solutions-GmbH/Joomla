@@ -121,7 +121,7 @@ jobs:
           ./build.sh
           mkdir -p tests
           cp *.zip tests/extension.zip
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/extension.zip
@@ -137,7 +137,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.2'
       - name: Check PHP syntax
@@ -155,7 +155,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
       - name: Lint language files
@@ -204,7 +204,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
@@ -243,7 +243,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           ./run-tests.sh "$SUITE"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: j5-${{ matrix.script }}-logs
@@ -292,12 +292,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
           extensions: zip
@@ -352,7 +352,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=plg_osmap_j2commerce_j6_test J2COMMERCE_STACK=j6 ./run-tests.sh "$SUITE"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: j6-${{ matrix.script }}-logs
@@ -376,12 +376,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
           extensions: zip
@@ -435,7 +435,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=plg_osmap_j2commerce_j6_sef_test J2COMMERCE_STACK=j6 ./run-tests.sh sitemap-http-sef
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: j6-sef-sitemap-http-sef-logs
@@ -461,7 +461,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
@@ -499,7 +499,7 @@ jobs:
           cd j2commerce/plg_osmap_j2commerce/tests
           chmod +x run-tests.sh
           CONTAINER_NAME=plg_osmap_j2commerce_j5_sef_test ./run-tests.sh sitemap-http-sef
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: j5-sef-sitemap-http-sef-logs
@@ -523,12 +523,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: j2commerce/plg_osmap_j2commerce/tests/
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
           extensions: zip
@@ -594,7 +594,7 @@ jobs:
         run: |
           docker exec -e TEST_STRICT_SKIP=1 plg_osmap_j2commerce_prod_test \
             php /var/www/html/tests/scripts/shared-deprecations.php
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: production-logs
@@ -619,7 +619,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: extension-package
           path: /tmp/new-package/
@@ -638,7 +638,7 @@ jobs:
           (cd /tmp/previous/j2commerce/plg_osmap_j2commerce && chmod +x build.sh && ./build.sh)
           cp /tmp/previous/j2commerce/plg_osmap_j2commerce/plg_osmap_j2commerce_*.zip j2commerce/plg_osmap_j2commerce/tests/extension.zip
       - name: Setup PHP for J2Commerce build
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
           extensions: zip
@@ -759,7 +759,7 @@ jobs:
     permissions:
       actions: read
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: test-artifacts/
       - name: Collect and display logs
@@ -773,7 +773,7 @@ jobs:
             fi
           done
       - name: Upload combined logs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: all-test-logs
           path: test-artifacts/
