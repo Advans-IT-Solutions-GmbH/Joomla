@@ -69,10 +69,21 @@ param `dns_diagnostics` and use the existing `DnsResolverInterface` plus a `Poli
 (`HttpPolicyFetcher`) — both are interfaces so tests inject fakes.
 
 Finding codes: `mtasts_no_mx`, `mtasts_publish`, `mtasts_lookup_error`, `mtasts_record_drift`,
-`mtasts_policy_unreachable`, `mtasts_policy_drift`, `mtasts_mode_testing`, `tlsrpt_publish`. These
+`mtasts_policy_unreachable`, `mtasts_policy_drift`, `mtasts_mx_lookup_error`, `mtasts_mx_no_answer`,
+`mtasts_mx_uncovered`, `mtasts_mode_testing`, `tlsrpt_publish`, `tlsrpt_missing_rua`. These
 cover: no MX configured, record/policy not yet published, lookup failure, the `_mta-sts` id drifting
 from the generated id, the hosted policy unreachable or inconsistent, the roll-out still in `testing`,
 and the TLS-RPT record missing.
+
+With network diagnostics enabled, the resolver also reads the receiving domain's actual MX targets.
+`MtaStsPolicy::matchesMx()` applies RFC 8461 section 4.1 exact/single-label wildcard matching.
+The shared configured MX list may be a union across monitored domains; coverage is checked for each
+domain independently, even before its STS record is published. Uncovered targets warn (severity 3
+in enforce, otherwise 2); resolver failure (`null`) and no usable targets (`[]`, including null MX)
+are explicit unverified findings. Enforce advice is emitted only after MX coverage and the hosted
+policy/record checks pass. SMTP STARTTLS and MX certificates still need separate verification.
+Domain detail/its Action Center and System Check reuse this path; the main dashboard/module stay
+network-free and their publish guidance points administrators at the live checks.
 
 ## TLS-RPT ingestion
 

@@ -12,23 +12,23 @@ Administrator component that turns raw DMARC aggregate reports into a readable d
 
 Mailbox providers send DMARC aggregate reports (RFC 7489) as compressed XML attachments that are unreadable by hand. The DMARC Reports Component collects those reports directly inside your [Joomla](https://github.com/joomla/joomla-cms) installation, parses them in native PHP, and presents the result as per-domain statistics: mail volume, SPF and DKIM pass rates, alignment, top sending sources, and how much legitimate mail would be rejected under `p=reject`.
 
-Everything runs on your own server. No report data ever leaves the host — there is no external service, no Python, no Elasticsearch, and no cloud dependency. Reports are fetched on demand from a configured mailbox over IMAP, or uploaded by hand. For report ingestion the component opens a single outbound connection — to the mailbox you configure — and the parsed report data itself is never transmitted anywhere. The optional per-domain DNS diagnostics described in the next paragraph are the one exception, and even then only the queried domain name is disclosed, never report contents. Separately, Joomla's own extension updater periodically contacts the registered update server on GitHub to check for a newer release — exactly as it does for every installed extension — and that check carries only version metadata, never any report data.
+Report parsing and storage run on your own server — there is no external analysis service, Python, Elasticsearch or cloud dependency. Reports can be fetched on demand from configured mailboxes over outbound IMAP, uploaded by hand, or imported automatically by the optional [Scheduler task plugin](../plg_task_dmarcreports). Automatic ingestion requires a configured task and a working Joomla Scheduler trigger (site traffic for the lazy scheduler, or system/web cron for regular unattended operation); installing the plugin does not start a daemon. Report contents are not sent to an external analysis service. Exports and uploads remain administrator-controlled.
 
-The one optional outbound exception is DNS: the DNS diagnostics in the per-domain detail view call `dns_get_record()` to read that domain's published SPF and DMARC records. This is **off by default** and must be enabled in the component options, because — like any DNS lookup — it discloses the domain name being queried to your configured resolver and the upstream servers it consults. Even when enabled, no report contents are ever transmitted and the parsed report data is never sent to a third-party analysis service.
+**Network and privacy:** IMAP connects to the mailbox hosts and ports you configure. Live diagnostics are **off by default** (`dns_diagnostics`): enabling them permits DNS queries for SPF/DMARC and, for separately enabled MTA-STS/TLS-RPT features, their TXT records and the receiving domain's actual MX targets. DNS discloses queried names to the configured resolver and upstream DNS servers. MTA-STS validation also makes an outbound **HTTPS** request to `https://mta-sts.<domain>/.well-known/mta-sts.txt` when the published TXT id matches; that host sees the requested path and server connection metadata, not report contents. These live checks run in the domain detail and System Check, not the main dashboard or dashboard module. Separately, Joomla's extension updater checks GitHub for version metadata and downloads update packages when requested; it does not upload reports.
 
 Beyond showing the numbers, the component includes an **Action Center** that reads the parsed data and produces prioritised, plain-language recommendations: when it is safe to move a domain from `p=none` to `quarantine` to `reject`, which unaligned senders need SPF or DKIM before you tighten policy, and which new or failing sources need attention first. A non-expert administrator can see exactly where action is required.
 
 ## Features
 
 - Multi-domain, multi-tenant: monitor several domains, each with its own report source
-- On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest
+- On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest; optional scheduled ingestion through the companion task plugin
 - Manual upload of `.xml`, `.gz` and `.zip` aggregate reports as an alternative input
 - Native RFC 7489 aggregate-report XML parser (no external tools)
 - Idempotent storage: reports are de-duplicated by policy domain, reporter org, report id and report-window start date, so a reporter that reuses a report id for a later window — or for a different policy domain — still stores each report separately
 - Dashboard with per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 - Per-domain drill-down: top sending IPs, pass/fail breakdown and a timeline
 - **Action Center**: prioritised, data-driven next steps along the `none → quarantine → reject` rollout
-- DNS diagnostics (optional, off by default): detects missing or broken SPF/DMARC records and suggests the record to publish
+- Live diagnostics (optional, off by default): SPF/DMARC records, MTA-STS/TLS-RPT publication and policy drift, and actual receiving-MX coverage before MTA-STS enforce advice
 - CSV export of the per-domain record data
 - System check view that reports whether the IMAP transport is available
 - Administrator-only, behind Joomla ACL — the data never appears on the public site
@@ -40,7 +40,8 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - A MySQL or MariaDB database (the schema is shipped for the MySQL/MariaDB driver only; installation is refused on other database servers)
 - Administrator access
 - A mailbox that receives DMARC aggregate reports (for IMAP ingestion); manual upload works without one
-- Outbound IMAP connectivity from the web server for on-demand ingestion
+- Outbound IMAP connectivity from the web server for mailbox ingestion (manual or scheduled)
+- Outbound DNS and HTTPS connectivity if live MTA-STS diagnostics are enabled
 
 ## Joomla 6 Compatibility
 
@@ -48,14 +49,18 @@ On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The c
 
 ## Installation
 
-1. Download `com_dmarcreports_<version>.zip` from the latest release
+**Availability:** No component release or `dmarcreports-v*` tag has been published yet. Build from source for now. The component is individually buildable; the [DMARC Reports package](../pkg_dmarcreports) bundles it with the module and both plugins for a single installation and update channel.
+
+From a repository checkout with Bash, rsync and zip available, run `cd com_dmarcreports` followed by `./build.sh`.
+
+1. Use the generated `com_dmarcreports_<version>.zip`
 2. **System → Install → Extensions**
 3. Upload and install
 4. Access via **Components → DMARC Reports**
 
 ## Updating
 
-The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
+The standalone manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. Published versions will appear under **System → Update → Extensions** once releases exist; source availability does not imply a downloadable release. You can also install a newer built ZIP over the existing installation. Package installations use the package's update channel instead. Releases retain only the newest release in each extension's tag family, not one global latest release for this monorepo.
 
 ## Uninstall
 
@@ -72,7 +77,7 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Reject pass threshold | `99` | Aligned-pass rate (%) at which moving to `p=reject` is suggested |
 | IMAP timeout | `20` | Seconds to wait for the mailbox connection |
 | Max messages per run | `200` | Upper bound of messages fetched per ingestion run |
-| DNS diagnostics | `Off` | When on, the per-domain detail view checks published DMARC/SPF records; each check discloses the domain name to your DNS resolver |
+| DNS diagnostics | `Off` | Enables live DNS checks in domain detail/System Check; separately enabled MTA-STS also checks MX coverage and fetches the hosted policy over HTTPS. Queried names and connection metadata are disclosed as described above; report contents are not sent |
 
 Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log.
 
@@ -86,7 +91,7 @@ Navigate to **Components → DMARC Reports** (`administrator/index.php?option=co
 
 1. **Add a domain** under **Domains** — the domain you want to monitor (for example `example.org`)
 2. **Add a report source** under **Sources** — the mailbox that receives the aggregate reports for that domain, with its IMAP settings. Unless automatic domain creation is enabled, a source only stores reports for its own domain or a subdomain of it (for example `mail.example.org`); a report for a parent, sibling or unrelated domain is skipped. Without a bundled Public Suffix List this is an exact-or-child rule, so bind the source to the registrable domain you own, never to a public suffix such as `co.uk`
-3. **Ingest reports** — trigger an on-demand IMAP fetch from the source, or upload a report file by hand
+3. **Ingest reports** — trigger an on-demand IMAP fetch, upload a report file, or configure the companion task plugin and a Scheduler trigger for automatic imports
 4. **Read the Dashboard** — per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 5. **Act on the Action Center** — follow the prioritised recommendations before tightening policy
 6. **Drill down** per domain for top sending IPs, pass/fail detail and the timeline
@@ -107,6 +112,12 @@ Each item explains what to change, why, and when it is safe, ordered so the most
 ### Policy rollout guidance
 
 DMARC policy is rolled out in stages: `p=none` (monitor only) → `p=quarantine` (suspicious mail to spam) → `p=reject` (fail hard). The component shows this as help text and only recommends the next step once the data says the step is safe, so legitimate mail is not lost.
+
+### MTA-STS receiving-MX coverage
+
+The MTA-STS MX list in component options is shared across monitored domains; a union of all their receiving hosts is valid. With live diagnostics enabled, the domain detail Action Center and System Check compare **each domain's actual DNS MX targets** with that policy. Exact matches are case-insensitive; `*.example.org` matches `mail.example.org`, but neither `example.org` nor `mail.eu.example.org` (RFC 8461 section 4.1).
+
+Uncovered targets produce an actionable warning even before policy publication, with higher urgency in `enforce`. DNS failures and answers without usable MX targets (including null MX) remain explicit, unverified states and never produce enforce advice. Correct the MX list, publish the updated policy and TXT id, and recheck every affected domain before enforcing. A mismatch in an enforcing policy can defer delivery and eventually cause bounces. Coverage alone does not test SMTP STARTTLS or MX certificates: verify those and review TLS-RPT reports as well. The main dashboard/module remain network-free and direct you to these checks through their publish guidance.
 
 ## Development
 

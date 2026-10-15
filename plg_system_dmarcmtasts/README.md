@@ -26,14 +26,35 @@ DNS records exactly.
 
 ## Installation
 
-Install like any Joomla extension; the plugin is enabled automatically on a fresh install. It is
+**Availability:** No system-plugin release or `system-dmarcmtasts-v*` tag has been published yet.
+Build from source with `cd plg_system_dmarcmtasts` and `./build.sh` (Bash, rsync and zip required),
+or build the [DMARC Reports package](../pkg_dmarcreports) for the complete solution.
+Individual buildability is retained; it does not imply an existing release download.
+
+Install the built ZIP like any Joomla extension; the plugin is enabled automatically on a fresh install. It is
 also bundled in `pkg_dmarcreports`, the recommended way to install the whole DMARC solution.
+
+Standalone installs register their own update server; package installs use the package channel.
+Updates become downloadable when releases are published. Release retention is latest-only per
+extension/tag family, not the monorepo's global latest release.
 
 ## Configuration
 
 Configure everything in the DMARC Reports component options (Options → MTA-STS): enable MTA-STS,
 choose the mode, list the MX hosts, set `max_age` and the TLS-RPT reporting address. Then publish
 the DNS records and the `mta-sts` subdomain shown in the component's Action Center.
+
+The MX list is shared by all monitored domains. A union of their receiving MX hosts is valid,
+but every domain's actual DNS MX targets must be covered before `enforce`. Enable the component's
+live diagnostics and check the domain detail Action Center or System Check. Wildcards match only
+one left-most label: `*.example.org` does not cover `example.org` or `mail.eu.example.org`.
+Uncovered hosts can defer delivery and eventually cause bounces under an enforcing policy;
+DNS failures or absent usable MX records are not proof of coverage. Also verify SMTP STARTTLS,
+MX certificates and TLS-RPT results before rollout.
+
+Serving this endpoint is inbound HTTP(S) traffic. The component's optional live validation is
+separate: it performs outbound DNS and HTTPS policy fetching when diagnostics are enabled.
+Neither policy hosting nor validation uploads report contents.
 
 ### DNS / host step the extension cannot do
 
