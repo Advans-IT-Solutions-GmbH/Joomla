@@ -273,7 +273,7 @@ idempotently (dedupe by `report_hash`).
 | UP-04 | NEG | Upload an empty file. | Nothing stored; the summary reason is `empty` (`COM_DMARCREPORTS_UPLOAD_REASON_*`). |
 | UP-05 | NEG | Upload a well-formed XML that is not a DMARC aggregate report. | Nothing stored; reason `format`. |
 | UP-06 | NEG | Upload corrupt XML and XML with a declared `DOCTYPE` (the XXE class). | Nothing stored; reason `malformed`; no external entity is expanded. |
-| UP-07 | NEG | Upload an oversized or over-expanding archive (gzip/zip bomb). | Bounded; nothing stored; reason `bomb`. |
+| UP-07 | NEG | Upload (a) a gzip bomb or a `.zip` whose every `.xml` entry exceeds the per-document ceiling, then (b) a `.zip` holding one in-budget valid report plus one oversized `.xml` entry. | (a) Bounded; nothing stored; reason `bomb`. (b) Per-entry, not atomic: the in-budget report imports while the oversized sibling is skipped as size-limited — no `bomb` reason surfaces because a usable document came out. |
 | UP-08 | FEH | On a host lacking `gzdecode`/`ZipArchive`, upload a `.gz`/`.zip`. | `COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE` names the concrete missing extension; nothing is silently lost. |
 | UP-09 | NEG | Upload with a crafted `source_id` in the POST. | Ignored; upload is unbound and stores `source_id = 0`; provenance cannot be attacker-set. |
 | UP-10 | NEG | Upload without a valid CSRF token, or as a user lacking `dmarc.ingest`. | Refused; no report stored. `IngestController::authorise()` requires only `dmarc.ingest`; `core.create` governs unknown-domain creation (UP-11), not upload permission. |
@@ -332,7 +332,7 @@ unattended. It must not re-implement IMAP or parsing.
 | PA-07 | NEG | Parse a report whose `date_end` is more than 48 h (`MAX_CLOCK_SKEW`) in the future. | Rejected; a far-future report cannot pin the rolling windows or the displayed policy. |
 | PA-08 | NEG | Parse a record with a missing or malformed `source_ip`. | The whole report is rejected (not coerced to an empty IP). |
 | PA-09 | NEG | Parse records with a missing, non-positive or over-`PHP_INT_MAX` `count`, and a set whose valid counts sum past `PHP_INT_MAX`. | Each is rejected up front with overflow-safe addition; nothing is stored. |
-| PA-10 | NEG | Parse records whose evaluated `disposition`, `dkim`, `spf` or `header_from` is missing or an unknown value. | The whole report is rejected rather than stored with a misleading default. |
+| PA-10 | NEG | Parse records whose evaluated `disposition`, `dkim` or `spf` is missing or an unknown value, and separately a record with a missing/empty `header_from`. | An unknown `disposition`/`dkim`/`spf`, or a missing `header_from`, rejects the whole report rather than storing a misleading default. `header_from` is a domain field with no allowed-value set, so an unfamiliar nonempty value is accepted; only its missing/empty state (here) or its length boundary (PA-11) is rejected. |
 | PA-11 | GRZ | Parse a policy domain and `header_from` at and beyond `MAX_DOMAIN_LENGTH` (190). | The overlong value is rejected, never truncated or overflowed into the column. |
 | PA-12 | NEG | Parse XML carrying an external entity / `DOCTYPE`. | Loaded safely; no external entity expansion (no XXE). |
 | PA-13 | POS | Parse a report for a monitored subdomain published at its organizational parent. | `effectivePolicy()` uses the subdomain policy `sp` per RFC 7489, falling back to `p` when `sp` is empty. |
@@ -470,7 +470,7 @@ access control.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | RE-01 | NEG | As `GUEST`, request administration pages, ingestion, CSV export and the System Check. | No access to internal data. |
-| RE-02 | NEG | As `READONLY`, save, delete, ingest, export or change state. | Only explicitly permitted read operations are possible. |
+| RE-02 | POS/NEG | As `READONLY` (holds `core.manage`), attempt to save, delete, ingest and change state, then download a CSV export with a valid token. | The write and ingest actions are refused; the CSV export succeeds — `ExportController::records()` requires only `core.manage` and a valid GET token, so for this role export is a permitted read operation, not a write. |
 | RE-03 | POS/NEG | As `INGEST`, import a report for an already-monitored domain, then for an unknown domain. | The known-domain import succeeds; the unknown domain is not auto-created (no `core.create`). |
 | RE-04 | NEG | As `OPTIONS-DENIED`, open the component Options screen. | Access refused (`core.options`). |
 | RE-05 | NEG | Without `core.create`, create a domain or a source, including by direct POST. | Refused. |
