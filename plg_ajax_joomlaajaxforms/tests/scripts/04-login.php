@@ -228,9 +228,15 @@ class LoginTest
         $db       = Factory::getContainer()->get(DatabaseInterface::class);
         $mailfrom = (string) Factory::getConfig()->get('mailfrom');
         $password = 'Activate-Me-2026!';
+        // Four blocked accounts: e-mail confirmation pending (token as handleRegistration() writes
+        // it), confirmed and awaiting administrator approval (core sets the parameter `activate`),
+        // blocked by an administrator (no code), and blocked with a password-reset hash in the
+        // activation column (handleReset()). Only the first two get a precise sentence.
         $users    = [
-            'ajaxforms_pending' => ['block' => 1, 'activation' => md5('ajaxforms-pending')],
-            'ajaxforms_blocked' => ['block' => 1, 'activation' => ''],
+            'ajaxforms_pending'  => ['activation' => \Joomla\CMS\User\UserHelper::genRandomPassword(32), 'params' => '{}'],
+            'ajaxforms_approval' => ['activation' => md5('ajaxforms-approval'), 'params' => '{"activate":1}'],
+            'ajaxforms_blocked'  => ['activation' => '', 'params' => '{}'],
+            'ajaxforms_reset'    => ['activation' => \Joomla\CMS\User\UserHelper::hashPassword('reset-token'), 'params' => '{}'],
         ];
 
         foreach ($users as $username => $state) {
@@ -246,11 +252,12 @@ class LoginTest
                 'username'     => $username,
                 'email'        => $username . '@example.com',
                 'password'     => \Joomla\CMS\User\UserHelper::hashPassword($password),
-                'block'        => $state['block'],
+                'block'        => 1,
                 'sendEmail'    => 0,
-                'registerDate' => Factory::getDate()->toSql(),
+                // gmdate(), not Factory::getDate(): this CLI suite never initialises the application.
+                'registerDate' => gmdate('Y-m-d H:i:s'),
                 'activation'   => $state['activation'],
-                'params'       => '{}',
+                'params'       => $state['params'],
                 'otpKey'       => '',
                 'otep'         => '',
                 'requireReset' => 0,
@@ -291,6 +298,21 @@ class LoginTest
             'Got: ' . json_encode($blocked)
         );
 
+        $approval = $this->loginAnswer('ajaxforms_approval', $password);
+        $this->test(
+            'Confirmed, awaiting administrator approval → its own sentence with the contact address',
+            ($approval['success'] ?? null) === false && str_contains((string) ($approval['message'] ?? ''), $mailfrom)
+                && ($approval['message'] ?? '') !== $generic && ($approval['message'] ?? '') !== ($pending['message'] ?? ''),
+            'Got: ' . json_encode($approval)
+        );
+
+        $reset = $this->loginAnswer('ajaxforms_reset', $password);
+        $this->test(
+            'Blocked with a password-reset hash in the activation column → generic sentence',
+            ($reset['success'] ?? null) === false && ($reset['message'] ?? '') === $generic,
+            'Got: ' . json_encode($reset)
+        );
+
         foreach (array_keys($users) as $username) {
             $id = (int) $db->setQuery(
                 'SELECT id FROM ' . $db->quoteName('#__users') . ' WHERE ' . $db->quoteName('username') . ' = ' . $db->quote($username)
@@ -314,6 +336,7 @@ class LoginTest
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_SUCCESS',
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_FAILED',
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED',
+            'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_AWAITING_APPROVAL',
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGOUT_SUCCESS',
             'PLG_AJAX_JOOMLAAJAXFORMS_MFA_REQUIRED',
         ] as $key) {

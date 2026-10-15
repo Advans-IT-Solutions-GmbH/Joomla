@@ -376,9 +376,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         // Correct password, account still awaiting its activation: say what is missing instead of
         // asking to check username and password, with the site's sender address as contact.
-        if ($accepted !== null && $this->awaitsActivation($accepted !== '' ? $accepted : $username)) {
+        $state = $accepted !== null ? $this->activationState($accepted !== '' ? $accepted : $username) : '';
+
+        if ($state === 'confirm' || $state === 'approval') {
             return $this->jsonError(Text::sprintf(
-                'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED',
+                $state === 'confirm' ? 'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED' : 'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_AWAITING_APPROVAL',
                 (string) $this->getApplication()->get('mailfrom')
             ));
         }
@@ -387,29 +389,44 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Is this account blocked and still waiting for its activation (an activation code is set)? An
-     * account blocked by an administrator has no code and is not reported here.
+     * Why a blocked account cannot log in, as far as the customer can act on it:
+     * - 'confirm': the confirmation link in the registration e-mail is still pending. The code is
+     *   an activation token of 32 letters and digits (ApplicationHelper::getHash() in Joomla,
+     *   UserHelper::genRandomPassword(32) in handleRegistration()), and the account has not
+     *   confirmed yet. com_users accepts the same form (getAlnum(), 32 characters).
+     * - 'approval': the e-mail is confirmed and an administrator still has to approve the account
+     *   (administrator activation: RegistrationModel::activate() sets the user parameter `activate`
+     *   and stores a new token for the administrator).
+     * - '': anything else, so the generic sentence stays. That covers an account blocked by an
+     *   administrator (no code) and a password-reset hash in the same column (handleReset() and
+     *   Joomla store a password hash there, which starts with a dollar sign).
      */
-    protected function awaitsActivation(string $username): bool
+    protected function activationState(string $username): string
     {
         if ($username === '') {
-            return false;
+            return '';
         }
 
         try {
             $db    = $this->getDatabase();
             $query = $this->createDbQuery($db)
-                ->select('COUNT(*)')
+                ->select([$db->quoteName('activation'), $db->quoteName('params')])
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('username') . ' = :username')
                 ->where($db->quoteName('block') . ' = 1')
-                ->where($db->quoteName('activation') . " NOT IN ('', '0')")
                 ->bind(':username', $username);
-
-            return (int) $db->setQuery($query)->loadResult() > 0;
+            $row = $db->setQuery($query)->loadObject();
         } catch (\Throwable $e) {
-            return false;
+            return '';
         }
+
+        if (!$row || !preg_match('/^[A-Za-z0-9]{32}$/', (string) $row->activation)) {
+            return '';
+        }
+
+        $params = json_decode((string) $row->params, true);
+
+        return \is_array($params) && !empty($params['activate']) ? 'approval' : 'confirm';
     }
 
     /**
