@@ -887,11 +887,20 @@ class ImportModel extends BaseDatabaseModel
             'language' => $menuData['language'] ?? '*',
             'params' => $menuData['params'] ?? '{}',
             'client_id' => 0,
-            'home' => 0,
         ];
 
-        if (!$menu->setLocation((int) $row['parent_id'], 'last-child')
-            || !$menu->bind($row) || !$menu->check() || !$menu->store()) {
+        $existing = $menu->load([
+            'link' => $row['link'],
+            'parent_id' => (int) $row['parent_id'],
+            'menutype' => $menutype,
+            'client_id' => 0,
+            'type' => 'component',
+        ]);
+        $row['home'] = (int) $menu->home;
+        if (!$existing) {
+            $menu->setLocation((int) $row['parent_id'], 'last-child');
+        }
+        if (!$menu->bind($row) || !$menu->check() || !$menu->store()) {
             throw new \RuntimeException($menu->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
     }

@@ -40,12 +40,30 @@ namespace Joomla\CMS\Session {
 namespace Joomla\CMS\Table {
     class Menu
     {
+        public int $home = 0;
+        public static bool $failStore = false;
         private object $row;
-        public function __construct(private object $db) {}
-        public function setLocation(int $parent, string $position): bool { return true; }
-        public function bind(array $data): bool { $this->row = (object) $data; return true; }
+        public function __construct(private object $db) { $this->row = (object) ['id' => 0, 'home' => 0]; }
+        public function setLocation(int $parent, string $position): void { $this->db->menuLocations[] = [$parent, $position]; }
+        public function load(array $keys): bool {
+            $stored = $this->db->inserted['#__menu'] ?? null;
+            foreach ($keys as $key => $value) {
+                if (!$stored || (string) ($stored->$key ?? '') !== (string) $value) {
+                    return false;
+                }
+            }
+            $this->row = clone $stored;
+            $this->home = (int) $stored->home;
+            return true;
+        }
+        public function bind(array $data): bool { $this->row = (object) array_replace((array) $this->row, $data); return true; }
         public function check(): bool { $this->row->img = ' '; return true; }
-        public function store(): bool { $this->db->insertObject('#__menu', $this->row); return true; }
+        public function store(): bool {
+            if (self::$failStore) { return false; }
+            if (!$this->row->id) { $this->row->id = ++$this->db->menuInsertions; }
+            $this->db->insertObject('#__menu', $this->row);
+            return true;
+        }
         public function getError(): string { return 'Menu fixture validation failed'; }
     }
 }
@@ -319,6 +337,8 @@ namespace {
         $real->database = new class {
             public int $quantity = 50;
             public array $inserted = [];
+            public int $menuInsertions = 0;
+            public array $menuLocations = [];
             public function createQuery(): \Joomla\Database\QueryInterface {
                 return new class implements \Joomla\Database\QueryInterface {
                     public function __call($name, $args): self { return $this; }
@@ -344,6 +364,21 @@ namespace {
             ['menu_published' => false]);
         check($real->database->inserted['#__menu']->published === 0, 'Unchecked publication reaches the database as integer zero');
         check(isset($real->database->inserted['#__menu']->img), 'Menu insertion goes through table validation defaults');
+        $initialMenuId = $real->database->inserted['#__menu']->id;
+        $menuMethod->invoke($real, ['title' => 'Updated fixture', 'alias' => 'unpublished-fixture'], 1,
+            ['menu_published' => false, 'update_existing' => true]);
+        check($real->database->menuInsertions === 1 && $real->database->inserted['#__menu']->id === $initialMenuId
+            && $real->database->inserted['#__menu']->title === 'Updated fixture', 'Menu-enabled re-import updates the existing linked entry');
+        check($real->database->menuLocations === [[1, 'last-child']], 'Only new menu entries receive a nested-set location');
+        try {
+            \Joomla\CMS\Table\Menu::$failStore = true;
+            $menuMethod->invoke($real, ['title' => 'Failed fixture', 'alias' => 'unpublished-fixture'], 1, []);
+            throw new \RuntimeException('Menu persistence failure was ignored');
+        } catch (\RuntimeException $e) {
+            check($e->getMessage() === 'Menu fixture validation failed', 'Menu table persistence failures are surfaced');
+        } finally {
+            \Joomla\CMS\Table\Menu::$failStore = false;
+        }
     } finally {
         foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);

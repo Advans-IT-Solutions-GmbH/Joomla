@@ -422,6 +422,11 @@ class ImportHttpTest
                 "no variant row with SKU $variantSku");
 
             if ($variant !== null) {
+                $this->db->setQuery('SELECT id FROM ' . $this->db->quoteName('#__menu')
+                    . ' WHERE alias = ' . $this->db->quote($alias) . ' AND menutype = ' . $this->db->quote($menutype)
+                    . ' AND client_id = 0');
+                $initialMenuId = (int) $this->db->loadResult();
+                $this->test('Initial menu-enabled import creates a menu entry', $initialMenuId > 0);
                 $quantity = function () use ($variant): int {
                     $this->db->setQuery('SELECT quantity FROM ' . $this->db->quoteName('#__' . $this->tp . '_productquantities')
                         . ' WHERE variant_id = ' . (int) $variant[$this->pkVar]);
@@ -429,7 +434,9 @@ class ImportHttpTest
                 };
                 $this->test('Initial stock matches uploaded quantity', $quantity() === 7);
                 foreach (['add' => 14, 'replace' => 7] as $mode => $expected) {
-                    $repeatFile = $this->writeImportFile($sku, $title, $alias);
+                    $repeatFile = $this->writeImportFile($sku, $title, $alias, [
+                        'menu_item' => ['title' => $title . ' menu ' . $mode, 'alias' => $alias],
+                    ]);
                     try {
                         $repeatUpload = $this->request($uploadUrl, [
                             'import_file' => new \CURLFile($repeatFile, 'application/json', 'import.json'),
@@ -440,7 +447,10 @@ class ImportHttpTest
                         $updated = $this->request($processUrl, [
                             'type' => 'products_full',
                             'file' => $repeatUpload['json']['file'] ?? '',
-                            'options' => ['update_existing' => '1', 'quantity_mode' => $mode],
+                            'options' => [
+                                'update_existing' => '1', 'quantity_mode' => $mode,
+                                'create_menu' => '1', 'default_menutype' => $menutype,
+                            ],
                             $token => '1',
                         ]);
                         $this->test('HTTP stock mode ' . $mode . ' updates the same variant',
@@ -465,9 +475,13 @@ class ImportHttpTest
                 if ($articleId > 0) {
                     $this->db->setQuery('SELECT catid FROM ' . $this->db->quoteName('#__content') . ' WHERE id = ' . $articleId);
                     $this->test('HTTP forwards the default category', (int) $this->db->loadResult() === 2);
-                    $this->db->setQuery('SELECT menutype, published, access FROM ' . $this->db->quoteName('#__menu')
+                    $this->db->setQuery('SELECT id, title, menutype, published, access FROM ' . $this->db->quoteName('#__menu')
                         . ' WHERE link = ' . $this->db->quote('index.php?option=com_content&view=article&id=' . $articleId));
-                    $menu = $this->db->loadAssoc();
+                    $menus = $this->db->loadAssocList();
+                    $menu = $menus[0] ?? null;
+                    $this->test('Repeated menu-enabled imports update the same menu entry without duplicates',
+                        count($menus) === 1 && (int) $menu['id'] === $initialMenuId
+                        && $menu['title'] === $title . ' menu replace');
                     $this->test('HTTP forwards menu defaults and absent publication checkbox is false',
                         $menu && $menu['menutype'] === $menutype && (int) $menu['published'] === 0 && (int) $menu['access'] === 1);
                     $this->db->setQuery('SELECT title FROM ' . $this->db->quoteName('#__content')
