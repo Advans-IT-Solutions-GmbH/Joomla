@@ -37,6 +37,7 @@ Products are matched and updated (instead of duplicated) using three methods:
 - Update matching products, or create new records without updating matches
 - Create menu items from the file's `menu_item` records
 - Configure default menu type, publication state and access level
+- Create menus through Joomla's validated nested-set table API, including required database defaults
 - Set a default category when the record has no category ID or path
 - Import without stock management (unlimited inventory)
 - **Quantity Update Mode** - Choose how stock quantities are updated:

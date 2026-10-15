@@ -872,7 +872,8 @@ class ImportModel extends BaseDatabaseModel
         $menutype = $menuData['menutype'] ?? $options['default_menutype'] ?? 'mainmenu';
         $alias = $menuData['alias'] ?? ApplicationHelper::stringURLSafe($menuData['title']);
 
-        $menu = (object) [
+        $menu = new MenuTable($db);
+        $row = [
             'menutype' => $menutype,
             'title' => $menuData['title'],
             'alias' => $alias,
@@ -881,16 +882,18 @@ class ImportModel extends BaseDatabaseModel
             'type' => 'component',
             'published' => (int) ($menuData['published'] ?? ($options['menu_published'] ?? 1)),
             'parent_id' => $menuData['parent_id'] ?? 1,
-            'level' => 1,
             'component_id' => $this->getComponentId('com_content'),
             'access' => $menuData['access'] ?? ($options['menu_access'] ?? 1),
             'language' => $menuData['language'] ?? '*',
             'params' => $menuData['params'] ?? '{}',
             'client_id' => 0,
+            'home' => 0,
         ];
 
-        $db->insertObject('#__menu', $menu);
-        (new MenuTable($db))->rebuild();
+        if (!$menu->setLocation((int) $row['parent_id'], 'last-child')
+            || !$menu->bind($row) || !$menu->check() || !$menu->store()) {
+            throw new \RuntimeException($menu->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
     }
 
     protected function getComponentId(string $element): int

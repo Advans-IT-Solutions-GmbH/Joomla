@@ -40,8 +40,13 @@ namespace Joomla\CMS\Session {
 namespace Joomla\CMS\Table {
     class Menu
     {
-        public function __construct(object $db) {}
-        public function rebuild(): void {}
+        private object $row;
+        public function __construct(private object $db) {}
+        public function setLocation(int $parent, string $position): bool { return true; }
+        public function bind(array $data): bool { $this->row = (object) $data; return true; }
+        public function check(): bool { $this->row->img = ' '; return true; }
+        public function store(): bool { $this->db->insertObject('#__menu', $this->row); return true; }
+        public function getError(): string { return 'Menu fixture validation failed'; }
     }
 }
 namespace Joomla\Database {
@@ -338,6 +343,7 @@ namespace {
         $menuMethod->invoke($real, ['title' => 'Unpublished fixture', 'alias' => 'unpublished-fixture'], 1,
             ['menu_published' => false]);
         check($real->database->inserted['#__menu']->published === 0, 'Unchecked publication reaches the database as integer zero');
+        check(isset($real->database->inserted['#__menu']->img), 'Menu insertion goes through table validation defaults');
     } finally {
         foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);
