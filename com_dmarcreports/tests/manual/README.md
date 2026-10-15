@@ -239,7 +239,7 @@ and confirm that an update never drops a previously populated `#__dmarc_*` table
 | DO-07 | GRZ | Delete a domain that has stored reports and a bound source. | Behaviour follows the documented rule (refusal or defined cascade); never an orphan report or source pointing at a nonexistent domain. |
 | DO-08 | POS | Create several domains and ingest for each (multi-tenant). | Each domain is isolated; the dashboard lists each separately with its own metrics. |
 | DO-09 | NEG | As a user with `core.manage` but not `core.create`, attempt to create a domain, including by direct POST. | Creation refused. |
-| DO-10 | GRZ | Create a domain at the 190-character column limit and with an internationalised (Unicode) label. | Stored canonicalised; the dashboard and detail views stay consistent; no overflow. |
+| DO-10 | GRZ | Create a domain at the 190-character ASCII column limit, then separately create one with an internationalised (Unicode) label. | The ASCII name is stored without overflow. The Unicode label is stored canonicalised only when `idn_to_ascii` (ext-intl) is available; otherwise `DomainName::canonicalize()` returns null and the save is refused with a localized message (the installer does not require ext-intl). |
 
 ### 4.2 Report sources
 
@@ -323,7 +323,7 @@ unattended. It must not re-implement IMAP or parsing.
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| PA-01 | POS | Parse a well-formed report with mixed auth results. | One report header and N record rows; `spf_aligned`/`dkim_aligned` computed from the auth results. |
+| PA-01 | POS | Parse a well-formed report with mixed results. | One report header and N record rows; `spf_aligned`/`dkim_aligned` are taken from each row's `policy_evaluated/spf` and `dkim` (pass → 1, else 0), not recomputed from `auth_results`, so a raw authentication pass can still be unaligned. |
 | PA-02 | POS | Parse records with `disposition` `none`, `quarantine` and `reject`. | Each disposition is stored verbatim. |
 | PA-03 | NEG | Parse a report whose published `p` is an unknown value. | The whole report is rejected; no fake policy is displayed. |
 | PA-04 | NEG | Parse a report whose `pct` is not a whole number 0–100. | The whole report is rejected, not coerced. |
@@ -353,7 +353,7 @@ unattended. It must not re-implement IMAP or parsing.
 | ME-09 | GRZ | Open a domain with no reports. | `no_data`; the metrics degrade to zeroes with no error. |
 | ME-10 | POS | Seed several overlapping reports across windows. | The timeline renders correctly with no double counting. |
 | ME-11 | POS | With several tenants ingested, inspect each domain's metrics. | One domain's metrics never include another domain's records. |
-| ME-12 | POS | Ingest a TLS-RPT report, then open the dashboard and detail. | The TLS-RPT delivery-results card is shown alongside the DMARC metrics (ties to section 10). |
+| ME-12 | POS | Ingest a TLS-RPT report for an existing domain, then open the dashboard and the domain detail. | The TLS-RPT delivery-results card appears only on the domain detail view (`DashboardModel` supplies DMARC totals, not a TLS-RPT summary); the dashboard's DMARC message totals stay unchanged (ties to section 10). |
 
 ## 8. Action Center, system check and DNS diagnostics
 
@@ -384,7 +384,7 @@ unattended. It must not re-implement IMAP or parsing.
 | SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; only the domain name is disclosed to the resolver, never report contents. |
 | SY-05 | NEG | Point a domain at a missing SPF/DMARC record. | A `dns_*` finding suggests the record to publish. |
 | SY-06 | NEG | Force a DNS lookup error (null) versus a genuinely absent record (`[]`). | A null result emits `dns_lookup_error` and suppresses the publish suggestion; a transient outage is not reported as a missing record. |
-| SY-07 | NEG | Publish a duplicate DMARC/SPF record, a malformed `p`/`pct`, and a lookalike version token (`v=DMARC10`, `v=spf10`). | The duplicate and malformed record are reported (`dns_dmarc_invalid`); the lookalike version is treated as missing via the word-boundary match. |
+| SY-07 | NEG | Exercise separately: a duplicate DMARC record, a duplicate SPF record, a malformed `p`/`pct`, and a lookalike version token (`v=DMARC10`, `v=spf10`). | The duplicates are reported as `dns_dmarc_duplicate`/`dns_spf_duplicate`; the malformed policy tags as `dns_dmarc_invalid`; the lookalike version is treated as missing via the word-boundary match. |
 | SY-08 | POS | Simulate a domain-wide outage where the parent zone also fails to resolve. | Kept as null (ambiguous), not reported as a missing record. |
 
 ## 9. MTA-STS policy hosting and records
@@ -499,7 +499,7 @@ access control.
 |---|---|---|---|
 | MO-01 | POS | Place `mod_dmarcreports` on the administrator `cpanel` dashboard with data ingested. | It shows monitored domains, total messages, SPF/DKIM pass rate and would-be-rejected share, plus the top Action Center items with severity label/class and the owning domain. |
 | MO-02 | POS | Vary the `show_summary` and `action_limit` parameters. | The summary is gated by `show_summary`; items are capped by `action_limit`; a "more actions" count and an "Open dashboard" button into the component are shown. |
-| MO-03 | POS | Compare the module figures with the component dashboard. | They match exactly — the module reuses `DashboardModel`/`ActionPresenter` and duplicates no query logic. |
+| MO-03 | POS | Compare the module figures with the component dashboard. | The shared totals and the pass rate agree; the would-be-rejected figure differs in unit by design — the component shows `reject_under_p` as a count while the module renders it as a rate via `DmarcReportsHelper::rejectRate()` (e.g. 50 of 200 messages is `50` versus `25.0%`), so convert before comparing that field. |
 | MO-04 | POS | Disable or remove the component, then view the module. | The `unavailable` notice renders; no raw language key leaks; no summary cards appear. |
 | MO-05 | NEG | View the module as a user without `core.manage`. | The `unauthorised` state; no figures. |
 | MO-06 | FEH | With the component present, force a model/method error. | The `error` state renders a short translated notice; no fatal. |
