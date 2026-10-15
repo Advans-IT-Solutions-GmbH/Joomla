@@ -342,13 +342,13 @@ unattended. It must not re-implement IMAP or parsing.
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| ME-01 | POS | Open the dashboard with several domains ingested. | Each domain shows volume, SPF/DKIM pass rate and would-be-rejected share. |
+| ME-01 | POS | Open the dashboard with several domains ingested. | Each domain row shows volume, the combined DMARC aligned-pass rate (`pass_rate`, a percentage) and the would-be-rejected message count (`reject_under_p`, an integer count, not a percentage nor a separate SPF/DKIM rate). |
 | ME-02 | POS | Open a domain's detail view. | Top sending IPs, a pass/fail breakdown and a timeline are shown. |
 | ME-03 | GRZ | Seed one historical failure, then a clean current window. | The rollout decision reads the current window (`window_total`, `pass_rate_window`, `window_reject_under_p`); the historical failure does not block the next step forever. |
 | ME-04 | POS | Seed a would-be-rejected share at and above 2%. | The share is shown and raised to severity 3 at ≥2%. |
 | ME-05 | POS | Seed a heavy failing sender ranked below the top-20 by total volume. | `unalignedSources()` still surfaces it for an alignment recommendation. |
 | ME-06 | POS | Seed an IP first seen only in a second, contemporaneous report from another reporter in the current window. | `newSources()` flags it across the whole window, not just the single newest report id. |
-| ME-07 | GRZ | Seed a drop in aligned-pass rate versus the previous period. | `pass_rate_drop` is reported. |
+| ME-07 | GRZ | Seed a window-to-window drop in the aligned-pass rate of more than five percentage points (latest reporting window versus the one immediately before it). | `pass_rate_drop` is reported; a drop of exactly five points or less correctly produces no finding (`$current < $previous - 5`). |
 | ME-08 | POS | Compare `latestPolicy()` (single domain) and `latestPolicyAll()` (bulk dashboard) for a subdomain already covered by `sp=reject`. | Both resolve the effective policy; the subdomain is not told to start its rollout from `none`. |
 | ME-09 | GRZ | Open a domain with no reports. | `no_data`; the metrics degrade to zeroes with no error. |
 | ME-10 | POS | Seed several overlapping reports across windows. | The timeline renders correctly with no double counting. |
@@ -370,7 +370,7 @@ unattended. It must not re-implement IMAP or parsing.
 | AC-07 | POS | Seed an unaligned sender at a small and a large share. | `align_source` with severity scaled by share. |
 | AC-08 | POS | Seed a sending IP not seen before. | `new_source` — review it. |
 | AC-09 | POS | Inspect ordering and badges across mixed findings. | Sorted by severity descending then `action_key`; the presenter maps 3→danger, 2→warning, 1→info, else success. |
-| AC-10 | POS | Mark an item done and snooze another, then re-ingest. | The status and `snooze_until` survive the next ingestion; `first_seen`/`last_seen` track recurrence. |
+| AC-10 | POS | Mark an item done and snooze another, then re-ingest. | The status and `snooze_until` survive the next ingestion. (`first_seen`/`last_seen` are written only by `ActionsController` on a status override or change, not by ingestion or dashboard generation.) |
 | AC-11 | NEG | Mark an item done or snooze it without a CSRF token or without rights, including by direct POST. | No change. |
 | AC-12 | POS | Vary `expected_policy`/`default_policy_target` and the two thresholds. | The `none<quarantine<reject` rank comparison drives the correct branch each time. |
 
@@ -394,7 +394,7 @@ and records and validates what is published. The component never writes DNS.
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| MS-01 | POS | Enable MTA-STS, mode `testing`, set the MX list and `max_age`. | `MtaStsPolicy::generate()` surfaces the body and the `_mta-sts`/`_smtp._tls` records in the Action Center and on the domain detail view. |
+| MS-01 | POS | Enable MTA-STS (mode `testing`, MX list, `max_age`) and enable TLS-RPT with a valid synthetic `tlsrpt_rua` address. | `MtaStsPolicy::generate()` produces the policy; the domain detail card shows the `_mta-sts` and `_smtp._tls` records and the policy URL. The `_smtp._tls` record is emitted only when `tlsrpt_rua` is set (otherwise `tlsRptRecord()` returns an empty string and the card hides it). Verify the policy body itself through the MS-02 endpoint, not the detail card. |
 | MS-02 | INT | With the documented Apache rewrite rule in place, request `/.well-known/mta-sts.txt` on `mta-sts.<domain>`. | The policy is served with `version: STSv1` and the configured `mode`, `mx` and `max_age`. |
 | MS-03 | POS | Change the mode from `testing` to `enforce`. | The served policy changes dynamically to match the component option. |
 | MS-04 | NEG | Request the path on a non-`mta-sts.` host (for example `www.<domain>`). | The policy is not served; the plugin stays silent and emits no error. |
@@ -415,7 +415,7 @@ gzipped, and are routed by content to a dedicated parser and separate tables.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | TR-01 | POS | Upload a valid TLS-RPT JSON report (`T-OK`). | It is routed by content to `TlsRptParser` and stored in `#__dmarc_tlsrpt_*`, never mixed into the DMARC aggregate tables. |
-| TR-02 | POS | Upload the same report gzipped. | `TlsReportArchive` decodes it; it is stored. |
+| TR-02 | POS | Upload a fresh TLS-RPT report gzipped (against an empty database). | `TlsReportArchive` decodes it and it is stored; gzipping does not change the parsed fingerprint, so re-uploading an already-ingested report gzipped is a deduplicated no-op (`TlsRptIngestor::store()`), as in TR-04. |
 | TR-03 | NEG | Feed empty JSON, invalid JSON and valid JSON that is not a TLS-RPT report to `TlsRptParser` directly, and separately upload the same through the endpoint. | The parser raises `ERROR_EMPTY(1)`, `ERROR_JSON(2)` and `ERROR_NOT_REPORT(4)` respectively; `TlsRptIngestor::ingestDocuments()` converts each into a summary reason that `IngestController::upload()` shows as a localized message. Nothing is stored either way. |
 | TR-04 | POS | Re-ingest the same TLS-RPT report. | Idempotent no-op; the unique fingerprint prevents a duplicate. |
 | TR-05 | POS | Ingest a report with several policy blocks. | One row per block in `#__dmarc_tlsrpt_policies` (type, policy domain, success/failure session counts). |
@@ -475,7 +475,7 @@ access control.
 | RE-04 | NEG | As `OPTIONS-DENIED`, open the component Options screen. | Access refused (`core.options`). |
 | RE-05 | NEG | Without `core.create`, create a domain or a source, including by direct POST. | Refused. |
 | RE-06 | NEG | With `core.edit` but not `core.edit.state`/`core.delete`, change the published state or delete, including by direct POST. | Each denied action is refused. |
-| RE-07 | KON | User 1 opens a domain or source for editing; user 2 attempts to edit/save the same record. | Joomla checkout is respected; no unnoticed loss of user 1's changes. |
+| RE-07 | KON | User 1 opens a domain or source for editing; user 2 edits and saves the same record. | Documented limitation: the domain and source tables have no `checked_out`/`checked_out_time` columns and the component implements no editor checkout, so concurrent edits are not guarded (last save wins). The ingestion row locks (`DomainLock`/`SourceLock`/`RowLock`) protect ingestion, not open edit forms. |
 | RE-08 | NEG | Request a CSV export without `core.manage` or without a valid token. | No export. |
 | RE-09 | NEG | As a user without `core.manage` on the component, view the dashboard module. | The module shows the `unauthorised` state with no figures. |
 | RE-10 | NEG | Enable the task parameter `auto_create_domains` while the component option `task_auto_create` is off, then run the task. | The component option vetoes it: `$allowAutoCreate` is false, a `warning` is logged, and unknown-domain reports are still skipped. The scheduled path never consults the triggering user's `core.create`. |
@@ -518,7 +518,7 @@ complete security audit.
 | RB-03 | NEG | Substitute another record's id in domain, source, detail and export requests. | No unauthorised record is readable or changeable. |
 | RB-04 | NEG | Seed report fields with `=1+1`, `+1+1`, `-1+1` and `@TEST`, then export CSV and open it in a spreadsheet. | Protected as text; no formula execution. |
 | RB-05 | FEH | Trigger an IMAP, parser and validation error in turn; inspect the visible error. | No credential, token or raw stack trace is leaked. |
-| RB-06 | NEG | Submit a manipulated `source_id`/`domain_id` in an upload POST, a nonexistent record id in a source-edit POST, and an unsupported `security` value in a source POST. | The upload ignores posted `source_id`/`domain_id` (stored as `0`, per UP-09) and still succeeds; the nonexistent reference and the unsupported `security` value are refused server-side. |
+| RB-06 | NEG | Submit a manipulated `source_id`/`domain_id` in an upload POST, a nonexistent record id in a source-edit POST, and an unsupported `security` value in a source POST. | The upload ignores the posted `source_id`/`domain_id`: `source_id` is stored as `0` while the domain is resolved from the report's own policy domain (`Ingestor::store()`, per UP-09/UP-11), and the upload still succeeds; the nonexistent reference and the unsupported `security` value are refused server-side. |
 | RB-07 | GRZ | Upload a very large file and a report with many records in an isolated environment. | Bounded by `MAX_TOTAL_BYTES`, the archive cap and the parser count caps; no 500 error or unbounded processing. |
 | RB-08 | INT | Inspect the component tables and logs after the induced errors. | No raw credential, source password or confidential token is stored or logged. |
 
