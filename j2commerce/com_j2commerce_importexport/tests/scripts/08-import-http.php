@@ -355,7 +355,7 @@ class ImportHttpTest
         if ($uploadOk) {
             $uploadedFile = $upload['json']['file'];
             foreach ([$previewUrl, $processUrl] as $protectedUrl) {
-                $withoutToken = $this->request($protectedUrl, ['type' => 'products_full']);
+                $withoutToken = $this->request($protectedUrl, ['type' => 'products_full', 'file' => $uploadedFile]);
                 $this->test('Preview/process without CSRF token is rejected',
                     ($withoutToken['json']['success'] ?? false) !== true);
             }

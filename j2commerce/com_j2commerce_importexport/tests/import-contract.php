@@ -37,6 +37,13 @@ namespace Joomla\CMS\Session {
         public static function checkToken(): bool { return true; }
     }
 }
+namespace Joomla\CMS\Table {
+    class Menu
+    {
+        public function __construct(object $db) {}
+        public function rebuild(): void {}
+    }
+}
 namespace Joomla\Database {
     interface QueryInterface {}
     class ParameterType { const INTEGER = 'int'; }
@@ -202,16 +209,18 @@ namespace {
             check(true, 'Streaming preview validates rows beyond the retained sample');
         }
 
-        $handle = fopen($csv, 'w');
-        fputcsv($handle, ['title', 'variants'], ',', '"', '');
-        fputcsv($handle, ['Quoted JSON', json_encode([['sku' => 'A"B']])], ',', '"', '');
-        fclose($handle);
-        $parsed = $model->previewFile($csv);
-        check($parsed['rows'][0]['variants'][0]['sku'] === 'A"B', 'CSV preserves JSON backslash escapes next to doubled quotes');
-        $imported = $model->importData($csv, 'products_full', []);
-        $last = $model->received[array_key_last($model->received)];
-        check($imported['imported'] === 1 && $last['data']['variants'][0]['sku'] === 'A"B',
-            'CSV preview and import share the same nested JSON parser');
+        foreach (['', '\\'] as $escape) {
+            $handle = fopen($csv, 'w');
+            fputcsv($handle, ['title', 'variants'], ',', '"', $escape);
+            fputcsv($handle, ['Quoted JSON', json_encode([['sku' => 'A"B']])], ',', '"', $escape);
+            fclose($handle);
+            $parsed = $model->previewFile($csv);
+            check($parsed['rows'][0]['variants'][0]['sku'] === 'A"B', 'CSV preserves JSON quotes for escape dialect: ' . json_encode($escape));
+            $imported = $model->importData($csv, 'products_full', []);
+            $last = $model->received[array_key_last($model->received)];
+            check($imported['imported'] === 1 && $last['data']['variants'][0]['sku'] === 'A"B',
+                'CSV preview/import agree for escape dialect: ' . json_encode($escape));
+        }
 
         $real = new ImportModel();
         foreach ([
@@ -230,15 +239,19 @@ namespace {
         }
         $real->database = new class {
             public int $quantity = 50;
+            public array $inserted = [];
             public function createQuery(): \Joomla\Database\QueryInterface {
                 return new class implements \Joomla\Database\QueryInterface {
                     public function __call($name, $args): self { return $this; }
                 };
             }
             public function quoteName($name) { return $name; }
+            public function quote($value) { return $value; }
             public function setQuery($query): void {}
             public function loadObject(): object { return (object) ['j2store_productquantity_id' => 1, 'quantity' => $this->quantity]; }
+            public function loadResult(): int { return 42; }
             public function updateObject($table, $row, $key): void { $this->quantity = $row->quantity; }
+            public function insertObject($table, $row): void { $this->inserted[$table] = clone $row; }
         };
         $cache = new \ReflectionProperty(ImportModel::class, 'isJ2Commerce6Cache');
         $cache->setValue($real, false);
@@ -247,6 +260,10 @@ namespace {
         check($real->database->quantity === 80, 'Actual quantity helper adds 30 to 50');
         $quantityMethod->invoke($real, 1, ['quantity' => 30], ['quantity_mode' => 'replace']);
         check($real->database->quantity === 30, 'Actual quantity helper replaces 80 with 30');
+        $menuMethod = new \ReflectionMethod(ImportModel::class, 'importMenuItem');
+        $menuMethod->invoke($real, ['title' => 'Unpublished fixture', 'alias' => 'unpublished-fixture'], 1,
+            ['menu_published' => false]);
+        check($real->database->inserted['#__menu']->published === 0, 'Unchecked publication reaches the database as integer zero');
     } finally {
         foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);

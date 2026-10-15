@@ -879,7 +879,7 @@ class ImportModel extends BaseDatabaseModel
             'path' => $alias,
             'link' => 'index.php?option=com_content&view=article&id=' . $articleId,
             'type' => 'component',
-            'published' => $menuData['published'] ?? ($options['menu_published'] ?? 1),
+            'published' => (int) ($menuData['published'] ?? ($options['menu_published'] ?? 1)),
             'parent_id' => $menuData['parent_id'] ?? 1,
             'level' => 1,
             'component_id' => $this->getComponentId('com_content'),
@@ -1027,6 +1027,21 @@ class ImportModel extends BaseDatabaseModel
 
     private function readCSV(string $filePath): \Generator
     {
+        // Prefer doubled quotes, but preserve PHP's legacy CSV escape dialect.
+        // Choose one dialect for the whole file before exposing any records.
+        $escape = '';
+        try {
+            foreach ($this->readCSVDialect($filePath, '') as $item) {
+            }
+        } catch (\InvalidArgumentException $e) {
+            $escape = '\\';
+        }
+
+        yield from $this->readCSVDialect($filePath, $escape);
+    }
+
+    private function readCSVDialect(string $filePath, string $escape): \Generator
+    {
         $handle = fopen($filePath, 'r');
         if (!$handle) {
             throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND'));
@@ -1037,8 +1052,7 @@ class ImportModel extends BaseDatabaseModel
                 rewind($handle);
             }
             $headers = [];
-            // Disable CSV's legacy backslash escape so nested JSON keeps its own escapes.
-            while (($line = fgetcsv($handle, 0, ',', '"', '')) !== false) {
+            while (($line = fgetcsv($handle, 0, ',', '"', $escape)) !== false) {
                 if (empty($line) || (count($line) === 1 && empty($line[0]))) {
                     continue;
                 }
