@@ -103,6 +103,9 @@ class PublishTests(unittest.TestCase):
         calls = self.publication(existing=True)
         self.assertFalse(any("create" in call or "upload" in call or "--clobber" in call for call in calls))
         self.assertFalse(any("privacy-v1.0.0" in call and "delete" in call for call in calls))
+        edit = next(call for call in calls if call[:3] == ("gh", "release", "edit"))
+        self.assertNotIn("--notes", edit)
+        self.assertNotIn("--title", edit)
 
     def test_zip_comparison_ignores_container_timestamps(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -123,6 +126,24 @@ class PublishTests(unittest.TestCase):
                 with zipfile.ZipFile(path, "w") as archive:
                     archive.writestr("packages/child.zip", child.getvalue())
             self.assertEqual(publisher.zip_contents(paths[0]), publisher.zip_contents(paths[1]))
+
+    def test_attestation_input_matches_downloaded_bytes_on_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr(zipfile.ZipInfo("payload", (2025, 1, 1, 0, 0, 0)), "same")
+            downloaded = io.BytesIO()
+            with zipfile.ZipFile(downloaded, "w") as archive:
+                archive.writestr(zipfile.ZipInfo("payload", (2026, 1, 1, 0, 0, 0)), "same")
+
+            def download(*args):
+                target = Path(args[args.index("--dir") + 1]) / package.name
+                target.write_bytes(downloaded.getvalue())
+                return ""
+
+            with patch.object(publisher, "run", side_effect=download):
+                publisher.verify_asset("owner/repo", "privacy-v1.0.0", package)
+            self.assertEqual(package.read_bytes(), downloaded.getvalue())
 
     def test_obsolete_publish_does_not_write(self):
         with patch.object(publisher, "inventory", return_value=({"privacy-v2.0.0": "newer"}, {})), \

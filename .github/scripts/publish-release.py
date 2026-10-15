@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,9 @@ def verify_asset(repo, tag, package):
             "--pattern", package.name, "--dir", directory)
         if zip_contents(Path(directory) / package.name) != zip_contents(package):
             raise ValueError(f"Published {tag}/{package.name} differs from the built package")
+        # Attestation runs after publication and must hash the downloadable ZIP,
+        # not a timestamp-different rebuild of the same payload on a retry.
+        shutil.copyfile(Path(directory) / package.name, package)
 
 
 def publish(repo, prefix, number, sha, package, title, notes):
@@ -101,8 +105,7 @@ def publish(repo, prefix, number, sha, package, title, notes):
     # Never delete a working release or clobber an existing asset on a retry.
     # ZIP timestamps may change between builds; compare unpacked payloads instead.
     verify_asset(repo, tag, package)
-    run("gh", "release", "edit", tag, "--repo", repo, "--draft=false",
-        "--latest=false", "--title", title, "--notes", notes)
+    run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest=false")
     published = json.loads(run("gh", "api", f"repos/{repo}/releases/tags/{tag}"))
     if published["draft"] or not any(asset["name"] == package.name for asset in published["assets"]):
         raise ValueError(f"Release {tag} was not published with its expected asset")
