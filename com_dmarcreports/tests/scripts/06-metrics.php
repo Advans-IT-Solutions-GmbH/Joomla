@@ -203,12 +203,168 @@ class MetricsTest
             }
         });
 
+        $this->runTlsRptSummaryTests();
+
         $this->cleanup();
 
         echo "\n=== Metrics Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Exercise the TLS-RPT summary aggregation (RFC 8460) the Domain view and
+     * dashboard render from. The suite that stores TLS-RPT reports proves the
+     * rows land; here the shipped Metrics::tlsRptSummary() SQL is driven against
+     * a real database on both Joomla 5 and 6, covering the three things the
+     * dashboard depends on: report/session totals summed from the per-policy
+     * rows, failures grouped by result type, receiving MX and sending MTA and
+     * ordered by session volume, and per-policy-domain attribution when one
+     * report bundles policies for several domains.
+     */
+    private function runTlsRptSummaryTests(): void
+    {
+        // A second monitored domain that appears only as a secondary policy
+        // inside the primary domain's single report. RFC 8460 lets one report
+        // bundle policies for several policy domains; the summary must attribute
+        // each policy to its own domain, not to the report's owning domain.
+        $secondaryId = $this->insertDomain('tls-secondary.' . self::DOMAIN);
+        $reportId    = 0;
+
+        try {
+            $reportId = $this->insertTlsReport($this->domainId);
+
+            // Two policies for the primary domain in the one report: totals must
+            // sum both and count the report once (COUNT(DISTINCT report_id)).
+            $this->insertTlsPolicy($reportId, $this->domainId, 100, 5);
+            $this->insertTlsPolicy($reportId, $this->domainId, 50, 5);
+            // One policy for the secondary domain, bundled in the same report.
+            $this->insertTlsPolicy($reportId, $secondaryId, 7, 1);
+
+            // Failures: two rows share a (result_type, MX, sending IP) triple and
+            // must collapse into one group whose sessions sum; a third distinct
+            // triple has fewer sessions and must sort after it.
+            $this->insertTlsFailure($reportId, $this->domainId, 'certificate-expired', 'mx1.example', '192.0.2.10', 3);
+            $this->insertTlsFailure($reportId, $this->domainId, 'certificate-expired', 'mx1.example', '192.0.2.10', 4);
+            $this->insertTlsFailure($reportId, $this->domainId, 'starttls-not-supported', 'mx2.example', '192.0.2.20', 2);
+
+            $metrics = new Metrics($this->db);
+            $summary = $metrics->tlsRptSummary($this->domainId);
+
+            $this->test('TLS-RPT summary sums sessions and counts the report once', function () use ($summary) {
+                return (int) $summary['reports'] === 1
+                    && (int) $summary['success'] === 150
+                    && (int) $summary['failure'] === 10;
+            });
+
+            $this->test('TLS-RPT failures group by result/MX/IP and sort by session volume', function () use ($summary) {
+                if (count($summary['failures']) !== 2) {
+                    return false;
+                }
+
+                $top = $summary['failures'][0];
+
+                return (int) $top['sessions'] === 7
+                    && $top['result_type'] === 'certificate-expired'
+                    && $top['receiving_mx_host'] === 'mx1.example'
+                    && $top['sending_mta_ip'] === '192.0.2.10'
+                    && (int) $summary['failures'][1]['sessions'] === 2;
+            });
+
+            $this->test('TLS-RPT policies attribute to their own domain, not the report owner', function () use ($metrics, $secondaryId) {
+                $secondary = $metrics->tlsRptSummary($secondaryId);
+
+                // The secondary domain sees only its bundled policy, and its
+                // success total is excluded from the primary domain's 150.
+                return (int) $secondary['reports'] === 1
+                    && (int) $secondary['success'] === 7
+                    && (int) $secondary['failure'] === 1
+                    && $secondary['failures'] === [];
+            });
+        } finally {
+            if ($reportId > 0) {
+                foreach (['#__dmarc_tlsrpt_failures', '#__dmarc_tlsrpt_policies'] as $table) {
+                    $query = $this->query()
+                        ->delete($this->db->quoteName($table))
+                        ->where($this->db->quoteName('report_id') . ' = ' . (int) $reportId);
+                    $this->db->setQuery($query)->execute();
+                }
+
+                $query = $this->query()
+                    ->delete($this->db->quoteName('#__dmarc_tlsrpt_reports'))
+                    ->where($this->db->quoteName('id') . ' = ' . (int) $reportId);
+                $this->db->setQuery($query)->execute();
+            }
+
+            $this->deleteDomain($secondaryId);
+        }
+    }
+
+    private function insertDomain(string $domain): int
+    {
+        $row = (object) [
+            'domain'          => $domain,
+            'title'           => 'TLS-RPT Secondary',
+            'expected_policy' => 'reject',
+            'published'       => 1,
+            'created'         => gmdate('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__dmarc_domains', $row, 'id');
+
+        return (int) $row->id;
+    }
+
+    private function insertTlsReport(int $domainId): int
+    {
+        $report = (object) [
+            'domain_id'     => $domainId,
+            'source_id'     => 0,
+            'org_name'      => 'tls-reporter',
+            'contact_info'  => 'tls@reporter.test',
+            'report_id'     => 'tls-' . $domainId . '-' . self::ANCHOR,
+            'report_hash'   => hash('sha256', 'tls|' . $domainId . '|' . self::ANCHOR),
+            'date_begin'    => self::ANCHOR - self::DAY,
+            'date_end'      => self::ANCHOR,
+            'policy_domain' => self::DOMAIN,
+            'success_count' => 0,
+            'failure_count' => 0,
+            'created'       => gmdate('Y-m-d H:i:s'),
+        ];
+        $this->db->insertObject('#__dmarc_tlsrpt_reports', $report, 'id');
+
+        return (int) $report->id;
+    }
+
+    private function insertTlsPolicy(int $reportId, int $domainId, int $success, int $failure): void
+    {
+        $policy = (object) [
+            'report_id'     => $reportId,
+            'domain_id'     => $domainId,
+            'policy_type'   => 'sts',
+            'policy_domain' => self::DOMAIN,
+            'success_count' => $success,
+            'failure_count' => $failure,
+        ];
+        $this->db->insertObject('#__dmarc_tlsrpt_policies', $policy);
+    }
+
+    private function insertTlsFailure(int $reportId, int $domainId, string $resultType, string $mx, string $ip, int $sessions): void
+    {
+        $failure = (object) [
+            'report_id'            => $reportId,
+            'policy_id'            => 0,
+            'domain_id'            => $domainId,
+            'policy_domain'        => self::DOMAIN,
+            'result_type'          => $resultType,
+            'sending_mta_ip'       => $ip,
+            'receiving_mx_host'    => $mx,
+            'receiving_ip'         => '',
+            'failed_session_count' => $sessions,
+            'additional_info'      => '',
+            'failure_reason_code'  => '',
+        ];
+        $this->db->insertObject('#__dmarc_tlsrpt_failures', $failure);
     }
 
     private function seed(): void
