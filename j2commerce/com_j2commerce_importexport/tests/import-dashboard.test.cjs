@@ -20,7 +20,7 @@ namespace {
     $view->render($argv[1]);
 }
 `, template], {encoding: 'utf8'});
-const script = rendered.match(/<script>([\s\S]*?)<\/script>/)[1];
+const script = rendered.match(/<script>([\s\S]*?)<\/script>/i)[1];
 
 function dashboard(responses) {
     const elements = {};

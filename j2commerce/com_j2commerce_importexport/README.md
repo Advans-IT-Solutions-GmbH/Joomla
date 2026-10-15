@@ -359,7 +359,7 @@ CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command 
 
 ### Import Fails with "Invalid file type"
 **Problem:** Upload rejected immediately  
-**Solution:** Only CSV, XML and JSON files are accepted. Verify the file extension and that the file is not corrupted.
+**Solution:** Only CSV and JSON files are accepted for import. XML is export-only. Verify the file extension and that the file is not corrupted.
 
 ### Upload Rejected Because the File Is Too Large
 **Problem:** Upload fails for a large import file  
