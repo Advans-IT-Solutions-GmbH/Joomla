@@ -284,7 +284,29 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             'action'   => 'core.login.site',
         ];
 
-        $result = $this->getApplication()->login($credentials, $options);
+        // Did the credentials pass authentication even though the login failed? CMSApplication::login()
+        // hands the authentication response to onUserLoginFailure; its status is STATUS_SUCCESS only
+        // when the password was correct and a user plugin refused afterwards (plg_user_joomla for a
+        // blocked account). A wrong password never sets this, so the precise sentence below cannot be
+        // used to find out whether an account exists. Listened to for this one login only.
+        $accepted   = null;
+        $dispatcher = $this->getApplication()->getDispatcher();
+        $listener   = static function ($event) use (&$accepted): void {
+            $response = method_exists($event, 'getAuthenticationResponse')
+                ? (array) $event->getAuthenticationResponse()
+                : (array) ($event->getArgument('subject') ?? []);
+
+            if ((int) ($response['status'] ?? 0) === Authentication::STATUS_SUCCESS) {
+                $accepted = (string) ($response['username'] ?? '');
+            }
+        };
+        $dispatcher->addListener('onUserLoginFailure', $listener);
+
+        try {
+            $result = $this->getApplication()->login($credentials, $options);
+        } finally {
+            $dispatcher->removeListener('onUserLoginFailure', $listener);
+        }
 
         if ($result === true) {
             $user = $this->getApplication()->getIdentity();
@@ -352,7 +374,42 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $this->getApplication()->getMessageQueue(true);
         $this->getApplication()->getSession()->set('application.queue', []);
 
+        // Correct password, account still awaiting its activation: say what is missing instead of
+        // asking to check username and password, with the site's sender address as contact.
+        if ($accepted !== null && $this->awaitsActivation($accepted !== '' ? $accepted : $username)) {
+            return $this->jsonError(Text::sprintf(
+                'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED',
+                (string) $this->getApplication()->get('mailfrom')
+            ));
+        }
+
         return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_FAILED'));
+    }
+
+    /**
+     * Is this account blocked and still waiting for its activation (an activation code is set)? An
+     * account blocked by an administrator has no code and is not reported here.
+     */
+    protected function awaitsActivation(string $username): bool
+    {
+        if ($username === '') {
+            return false;
+        }
+
+        try {
+            $db    = $this->getDatabase();
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__users'))
+                ->where($db->quoteName('username') . ' = :username')
+                ->where($db->quoteName('block') . ' = 1')
+                ->where($db->quoteName('activation') . " NOT IN ('', '0')")
+                ->bind(':username', $username);
+
+            return (int) $db->setQuery($query)->loadResult() > 0;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**

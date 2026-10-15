@@ -361,6 +361,17 @@ After AJAX login with MFA enabled, the plugin redirects the browser to Joomla's 
 - The handler does nothing when `isMultiFactorAuthenticationPage()` is true (captive view or `captive.validate` task).
 - `CaptiveController::validate()` reads **only** from the session — it does not check POST parameters.
 
+### Login of an account that is not activated yet
+
+A failed login answers with one generic sentence (`PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_FAILED`), so
+the answer does not tell whether an account exists. There is one exception. If the password was
+correct and the account still awaits its activation (blocked, activation code set), the answer is
+`PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED`, with the site's sender address (`mailfrom`) as
+contact. The plugin learns that the password was correct from `onUserLoginFailure`: its
+authentication response has `STATUS_SUCCESS` only when a user plugin refused the login after the
+password check, as `plg_user_joomla` does for a blocked account. The listener exists for this one
+login only. An account blocked by an administrator (no activation code) keeps the generic sentence.
+
 ### Session persistence
 
 Joomla registers `JoomlaStorage::close()` as a PHP shutdown function. Session data written via `$session->set()` is automatically serialized into `$_SESSION['joomla']` when `exit()` is called. An explicit `$session->close()` before `$app->close()` is not necessary.

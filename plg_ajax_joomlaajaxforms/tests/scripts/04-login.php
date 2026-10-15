@@ -172,6 +172,109 @@ class LoginTest
         );
     }
 
+    /** The inner JSON of an AJAX login answer (com_ajax wraps it in data[0]). */
+    private function loginAnswer(string $username, string $password): array
+    {
+        [$cookie, $token] = $this->getSessionAndToken();
+        $cookies = [];
+        if ($cookie && str_contains($cookie, '=')) {
+            [$cn, $cv] = explode('=', $cookie, 2);
+            $cookies[$cn] = $cv;
+        }
+        $fields = ['task' => 'login', 'username' => $username, 'password' => $password];
+        if ($token) {
+            $fields[$token] = '1';
+        }
+        [, $body] = $this->http('POST', $this->baseUrl . $this->ajaxPath . '&task=login', $fields, $cookies);
+        $outer = json_decode($body, true);
+        $inner = $outer['data'][0] ?? $outer;
+        if (is_string($inner)) {
+            $inner = json_decode($inner, true);
+        }
+        return is_array($inner) ? $inner : [];
+    }
+
+    /**
+     * A correct password for an account that still awaits its activation gets the precise sentence
+     * with the site's contact address. A wrong password and an account blocked by an administrator
+     * (no activation code) keep the generic sentence, so the answer reveals nothing about an
+     * account unless its password is known.
+     */
+    private function testNotActivatedAccount(): void
+    {
+        echo "\n--- HTTP: account awaiting activation ---\n";
+
+        $db       = Factory::getContainer()->get(DatabaseInterface::class);
+        $mailfrom = (string) Factory::getConfig()->get('mailfrom');
+        $password = 'Activate-Me-2026!';
+        $users    = [
+            'ajaxforms_pending' => ['block' => 1, 'activation' => md5('ajaxforms-pending')],
+            'ajaxforms_blocked' => ['block' => 1, 'activation' => ''],
+        ];
+
+        foreach ($users as $username => $state) {
+            $old = (int) $db->setQuery(
+                'SELECT id FROM ' . $db->quoteName('#__users') . ' WHERE ' . $db->quoteName('username') . ' = ' . $db->quote($username)
+            )->loadResult();
+            if ($old > 0) {
+                $db->setQuery('DELETE FROM ' . $db->quoteName('#__user_usergroup_map') . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $old)->execute();
+                $db->setQuery('DELETE FROM ' . $db->quoteName('#__users') . ' WHERE ' . $db->quoteName('id') . ' = ' . $old)->execute();
+            }
+            $row = (object) [
+                'name'         => $username,
+                'username'     => $username,
+                'email'        => $username . '@example.com',
+                'password'     => \Joomla\CMS\User\UserHelper::hashPassword($password),
+                'block'        => $state['block'],
+                'sendEmail'    => 0,
+                'registerDate' => Factory::getDate()->toSql(),
+                'activation'   => $state['activation'],
+                'params'       => '{}',
+                'otpKey'       => '',
+                'otep'         => '',
+                'requireReset' => 0,
+            ];
+            $db->insertObject('#__users', $row, 'id');
+            $map = (object) ['user_id' => (int) $row->id, 'group_id' => 2];
+            $db->insertObject('#__user_usergroup_map', $map);
+        }
+
+        $failed = $this->loginAnswer('nonexistent_user_xyz', 'wrong_pass_xyz');
+        $generic = (string) ($failed['message'] ?? '');
+
+        $pending = $this->loginAnswer('ajaxforms_pending', $password);
+        $this->test(
+            'Pending activation, correct password → precise sentence with the contact address',
+            ($pending['success'] ?? null) === false && $mailfrom !== '' && str_contains((string) ($pending['message'] ?? ''), $mailfrom)
+                && ($pending['message'] ?? '') !== $generic,
+            'Got: ' . json_encode($pending)
+        );
+
+        $wrong = $this->loginAnswer('ajaxforms_pending', 'not-the-password');
+        $this->test(
+            'Pending activation, wrong password → generic sentence (no account enumeration)',
+            ($wrong['success'] ?? null) === false && ($wrong['message'] ?? '') === $generic,
+            'Got: ' . json_encode($wrong)
+        );
+
+        $blocked = $this->loginAnswer('ajaxforms_blocked', $password);
+        $this->test(
+            'Blocked by an administrator (no activation code) → generic sentence',
+            ($blocked['success'] ?? null) === false && ($blocked['message'] ?? '') === $generic,
+            'Got: ' . json_encode($blocked)
+        );
+
+        foreach (array_keys($users) as $username) {
+            $id = (int) $db->setQuery(
+                'SELECT id FROM ' . $db->quoteName('#__users') . ' WHERE ' . $db->quoteName('username') . ' = ' . $db->quote($username)
+            )->loadResult();
+            if ($id > 0) {
+                $db->setQuery('DELETE FROM ' . $db->quoteName('#__user_usergroup_map') . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $id)->execute();
+                $db->setQuery('DELETE FROM ' . $db->quoteName('#__users') . ' WHERE ' . $db->quoteName('id') . ' = ' . $id)->execute();
+            }
+        }
+    }
+
     private function testLanguageKeys(): void
     {
         echo "\n--- Language keys ---\n";
@@ -183,6 +286,7 @@ class LoginTest
         foreach ([
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_SUCCESS',
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_FAILED',
+            'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED',
             'PLG_AJAX_JOOMLAAJAXFORMS_LOGOUT_SUCCESS',
             'PLG_AJAX_JOOMLAAJAXFORMS_MFA_REQUIRED',
         ] as $key) {
@@ -198,6 +302,7 @@ class LoginTest
         $this->testLoginFeatureConfig();
         $this->testNoTokenRejected();
         $this->testWrongCredentialsRejected();
+        $this->testNotActivatedAccount();
         $this->testLanguageKeys();
 
         echo "\n=== Login Test Summary ===\n";
