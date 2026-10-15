@@ -218,7 +218,7 @@ class ImportModelTest
                     return $rejections === 2;
                 });
             }
-            file_put_contents($csv, "\xEF\xBB\xBF# documentation\n# comment\ntitle,variants\nCSV,\"[{\"\"sku\"\":\"\"CSV-1\"\",\"\"quantity\"\":0}]\"\n");
+            file_put_contents($csv, "\xEF\xBB\xBF# documentation \"with quotes\"\n# comment\ntitle,variants\nCSV,\"[{\"\"sku\"\":\"\"CSV-1\"\",\"\"quantity\"\":0}]\"\n");
             $preview = $model->previewFile($csv);
             $this->test('CSV preview skips BOM/comments and decodes nested arrays', fn () =>
                 $preview['headers'] === ['title', 'variants']
@@ -241,6 +241,17 @@ class ImportModelTest
                 $preview = $model->previewFile($csv);
                 $this->test('Quoted JSON values survive CSV dialect ' . json_encode($escape), fn () =>
                     $preview['rows'][0]['variants'][0]['sku'] === 'A"B');
+            }
+            foreach (['', '\\'] as $escape) {
+                $title = 'A\"B';
+                $images = json_encode(['image_intro' => 'images/A"B.jpg']);
+                $handle = fopen($csv, 'w');
+                fputcsv($handle, ['title', 'article_images'], ',', '"', $escape);
+                fputcsv($handle, [$title, $images], ',', '"', $escape);
+                fclose($handle);
+                $preview = $model->previewFile($csv);
+                $this->test('Scalar fields preserve quotes in CSV dialect ' . json_encode($escape), fn () =>
+                    $preview['rows'][0]['title'] === $title && $preview['rows'][0]['article_images'] === $images);
             }
 
             foreach (["title,title\nOne,Two\n", "title,alias\nMissing\n", "title,variants\nBad,broken-json\n"] as $invalidCsv) {

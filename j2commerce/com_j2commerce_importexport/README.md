@@ -125,6 +125,8 @@ quoted headers, BOM-prefixed documentation rows and escaped quotes inside nested
 Standard doubled-quote CSV is preferred. If that dialect cannot parse the complete file,
 the parser accepts PHP's legacy backslash-escape dialect used by existing exports.
 Both preview and import select one dialect for the whole file; files invalid in both are rejected.
+Quoting is checked against the raw CSV records before accepting a dialect, including
+scalar text and serialized article-image fields; matching column counts alone are not sufficient.
 Row errors and partial-import counts are shown without an automatic page reload.
 
 Complete product JSON accepts an array of records or a `{"products": [...]}` wrapper.

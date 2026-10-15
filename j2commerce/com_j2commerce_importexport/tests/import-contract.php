@@ -172,7 +172,7 @@ namespace {
         check(response($controller, 'preview')['success'] === false, 'Empty preview is rejected');
         check(response($controller, 'process')['success'] === false, 'Zero imported rows are not reported as success');
 
-        file_put_contents($csv, "\xEF\xBB\xBF# help\ntitle,variants\nCSV,\"[{\"\"quantity\"\":0}]\"\n");
+        file_put_contents($csv, "\xEF\xBB\xBF# help \"with quotes\"\ntitle,variants\nCSV,\"[{\"\"quantity\"\":0}]\"\n");
         $parsed = $model->previewFile($csv);
         check($parsed['total'] === 1 && $parsed['rows'][0]['variants'][0]['quantity'] === 0,
             'CSV parser handles BOM/comments and nested JSON');
@@ -220,6 +220,33 @@ namespace {
             $last = $model->received[array_key_last($model->received)];
             check($imported['imported'] === 1 && $last['data']['variants'][0]['sku'] === 'A"B',
                 'CSV preview/import agree for escape dialect: ' . json_encode($escape));
+        }
+        foreach (['', '\\'] as $escape) {
+            $title = 'A\"B';
+            $images = json_encode(['image_intro' => 'images/A"B.jpg']);
+            $handle = fopen($csv, 'w');
+            fputcsv($handle, ['title', 'article_images'], ',', '"', $escape);
+            fputcsv($handle, [$title, $images], ',', '"', $escape);
+            fclose($handle);
+            $parsed = $model->previewFile($csv);
+            check($parsed['rows'][0]['title'] === $title && $parsed['rows'][0]['article_images'] === $images,
+                'CSV scalar text/article images round trip for dialect: ' . json_encode($escape));
+            $model->importData($csv, 'products_full', []);
+            $last = $model->received[array_key_last($model->received)];
+            check($last['data']['title'] === $title && $last['data']['article_images'] === $images,
+                'Import preserves scalar text/article images for dialect: ' . json_encode($escape));
+        }
+        file_put_contents($csv, "title,alias\r\n\"First\r\nSecond\",\"multiline\"\r\n");
+        $parsed = $model->previewFile($csv);
+        check($parsed['rows'][0]['title'] === "First\r\nSecond", 'Strict CSV quoting preserves embedded CRLF');
+        foreach (["title,alias\n\"Unclosed,alias\n", "title,alias\n\"Closed\"trailing,alias\n"] as $invalidCsv) {
+            file_put_contents($csv, $invalidCsv);
+            try {
+                $model->previewFile($csv);
+                throw new \RuntimeException('Malformed CSV quoting was accepted');
+            } catch (\InvalidArgumentException $e) {
+                check(true, 'Malformed CSV quoting is rejected in both dialects');
+            }
         }
 
         $real = new ImportModel();

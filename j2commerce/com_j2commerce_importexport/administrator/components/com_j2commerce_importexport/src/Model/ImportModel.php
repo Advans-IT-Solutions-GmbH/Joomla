@@ -1042,7 +1042,7 @@ class ImportModel extends BaseDatabaseModel
 
     private function readCSVDialect(string $filePath, string $escape): \Generator
     {
-        $handle = fopen($filePath, 'r');
+        $handle = fopen($filePath, 'rb');
         if (!$handle) {
             throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND'));
         }
@@ -1052,12 +1052,28 @@ class ImportModel extends BaseDatabaseModel
                 rewind($handle);
             }
             $headers = [];
-            while (($line = fgetcsv($handle, 0, ',', '"', $escape)) !== false) {
+            while (true) {
+                $start = ftell($handle);
+                $line = fgetcsv($handle, 0, ',', '"', $escape);
+                if ($line === false) {
+                    break;
+                }
                 if (empty($line) || (count($line) === 1 && empty($line[0]))) {
                     continue;
                 }
                 if (isset($line[0]) && strpos(trim($line[0]), '#') === 0) {
                     continue;
+                }
+                $end = ftell($handle);
+                if ($start === false || $end === false) {
+                    throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+                $record = stream_get_contents($handle, $end - $start, $start);
+                if ($record === false || strlen($record) !== $end - $start) {
+                    throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+                if (!$this->isValidCSVRecord($record, $escape)) {
+                    throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
                 }
                 if (empty($headers)) {
                     $headers = $line;
@@ -1088,6 +1104,44 @@ class ImportModel extends BaseDatabaseModel
         } finally {
             fclose($handle);
         }
+    }
+
+    private function isValidCSVRecord(string $record, string $escape): bool
+    {
+        $record = preg_replace('/\r\n$|[\r\n]$/D', '', $record);
+        $quoted = false;
+        $fieldStart = true;
+        $closed = false;
+        $length = strlen($record);
+        for ($i = 0; $i < $length; $i++) {
+            $char = $record[$i];
+            if ($quoted) {
+                if ($escape !== '' && $char === $escape && ($record[$i + 1] ?? '') === '"') {
+                    $i++;
+                } elseif ($char === '"') {
+                    if (($record[$i + 1] ?? '') === '"') {
+                        $i++;
+                    } else {
+                        $quoted = false;
+                        $closed = true;
+                    }
+                }
+            } elseif ($char === ',') {
+                $fieldStart = true;
+                $closed = false;
+            } elseif ($closed || $char === "\r" || $char === "\n") {
+                return false;
+            } elseif ($char === '"') {
+                if (!$fieldStart) {
+                    return false;
+                }
+                $quoted = true;
+                $fieldStart = false;
+            } else {
+                $fieldStart = false;
+            }
+        }
+        return !$quoted;
     }
 
     public function importData(string $filePath, string $type, array $mapping, array $options = []): array
