@@ -86,15 +86,12 @@ HTMLHelper::_('bootstrap.collapse');
                             <label for="import-type" class="form-label"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_TYPE'); ?></label>
                             <select name="type" id="import-type" class="form-select">
                                 <option value="products_full"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_PRODUCTS_FULL'); ?></option>
-                                <option value="products"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_PRODUCTS_SIMPLE'); ?></option>
-                                <option value="variants"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_VARIANTS'); ?></option>
-                                <option value="prices"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_PRICES'); ?></option>
                             </select>
                         </div>
                         
                         <div class="mb-3">
                             <label for="import-file" class="form-label"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_FILE'); ?></label>
-                            <input type="file" name="import_file" id="import-file" class="form-control" accept=".csv,.xml,.json" required>
+                            <input type="file" name="import_file" id="import-file" class="form-control" accept=".csv,.json" required>
                         </div>
 
                         <!-- Import Options -->
@@ -153,7 +150,7 @@ HTMLHelper::_('bootstrap.collapse');
                                             <label for="opt-category" class="form-label"><?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_DEFAULT_CATEGORY'); ?></label>
                                             <select name="options[default_category]" id="opt-category" class="form-select form-select-sm">
                                                 <?php foreach ($this->categories as $cat): ?>
-                                                <option value="<?php echo $cat->id; ?>"><?php echo str_repeat('- ', $cat->level - 1) . $cat->title; ?></option>
+                                                <option value="<?php echo (int) $cat->id; ?>"><?php echo str_repeat('- ', max(0, $cat->level - 1)) . $this->escape($cat->title); ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
@@ -214,26 +211,57 @@ document.addEventListener('DOMContentLoaded', function() {
     const importPreview = document.getElementById('import-preview');
     const previewContent = document.getElementById('preview-content');
     const processButton = document.getElementById('process-import');
+    const uploadButton = importForm.querySelector('button[type="submit"]');
+    let busy = false;
+    let previewReady = false;
+
+    function resetPreview() {
+        previewReady = false;
+        importPreview.style.display = 'none';
+        processButton.disabled = true;
+    }
+
+    document.getElementById('import-file').addEventListener('change', resetPreview);
+    resetPreview();
+
+    async function postJson(url, formData) {
+        const response = await fetch(url, {method: 'POST', body: formData});
+        const data = await response.json();
+        if (!response.ok || data.success !== true) {
+            throw new Error([data.message, ...(data.errors || [])].filter(Boolean).join('\n')
+                || <?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')); ?>);
+        }
+        return data;
+    }
     
-    importForm.addEventListener('submit', function(e) {
+    importForm.addEventListener('submit', async function(e) {
         e.preventDefault();
-        
-        const formData = new FormData(this);
-        
-        fetch(this.action, {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                importPreview.style.display = 'block';
-                displayPreview(data.preview);
-            } else {
-                alert(data.message || '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED'); ?>');
+        if (busy) return;
+        busy = true;
+        uploadButton.disabled = true;
+        resetPreview();
+        const selectedFile = document.getElementById('import-file').files[0];
+
+        try {
+            await postJson(this.action, new FormData(this));
+            const formData = new FormData(this);
+            formData.delete('import_file');
+            const data = await postJson('index.php?option=com_j2commerce_importexport&task=import.preview&format=json', formData);
+            if (!data.preview || !Array.isArray(data.preview.headers)
+                || !Array.isArray(data.preview.rows) || data.preview.total < 1) {
+                throw new Error(<?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_PREVIEW_FAILED')); ?>);
             }
-        })
-        .catch(error => alert('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED'); ?>: ' + error.message));
+            if (selectedFile !== document.getElementById('import-file').files[0]) return;
+            displayPreview(data.preview);
+            previewReady = true;
+            processButton.disabled = false;
+            importPreview.style.display = 'block';
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            busy = false;
+            uploadButton.disabled = false;
+        }
     });
     
     function escapeHtml(str) {
@@ -260,7 +288,7 @@ document.addEventListener('DOMContentLoaded', function() {
         data.rows.slice(0, 5).forEach(row => {
             html += '<tr>';
             data.headers.forEach(header => {
-                let val = row[header] || '';
+                let val = row[header] ?? '';
                 if (typeof val === 'object') val = JSON.stringify(val).substring(0, 50) + '...';
                 if (typeof val === 'string' && val.length > 50) val = val.substring(0, 50) + '...';
                 html += '<td>' + escapeHtml(val) + '</td>';
@@ -274,30 +302,31 @@ document.addEventListener('DOMContentLoaded', function() {
         previewContent.innerHTML = html;
     }
     
-    processButton.addEventListener('click', function() {
+    processButton.addEventListener('click', async function() {
+        if (busy || !previewReady) return;
         if (!confirm('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_CONFIRM_IMPORT'); ?>')) {
             return;
         }
-        
-        const type = document.getElementById('import-type').value;
+        busy = true;
+        processButton.disabled = true;
+        uploadButton.disabled = true;
         const formData = new FormData(importForm);
-        
-        fetch('index.php?option=com_j2commerce_importexport&task=import.process&format=json', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_IMPORT_SUCCESS'); ?>\n' +
-                      '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_IMPORTED'); ?>: ' + data.imported + '\n' +
-                      '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_FAILED'); ?>: ' + data.failed);
-                location.reload();
-            } else {
-                alert(data.message || '<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'); ?>');
-            }
-        })
-        .catch(error => alert('<?php echo Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'); ?>: ' + error.message));
+        formData.delete('import_file');
+
+        try {
+            const data = await postJson('index.php?option=com_j2commerce_importexport&task=import.process&format=json', formData);
+            alert((data.failed === 0 ? <?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_IMPORT_SUCCESS')); ?> + '\n' : '') +
+                  <?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_IMPORTED')); ?> + ': ' + data.imported + '\n' +
+                  <?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_FAILED')); ?> + ': ' + data.failed +
+                  (data.errors.length ? '\n' + data.errors.join('\n') : ''));
+            resetPreview();
+        } catch (error) {
+            resetPreview();
+            alert(error.message);
+        } finally {
+            busy = false;
+            uploadButton.disabled = false;
+        }
     });
 });
 </script>

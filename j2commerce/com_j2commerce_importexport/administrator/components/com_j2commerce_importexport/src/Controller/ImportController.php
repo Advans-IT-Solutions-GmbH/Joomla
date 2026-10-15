@@ -13,7 +13,6 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Response\JsonResponse;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Language\Text;
 
@@ -38,26 +37,22 @@ class ImportController extends BaseController
         $file = $input->files->get('import_file');
 
         if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED')], '', true);
-            $app->close();
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED')]);
         }
 
-        // Only allow CSV, XML and JSON import files
-        $allowedExtensions = ['csv', 'xml', 'json'];
+        // Keep upload formats aligned with the model's parser.
+        $allowedExtensions = ['csv', 'json'];
         $allowedMimeTypes  = [
             'text/csv',
             'text/plain',
             'application/csv',
-            'application/xml',
-            'text/xml',
             'application/json',
         ];
 
         // Enforce 10 MB upload limit
         $maxBytes = 10 * 1024 * 1024;
         if (($file['size'] ?? 0) > $maxBytes) {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_TOO_LARGE')], '', true);
-            $app->close();
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_TOO_LARGE')]);
         }
 
         $originalName  = $file['name'] ?? '';
@@ -65,8 +60,7 @@ class ImportController extends BaseController
         $detectedMime  = mime_content_type($file['tmp_name']);
 
         if (!in_array($fileExtension, $allowedExtensions, true) || !in_array($detectedMime, $allowedMimeTypes, true)) {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_FILE_TYPE')], '', true);
-            $app->close();
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_FILE_TYPE')]);
         }
 
         $session = $app->getSession();
@@ -75,9 +69,9 @@ class ImportController extends BaseController
         
         if (move_uploaded_file($file['tmp_name'], $tmpPath)) {
             $session->set('import_file', $tmpPath, 'j2commerce_import');
-            echo new JsonResponse(['success' => true, 'file' => basename($tmpPath)]);
+            $this->sendJson(['success' => true, 'file' => basename($tmpPath)]);
         } else {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_SAVE_FAILED')], '', true);
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_SAVE_FAILED')]);
         }
 
         $app->close();
@@ -94,21 +88,24 @@ class ImportController extends BaseController
         $filePath = $session->get('import_file', '', 'j2commerce_import');
 
         if (!file_exists($filePath)) {
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')], '', true);
-            $app->close();
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
         }
 
         try {
             $model = $this->getModel('Import', 'Administrator');
             $preview = $model->previewFile($filePath);
 
-            echo new JsonResponse(['success' => true, 'data' => $preview]);
+            if ($preview['total'] === 0) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_NO_DATA'));
+            }
+        } catch (\InvalidArgumentException $e) {
+            $this->sendJson(['success' => false, 'message' => $e->getMessage()]);
         } catch (\Exception $e) {
             \Joomla\CMS\Log\Log::add('Import preview error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
-            echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_PREVIEW_FAILED')], '', true);
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_PREVIEW_FAILED')]);
         }
 
-        $app->close();
+        $this->sendJson(['success' => true, 'preview' => $preview]);
     }
 
     public function process()
@@ -122,7 +119,10 @@ class ImportController extends BaseController
         
         $filePath = $session->get('import_file', '', 'j2commerce_import');
         $mapping = $input->get('mapping', [], 'array');
-        $type = $input->get('type', 'products', 'string');
+        $type = $input->get('type', 'products_full', 'string');
+        $options = $input->get('options', [], 'array');
+        // Unchecked HTML checkboxes are absent, not model defaults.
+        $options += ['update_existing' => false, 'create_menu' => false, 'menu_published' => false];
 
         if (!file_exists($filePath)) {
             $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
@@ -130,18 +130,21 @@ class ImportController extends BaseController
 
         try {
             $model = $this->getModel('Import', 'Administrator');
-            $result = $model->importData($filePath, $type, $mapping);
+            $result = $model->importData($filePath, $type, $mapping, $options);
 
             // Clean up
             @unlink($filePath);
             $session->clear('import_file', 'j2commerce_import');
 
             $this->sendJson([
-                'success' => true,
+                'success' => $result['imported'] > 0,
+                'message' => $result['imported'] > 0 ? '' : Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'),
                 'imported' => $result['imported'],
                 'failed' => $result['failed'],
                 'errors' => $result['errors']
             ]);
+        } catch (\InvalidArgumentException $e) {
+            $this->sendJson(['success' => false, 'message' => $e->getMessage()]);
         } catch (\Exception $e) {
             \Joomla\CMS\Log\Log::add('Import process error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
             $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')]);

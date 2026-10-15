@@ -92,6 +92,14 @@ class ImportModelTest
 
             return false;
         });
+        $this->test('Malformed nested product data is rejected before writing', function () use ($model) {
+            try {
+                $model->importProductFull(['title' => 'Invalid nested data', 'variants' => [1]]);
+            } catch (\InvalidArgumentException $e) {
+                return true;
+            }
+            return false;
+        });
 
         // --- Runtime: importProductFull() with minimal valid data ---
         // Detect stack
@@ -134,6 +142,7 @@ class ImportModelTest
         }
 
         $this->testTranslatedRowErrors($model);
+        $this->testImportContract($model);
 
         echo "\n=== Import Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
@@ -141,6 +150,96 @@ class ImportModelTest
         echo "Total:  " . ($this->passed + $this->failed) . "\n";
 
         return $this->failed === 0;
+    }
+
+    private function testImportContract(ImportModel $model): void
+    {
+        $options = $model->normalizeImportOptions([
+            'quantity_mode' => 'add', 'update_existing' => '0',
+            'create_menu' => '1', 'menu_published' => '0',
+            'default_category' => '2', 'menu_access' => '1',
+            'default_menutype' => 'mainmenu',
+        ]);
+        $this->test('Import options have strict normalized types', fn () =>
+            $options['quantity_mode'] === 'add'
+            && $options['update_existing'] === false
+            && $options['create_menu'] === true
+            && $options['menu_published'] === false
+            && $options['default_category'] === 2 && $options['menu_access'] === 1);
+
+        foreach ([
+            ['quantity_mode' => 'ADD'], ['quantity_mode' => []],
+            ['update_existing' => 'false'], ['create_menu' => 2],
+            ['menu_published' => []], ['default_category' => 0],
+            ['default_category' => '2x'], ['menu_access' => -1],
+            ['default_menutype' => []], ['unknown' => '1'],
+        ] as $invalid) {
+            $this->test('Invalid option rejected: ' . array_key_first($invalid), function () use ($model, $invalid) {
+                try {
+                    $model->normalizeImportOptions($invalid);
+                } catch (\InvalidArgumentException $e) {
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        $base = tempnam(sys_get_temp_dir(), 'j2ie-contract-');
+        $json = $base . '.json';
+        $csv = $base . '.csv';
+        try {
+            file_put_contents($json, '{"products":[{"title":"Preview","variants":[{"quantity":0}]}]}');
+            $preview = $model->previewFile($json);
+            $this->test('Preview exposes actual product records', fn () =>
+                $preview['total'] === 1 && $preview['rows'][0]['title'] === 'Preview'
+                && $preview['rows'][0]['variants'][0]['quantity'] === 0);
+
+            foreach (['products', 'variants', 'prices', 'categories', 'invalid'] as $type) {
+                $this->test('Unsupported import type rejected: ' . $type, function () use ($model, $json, $type) {
+                    try {
+                        $model->importData($json, $type, []);
+                    } catch (\InvalidArgumentException $e) {
+                        return true;
+                    }
+                    return false;
+                });
+            }
+            foreach (['{', 'null', '"text"', '{"title":"Not a list"}', '[1]', '{"products":false}'] as $invalidJson) {
+                file_put_contents($json, $invalidJson);
+                $this->test('Invalid JSON rejected by preview and process: ' . $invalidJson, function () use ($model, $json) {
+                    $rejections = 0;
+                    foreach (['preview', 'process'] as $task) {
+                        try {
+                            $task === 'preview' ? $model->previewFile($json) : $model->importData($json, 'products_full', []);
+                        } catch (\InvalidArgumentException $e) {
+                            $rejections++;
+                        }
+                    }
+                    return $rejections === 2;
+                });
+            }
+            file_put_contents($csv, "\xEF\xBB\xBF# documentation\n# comment\ntitle,variants\nCSV,\"[{\"\"sku\"\":\"\"CSV-1\"\",\"\"quantity\"\":0}]\"\n");
+            $preview = $model->previewFile($csv);
+            $this->test('CSV preview skips BOM/comments and decodes nested arrays', fn () =>
+                $preview['headers'] === ['title', 'variants']
+                && $preview['total'] === 1 && $preview['rows'][0]['variants'][0]['quantity'] === 0);
+
+            foreach (["title,title\nOne,Two\n", "title,alias\nMissing\n", "title,variants\nBad,broken-json\n"] as $invalidCsv) {
+                file_put_contents($csv, $invalidCsv);
+                $this->test('Malformed CSV is rejected', function () use ($model, $csv) {
+                    try {
+                        $model->previewFile($csv);
+                    } catch (\InvalidArgumentException $e) {
+                        return true;
+                    }
+                    return false;
+                });
+            }
+        } finally {
+            unlink($json);
+            unlink($csv);
+            unlink($base);
+        }
     }
 
     /**

@@ -7,7 +7,7 @@
  *
  *   1. Authenticates against the Joomla administrator + obtains a CSRF token.
  *   2. Uploads a small JSON product file via a multipart POST to
- *      task=import.upload, then runs task=import.process.
+ *      task=import.upload, previews it, then runs task=import.process.
  *   3. Asserts the product is actually created in the live j2store /
  *      j2commerce product tables.
  *   4. Negative: a multipart upload without a CSRF token is rejected.
@@ -183,7 +183,7 @@ class ImportHttpTest
         return null;
     }
 
-    private function writeImportFile(string $sku, string $title, string $alias): string
+    private function writeImportFile(string $sku, string $title, string $alias, array $extra = []): string
     {
         $payload = [
             'products' => [
@@ -207,6 +207,7 @@ class ImportHttpTest
                             'shipping'             => 1,
                             'quantity_restriction' => 0,
                             'allow_backorder'      => 0,
+                            'quantity'             => 7,
                         ],
                     ],
                     'product_images' => [],
@@ -219,6 +220,7 @@ class ImportHttpTest
             ],
         ];
 
+        $payload['products'][0] = array_replace($payload['products'][0], $extra);
         $path = '/tmp/j2ie-http-import-' . bin2hex(random_bytes(4)) . '.json';
         file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         return $path;
@@ -251,12 +253,18 @@ class ImportHttpTest
                 );
                 $articleId = (int) $this->db->loadResult();
 
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_productquantities')
+                    . ' WHERE variant_id IN (SELECT ' . $this->db->quoteName($this->pkVar)
+                    . ' FROM ' . $this->db->quoteName('#__' . $this->tp . '_variants')
+                    . ' WHERE product_id = ' . $productId . ')')->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_variants')
                     . ' WHERE ' . $this->db->quoteName('product_id') . ' = ' . $productId)->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_products')
                     . ' WHERE ' . $this->db->quoteName($this->pkProd) . ' = ' . $productId)->execute();
             }
             if ($articleId > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__menu')
+                    . ' WHERE link = ' . $this->db->quote('index.php?option=com_content&view=article&id=' . $articleId))->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__content')
                     . ' WHERE id = ' . $articleId)->execute();
             }
@@ -300,6 +308,12 @@ class ImportHttpTest
 
         $uploadUrl  = $this->baseUrl . '/administrator/index.php?option=com_j2commerce_importexport&task=import.upload';
         $processUrl = $this->baseUrl . '/administrator/index.php?option=com_j2commerce_importexport&task=import.process&format=json';
+        $previewUrl = $this->baseUrl . '/administrator/index.php?option=com_j2commerce_importexport&task=import.preview&format=json';
+
+        $missing = $this->request($previewUrl, [$token => '1']);
+        $this->test('Preview without upload returns a flat JSON error',
+            ($missing['json']['success'] ?? null) === false && !empty($missing['json']['message'])
+            && !isset($missing['json']['data']));
 
         // --- Negative: multipart upload without CSRF token ---
         echo "\n--- Negative: upload without CSRF token ---\n";
@@ -318,7 +332,9 @@ class ImportHttpTest
 
         // --- Positive: authenticated multipart upload ---
         echo "\n--- Authenticated multipart upload ---\n";
-        $file   = $this->writeImportFile($sku, $title, $alias);
+        $file   = $this->writeImportFile($sku, $title, $alias, [
+            'menu_item' => ['title' => $title, 'alias' => $alias],
+        ]);
         $upload = $this->request($uploadUrl, [
             'import_file' => new \CURLFile($file, 'application/json', 'import.json'),
             'type'        => 'products_full',
@@ -333,12 +349,53 @@ class ImportHttpTest
         }
         $this->test('Upload returns success JSON', $uploadOk,
             "HTTP {$upload['code']}, body: " . substr(trim($upload['body']), 0, 160));
+        $this->test('Upload uses the flat file response contract',
+            isset($upload['json']['file']) && !isset($upload['json']['data']));
 
         if ($uploadOk) {
+            foreach ([$previewUrl, $processUrl] as $protectedUrl) {
+                $withoutToken = $this->request($protectedUrl, ['type' => 'products_full']);
+                $this->test('Preview/process without CSRF token is rejected',
+                    ($withoutToken['json']['success'] ?? false) !== true);
+            }
+            $preview = $this->request($previewUrl, [$token => '1']);
+            $this->test('Preview returns the real uploaded product in flat JSON',
+                ($preview['json']['success'] ?? false) === true
+                && ($preview['json']['preview']['total'] ?? 0) === 1
+                && ($preview['json']['preview']['rows'][0]['title'] ?? '') === $title
+                && in_array('title', $preview['json']['preview']['headers'] ?? [], true)
+                && !isset($preview['json']['data']));
+            $this->test('Preview does not import records', $this->findVariantBySku($variantSku) === null);
+
+            foreach (['products', 'variants', 'prices'] as $unsupported) {
+                $rejected = $this->request($processUrl, ['type' => $unsupported, $token => '1']);
+                $this->test('HTTP rejects unsupported type ' . $unsupported,
+                    ($rejected['json']['success'] ?? null) === false && !empty($rejected['json']['message']));
+            }
+            foreach ([
+                ['quantity_mode' => 'multiply'], ['update_existing' => 'false'],
+                ['default_category' => -1], ['menu_access' => '1x'],
+            ] as $invalidOptions) {
+                $rejected = $this->request($processUrl, [
+                    'type' => 'products_full', 'options' => $invalidOptions, $token => '1',
+                ]);
+                $this->test('HTTP rejects invalid option ' . array_key_first($invalidOptions),
+                    ($rejected['json']['success'] ?? null) === false && !empty($rejected['json']['message']));
+            }
+            $this->test('Rejected requests do not import records', $this->findVariantBySku($variantSku) === null);
+
             // --- Process the uploaded file ---
             echo "\n--- Process import ---\n";
+            $this->db->setQuery('SELECT menutype FROM ' . $this->db->quoteName('#__menu_types') . ' ORDER BY id');
+            $menutype = (string) $this->db->loadResult();
             $process = $this->request($processUrl, [
                 'type'  => 'products_full',
+                'options' => [
+                    'update_existing' => '1', 'quantity_mode' => 'replace',
+                    'create_menu' => '1', 'default_menutype' => $menutype,
+                    'default_category' => '2', 'menu_access' => '1',
+                    // menu_published deliberately absent: unchecked must mean false.
+                ],
                 $token  => '1',
             ]);
             $procJson = $process['json'];
@@ -356,6 +413,32 @@ class ImportHttpTest
                 "no variant row with SKU $variantSku");
 
             if ($variant !== null) {
+                $quantity = function () use ($variant): int {
+                    $this->db->setQuery('SELECT quantity FROM ' . $this->db->quoteName('#__' . $this->tp . '_productquantities')
+                        . ' WHERE variant_id = ' . (int) $variant[$this->pkVar]);
+                    return (int) $this->db->loadResult();
+                };
+                $this->test('Initial stock matches uploaded quantity', $quantity() === 7);
+                foreach (['add' => 14, 'replace' => 7] as $mode => $expected) {
+                    $repeatFile = $this->writeImportFile($sku, $title, $alias);
+                    try {
+                        $repeatUpload = $this->request($uploadUrl, [
+                            'import_file' => new \CURLFile($repeatFile, 'application/json', 'import.json'),
+                            $token => '1',
+                        ]);
+                        $this->test('Re-upload succeeds for quantity mode ' . $mode,
+                            ($repeatUpload['json']['success'] ?? false) === true);
+                        $updated = $this->request($processUrl, [
+                            'type' => 'products_full',
+                            'options' => ['update_existing' => '1', 'quantity_mode' => $mode],
+                            $token => '1',
+                        ]);
+                        $this->test('HTTP stock mode ' . $mode . ' updates the same variant',
+                            ($updated['json']['imported'] ?? 0) === 1 && $quantity() === $expected);
+                    } finally {
+                        unlink($repeatFile);
+                    }
+                }
                 $this->test('Imported variant price matches', abs((float) ($variant['price'] ?? 0) - 19.95) < 0.001,
                     'price=' . ($variant['price'] ?? 'n/a'));
 
@@ -370,6 +453,13 @@ class ImportHttpTest
                     "product_source_id=$articleId");
 
                 if ($articleId > 0) {
+                    $this->db->setQuery('SELECT catid FROM ' . $this->db->quoteName('#__content') . ' WHERE id = ' . $articleId);
+                    $this->test('HTTP forwards the default category', (int) $this->db->loadResult() === 2);
+                    $this->db->setQuery('SELECT menutype, published, access FROM ' . $this->db->quoteName('#__menu')
+                        . ' WHERE link = ' . $this->db->quote('index.php?option=com_content&view=article&id=' . $articleId));
+                    $menu = $this->db->loadAssoc();
+                    $this->test('HTTP forwards menu defaults and absent publication checkbox is false',
+                        $menu && $menu['menutype'] === $menutype && (int) $menu['published'] === 0 && (int) $menu['access'] === 1);
                     $this->db->setQuery('SELECT title FROM ' . $this->db->quoteName('#__content')
                         . ' WHERE id = ' . $articleId);
                     $createdTitle = (string) $this->db->loadResult();
