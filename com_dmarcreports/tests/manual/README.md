@@ -254,9 +254,9 @@ and confirm that an update never drops a previously populated `#__dmarc_*` table
 | SR-07 | POS | Edit a source leaving the password field blank. | The existing encrypted password is retained, not wiped. |
 | SR-08 | POS | Inspect the database, logs and `last_message` after saving and a failed run. | The password never appears in plaintext, in a log or in `last_message`. |
 | SR-09 | POS | Unpublish a source, then run an on-demand poll and the task. | The unpublished source is skipped by both paths (`activeSources()`); publishing it again restores processing. |
-| SR-10 | POS | Delete a source that has ingested reports. | Source removed; its reports remain with their recorded `source_id`, per the documented behaviour. |
+| SR-10 | POS | Delete a source that has ingested reports. | Source removed; its DMARC and TLS-RPT reports are preserved but their `source_id` is reset to `0` by `ReportProvenance::unbindSources()`, leaving no dangling source reference. |
 | SR-11 | NEG | As `READONLY` or `INGEST`, create, edit or delete a source, including by direct POST. | Refused; no row written or changed. |
-| SR-12 | GRZ | Bind a source to `D-PS` (a public suffix) and to a registrable domain, then ingest reports for a parent, a sibling and a subdomain. | Only the bound domain or a subdomain of it is accepted (exact-or-child, no PSL); a parent, sibling or unrelated domain is counted skipped. |
+| SR-12 | GRZ | With forced binding active (ingest as `INGEST` on demand, or through a task whose auto-creation is off, so `SourcePoller::forcedDomainId()` returns the bound domain), feed a source bound to a registrable domain distinct reports for the exact domain, a subdomain, the parent and a sibling; repeat with the source bound to the public suffix `D-PS`. | Only the bound domain or a subdomain of it is accepted (exact-or-child, no PSL, so `D-PS` is matched as an ordinary label); the parent, sibling and unrelated domain are counted skipped, never resolved independently. |
 
 ## 5. Report ingestion: upload and IMAP
 
@@ -276,7 +276,7 @@ idempotently (dedupe by `report_hash`).
 | UP-07 | NEG | Upload an oversized or over-expanding archive (gzip/zip bomb). | Bounded; nothing stored; reason `bomb`. |
 | UP-08 | FEH | On a host lacking `gzdecode`/`ZipArchive`, upload a `.gz`/`.zip`. | `COM_DMARCREPORTS_INGEST_DECODER_UNAVAILABLE` names the concrete missing extension; nothing is silently lost. |
 | UP-09 | NEG | Upload with a crafted `source_id` in the POST. | Ignored; upload is unbound and stores `source_id = 0`; provenance cannot be attacker-set. |
-| UP-10 | NEG | Upload without a valid CSRF token, or without `dmarc.ingest`/`core.create` rights. | Refused; no report stored. |
+| UP-10 | NEG | Upload without a valid CSRF token, or as a user lacking `dmarc.ingest`. | Refused; no report stored. `IngestController::authorise()` requires only `dmarc.ingest`; `core.create` governs unknown-domain creation (UP-11), not upload permission. |
 | UP-11 | GRZ | As `INGEST` (no `core.create`), upload a report whose policy domain is not yet monitored. | The report is counted skipped; no domain is auto-created; nothing is stored under `domain_id = 0`. |
 | UP-12 | POS | Re-upload a previously stored report. | Idempotent no-op; no duplicate report or records. |
 
@@ -312,9 +312,9 @@ unattended. It must not re-implement IMAP or parsing.
 | AI-04 | POS | With several active sources, let the task run. | It polls every active source through `SourcePoller`/`Ingestor` and stores the same result as an on-demand run. |
 | AI-05 | FEH | Make one of several sources unreachable. | Per-source error isolation: the run reports `Status::KNOCKOUT`, the other sources are still processed. |
 | AI-06 | KON | Run the task concurrently with a manual on-demand import of the same source. | Parallel-safe under `DomainLock`/`SourceLock`/`RowLock`: each message is processed exactly once, never twice. |
-| AI-07 | POS | Disable or remove the component, then let the task run. | The routine advertises and no-ops (`Status::KNOCKOUT`) instead of fatalling (`class_exists(SourcePoller)` is false). |
+| AI-07 | POS | On a separate installation carrying only the standalone task plugin (the package blocks child uninstall, and disabling the component alone does not remove its classes), let the task run. | The guard `class_exists(SourcePoller::class)` is false, so the routine no-ops with `Status::KNOCKOUT` instead of fatalling. |
 | AI-08 | POS | Run the task with no active sources. | A clean `Status::OK`; nothing stored. |
-| AI-09 | POS/NEG | Toggle the task's `auto_create_domains` and the component's auto-create ACL, then ingest a report for an unknown domain. | A new monitored domain is created only when the ACL permits it; otherwise the unknown-domain report is skipped, never stored under `domain_id = 0`. |
+| AI-09 | POS/NEG | Across all four combinations of the task parameter `auto_create_domains` and the component option `task_auto_create`, run the task with a published source bound to a published domain plus a fresh unknown-domain report each run. | A new monitored domain is created only when both switches are on (`$allowAutoCreate`); in the other three combinations the unknown-domain report is skipped, never stored under `domain_id = 0`. The scheduled path consults no triggering-user ACL. |
 | AI-10 | POS | Disable the task. | Ingestion stops; the dashboard shows no new data; nothing claims continuous ingestion is still guaranteed. |
 
 ## 7. Parser and aggregate evaluation
@@ -378,8 +378,8 @@ unattended. It must not re-implement IMAP or parsing.
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| SY-01 | POS | Open the System Check with a complete configuration. | The IMAP transport state (`EnvironmentCheck`), plugins, both tasks and the last run are understandable. |
-| SY-02 | POS | Make the IMAP transport unavailable (no `imap` extension and no outbound access). | The System Check surfaces it clearly; manual upload still works. |
+| SY-01 | POS | Open the System Check. | It reports the runtime capabilities (`EnvironmentCheck`, including the socket-function check) and the MTA-STS/TLS-RPT diagnostics; it does not claim to show plugin or task status, the last run, or mailbox reachability. Inspect task and source status in their own screens. |
+| SY-02 | POS | In an isolated runtime, disable the `stream_socket_client` function so `EnvironmentCheck::sockets()` reports a warning. | The capability warning is surfaced; manual upload still works. Removing ext-imap or blocking outbound access alone does not change this check. |
 | SY-03 | POS | Leave DNS diagnostics off (default) and open a domain detail view. | No DNS lookup is performed. |
 | SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; only the domain name is disclosed to the resolver, never report contents. |
 | SY-05 | NEG | Point a domain at a missing SPF/DMARC record. | A `dns_*` finding suggests the record to publish. |
@@ -416,13 +416,13 @@ gzipped, and are routed by content to a dedicated parser and separate tables.
 |---|---|---|---|
 | TR-01 | POS | Upload a valid TLS-RPT JSON report (`T-OK`). | It is routed by content to `TlsRptParser` and stored in `#__dmarc_tlsrpt_*`, never mixed into the DMARC aggregate tables. |
 | TR-02 | POS | Upload the same report gzipped. | `TlsReportArchive` decodes it; it is stored. |
-| TR-03 | NEG | Upload empty JSON, invalid JSON and valid JSON that is not a TLS-RPT report. | Rejected with `ERROR_EMPTY(1)`, `ERROR_JSON(2)` and `ERROR_NOT_REPORT(4)` respectively; nothing stored. |
+| TR-03 | NEG | Feed empty JSON, invalid JSON and valid JSON that is not a TLS-RPT report to `TlsRptParser` directly, and separately upload the same through the endpoint. | The parser raises `ERROR_EMPTY(1)`, `ERROR_JSON(2)` and `ERROR_NOT_REPORT(4)` respectively; `TlsRptIngestor::ingestDocuments()` converts each into a summary reason that `IngestController::upload()` shows as a localized message. Nothing is stored either way. |
 | TR-04 | POS | Re-ingest the same TLS-RPT report. | Idempotent no-op; the unique fingerprint prevents a duplicate. |
 | TR-05 | POS | Ingest a report with several policy blocks. | One row per block in `#__dmarc_tlsrpt_policies` (type, policy domain, success/failure session counts). |
 | TR-06 | POS | Ingest `T-FAIL` with failure details. | One row per detail in `#__dmarc_tlsrpt_failures` (result type, receiving MX, sending MTA IP, session count). |
 | TR-07 | POS | Call `Metrics::tlsRptSummary()` for a domain with and without reports. | It returns reports/success/failure/failures and degrades to zeroes/empty when there are none. |
 | TR-08 | POS | Open the domain detail view after ingesting a TLS-RPT report. | The TLS reporting card (`DETAIL_TLSRPT_*`) renders alongside the MTA-STS records card. |
-| TR-09 | POS | Ingest a TLS-RPT report for a bound source and for a parent/sibling domain. | The report is routed to the correct domain (`DomainRegistry`/`DomainBinding`, exact-or-child); an unrelated domain is skipped. |
+| TR-09 | POS | With forced binding active (ingest as `INGEST` on demand, or through a task whose auto-creation is off), ingest a TLS-RPT report for a bound source and for a parent/sibling domain. | The report is routed to the bound domain or a subdomain of it (`DomainRegistry`/`DomainBinding`, exact-or-child); a parent, sibling or unrelated domain is skipped. |
 | TR-10 | GRZ | Feed the pipeline a DMARC XML and a TLS-RPT JSON in turn. | Each is routed to its own parser and tables with no cross-contamination. |
 
 ## 11. Security: SSRF hardening of the MTA-STS policy fetcher
@@ -442,7 +442,7 @@ These cases do not replace a separate, complete security audit.
 | SE-06 | NEG | Resolve the host to RFC 1918 (`10/8`, `172.16/12`, `192.168/16`). | Refused. |
 | SE-07 | NEG | Resolve to link-local (`169.254/16`, `fe80::/10`) and CGNAT (`100.64/10`). | Refused. |
 | SE-08 | NEG | Resolve to ULA (`fc00::/7`) and deprecated site-local (`fec0::/10`). | Refused (the IPv6 global-unicast gate fails closed). |
-| SE-09 | NEG | Resolve to 6to4 (`2002::/16`), IPv4-compatible (`::a.b.c.d`, e.g. `::10.0.0.1`), IPv4-mapped (`::ffff:a.b.c.d`) and NAT64 (`64:ff9b::/96`). | Each is judged by its embedded IPv4 value and refused. |
+| SE-09 | NEG | Resolve to 6to4 (`2002::/16`, any embedded value); and separately to IPv4-mapped (`::ffff:10.0.0.1`), IPv4-compatible (`::10.0.0.1`) and NAT64 (`64:ff9b::10.0.0.1`) forms carrying a private embedded IPv4. | 6to4 is rejected unconditionally; the mapped, compatible and NAT64 forms are unwrapped and refused because their embedded IPv4 is private (a public embedded IPv4 would be allowed). |
 | SE-10 | NEG | Resolve to TEST-NET `/24` (`192.0.2`, `198.51.100`, `203.0.113`), benchmarking (`198.18/15`), and documentation (`2001:db8::/32`, `3fff::/20`). | Refused. |
 | SE-11 | NEG | Rebind the host: public at validation, private at connect (DNS rebinding / TOCTOU). | The connection is pinned to the validated IP via `CURLOPT_RESOLVE`; the rebinding cannot take effect. |
 | SE-12 | NEG | Serve an oversized policy response (over the 64 KiB `MAX_POLICY_BYTES`). | The transfer is aborted; no memory exhaustion. |
@@ -454,7 +454,7 @@ These cases do not replace a separate, complete security audit.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | PR-01 | INT | Block outbound Internet for the isolated environment except the configured mailbox; run ingestion and open the dashboard. | Ingestion and the dashboard work; no report data is sent anywhere. |
-| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (domain name only) and Joomla's own update check (version metadata only); no third-party analysis service. |
+| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (domain name only), Joomla's own update check (version metadata only) and, when MTA-STS diagnostics are enabled, the HTTPS MTA-STS policy fetch to the policy host (`MtaStsDiagnostics::inspectHostedPolicy()` via `HttpPolicyFetcher`). No report contents or mailbox credentials are ever sent, and there is no third-party analysis service. |
 | PR-03 | POS | After ingestion, inspect where report data lives. | Parsed report data is stored only in the local `#__dmarc_*`/`#__dmarc_tlsrpt_*` tables and is never transmitted. |
 | PR-04 | POS | Confirm DNS diagnostics default state and its disclosure. | Off by default; when enabled, only the domain name is disclosed to the resolver, never report contents. |
 | PR-05 | POS | Inspect the stored mailbox password everywhere it could appear. | Encrypted at rest in `password_enc`; never logged and never in `last_message`. |
@@ -478,7 +478,7 @@ access control.
 | RE-07 | KON | User 1 opens a domain or source for editing; user 2 attempts to edit/save the same record. | Joomla checkout is respected; no unnoticed loss of user 1's changes. |
 | RE-08 | NEG | Request a CSV export without `core.manage` or without a valid token. | No export. |
 | RE-09 | NEG | As a user without `core.manage` on the component, view the dashboard module. | The module shows the `unauthorised` state with no figures. |
-| RE-10 | NEG | Enable the task's `auto_create_domains` for a user/role whose component ACL does not permit auto-create. | The flag has no effect; unknown-domain reports are still skipped. |
+| RE-10 | NEG | Enable the task parameter `auto_create_domains` while the component option `task_auto_create` is off, then run the task. | The component option vetoes it: `$allowAutoCreate` is false, a `warning` is logged, and unknown-domain reports are still skipped. The scheduled path never consults the triggering user's `core.create`. |
 
 ## 14. Languages and presentation
 
@@ -518,7 +518,7 @@ complete security audit.
 | RB-03 | NEG | Substitute another record's id in domain, source, detail and export requests. | No unauthorised record is readable or changeable. |
 | RB-04 | NEG | Seed report fields with `=1+1`, `+1+1`, `-1+1` and `@TEST`, then export CSV and open it in a spreadsheet. | Protected as text; no formula execution. |
 | RB-05 | FEH | Trigger an IMAP, parser and validation error in turn; inspect the visible error. | No credential, token or raw stack trace is leaked. |
-| RB-06 | NEG | Submit a manipulated `source_id`, `domain_id` or `security` in ingest/source POST requests. | The server-side recheck refuses the operation. |
+| RB-06 | NEG | Submit a manipulated `source_id`/`domain_id` in an upload POST, a nonexistent record id in a source-edit POST, and an unsupported `security` value in a source POST. | The upload ignores posted `source_id`/`domain_id` (stored as `0`, per UP-09) and still succeeds; the nonexistent reference and the unsupported `security` value are refused server-side. |
 | RB-07 | GRZ | Upload a very large file and a report with many records in an isolated environment. | Bounded by `MAX_TOTAL_BYTES`, the archive cap and the parser count caps; no 500 error or unbounded processing. |
 | RB-08 | INT | Inspect the component tables and logs after the induced errors. | No raw credential, source password or confidential token is stored or logged. |
 
@@ -549,7 +549,7 @@ Configure this scenario **only through Joomla administration**, without file or 
 | 6 | Drill into the domain detail. | Top IPs, pass/fail breakdown, timeline and the MTA-STS records card render. |
 | 7 | Upload a TLS-RPT JSON report. | It is stored separately; the TLS reporting card appears. |
 | 8 | Request `/.well-known/mta-sts.txt` on the `mta-sts.` host through the documented rule. | The generated policy is served; changing the mode changes it. |
-| 9 | Enable DNS diagnostics and open the System Check. | SPF/DMARC/MTA-STS record findings appear; only the domain name is disclosed. |
+| 9 | Enable DNS diagnostics, then open the domain detail page and the System Check. | The domain detail page shows the SPF/DMARC findings (`DetailModel::getDnsDiagnostics()`); the System Check shows the runtime capabilities and the MTA-STS/TLS-RPT diagnostics (which may make the optional HTTPS policy request). Only the domain name is disclosed to the resolver. |
 | 10 | Export the records as CSV, then uninstall the package on a disposable copy. | The export contains only authorised records; uninstall drops every table and all data. |
 
 Then repeat the core ingest-and-read flow in a second language.
