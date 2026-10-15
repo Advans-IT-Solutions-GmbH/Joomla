@@ -108,6 +108,7 @@ namespace {
     $base = tempnam(sys_get_temp_dir(), 'j2ie-contract-');
     $file = $base . '.json';
     $csv = $base . '.csv';
+    $otherFile = $base . '-tab-b.json';
     try {
         $upload = response($controller, 'upload');
         check($upload['success'] === false && isset($upload['message']) && !isset($upload['data']), 'Upload errors use flat JSON');
@@ -115,12 +116,20 @@ namespace {
         check($missing['success'] === false && isset($missing['message']), 'Missing upload returns a JSON error');
         file_put_contents($file, '{"products":[{"title":"Fixture","variants":[{"sku":"CONTRACT","quantity":7}]}]}');
         $session->file = $file;
+        check(response($controller, 'preview')['success'] === false, 'Preview requires the upload identifier');
+        $input->values = ['file' => basename($file)];
         $preview = response($controller, 'preview');
         check($preview['success'] === true && $preview['preview']['total'] === 1
             && $preview['preview']['rows'][0]['title'] === 'Fixture' && !isset($preview['data']), 'Actual preview response is flat and contains records');
+        file_put_contents($otherFile, '[{"title":"Tab B"}]');
+        $session->file = $otherFile;
+        check(response($controller, 'preview')['success'] === false, 'Tab A cannot preview the replacement upload from tab B');
+        check(response($controller, 'process')['success'] === false && $model->received === []
+            && is_file($otherFile) && is_file($file), 'Tab A cannot import or delete the replacement upload from tab B');
+        $session->file = $file;
 
         foreach (['products', 'variants', 'prices', 'unknown'] as $type) {
-            $input->values = ['type' => $type];
+            $input->values = ['type' => $type, 'file' => basename($file)];
             check(response($controller, 'process')['success'] === false && is_file($file)
                 && $model->received === [], "Unsupported $type does not import or delete the upload");
         }
@@ -129,11 +138,11 @@ namespace {
             ['create_menu' => 2], ['menu_published' => []], ['default_category' => '1x'],
             ['default_category' => 0], ['menu_access' => -1], ['default_menutype' => []],
         ] as $options) {
-            $input->values = ['options' => $options];
+            $input->values = ['options' => $options, 'file' => basename($file)];
             check(response($controller, 'process')['success'] === false && is_file($file),
                 'Invalid option rejected: ' . array_key_first($options));
         }
-        $input->values = ['options' => [
+        $input->values = ['file' => basename($file), 'options' => [
             'quantity_mode' => 'add', 'create_menu' => '1', 'default_category' => '3',
             'default_menutype' => 'fixture', 'menu_access' => '2',
         ]];
@@ -160,6 +169,15 @@ namespace {
         $parsed = $model->previewFile($csv);
         check($parsed['total'] === 1 && $parsed['rows'][0]['variants'][0]['quantity'] === 0,
             'CSV parser handles BOM/comments and nested JSON');
+        foreach ([
+            "\xEF\xBB\xBF\"title\",\"alias\"\n\"Quoted\",\"quoted\"\n",
+            "\xEF\xBB\xBF\"# Product title\",\"# Article alias\"\n\"title\",\"alias\"\n\"Quoted\",\"quoted\"\n",
+        ] as $quotedCsv) {
+            file_put_contents($csv, $quotedCsv);
+            $parsed = $model->previewFile($csv);
+            check($parsed['headers'] === ['title', 'alias'] && $parsed['rows'][0]['title'] === 'Quoted'
+                && $parsed['total'] === 1, 'BOM is consumed before parsing quoted CSV headers/documentation');
+        }
         file_put_contents($csv, "title,alias\nMissing\n");
         try {
             $model->previewFile($csv);
@@ -203,7 +221,7 @@ namespace {
         $quantityMethod->invoke($real, 1, ['quantity' => 30], ['quantity_mode' => 'replace']);
         check($real->database->quantity === 30, 'Actual quantity helper replaces 80 with 30');
     } finally {
-        foreach ([$file, $csv, $base] as $owned) {
+        foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);
         }
     }

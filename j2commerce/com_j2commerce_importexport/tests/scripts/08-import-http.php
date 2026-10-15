@@ -353,12 +353,20 @@ class ImportHttpTest
             isset($upload['json']['file']) && !isset($upload['json']['data']));
 
         if ($uploadOk) {
+            $uploadedFile = $upload['json']['file'];
             foreach ([$previewUrl, $processUrl] as $protectedUrl) {
                 $withoutToken = $this->request($protectedUrl, ['type' => 'products_full']);
                 $this->test('Preview/process without CSRF token is rejected',
                     ($withoutToken['json']['success'] ?? false) !== true);
             }
-            $preview = $this->request($previewUrl, [$token => '1']);
+            foreach ([$previewUrl, $processUrl] as $identityUrl) {
+                foreach (['', 'superseded-upload.json'] as $wrongFile) {
+                    $rejected = $this->request($identityUrl, ['file' => $wrongFile, $token => '1']);
+                    $this->test('Preview/process rejects missing or superseded upload identity',
+                        ($rejected['json']['success'] ?? null) === false && !empty($rejected['json']['message']));
+                }
+            }
+            $preview = $this->request($previewUrl, ['file' => $uploadedFile, $token => '1']);
             $this->test('Preview returns the real uploaded product in flat JSON',
                 ($preview['json']['success'] ?? false) === true
                 && ($preview['json']['preview']['total'] ?? 0) === 1
@@ -368,7 +376,7 @@ class ImportHttpTest
             $this->test('Preview does not import records', $this->findVariantBySku($variantSku) === null);
 
             foreach (['products', 'variants', 'prices'] as $unsupported) {
-                $rejected = $this->request($processUrl, ['type' => $unsupported, $token => '1']);
+                $rejected = $this->request($processUrl, ['type' => $unsupported, 'file' => $uploadedFile, $token => '1']);
                 $this->test('HTTP rejects unsupported type ' . $unsupported,
                     ($rejected['json']['success'] ?? null) === false && !empty($rejected['json']['message']));
             }
@@ -377,7 +385,7 @@ class ImportHttpTest
                 ['default_category' => -1], ['menu_access' => '1x'],
             ] as $invalidOptions) {
                 $rejected = $this->request($processUrl, [
-                    'type' => 'products_full', 'options' => $invalidOptions, $token => '1',
+                    'type' => 'products_full', 'file' => $uploadedFile, 'options' => $invalidOptions, $token => '1',
                 ]);
                 $this->test('HTTP rejects invalid option ' . array_key_first($invalidOptions),
                     ($rejected['json']['success'] ?? null) === false && !empty($rejected['json']['message']));
@@ -390,6 +398,7 @@ class ImportHttpTest
             $menutype = (string) $this->db->loadResult();
             $process = $this->request($processUrl, [
                 'type'  => 'products_full',
+                'file' => $uploadedFile,
                 'options' => [
                     'update_existing' => '1', 'quantity_mode' => 'replace',
                     'create_menu' => '1', 'default_menutype' => $menutype,
@@ -430,6 +439,7 @@ class ImportHttpTest
                             ($repeatUpload['json']['success'] ?? false) === true);
                         $updated = $this->request($processUrl, [
                             'type' => 'products_full',
+                            'file' => $repeatUpload['json']['file'] ?? '',
                             'options' => ['update_existing' => '1', 'quantity_mode' => $mode],
                             $token => '1',
                         ]);

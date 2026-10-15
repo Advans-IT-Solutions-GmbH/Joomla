@@ -166,6 +166,9 @@ All three import tasks return flat JSON with a boolean `success` and a `message`
 failure. Upload returns `file`; preview returns `preview` containing `headers`, `rows`
 and `total`; process returns `imported`, `failed` and `errors`. The dashboard calls
 upload, then preview, and enables processing only after a non-empty preview.
+Clients must send the upload response's `file` identifier with both preview and process
+requests. It must still match the session's current upload; uploads superseded by another
+tab are rejected rather than importing a different file from the displayed preview.
 
 ## Export Formats
 

@@ -223,6 +223,16 @@ class ImportModelTest
             $this->test('CSV preview skips BOM/comments and decodes nested arrays', fn () =>
                 $preview['headers'] === ['title', 'variants']
                 && $preview['total'] === 1 && $preview['rows'][0]['variants'][0]['quantity'] === 0);
+            foreach ([
+                "\xEF\xBB\xBF\"title\",\"alias\"\n\"Quoted\",\"quoted\"\n",
+                "\xEF\xBB\xBF\"# Product title\",\"# Article alias\"\n\"title\",\"alias\"\n\"Quoted\",\"quoted\"\n",
+            ] as $quotedCsv) {
+                file_put_contents($csv, $quotedCsv);
+                $preview = $model->previewFile($csv);
+                $this->test('BOM-prefixed quoted headers/documentation parse correctly', fn () =>
+                    $preview['headers'] === ['title', 'alias'] && $preview['total'] === 1
+                    && $preview['rows'][0]['title'] === 'Quoted');
+            }
 
             foreach (["title,title\nOne,Two\n", "title,alias\nMissing\n", "title,variants\nBad,broken-json\n"] as $invalidCsv) {
                 file_put_contents($csv, $invalidCsv);

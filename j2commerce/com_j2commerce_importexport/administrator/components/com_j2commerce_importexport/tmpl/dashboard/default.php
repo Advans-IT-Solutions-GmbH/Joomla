@@ -214,9 +214,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const uploadButton = importForm.querySelector('button[type="submit"]');
     let busy = false;
     let previewReady = false;
+    let uploadFile = null;
 
     function resetPreview() {
         previewReady = false;
+        uploadFile = null;
         importPreview.style.display = 'none';
         processButton.disabled = true;
     }
@@ -243,9 +245,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedFile = document.getElementById('import-file').files[0];
 
         try {
-            await postJson(this.action, new FormData(this));
+            const uploaded = await postJson(this.action, new FormData(this));
+            if (typeof uploaded.file !== 'string' || uploaded.file === '') {
+                throw new Error(<?php echo json_encode(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_FAILED')); ?>);
+            }
             const formData = new FormData(this);
             formData.delete('import_file');
+            formData.set('file', uploaded.file);
             const data = await postJson('index.php?option=com_j2commerce_importexport&task=import.preview&format=json', formData);
             if (!data.preview || !Array.isArray(data.preview.headers)
                 || !Array.isArray(data.preview.rows) || data.preview.total < 1) {
@@ -253,6 +259,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (selectedFile !== document.getElementById('import-file').files[0]) return;
             displayPreview(data.preview);
+            uploadFile = uploaded.file;
             previewReady = true;
             processButton.disabled = false;
             importPreview.style.display = 'block';
@@ -312,6 +319,7 @@ document.addEventListener('DOMContentLoaded', function() {
         uploadButton.disabled = true;
         const formData = new FormData(importForm);
         formData.delete('import_file');
+        formData.set('file', uploadFile);
 
         try {
             const data = await postJson('index.php?option=com_j2commerce_importexport&task=import.process&format=json', formData);

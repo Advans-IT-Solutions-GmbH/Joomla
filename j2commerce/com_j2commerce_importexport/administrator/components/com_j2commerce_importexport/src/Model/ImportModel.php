@@ -1012,14 +1012,15 @@ class ImportModel extends BaseDatabaseModel
         if (!$handle) {
             throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND'));
         }
+        // fgetcsv must see the opening quote, not the BOM preceding it.
+        if (fread($handle, 3) !== "\xEF\xBB\xBF") {
+            rewind($handle);
+        }
 
         $headers = [];
         $data = [];
 
         while (($line = fgetcsv($handle)) !== false) {
-            if (isset($line[0])) {
-                $line[0] = preg_replace('/^\xEF\xBB\xBF/', '', $line[0]);
-            }
             // Skip empty lines
             if (empty($line) || (count($line) === 1 && empty($line[0]))) {
                 continue;

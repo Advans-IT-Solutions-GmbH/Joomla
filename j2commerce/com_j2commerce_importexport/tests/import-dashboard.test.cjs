@@ -42,6 +42,7 @@ function dashboard(responses) {
     class FormData {
         constructor() { this.values = new Map(values); }
         delete(key) { this.values.delete(key); }
+        set(key, value) { this.values.set(key, value); }
     }
     vm.runInNewContext(script, {
         document: {
@@ -79,6 +80,7 @@ test('upload -> preview -> process uses flat responses and preserves form option
     await ui.submit();
     assert.match(ui.calls[0].url, /import.upload/);
     assert.match(ui.calls[1].url, /import.preview/);
+    assert.equal(ui.calls[1].values.get('file'), 'fixture.json');
     assert.equal(ui.elements['import-preview'].style.display, 'block');
     assert.equal(ui.elements['process-import'].disabled, false);
     assert.match(ui.elements['preview-content'].innerHTML, /&lt;b&gt;Product&lt;\/b&gt;/);
@@ -89,6 +91,7 @@ test('upload -> preview -> process uses flat responses and preserves form option
     assert.equal(ui.calls[2].values.get('options[update_existing]'), '1');
     assert.equal(ui.calls[2].values.get('csrf-token'), '1');
     assert.equal(ui.calls[2].values.has('import_file'), false);
+    assert.equal(ui.calls[2].values.get('file'), 'fixture.json');
     assert.equal(ui.elements['import-preview'].style.display, 'none');
     await ui.process();
     assert.equal(ui.calls.length, 3, 'Completed import cannot be submitted twice');
@@ -131,6 +134,16 @@ test('changing the file invalidates the preview', async () => {
     await ui.process();
     assert.equal(ui.calls.length, 2);
     assert.equal(ui.elements['import-preview'].style.display, 'none');
+});
+
+test('a superseded upload fails instead of importing a different tab file', async () => {
+    const ui = dashboard([{success: true, file: 'tab-a.json'}, preview,
+        {success: false, message: 'Upload replaced by tab B'}]);
+    await ui.submit();
+    await ui.process();
+    assert.equal(ui.calls[2].values.get('file'), 'tab-a.json');
+    assert.match(ui.alerts[0], /Upload replaced by tab B/);
+    assert.equal(ui.elements['process-import'].disabled, true);
 });
 
 test('unsupported import types and XML are not advertised; exports remain unchanged', () => {

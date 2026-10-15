@@ -83,13 +83,7 @@ class ImportController extends BaseController
         $this->checkAccess();
         
         $app = Factory::getApplication();
-        $session = $app->getSession();
-        
-        $filePath = $session->get('import_file', '', 'j2commerce_import');
-
-        if (!file_exists($filePath)) {
-            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
-        }
+        $filePath = $this->getImportFile();
 
         try {
             $model = $this->getModel('Import', 'Administrator');
@@ -117,16 +111,12 @@ class ImportController extends BaseController
         $session = $app->getSession();
         $input = $app->getInput();
         
-        $filePath = $session->get('import_file', '', 'j2commerce_import');
+        $filePath = $this->getImportFile();
         $mapping = $input->get('mapping', [], 'array');
         $type = $input->get('type', 'products_full', 'string');
         $options = $input->get('options', [], 'array');
         // Unchecked HTML checkboxes are absent, not model defaults.
         $options += ['update_existing' => false, 'create_menu' => false, 'menu_published' => false];
-
-        if (!file_exists($filePath)) {
-            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
-        }
 
         try {
             $model = $this->getModel('Import', 'Administrator');
@@ -149,6 +139,20 @@ class ImportController extends BaseController
             \Joomla\CMS\Log\Log::add('Import process error: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_j2commerce_importexport');
             $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED')]);
         }
+    }
+
+    private function getImportFile(): string
+    {
+        $app = Factory::getApplication();
+        $filePath = $app->getSession()->get('import_file', '', 'j2commerce_import');
+        if (!is_file($filePath)) {
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND')]);
+        }
+        $file = $app->getInput()->get('file', '', 'string');
+        if ($file === '' || !hash_equals(basename($filePath), $file)) {
+            $this->sendJson(['success' => false, 'message' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UPLOAD_CHANGED')]);
+        }
+        return $filePath;
     }
 
     /**
