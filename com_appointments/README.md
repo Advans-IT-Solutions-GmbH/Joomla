@@ -42,8 +42,8 @@ configuration is required.
 
 ### Currently: build from source
 
-Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync` and `zip`
-available. From the repository root:
+Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip` and
+`unzip` available. From the repository root:
 
 ```bash
 cd com_appointments
