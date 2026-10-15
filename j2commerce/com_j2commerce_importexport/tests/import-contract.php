@@ -236,6 +236,19 @@ namespace {
             check($last['data']['title'] === $title && $last['data']['article_images'] === $images,
                 'Import preserves scalar text/article images for dialect: ' . json_encode($escape));
         }
+        $pairedTitle = 'Paired' . str_repeat('\\', 2);
+        $handle = fopen($csv, 'w');
+        fputcsv($handle, ['title', 'variants'], ',', '"', '\\');
+        fputcsv($handle, [$pairedTitle, json_encode([['sku' => 'A"B']])], ',', '"', '\\');
+        fclose($handle);
+        $parsed = $model->previewFile($csv);
+        check($parsed['rows'][0]['title'] === $pairedTitle && $parsed['rows'][0]['variants'][0]['sku'] === 'A"B',
+            'Legacy CSV preserves paired trailing backslashes alongside quoted JSON');
+        $model->importData($csv, 'products_full', []);
+        $last = $model->received[array_key_last($model->received)];
+        check($last['data']['title'] === $pairedTitle && $last['data']['variants'][0]['sku'] === 'A"B',
+            'Import preserves paired trailing backslashes alongside quoted JSON');
+
         file_put_contents($csv, "title,alias\r\n\"First\r\nSecond\",\"multiline\"\r\n");
         $parsed = $model->previewFile($csv);
         check($parsed['rows'][0]['title'] === "First\r\nSecond", 'Strict CSV quoting preserves embedded CRLF');
@@ -247,6 +260,40 @@ namespace {
             } catch (\InvalidArgumentException $e) {
                 check(true, 'Malformed CSV quoting is rejected in both dialects');
             }
+        }
+        $samples = [''];
+        $level = [''];
+        for ($length = 1; $length <= 3; $length++) {
+            $next = [];
+            foreach ($level as $prefix) {
+                foreach (['A', '\\', '"', ',', "\n"] as $char) {
+                    $next[] = $prefix . $char;
+                }
+            }
+            $samples = array_merge($samples, $next);
+            $level = $next;
+        }
+        foreach (['', '\\'] as $escape) {
+            $compared = 0;
+            foreach ($samples as $sample) {
+                $handle = fopen($csv, 'w+');
+                fputcsv($handle, ['title', 'alias'], ',', '"', $escape);
+                fputcsv($handle, [$sample, 'fixture'], ',', '"', $escape);
+                rewind($handle);
+                fgetcsv($handle, 0, ',', '"', $escape);
+                $native = fgetcsv($handle, 0, ',', '"', $escape);
+                fclose($handle);
+                // PHP's legacy writer cannot round-trip every possible trailing escape.
+                if ($native !== [$sample, 'fixture']) {
+                    continue;
+                }
+                $parsed = $model->previewFile($csv);
+                if (($parsed['rows'][0]['title'] ?? null) !== $sample) {
+                    throw new \RuntimeException('CSV compatibility mismatch: ' . json_encode([$escape, $sample]));
+                }
+                $compared++;
+            }
+            check($compared > 100, 'CSV quote/backslash combinations match native round trips for dialect: ' . json_encode($escape));
         }
 
         $real = new ImportModel();

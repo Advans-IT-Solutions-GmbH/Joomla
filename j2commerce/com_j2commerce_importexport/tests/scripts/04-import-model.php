@@ -234,13 +234,14 @@ class ImportModelTest
                     && $preview['rows'][0]['title'] === 'Quoted');
             }
             foreach (['', '\\'] as $escape) {
+                $pairedTitle = 'Paired' . str_repeat('\\', 2);
                 $handle = fopen($csv, 'w');
                 fputcsv($handle, ['title', 'variants'], ',', '"', $escape);
-                fputcsv($handle, ['Quoted JSON', json_encode([['sku' => 'A"B']])], ',', '"', $escape);
+                fputcsv($handle, [$pairedTitle, json_encode([['sku' => 'A"B']])], ',', '"', $escape);
                 fclose($handle);
                 $preview = $model->previewFile($csv);
                 $this->test('Quoted JSON values survive CSV dialect ' . json_encode($escape), fn () =>
-                    $preview['rows'][0]['variants'][0]['sku'] === 'A"B');
+                    $preview['rows'][0]['title'] === $pairedTitle && $preview['rows'][0]['variants'][0]['sku'] === 'A"B');
             }
             foreach (['', '\\'] as $escape) {
                 $title = 'A\"B';

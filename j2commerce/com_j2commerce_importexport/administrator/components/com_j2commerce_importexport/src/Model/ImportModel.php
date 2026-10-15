@@ -1116,7 +1116,7 @@ class ImportModel extends BaseDatabaseModel
         for ($i = 0; $i < $length; $i++) {
             $char = $record[$i];
             if ($quoted) {
-                if ($escape !== '' && $char === $escape && ($record[$i + 1] ?? '') === '"') {
+                if ($escape !== '' && $char === $escape && $i + 1 < $length) {
                     $i++;
                 } elseif ($char === '"') {
                     if (($record[$i + 1] ?? '') === '"') {
