@@ -47,7 +47,7 @@ Advans-IT-Solutions-GmbH/Joomla
 ## Key Rules
 
 1. **Never set version manually** — the release workflow manages `VERSION`, `build.env`, the extension manifest and `updates/update.xml`
-2. **Conventional Commits** — prefix all commits: `fix:`, `feat:`, `docs:`, `chore:`, `test:`, `refactor:`
+2. **Conventional Commits** — prefix all commits: `fix:`, `feat:`, `docs:`, `chore:`, `test:`, `refactor:`. No `Co-authored-by` trailer and no agent signature (no Copilot/Ona/etc.) in commits, PR titles or bodies.
 3. **Auto-delete branches** is enabled — branches are deleted automatically after merge
 4. **One PR per plugin** — do not mix changes across plugins in a single PR
 

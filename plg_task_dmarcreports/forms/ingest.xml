@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<form>
+    <fields name="params">
+        <fieldset name="task_params">
+            <field
+                name="auto_create_domains"
+                type="radio"
+                label="PLG_TASK_DMARCREPORTS_AUTO_CREATE_DOMAINS_LABEL"
+                description="PLG_TASK_DMARCREPORTS_AUTO_CREATE_DOMAINS_DESC"
+                default="0"
+                layout="joomla.form.field.radio.switcher"
+                required="true"
+                filter="integer"
+            >
+                <option value="1">JYES</option>
+                <option value="0">JNO</option>
+            </field>
+        </fieldset>
+    </fields>
+</form>

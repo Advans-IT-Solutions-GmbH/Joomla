@@ -6,6 +6,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
 
+DROP TABLE IF EXISTS `#__dmarc_tlsrpt_failures`;
+DROP TABLE IF EXISTS `#__dmarc_tlsrpt_policies`;
+DROP TABLE IF EXISTS `#__dmarc_tlsrpt_reports`;
 DROP TABLE IF EXISTS `#__dmarc_records`;
 DROP TABLE IF EXISTS `#__dmarc_reports`;
 DROP TABLE IF EXISTS `#__dmarc_actions`;

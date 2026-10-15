@@ -238,6 +238,77 @@ final class Metrics
     /**
      * @return array<string, int>
      */
+    /**
+     * TLS-RPT (RFC 8460) summary for one domain: the stored report count, the
+     * successful and failed session totals and the most recent failure rows,
+     * grouped by result type. Returns zeroes and empty lists when no TLS-RPT
+     * report has been ingested yet, so the drill-down view degrades cleanly.
+     *
+     * @return  array{reports:int, success:int, failure:int, failures:array<int, array<string, mixed>>}
+     */
+    public function tlsRptSummary(int $domainId): array
+    {
+        // Reports and session totals are derived from the per-policy rows, each
+        // of which carries its own resolved domain. RFC 8460 lets one report
+        // bundle policies for several policy domains, so counting from the
+        // policy rows (rather than the single report-level domain) attributes
+        // every policy to its own domain's drill-down instead of only the
+        // report's primary domain.
+        $summary = $this->query()
+            ->select(
+                [
+                    'COUNT(DISTINCT ' . $this->db->quoteName('report_id') . ') AS reports',
+                    'COALESCE(SUM(' . $this->db->quoteName('success_count') . '), 0) AS success',
+                    'COALESCE(SUM(' . $this->db->quoteName('failure_count') . '), 0) AS failure',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_tlsrpt_policies'))
+            ->where($this->db->quoteName('domain_id') . ' = :domainId')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER);
+
+        $row = $this->db->setQuery($summary)->loadAssoc() ?: [];
+
+        $failQuery = $this->query()
+            ->select(
+                [
+                    $this->db->quoteName('result_type'),
+                    $this->db->quoteName('receiving_mx_host'),
+                    $this->db->quoteName('sending_mta_ip'),
+                    'COALESCE(SUM(' . $this->db->quoteName('failed_session_count') . '), 0) AS sessions',
+                ]
+            )
+            ->from($this->db->quoteName('#__dmarc_tlsrpt_failures'))
+            ->where($this->db->quoteName('domain_id') . ' = :domainId')
+            ->group(
+                [
+                    $this->db->quoteName('result_type'),
+                    $this->db->quoteName('receiving_mx_host'),
+                    $this->db->quoteName('sending_mta_ip'),
+                ]
+            )
+            ->order('sessions DESC')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER);
+
+        $failQuery->setLimit(20);
+
+        $failures = $this->db->setQuery($failQuery)->loadAssocList() ?: [];
+
+        return [
+            'reports'  => (int) ($row['reports'] ?? 0),
+            'success'  => (int) ($row['success'] ?? 0),
+            'failure'  => (int) ($row['failure'] ?? 0),
+            'failures' => array_map(
+                static fn (array $f): array => [
+                    'result_type'       => (string) ($f['result_type'] ?? ''),
+                    'receiving_mx_host' => (string) ($f['receiving_mx_host'] ?? ''),
+                    'sending_mta_ip'    => (string) ($f['sending_mta_ip'] ?? ''),
+                    'sessions'          => (int) ($f['sessions'] ?? 0),
+                ],
+                $failures
+            ),
+        ];
+    }
+
     private function totals(int $domainId): array
     {
         $count = $this->db->quoteName('count');

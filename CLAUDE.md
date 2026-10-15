@@ -22,7 +22,7 @@ Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` 
 
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).
-- `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center) und zum Dashboard-Modul `mod_dmarcreports`.
+- `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center), zum Dashboard-Modul `mod_dmarcreports`, zum Auto-Ingestion-Task-Plugin `plg_task_dmarcreports`, zum MTA-STS-/TLS-RPT-System-Plugin `plg_system_dmarcmtasts` und zum Paket `pkg_dmarcreports`.
 - `appointments` — Entwicklungsplan und Domänenwissen zu `com_appointments` (selbstgehostete Terminbuchung als Ersatz für einen gehosteten Buchungsdienst: Slot-Engine, iCalendar, Kalender-Feeds, Videokonferenz-Adapter, Löschwege). Die Komponente entsteht stufenweise; der Skill ist der verbindliche Plan und nennt den Stand je Stufe.
 
 ## Architektur / Das große Bild
@@ -32,6 +32,9 @@ Joomla/
 ├── plg_ajax_joomlaajaxforms/   # eigenständiges Joomla-Plugin (Gruppe: ajax)
 ├── com_dmarcreports/           # Komponente: DMARC-Aggregat-Report-Analyse (Admin-only)
 ├── mod_dmarcreports/           # Admin-Modul: DMARC-Dashboard (cpanel) — liest com_dmarcreports
+├── plg_task_dmarcreports/      # Task-Plugin: automatische IMAP-/TLS-RPT-Ingestion (Scheduler)
+├── plg_system_dmarcmtasts/     # System-Plugin: liefert die MTA-STS-Policy unter /.well-known aus
+├── pkg_dmarcreports/           # Paket: bündelt Komponente + Modul + Task-Plugin + System-Plugin
 ├── com_appointments/           # Komponente: selbstgehostete Terminbuchung (Admin + Website)
 ├── j2commerce/                 # J2Commerce-bezogene Extensions
 │   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension
@@ -53,7 +56,7 @@ Joomla/
 **Tests** laufen Docker-basiert gegen eine echte Joomla-(+J2Commerce-)Installation. Es gibt zwei Test-Ebenen:
 
 - Integrations-/Funktionstests über die PHP-Skripte in `tests/scripts/` + `shared/tests/run-tests.sh` (das, was die CI ausführt).
-- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce` mit den Suites `Unit` und `Integration`, ausserdem `com_j2commerce_importexport`, `com_j2store_cleanup`, `plg_j2commerce_productcompare`, `com_dmarcreports`, `mod_dmarcreports` und `com_appointments`).
+- Optionale PHPUnit-Unit-/Integrationstests dort, wo `phpunit.xml` + `composer.json` vorliegen (aktuell `plg_privacy_j2commerce` mit den Suites `Unit` und `Integration`, ausserdem `com_j2commerce_importexport`, `com_j2store_cleanup`, `plg_j2commerce_productcompare`, `com_dmarcreports`, `mod_dmarcreports`, `plg_task_dmarcreports`, `plg_system_dmarcmtasts` und `com_appointments`).
 
 Manche Extensions testen gegen mehrere Plattformen über parallele Test-Ordner bzw. `docker-compose.joomla6.yml` (z. B. `plg_ajax_joomlaajaxforms` mit `tests/`, `tests-j2c4/`, `tests-j2c6/`).
 
@@ -115,6 +118,9 @@ docker compose -f docker-compose.joomla6.yml down -v
 - Cleanup (Workflow setzt nur den Container): `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all`
 - DMARC Reports (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all`
 - DMARC Reports Dashboard Module (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=mod_dmarcreports_j6_test ./run-tests.sh all`
+- DMARC Reports Task-Plugin (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=plg_task_dmarcreports_j6_test ./run-tests.sh all`
+- DMARC Reports MTA-STS-System-Plugin (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=plg_system_dmarcmtasts_j6_test ./run-tests.sh all`
+- DMARC Reports Paket (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=pkg_dmarcreports_j6_test ./run-tests.sh all`
 - Appointments (kein J2Commerce; Workflow setzt nur den Container): `CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all`
 - AJAX Forms `tests/`: `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all`; `tests-j2c4/` und `tests-j2c6/` haben ein eigenes `test.env` mit passendem Container (`./run-tests.sh all`).
 

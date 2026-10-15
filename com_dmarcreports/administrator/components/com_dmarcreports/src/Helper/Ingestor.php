@@ -9,7 +9,6 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Helper;
 
-use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -61,10 +60,27 @@ final class Ingestor
      */
     private bool $allowAutoCreate;
 
+    /**
+     * Lazily created sibling ingestor for TLS-RPT (RFC 8460) JSON reports. Built
+     * only when a JSON document is actually routed, so a mailbox that carries
+     * only DMARC aggregate reports never instantiates it.
+     */
+    private ?TlsRptIngestor $tlsRpt = null;
+
     public function __construct(?DatabaseInterface $db = null, bool $allowAutoCreate = true)
     {
         $this->db              = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
         $this->allowAutoCreate = $allowAutoCreate;
+    }
+
+    /**
+     * The TLS-RPT ingestor, created on first use with the same database handle
+     * and auto-create privilege as this DMARC ingestor so both resolve domains
+     * identically against the shared monitored-domain list.
+     */
+    private function tlsRpt(): TlsRptIngestor
+    {
+        return $this->tlsRpt ??= new TlsRptIngestor($this->db, $this->allowAutoCreate);
     }
 
     /**
@@ -113,10 +129,20 @@ final class Ingestor
         $blocked = false;
 
         foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
-            $stats = [];
+            $stats   = [];
+            $content = (string) $attachment['content'];
+            $name    = (string) $attachment['filename'];
+
+            // TLS-RPT reports (RFC 8460) arrive in the same mailbox as DMARC
+            // aggregate reports but carry a JSON body, so route each attachment
+            // to the extractor and store path for its own format. Both paths
+            // share the same blocked/retry/dropped accounting.
+            $isTlsRpt = TlsReportArchive::looksLikeTlsRpt($content, $name);
 
             try {
-                $documents = ReportArchive::extract($attachment['content'], $attachment['filename'], $stats);
+                $documents = $isTlsRpt
+                    ? TlsReportArchive::extract($content, $name, $stats)
+                    : ReportArchive::extract($content, $name, $stats);
             } catch (DecoderUnavailableException) {
                 // The host cannot decompress this container because the PHP zlib
                 // or zip extension is absent. This is a permanent configuration
@@ -141,7 +167,11 @@ final class Ingestor
             // in the run summary instead of discarding them silently.
             $summary['dropped'] = (int) ($summary['dropped'] ?? 0) + (int) ($stats['dropped'] ?? 0);
 
-            $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+            if ($isTlsRpt) {
+                $this->tlsRpt()->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+            } else {
+                $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+            }
         }
 
         if ($blocked) {
@@ -231,9 +261,17 @@ final class Ingestor
 
         $retry     = false;
         $stats     = [];
-        $documents = ReportArchive::extract($payload, $filename, $stats);
+        $isTlsRpt  = TlsReportArchive::looksLikeTlsRpt($payload, $filename);
+        $documents = $isTlsRpt
+            ? TlsReportArchive::extract($payload, $filename, $stats)
+            : ReportArchive::extract($payload, $filename, $stats);
         $summary['dropped'] += (int) ($stats['dropped'] ?? 0);
-        $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+
+        if ($isTlsRpt) {
+            $this->tlsRpt()->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+        } else {
+            $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
+        }
 
         // When nothing was imported, explain why. A parse-level reason recorded
         // by ingestDocuments (malformed or wrong format) takes precedence over
@@ -310,10 +348,9 @@ final class Ingestor
             // content: a valid aggregate report for an unrelated domain would
             // otherwise be stored under this tenant and skew its volume, pass
             // rates and rollout recommendations. Only honour the binding when the
-            // report's policy domain belongs to the same organizational domain as
-            // the bound one (equal, or either a subdomain of the other under
-            // DMARC organizational-policy inheritance); a genuinely unrelated
-            // report is skipped rather than cross-attributed.
+            // report's policy domain is the bound domain or a subdomain of it
+            // (see DomainBinding); a parent, sibling or unrelated domain is
+            // skipped rather than cross-attributed.
             if (!$this->boundDomainMatchesPolicy($forcedDomainId, (string) ($report['policy']['domain'] ?? ''))) {
                 $summary['skipped']++;
 
@@ -425,21 +462,13 @@ final class Ingestor
 
     /**
      * Whether a mailbox's forced domain binding may accept a report carrying the
-     * given policy domain. Returns true only when the bound monitored domain and
-     * the report's policy domain share an organizational domain: identical, or
-     * either one a subdomain of the other (DMARC organizational-policy
-     * inheritance). The leading dot in the suffix test prevents a sibling such as
-     * evil-example.com from matching example.com. Without the Public Suffix List
-     * the exact organizational boundary cannot be proven, but the binding is
-     * operator-chosen, so this blocks the real risk — untrusted mailbox content
-     * for an unrelated domain being attributed to this tenant — while still
-     * accepting legitimate same-origin subdomain reports.
+     * given policy domain: the bound monitored domain itself or a subdomain of
+     * it, never a parent, sibling or unrelated domain. The rule lives in
+     * {@see DomainBinding} so the DMARC and TLS-RPT paths apply it identically.
      */
     private function boundDomainMatchesPolicy(int $domainId, string $policyDomain): bool
     {
-        $policyDomain = strtolower(trim($policyDomain));
-
-        if ($policyDomain === '') {
+        if (trim($policyDomain) === '') {
             return false;
         }
 
@@ -457,85 +486,18 @@ final class Ingestor
             return false;
         }
 
-        if ($bound === $policyDomain) {
-            return true;
-        }
-
-        return str_ends_with($policyDomain, '.' . $bound)
-            || str_ends_with($bound, '.' . $policyDomain);
+        return DomainBinding::accepts($bound, $policyDomain);
     }
 
     /**
      * Find the configured domain by name, creating a monitored entry on first
      * sight so a shared reporting mailbox populates the domain list by itself.
+     * Delegates to {@see DomainRegistry} so DMARC and TLS-RPT ingestion resolve
+     * domains identically against the shared `#__dmarc_domains` list.
      */
     private function resolveDomain(string $domain): int
     {
-        $domain = strtolower(trim($domain));
-
-        if ($domain === '') {
-            return 0;
-        }
-
-        $query = $this->query()
-            ->select($this->db->quoteName('id'))
-            ->from($this->db->quoteName('#__dmarc_domains'))
-            ->where($this->db->quoteName('domain') . ' = :domain')
-            ->bind(':domain', $domain);
-        $id = (int) $this->db->setQuery($query)->loadResult();
-
-        if ($id > 0) {
-            return $id;
-        }
-
-        if (!$this->allowAutoCreate) {
-            // The caller is acting for an operator who may not create domains,
-            // so an unknown domain is reported as unresolved and the report is
-            // skipped by the caller instead of registering a new configuration.
-            return 0;
-        }
-
-        $now    = Factory::getDate()->toSql();
-        $insert = (object) [
-            'domain'          => $domain,
-            'title'           => $domain,
-            'expected_policy' => $this->defaultPolicyTarget(),
-            'published'       => 1,
-            'created'         => $now,
-        ];
-
-        try {
-            $this->db->insertObject('#__dmarc_domains', $insert, 'id');
-
-            return (int) $insert->id;
-        } catch (\RuntimeException $e) {
-            // The lookup above and this insert are not atomic: a concurrent
-            // import of the same previously unknown domain can create the row in
-            // between, tripping the unique domain index. Recover by re-reading
-            // the row the other request created and treating it as resolved, so
-            // the whole IMAP batch is not aborted and left unread for retry.
-            // Only a genuine failure (the domain still does not exist) re-throws.
-            $existing = (int) $this->db->setQuery($query)->loadResult();
-
-            if ($existing > 0) {
-                return $existing;
-            }
-
-            throw $e;
-        }
-    }
-
-    /**
-     * The enforcement target assigned to domains discovered automatically from
-     * incoming reports, taken from the component configuration (default reject).
-     */
-    private function defaultPolicyTarget(): string
-    {
-        $target = strtolower(
-            (string) ComponentHelper::getParams('com_dmarcreports')->get('default_policy_target', 'reject')
-        );
-
-        return \in_array($target, ['none', 'quarantine', 'reject'], true) ? $target : 'reject';
+        return DomainRegistry::resolve($this->db, $domain, $this->allowAutoCreate);
     }
 
     /**

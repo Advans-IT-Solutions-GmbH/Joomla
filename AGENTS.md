@@ -93,6 +93,9 @@ Generische Extensions in diesem Repository:
 - `plg_osmap_j2commerce`
 - `com_dmarcreports`
 - `mod_dmarcreports`
+- `plg_task_dmarcreports`
+- `plg_system_dmarcmtasts`
+- `pkg_dmarcreports`
 - `com_appointments`
 - J2Commerce-Extensions
 

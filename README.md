@@ -9,6 +9,9 @@ Joomla/
 ├── plg_ajax_joomlaajaxforms/ # Joomla AJAX Forms Plugin
 ├── com_dmarcreports/         # DMARC Reports Component
 ├── mod_dmarcreports/         # DMARC Reports Dashboard Module
+├── plg_task_dmarcreports/    # DMARC Reports Scheduler Task Plugin
+├── plg_system_dmarcmtasts/   # DMARC Reports MTA-STS Policy System Plugin
+├── pkg_dmarcreports/         # DMARC Reports Package (bundles the four extensions above)
 ├── com_appointments/         # Appointments Component
 ├── j2commerce/               # J2Commerce Extensions
 │   ├── com_j2commerce_importexport/
@@ -29,6 +32,9 @@ Joomla/
 | [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
 | [DMARC Reports](com_dmarcreports/) | Administrator component that ingests and analyses RFC 7489 DMARC aggregate reports (IMAP and file upload) across multiple domains, with an actionable rollout dashboard and CSV export | 5.4 – 6.x |
 | [DMARC Reports Dashboard Module](mod_dmarcreports/) | Administrator control-panel module that surfaces the DMARC Reports multi-domain summary and top Action Center items on the Joomla backend dashboard, linking into the component and degrading gracefully when it is absent | 5.4 – 6.x |
+| [DMARC Reports Scheduler Task](plg_task_dmarcreports/) | Joomla scheduler task plugin that automatically fetches, parses and stores DMARC and TLS-RPT reports from every active IMAP source on a configurable interval, reusing the component's ingestion and locking so automatic and on-demand runs stay parallel-safe | 5.4 – 6.x |
+| [DMARC Reports MTA-STS Policy](plg_system_dmarcmtasts/) | System plugin that serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` for each configured domain, so the policy stays in sync with the component options without a hand-maintained static file | 5.4 – 6.x |
+| [DMARC Reports Package](pkg_dmarcreports/) | Joomla package that bundles the DMARC Reports component, dashboard module, scheduler task plugin and MTA-STS system plugin into one install, update and uninstall for the administrator | 5.4 – 6.x |
 | [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling with availability rules, no-JavaScript booking, approval, calendar invitations, signed reschedule/cancel/erase links, private subscriptions, reminders and retention, opt-in conferencing, Joomla privacy integration and per-event administration. See the component README for setup and limitations | 5.4 – 6.x |
 
 ### J2Commerce Extensions
@@ -50,6 +56,9 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `joomla-ajax-forms.yml` | Joomla AJAX Forms | `plg_ajax_joomlaajaxforms/**`, the shared files below, own workflow file |
 | `dmarc-reports.yml` | DMARC Reports | `com_dmarcreports/**`, the shared files below, own workflow file |
 | `moddmarcreports.yml` | DMARC Reports Dashboard Module | `mod_dmarcreports/**`, the shared files below, own workflow file |
+| `task-dmarcreports.yml` | DMARC Reports Scheduler Task | `plg_task_dmarcreports/**`, the shared files below, own workflow file |
+| `system-dmarcmtasts.yml` | DMARC Reports MTA-STS Policy | `plg_system_dmarcmtasts/**`, the shared files below, own workflow file |
+| `pkg-dmarcreports.yml` | DMARC Reports Package | `pkg_dmarcreports/**`, the shared files below, own workflow file |
 | `appointments.yml` | Appointments | `com_appointments/**`, the shared files below, own workflow file |
 | `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
 | `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, the shared files below, own workflow file |
@@ -85,7 +94,7 @@ All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is writt
 To add a language:
 
 1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
-2. Import/Export, Cleanup, DMARC Reports, DMARC Reports Dashboard Module, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.
+2. Import/Export, Cleanup, DMARC Reports, DMARC Reports Dashboard Module, DMARC Reports Package, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.
 3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension.
 4. Add the tag where tests name the languages explicitly (installer-messages suite, `de-DE, en-GB, fr-FR` loops).
 
@@ -124,6 +133,9 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 | `release-joomla-ajax-forms.yml` | `ajaxforms-v*` |
 | `release-dmarcreports.yml` | `dmarcreports-v*` |
 | `release-moddmarcreports.yml` | `moddmarcreports-v*` |
+| `release-task-dmarcreports.yml` | `task-dmarcreports-v*` |
+| `release-system-dmarcmtasts.yml` | `system-dmarcmtasts-v*` |
+| `release-pkg-dmarcreports.yml` | `pkgdmarcreports-v*` |
 | `release-appointments.yml` | `appointments-v*` |
 | `release-importexport.yml` | `importexport-v*` |
 | `release-cleanup.yml` | `cleanup-v*` |

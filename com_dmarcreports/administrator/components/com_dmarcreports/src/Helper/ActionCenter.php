@@ -241,12 +241,16 @@ final class ActionCenter
             $code     = (string) ($finding['code'] ?? '');
             $severity = (int) ($finding['severity'] ?? 1);
             $params   = (array) ($finding['params'] ?? []);
+            // DNS diagnostics findings carry no category and default to "dns";
+            // MTA-STS/TLS-RPT findings tag themselves "mtasts" so the view can
+            // group and icon them separately.
+            $category = (string) ($finding['category'] ?? 'dns');
 
             if ($code === '') {
                 continue;
             }
 
-            $items[] = self::item($code, 'dns', $severity, $domainId, $params);
+            $items[] = self::item($code, $category, $severity, $domainId, $params);
         }
 
         usort(

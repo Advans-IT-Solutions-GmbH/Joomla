@@ -14,8 +14,10 @@ defined('_JEXEC') or define('_JEXEC', 1);
 $helperDir = dirname(__DIR__) . '/administrator/components/com_dmarcreports/src/Helper';
 
 require_once $helperDir . '/DomainName.php';
+require_once $helperDir . '/DomainBinding.php';
 require_once $helperDir . '/DmarcParser.php';
 require_once $helperDir . '/ReportArchive.php';
+require_once $helperDir . '/TlsReportArchive.php';
 require_once $helperDir . '/MimeMessage.php';
 require_once $helperDir . '/ImapException.php';
 require_once $helperDir . '/ImapClient.php';
@@ -23,3 +25,17 @@ require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';
 require_once $helperDir . '/SourceIdentity.php';
+require_once $helperDir . '/ReportProvenance.php';
+require_once $helperDir . '/SourcePollLock.php';
+require_once $helperDir . '/PolicyFetcherInterface.php';
+require_once $helperDir . '/PrivateAddressFilter.php';
+require_once $helperDir . '/HttpPolicyFetcher.php';
+require_once $helperDir . '/MtaStsPolicy.php';
+require_once $helperDir . '/MtaStsDiagnostics.php';
+require_once $helperDir . '/TlsRptParser.php';
+
+// SourcePoller lives in the Service namespace. It is a final class with no
+// parent, so requiring the file only defines the class; its Joomla-dependent
+// collaborators are referenced inside method bodies and never load when the
+// pure, static forcing-decision helper is exercised.
+require_once dirname(__DIR__) . '/administrator/components/com_dmarcreports/src/Service/SourcePoller.php';

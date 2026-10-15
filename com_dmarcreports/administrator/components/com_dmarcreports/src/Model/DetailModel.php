@@ -13,6 +13,8 @@ use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\DnsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
+use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
+use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
@@ -103,14 +105,55 @@ class DetailModel extends BaseDatabaseModel
     }
 
     /**
+     * MTA-STS (RFC 8461) and TLS-RPT (RFC 8460) monitoring for the selected
+     * domain. The generated records to publish are always returned so the view
+     * can show the one manual DNS/host step; the live record, hosted policy and
+     * TLS-RPT lookups are only performed when the operator has enabled the
+     * "dns_diagnostics" option, because they disclose the monitored domain to
+     * the configured resolver and the policy host.
+     *
+     * @param   array<string, mixed>  $metrics
+     *
+     * @return  array<string, mixed>
+     */
+    public function getMtaStsDiagnostics(array $metrics): array
+    {
+        $params    = ComponentHelper::getParams('com_dmarcreports');
+        $generated = MtaStsPolicy::generate($params, (string) $metrics['domain']);
+
+        if (!$generated['enabled'] && !$generated['tlsrpt_enabled']) {
+            return ['enabled' => false, 'tlsrpt_enabled' => false, 'generated' => $generated, 'findings' => []];
+        }
+
+        $withNetwork = (int) $params->get('dns_diagnostics', 0) === 1;
+
+        return (new MtaStsDiagnostics())->inspect($generated, $withNetwork);
+    }
+
+    /**
+     * TLS-RPT (RFC 8460) delivery summary for the selected domain, read from the
+     * ingested TLS-RPT reports so the drill-down view can surface successful and
+     * failed TLS sessions alongside the DMARC figures.
+     *
+     * @param   array<string, mixed>  $metrics
+     *
+     * @return  array<string, mixed>
+     */
+    public function getTlsRptSummary(array $metrics): array
+    {
+        return (new Metrics())->tlsRptSummary((int) $metrics['domain_id']);
+    }
+
+    /**
      * The prioritised action items for the selected domain.
      *
      * @param   array<string, mixed>  $metrics
      * @param   array<string, mixed>  $dns
+     * @param   array<string, mixed>  $mtasts
      *
      * @return  array<int, array<string, mixed>>
      */
-    public function getActions(array $metrics, array $dns): array
+    public function getActions(array $metrics, array $dns, array $mtasts = []): array
     {
         $params = ComponentHelper::getParams('com_dmarcreports');
         $config = [
@@ -118,7 +161,12 @@ class DetailModel extends BaseDatabaseModel
             'reject_pass_threshold'     => $params->get('reject_pass_threshold', 99),
         ];
 
-        $items = ActionCenter::generate($metrics, $config, $dns['findings'] ?? []);
+        $findings = array_merge(
+            (array) ($dns['findings'] ?? []),
+            (array) ($mtasts['findings'] ?? [])
+        );
+
+        $items = ActionCenter::generate($metrics, $config, $findings);
 
         // Respect the status the operator has already set for these items on the
         // dashboard (done, ignored or snoozed) so the drill-down stays in sync.

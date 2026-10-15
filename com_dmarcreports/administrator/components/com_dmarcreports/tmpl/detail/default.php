@@ -131,6 +131,82 @@ defined('_JEXEC') or die;
         </div>
 
         <div class="card mb-4">
+            <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_HEADING'); ?></h3></div>
+            <div class="card-body">
+                <?php if (empty($this->mtasts['enabled']) && empty($this->mtasts['tlsrpt_enabled'])) : ?>
+                    <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_DISABLED'); ?></div>
+                <?php else : $g = $this->mtasts['generated']; ?>
+                <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_MANUAL_STEP'); ?></p>
+                <dl class="row mb-0">
+                    <?php if (!empty($this->mtasts['enabled'])) : ?>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_MODE'); ?></dt>
+                    <dd class="col-sm-9"><code><?php echo htmlspecialchars((string) $g['mode']); ?></code></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_POLICY_URL'); ?></dt>
+                    <dd class="col-sm-9"><code><?php echo htmlspecialchars((string) $g['well_known_url']); ?></code></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_STS_RECORD'); ?></dt>
+                    <dd class="col-sm-9">
+                        <code><?php echo htmlspecialchars((string) $g['sts_record_host']); ?></code>
+                        <?php if (!empty($g['sts_record'])) : ?>
+                            &rarr; <code><?php echo htmlspecialchars((string) $g['sts_record']); ?></code>
+                        <?php endif; ?>
+                    </dd>
+                    <?php endif; ?>
+                    <?php if (!empty($this->mtasts['tlsrpt_enabled']) && !empty($g['tlsrpt_record'])) : ?>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_MTASTS_TLSRPT_RECORD'); ?></dt>
+                    <dd class="col-sm-9">
+                        <code><?php echo htmlspecialchars((string) $g['tlsrpt_record_host']); ?></code>
+                        &rarr; <code><?php echo htmlspecialchars((string) $g['tlsrpt_record']); ?></code>
+                    </dd>
+                    <?php endif; ?>
+                </dl>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_HEADING'); ?></h3></div>
+            <div class="card-body">
+                <?php if (empty($this->tlsrpt['reports'])) : ?>
+                    <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_NONE'); ?></div>
+                <?php else : ?>
+                <dl class="row">
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_REPORTS'); ?></dt>
+                    <dd class="col-sm-9"><?php echo (int) $this->tlsrpt['reports']; ?></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SUCCESS'); ?></dt>
+                    <dd class="col-sm-9"><?php echo (int) $this->tlsrpt['success']; ?></dd>
+                    <dt class="col-sm-3"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_FAILURE'); ?></dt>
+                    <dd class="col-sm-9">
+                        <span class="badge bg-<?php echo $this->tlsrpt['failure'] > 0 ? 'danger' : 'success'; ?>">
+                            <?php echo (int) $this->tlsrpt['failure']; ?>
+                        </span>
+                    </dd>
+                </dl>
+                <?php if (!empty($this->tlsrpt['failures'])) : ?>
+                    <h4 class="h6"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_FAILURES_HEADING'); ?></h4>
+                    <table class="table table-sm table-striped mb-0">
+                        <thead><tr>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_RESULT_TYPE'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_MX'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SENDER'); ?></th>
+                            <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_TLSRPT_SESSIONS'); ?></th>
+                        </tr></thead>
+                        <tbody>
+                            <?php foreach ($this->tlsrpt['failures'] as $fail) : ?>
+                            <tr>
+                                <td><code><?php echo htmlspecialchars((string) $fail['result_type']); ?></code></td>
+                                <td><?php echo htmlspecialchars((string) $fail['receiving_mx_host']); ?></td>
+                                <td><?php echo htmlspecialchars((string) $fail['sending_mta_ip']); ?></td>
+                                <td class="text-end"><?php echo (int) $fail['sessions']; ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="card mb-4">
             <div class="card-header"><h3 class="mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_HEADING'); ?></h3></div>
             <div class="card-body">
                 <?php if (empty($m['top_sources'])) : ?>

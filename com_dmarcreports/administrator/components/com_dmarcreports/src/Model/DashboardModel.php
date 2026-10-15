@@ -12,9 +12,12 @@ namespace Advans\Component\DmarcReports\Administrator\Model;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
+use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
+use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\Database\DatabaseInterface;
+use Joomla\Registry\Registry;
 
 defined('_JEXEC') or die;
 
@@ -22,9 +25,13 @@ defined('_JEXEC') or die;
  * Supplies the dashboard: per-domain summaries, overall totals and the
  * prioritised Action Center. Recommendations are regenerated live from the
  * data on every load and merged with the persisted status (done, snoozed,
- * ignored) so the administrator's progress is preserved. DNS diagnostics are
- * intentionally left to the drill-down and System Check views to keep the
- * dashboard fast and free of network calls.
+ * ignored) so the administrator's progress is preserved. The DNS/policy publish
+ * guidance for MTA-STS and TLS-RPT is pure string generation and is always
+ * folded in, so the main Action Center and the dashboard module surface the one
+ * manual DNS/host step. Rendering the dashboard never makes an outbound call:
+ * the live DNS and MTA-STS/TLS-RPT drift lookups stay in the drill-down view
+ * and the System Check, so a page that lists many domains cannot stall on a row
+ * of network timeouts.
  *
  * @since  1.0.0
  */
@@ -104,6 +111,7 @@ class DashboardModel extends BaseDatabaseModel
         }
 
         $config  = $this->config();
+        $params  = ComponentHelper::getParams('com_dmarcreports');
         $metrics = new Metrics($this->getDb());
         $status  = new ActionStatus($this->getDb());
         $items   = [];
@@ -123,7 +131,9 @@ class DashboardModel extends BaseDatabaseModel
                 continue;
             }
 
-            foreach (ActionCenter::generate($domainMetrics, $config) as $item) {
+            $findings = $this->domainFindings((string) ($summary['domain'] ?? ''), $params);
+
+            foreach (ActionCenter::generate($domainMetrics, $config, $findings) as $item) {
                 $item['domain'] = $summary['domain'];
                 $items[]        = $item;
             }
@@ -138,6 +148,34 @@ class DashboardModel extends BaseDatabaseModel
         usort($partition['suppressed'], $sort);
 
         return $this->actions = $partition;
+    }
+
+    /**
+     * The MTA-STS/TLS-RPT publish guidance for one domain, mirroring the merge
+     * the drill-down performs in {@see DetailModel::getActions()} so the main
+     * Action Center and the dashboard module surface the same publish actions.
+     * This is pure string generation: it is always network-free, so rendering a
+     * dashboard that lists many domains never waits on DNS or HTTPS. The live
+     * DNS and MTA-STS/TLS-RPT drift lookups are performed only in the drill-down
+     * view and the System Check.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function domainFindings(string $domain, Registry $params): array
+    {
+        if ($domain === '') {
+            return [];
+        }
+
+        $generated = MtaStsPolicy::generate($params, $domain);
+
+        if (empty($generated['enabled']) && empty($generated['tlsrpt_enabled'])) {
+            return [];
+        }
+
+        $mtasts = (new MtaStsDiagnostics())->inspect($generated, false);
+
+        return (array) ($mtasts['findings'] ?? []);
     }
 
     /**

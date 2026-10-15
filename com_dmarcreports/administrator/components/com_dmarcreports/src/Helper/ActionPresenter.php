@@ -54,6 +54,15 @@ final class ActionPresenter
             'dns_spf_missing'       => Text::_('COM_DMARCREPORTS_ACTION_DNS_SPF_MISSING_TITLE'),
             'dns_spf_duplicate'     => Text::_('COM_DMARCREPORTS_ACTION_DNS_SPF_DUPLICATE_TITLE'),
             'dns_lookup_error'      => Text::_('COM_DMARCREPORTS_ACTION_DNS_LOOKUP_ERROR_TITLE'),
+            'mtasts_no_mx'          => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_NO_MX_TITLE'),
+            'mtasts_publish'        => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_PUBLISH_TITLE'),
+            'mtasts_record_drift'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_RECORD_DRIFT_TITLE'),
+            'mtasts_lookup_error'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_LOOKUP_ERROR_TITLE'),
+            'mtasts_policy_unreachable' => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_UNREACHABLE_TITLE'),
+            'mtasts_policy_drift'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_DRIFT_TITLE'),
+            'mtasts_mode_testing'   => Text::_('COM_DMARCREPORTS_ACTION_MTASTS_MODE_TESTING_TITLE'),
+            'tlsrpt_publish'        => Text::_('COM_DMARCREPORTS_ACTION_TLSRPT_PUBLISH_TITLE'),
+            'tlsrpt_missing_rua'    => Text::_('COM_DMARCREPORTS_ACTION_TLSRPT_MISSING_RUA_TITLE'),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TITLE'),
         };
     }
@@ -90,6 +99,15 @@ final class ActionPresenter
             'dns_spf_missing'       => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_SPF_MISSING_TEXT', ...self::pad($params, 1)),
             'dns_spf_duplicate'     => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_SPF_DUPLICATE_TEXT', ...self::pad($params, 1)),
             'dns_lookup_error'      => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_LOOKUP_ERROR_TEXT', ...self::pad($params, 1)),
+            'mtasts_no_mx'          => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_NO_MX_TEXT', ...self::pad($params, 1)),
+            'mtasts_publish'        => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_PUBLISH_TEXT', ...self::pad($params, 3)),
+            'mtasts_record_drift'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_RECORD_DRIFT_TEXT', ...self::pad($params, 3)),
+            'mtasts_lookup_error'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_LOOKUP_ERROR_TEXT', ...self::pad($params, 1)),
+            'mtasts_policy_unreachable' => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_UNREACHABLE_TEXT', ...self::pad($params, 1)),
+            'mtasts_policy_drift'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_POLICY_DRIFT_TEXT', ...self::pad($params, 1)),
+            'mtasts_mode_testing'   => Text::sprintf('COM_DMARCREPORTS_ACTION_MTASTS_MODE_TESTING_TEXT', ...self::pad($params, 1)),
+            'tlsrpt_publish'        => Text::sprintf('COM_DMARCREPORTS_ACTION_TLSRPT_PUBLISH_TEXT', ...self::pad($params, 2)),
+            'tlsrpt_missing_rua'    => Text::sprintf('COM_DMARCREPORTS_ACTION_TLSRPT_MISSING_RUA_TEXT', ...self::pad($params, 1)),
             default                 => Text::_('COM_DMARCREPORTS_ACTION_GENERIC_TEXT'),
         };
     }

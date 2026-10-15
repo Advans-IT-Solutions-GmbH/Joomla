@@ -176,20 +176,22 @@ final class MimeMessage
         $contentType = $headers['content-type'] ?? '';
         $filename    = self::filename($disposition) ?: self::filename($contentType);
 
-        // Some reporters attach the raw report as application/xml or text/xml
-        // with no file name, relying on Content-Disposition: attachment alone.
-        // Such a part is a report too, so XML media types count when the part is
-        // flagged as an attachment (the disposition keeps inline human-readable
-        // XML, which is not a report, from being picked up).
+        // Some reporters attach the raw report with no file name, relying on
+        // Content-Disposition: attachment alone. XML (DMARC aggregate) and
+        // tlsrpt+json/tlsrpt+gzip (TLS-RPT, RFC 8460) media types count as a
+        // report in that case; the disposition keeps inline human-readable
+        // XML/JSON, which is not a report, from being picked up.
         $isAttachment = stripos($disposition, 'attachment') !== false;
         $isXml        = stripos($contentType, 'application/xml') !== false
             || stripos($contentType, 'text/xml') !== false;
+        $isTlsRpt     = stripos($contentType, 'application/tlsrpt+json') !== false
+            || stripos($contentType, 'application/tlsrpt+gzip') !== false;
 
         $looksLikeReport = $filename !== ''
             || stripos($contentType, 'application/gzip') !== false
             || stripos($contentType, 'application/zip') !== false
             || stripos($contentType, 'application/x-gzip') !== false
-            || ($isXml && $isAttachment);
+            || (($isXml || $isTlsRpt) && $isAttachment);
 
         if (!$looksLikeReport) {
             return null;

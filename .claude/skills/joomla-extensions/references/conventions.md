@@ -15,7 +15,11 @@ refactor(privacy): extract anonymization into separate method
 
 Scope is the extension identifier as used by the release/publish workflows: `privacy`,
 `importexport`, `productcompare`, `osmap-j2commerce`, `cleanup`, `ajaxforms`, `dmarcreports`,
-`moddmarcreports`, `appointments`.
+`moddmarcreports`, `appointments`. The `pkg_dmarcreports` package and its bundled
+`plg_task_dmarcreports` and `plg_system_dmarcmtasts` plugins share the `dmarcreports` scope.
+
+No `Co-authored-by` trailer and no agent signature (no Copilot/Ona/etc.) in commits, PR titles or
+bodies.
 
 ## PHP
 

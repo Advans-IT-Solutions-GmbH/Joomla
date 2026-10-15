@@ -39,8 +39,9 @@ class InstallationTest
         });
 
         // E1-B: installing the component must seed a #__schemas baseline so
-        // future sql/updates have a version to diff against. Join the extension
-        // row to its schema version and assert the 1.0.0 baseline is recorded.
+        // future sql/updates have a version to diff against. Joomla stamps the
+        // highest sql/updates/mysql version on a fresh install, which advanced
+        // to 1.1.0 when the TLS-RPT tables were added, so assert that baseline.
         $this->test('Schema baseline recorded in #__schemas', function () {
             $result = $this->db->query(
                 "SELECT s.version_id FROM {$this->dbPrefix}schemas AS s"
@@ -48,7 +49,7 @@ class InstallationTest
                 . " WHERE e.element = 'com_dmarcreports' AND e.type = 'component'"
             );
             $row = $result ? $result->fetch_assoc() : null;
-            return $row && $row['version_id'] === '1.0.0';
+            return $row && $row['version_id'] === '1.1.0';
         });
 
         $this->test('Component directory exists', function () {

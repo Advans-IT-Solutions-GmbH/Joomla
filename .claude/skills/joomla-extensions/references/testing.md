@@ -87,8 +87,10 @@ cp *.zip tests/extension.zip
 
 `cp *.zip` expects exactly one ZIP in the extension directory; delete ZIPs from earlier builds first.
 
-The two components outside `j2commerce/` (`com_dmarcreports`, `com_appointments`) use no shop, so
-the same commands run from their own directory and no `j2commerce6.zip` is needed for either lane.
+The extensions outside `j2commerce/` that ship no shop dependency (`com_dmarcreports`,
+`mod_dmarcreports`, `plg_task_dmarcreports`, `plg_system_dmarcmtasts`, `pkg_dmarcreports`,
+`com_appointments`) use no shop, so the same commands run from their own directory and no
+`j2commerce6.zip` is needed for either lane.
 
 **AJAX Forms** uses three test directories. Run from the repository root (the `tests-j2c4/` and
 `tests-j2c6/` images are built with the repository root as build context, as in
@@ -170,6 +172,9 @@ because `test.env` names the Joomla 5 container. Variables exactly as in the wor
 | Cleanup | `CONTAINER_NAME=com_j2store_cleanup_j6_test ./run-tests.sh all` |
 | DMARC Reports | `CONTAINER_NAME=com_dmarcreports_j6_test ./run-tests.sh all` |
 | DMARC Reports Dashboard Module | `CONTAINER_NAME=mod_dmarcreports_j6_test ./run-tests.sh all` |
+| DMARC Reports Task | `CONTAINER_NAME=plg_task_dmarcreports_j6_test ./run-tests.sh all` |
+| DMARC Reports MTA-STS | `CONTAINER_NAME=plg_system_dmarcmtasts_j6_test ./run-tests.sh all` |
+| DMARC Reports Package | `CONTAINER_NAME=pkg_dmarcreports_j6_test ./run-tests.sh all` |
 | Appointments | `CONTAINER_NAME=com_appointments_j6_test ./run-tests.sh all` |
 | Appointments MariaDB (`docker-compose.mariadb.yml`, schema-sensitive suites only) | `CONTAINER_NAME=com_appointments_mariadb_test ./run-tests.sh structure` |
 | AJAX Forms | `CONTAINER_NAME=plg_ajax_joomlaajaxforms_j6_test ./run-tests.sh all` |
@@ -305,8 +310,9 @@ Notable test details:
   and build J2Commerce 6 from its `j2c6_ref` with `build_package.php --no-minify` and the Joomla 5
   images with its `j2store_url`/`j2store_sha256` (see "Shop Releases Under Test" above). The action
   and `.github/scripts/check-sql-alignment.php` are in the `push`/`pull_request` paths of those
-  workflows, so a change to them runs all of them. The two shop-free components
-  (`com_dmarcreports`, `com_appointments`) install no shop, so they neither resolve shop releases nor
+  workflows, so a change to them runs all of them. The shop-free DMARC extensions and components
+  (`com_dmarcreports`, `mod_dmarcreports`, `plg_task_dmarcreports`, `plg_system_dmarcmtasts`,
+  `pkg_dmarcreports`, `com_appointments`) install no shop, so they neither resolve shop releases nor
   watch those paths.
 - **Required check:** only `collect-results.yml` produces the required status check
   `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every

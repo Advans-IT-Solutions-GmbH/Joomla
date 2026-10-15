@@ -197,3 +197,10 @@ monitored-domain rows. When a report's policy domain is unknown and `allowAutoCr
 rather than registering a domain the operator is not entitled to or storing an orphan report
 (`domain_id = 0`). IMAP import for a source bound to a domain passes that id as `forcedDomainId`, so
 auto-discovery only applies to unbound sources and uploads.
+
+A forced binding only accepts a report whose policy domain is the bound domain or a subdomain of it
+(`DomainBinding::accepts()`, shared by the DMARC and TLS-RPT ingestors); a parent, sibling or unrelated
+domain is counted as `skipped`. Joomla ships no Public Suffix List library and bundling one is out of
+proportion, so the organizational domain is not computed: the rule is exact-or-child, never parent.
+The bound domain must therefore be the registrable domain the operator owns, never a public suffix
+such as `co.uk`.

@@ -73,6 +73,10 @@ function sh_read_package_manifest(string $package): ?array
         $element = str_starts_with($element, 'com_') ? $element : 'com_' . $element;
     }
 
+    if ($element === '' && $type === 'package') {
+        $element = 'pkg_' . strtolower(trim((string) $xml->packagename));
+    }
+
     $updateServer = '';
 
     if (isset($xml->updateservers->server)) {
