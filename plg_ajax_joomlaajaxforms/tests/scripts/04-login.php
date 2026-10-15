@@ -175,12 +175,33 @@ class LoginTest
     /** The inner JSON of an AJAX login answer (com_ajax wraps it in data[0]). */
     private function loginAnswer(string $username, string $password): array
     {
-        [$cookie, $token] = $this->getSessionAndToken();
+        // Cookie and token of the SAME session, from a core view that always renders a form with a
+        // token (as getSessionAndToken() in 08-security.php). The front page of a bare installation
+        // has no form, and a token of another session is answered with "invalid security token".
         $cookies = [];
-        if ($cookie && str_contains($cookie, '=')) {
-            [$cn, $cv] = explode('=', $cookie, 2);
-            $cookies[$cn] = $cv;
+        $token   = '';
+        foreach (['/index.php?option=com_users&view=login', '/'] as $pfad) {
+            $ch = curl_init($this->baseUrl . $pfad);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, '');
+            $html    = (string) curl_exec($ch);
+            $cookies = [];
+            foreach ((array) curl_getinfo($ch, CURLINFO_COOKIELIST) as $zeile) {
+                $felder = explode("\t", (string) $zeile);
+                if (count($felder) >= 7) {
+                    $cookies[$felder[5]] = $felder[6];
+                }
+            }
+            curl_close($ch);
+            if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $html, $m)) {
+                $token = $m[1];
+                break;
+            }
         }
+        $this->test('Session and token for the login request', $token !== '' && $cookies !== []);
         $fields = ['task' => 'login', 'username' => $username, 'password' => $password];
         if ($token) {
             $fields[$token] = '1';
@@ -241,6 +262,12 @@ class LoginTest
 
         $failed = $this->loginAnswer('nonexistent_user_xyz', 'wrong_pass_xyz');
         $generic = (string) ($failed['message'] ?? '');
+        // The reference must be the plugin's own sentence, not a token error that every case shares.
+        $this->test(
+            'Unknown account → a failed login, not a rejected token',
+            ($failed['success'] ?? null) === false && $generic !== '' && !str_contains(strtolower($generic), 'token'),
+            'Got: ' . json_encode($failed)
+        );
 
         $pending = $this->loginAnswer('ajaxforms_pending', $password);
         $this->test(
