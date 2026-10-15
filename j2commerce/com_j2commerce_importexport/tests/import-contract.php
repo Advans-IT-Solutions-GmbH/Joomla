@@ -185,6 +185,33 @@ namespace {
         } catch (\InvalidArgumentException $e) {
             check(true, 'Malformed CSV columns fail explicitly');
         }
+        $handle = fopen($csv, 'w');
+        fwrite($handle, "title,alias\n");
+        for ($row = 0; $row < 100000; $row++) {
+            fwrite($handle, "Sample,sample\n");
+        }
+        fclose($handle);
+        $parsed = $model->previewFile($csv);
+        check($parsed['total'] === 100000 && count($parsed['rows']) === 10
+            && memory_get_peak_usage(true) < 32 * 1024 * 1024, '100000-row CSV preview stays below 32 MiB and retains only ten rows');
+        file_put_contents($csv, "bad,extra,column\n", FILE_APPEND);
+        try {
+            $model->previewFile($csv);
+            throw new \RuntimeException('Malformed row after preview sample was accepted');
+        } catch (\InvalidArgumentException $e) {
+            check(true, 'Streaming preview validates rows beyond the retained sample');
+        }
+
+        $handle = fopen($csv, 'w');
+        fputcsv($handle, ['title', 'variants'], ',', '"', '');
+        fputcsv($handle, ['Quoted JSON', json_encode([['sku' => 'A"B']])], ',', '"', '');
+        fclose($handle);
+        $parsed = $model->previewFile($csv);
+        check($parsed['rows'][0]['variants'][0]['sku'] === 'A"B', 'CSV preserves JSON backslash escapes next to doubled quotes');
+        $imported = $model->importData($csv, 'products_full', []);
+        $last = $model->received[array_key_last($model->received)];
+        check($imported['imported'] === 1 && $last['data']['variants'][0]['sku'] === 'A"B',
+            'CSV preview and import share the same nested JSON parser');
 
         $real = new ImportModel();
         foreach ([

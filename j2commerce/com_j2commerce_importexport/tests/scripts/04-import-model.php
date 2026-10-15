@@ -233,6 +233,13 @@ class ImportModelTest
                     $preview['headers'] === ['title', 'alias'] && $preview['total'] === 1
                     && $preview['rows'][0]['title'] === 'Quoted');
             }
+            $handle = fopen($csv, 'w');
+            fputcsv($handle, ['title', 'variants'], ',', '"', '');
+            fputcsv($handle, ['Quoted JSON', json_encode([['sku' => 'A"B']])], ',', '"', '');
+            fclose($handle);
+            $preview = $model->previewFile($csv);
+            $this->test('Quoted JSON values survive CSV parsing', fn () =>
+                $preview['rows'][0]['variants'][0]['sku'] === 'A"B');
 
             foreach (["title,title\nOne,Two\n", "title,alias\nMissing\n", "title,variants\nBad,broken-json\n"] as $invalidCsv) {
                 file_put_contents($csv, $invalidCsv);

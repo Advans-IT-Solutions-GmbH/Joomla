@@ -120,6 +120,8 @@ Unchecked checkboxes are sent to the model as false. Options are validated serve
 invalid quantity modes, checkbox values and category/access ID formats are rejected.
 The preview and import use the same parser. Invalid JSON, inconsistent CSV columns and
 unsupported types fail explicitly instead of reporting a successful zero-row import.
+CSV preview validates/counts the entire file while retaining only its requested sample;
+quoted headers, BOM-prefixed documentation rows and escaped quotes inside nested JSON are supported.
 Row errors and partial-import counts are shown without an automatic page reload.
 
 Complete product JSON accepts an array of records or a `{"products": [...]}` wrapper.
@@ -308,11 +310,13 @@ The export controller is covered by a **real HTTP export test** (`07-export-http
 Lightweight contract checks can run without Docker or Joomla, from the repository root:
 
 ```sh
-php j2commerce/com_j2commerce_importexport/tests/import-contract.php
+php -d memory_limit=32M j2commerce/com_j2commerce_importexport/tests/import-contract.php
 node --test j2commerce/com_j2commerce_importexport/tests/import-dashboard.test.cjs
 ```
 
 The PHP check uses framework doubles around the real controller, parser and quantity helper.
+It also previews 100,000 CSV records under a 32 MiB peak-memory threshold and verifies that
+malformed rows beyond the preview sample are still rejected.
 The Node.js check renders the actual PHP template and exercises its script with a simulated
 DOM and HTTP responses. These checks do not replace the real Joomla HTTP suites or browser testing.
 
