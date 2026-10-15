@@ -144,8 +144,8 @@ controlled test mailbox — they are mandatory manual acceptance, not covered el
 | `ADMIN` | Joomla Super User |
 | `MANAGER` | Full component operator: `core.manage`, `core.create`, `core.edit`, `core.edit.state`, `core.delete`, `dmarc.ingest` |
 | `INGEST` | Ingest-only operator: `core.manage` and `dmarc.ingest` but **not** `core.create` |
-| `EDITOR` | `core.edit` only; explicitly denied `core.create`, `core.delete` and `core.edit.state` |
-| `OPTIONS-DENIED` | Everything except `core.options` |
+| `EDITOR` | Component access plus edit: `core.manage` and `core.edit`; explicitly denied `core.create`, `core.delete` and `core.edit.state`. `core.manage` is required because `DisplayController::display()` gates every view on it, so a blanket refusal cannot be mistaken for a passing write-restriction check |
+| `OPTIONS-DENIED` | A non-Super User with `core.manage`, explicitly denied **both** `core.options` and `core.admin` — the dashboard gates the Options link on `core.admin || core.options`, so `core.admin` alone would independently grant Options access |
 | `READONLY` | `core.manage` only; may read permitted views but may not change anything |
 | `GUEST` | Unauthenticated visitor / non-administrator |
 
