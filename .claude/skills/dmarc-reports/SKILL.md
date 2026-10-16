@@ -75,7 +75,7 @@ inside the Joomla install — no external service, Python, Elasticsearch or clou
 report data leaves the host.
 
 - Multi-domain / multi-tenant: several monitored domains, each with its own report source
-- Ingests reports on demand over IMAP, or by manual upload of `.xml`, `.gz` or `.zip`
+- Ingests reports on demand over IMAP, by manual upload of `.xml`, `.gz` or `.zip`, or through the companion task plugin with a configured Scheduler task and trigger
 - Native PHP RFC 7489 parser; idempotent storage de-duplicated by policy domain + reporter org + report id + report-window start
 - **TLS-RPT (RFC 8460)**: ingests SMTP TLS reporting JSON (optionally gzipped) over the same IMAP/upload pipeline, routed by content to a dedicated parser and its own tables (no mixing with DMARC aggregate data)
 - **MTA-STS (RFC 8461)**: generates the policy body, the `_mta-sts` TXT record and the `_smtp._tls` TLS-RPT TXT record, surfaces them in the Action Center and the domain detail view, and validates the published records and hosted policy in the system check (never writes DNS itself)

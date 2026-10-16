@@ -7,8 +7,9 @@ DMARC Reports mailbox import automatically. It reuses the `com_dmarcreports` com
 `SourcePoller` service, so an automatic run and a concurrent on-demand import share one
 cursor- and lock-safe path and never process the same message twice.
 
-With this plugin configured the administrator only watches the dashboard; nothing has to be
-imported by hand.
+With a task and a working Scheduler trigger configured, reports can be imported unattended.
+The plugin is not a daemon: without a trigger, due tasks do not run. Each run makes outbound
+IMAP connections to the configured mailbox sources; parsing and report storage remain local.
 
 ## Features
 
@@ -26,9 +27,18 @@ imported by hand.
 
 ## Installation
 
-Install the package like any Joomla extension (Extensions → Manage → Install). The plugin is
+**Availability:** No task-plugin release or `task-dmarcreports-v*` tag has been published yet.
+Build from source with `cd plg_task_dmarcreports` and `./build.sh` (Bash, rsync and zip required),
+or build the [DMARC Reports package](../pkg_dmarcreports) for the complete solution.
+Individual buildability is retained; it does not imply an existing release download.
+
+Install the built ZIP like any Joomla extension (Extensions → Manage → Install). The plugin is
 enabled automatically on a fresh install. It is also bundled in `pkg_dmarcreports`, which is the
 recommended way to install the whole DMARC solution together.
+
+Standalone installs register their own update server; package installs use the package channel.
+Updates become downloadable when releases are published. Release retention is latest-only per
+extension/tag family, not the monorepo's global latest release.
 
 ## Configuration
 
