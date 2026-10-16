@@ -284,7 +284,29 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             'action'   => 'core.login.site',
         ];
 
-        $result = $this->getApplication()->login($credentials, $options);
+        // Did the credentials pass authentication even though the login failed? CMSApplication::login()
+        // hands the authentication response to onUserLoginFailure; its status is STATUS_SUCCESS only
+        // when the password was correct and a user plugin refused afterwards (plg_user_joomla for a
+        // blocked account). A wrong password never sets this, so the precise sentence below cannot be
+        // used to find out whether an account exists. Listened to for this one login only.
+        $accepted   = null;
+        $dispatcher = $this->getApplication()->getDispatcher();
+        $listener   = static function ($event) use (&$accepted): void {
+            $response = method_exists($event, 'getAuthenticationResponse')
+                ? (array) $event->getAuthenticationResponse()
+                : (array) ($event->getArgument('subject') ?? []);
+
+            if ((int) ($response['status'] ?? 0) === Authentication::STATUS_SUCCESS) {
+                $accepted = (string) ($response['username'] ?? '');
+            }
+        };
+        $dispatcher->addListener('onUserLoginFailure', $listener);
+
+        try {
+            $result = $this->getApplication()->login($credentials, $options);
+        } finally {
+            $dispatcher->removeListener('onUserLoginFailure', $listener);
+        }
 
         if ($result === true) {
             $user = $this->getApplication()->getIdentity();
@@ -352,7 +374,59 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $this->getApplication()->getMessageQueue(true);
         $this->getApplication()->getSession()->set('application.queue', []);
 
+        // Correct password, account still awaiting its activation: say what is missing instead of
+        // asking to check username and password, with the site's sender address as contact.
+        $state = $accepted !== null ? $this->activationState($accepted !== '' ? $accepted : $username) : '';
+
+        if ($state === 'confirm' || $state === 'approval') {
+            return $this->jsonError(Text::sprintf(
+                $state === 'confirm' ? 'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_NOT_ACTIVATED' : 'PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_AWAITING_APPROVAL',
+                (string) $this->getApplication()->get('mailfrom')
+            ));
+        }
+
         return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_FAILED'));
+    }
+
+    /**
+     * Why a blocked account cannot log in, as far as the customer can act on it:
+     * - 'confirm': the confirmation link in the registration e-mail is still pending. The code is
+     *   an activation token of 32 letters and digits (ApplicationHelper::getHash() in Joomla,
+     *   UserHelper::genRandomPassword(32) in handleRegistration()), and the account has not
+     *   confirmed yet. com_users accepts the same form (getAlnum(), 32 characters).
+     * - 'approval': the e-mail is confirmed and an administrator still has to approve the account
+     *   (administrator activation: RegistrationModel::activate() sets the user parameter `activate`
+     *   and stores a new token for the administrator).
+     * - '': anything else, so the generic sentence stays. That covers an account blocked by an
+     *   administrator (no code) and a password-reset hash in the same column (handleReset() and
+     *   Joomla store a password hash there, which starts with a dollar sign).
+     */
+    protected function activationState(string $username): string
+    {
+        if ($username === '') {
+            return '';
+        }
+
+        try {
+            $db    = $this->getDatabase();
+            $query = $this->createDbQuery($db)
+                ->select([$db->quoteName('activation'), $db->quoteName('params')])
+                ->from($db->quoteName('#__users'))
+                ->where($db->quoteName('username') . ' = :username')
+                ->where($db->quoteName('block') . ' = 1')
+                ->bind(':username', $username);
+            $row = $db->setQuery($query)->loadObject();
+        } catch (\Throwable $e) {
+            return '';
+        }
+
+        if (!$row || !preg_match('/^[A-Za-z0-9]{32}$/', (string) $row->activation)) {
+            return '';
+        }
+
+        $params = json_decode((string) $row->params, true);
+
+        return \is_array($params) && !empty($params['activate']) ? 'approval' : 'confirm';
     }
 
     /**
