@@ -83,7 +83,8 @@ See `references/testing.md` for running tests locally.
   `shared-path-coverage.yml`, the one workflow that still watches `shared/**`, fails if a file under
   `shared/` is matched by the `pull_request.paths` of no other workflow. Each of these
   workflows also cancels a superseded run of the same branch or pull request, never on `main`, never
-  for a manual run (`workflow_dispatch`) and never in the publish or release workflows. The suite
+  for a manual run (`workflow_dispatch`). Release preparation is not grouped; publication is
+  serialized per extension without cancelling an active publication (see the release reference). The suite
   matrices are unchanged: one job per suite and
   lane, and a pull request runs the same full matrix as `main`.
 

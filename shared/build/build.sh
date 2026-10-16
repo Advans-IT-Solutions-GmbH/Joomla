@@ -95,9 +95,7 @@ cd ..
 PACKAGE_SIZE=$(du -h "$PACKAGE_NAME" | cut -f1)
 
 VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-package.sh"
-if [ -x "$VERIFY_SCRIPT" ]; then
-    "$VERIFY_SCRIPT"
-fi
+bash "$VERIFY_SCRIPT"
 
 echo ""
 echo -e "${GREEN}Build successful${NC}"

@@ -139,7 +139,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
-          php-version: '8.2'
+          php-version: '8.1'
       - name: Check PHP syntax
         run: |
           # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
@@ -504,6 +504,7 @@ jobs:
         with:
           name: j5-sef-sitemap-http-sef-logs
           path: j2commerce/plg_osmap_j2commerce/tests/test-results/*.txt
+          retention-days: 3
       - name: Cleanup
         if: always()
         run: |

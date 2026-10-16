@@ -8,14 +8,13 @@
 # the same pull request. Therefore exactly one workflow reports the required
 # check name and evaluates the extension workflows itself:
 #
-#   1. Read the pull_request trigger of every workflow in .github/workflows that
-#      filters by `paths` (the extension build & test workflows).
+#   1. Read every pull_request workflow in .github/workflows, including
+#      unconditional workflows such as Security Scan.
 #   2. Match those patterns against the files changed by the pull request.
 #   3. Wait for every matching workflow run on the pull request head commit and
 #      fail unless each of them concluded with `success`.
 #
-# A pull request that matches no extension workflow (for example a pure
-# documentation change outside the extension directories) passes immediately.
+# Documentation-only pull requests still have to pass unconditional workflows.
 #
 # Required environment: GH_TOKEN, REPO, PR_NUMBER, HEAD_SHA.
 # Optional: POLL_SECONDS (default 60), MISSING_RUN_GRACE_MINUTES (default 20),
@@ -153,16 +152,12 @@ for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
     fi
 
     paths="$(yq -r '(.on.pull_request.paths // []) | .[]' "$wf")"
-    # Workflows without a paths filter (for example the security scan) are not
-    # extension test workflows and are not part of this gate.
-    [ -n "$paths" ] || continue
-
     branches="$(yq -r '(.on.pull_request.branches // []) | .[]' "$wf")"
     if [ -n "$branches" ] && ! grep -qx 'main' <<< "$branches"; then
         continue
     fi
 
-    if any_file_matches "$paths" "${CHANGED[@]}"; then
+    if [ -z "$paths" ] || any_file_matches "$paths" "${CHANGED[@]}"; then
         REQUIRED+=("$name")
     elif [ "${#PREVIOUS[@]}" -gt 0 ] && any_file_matches "$paths" "${PREVIOUS[@]}"; then
         OPTIONAL+=("$name")
@@ -182,17 +177,18 @@ start_epoch="$(date +%s)"
 declare -A FINAL=()
 
 latest_run() {
-    # Prints: status<TAB>conclusion<TAB>html_url for the newest pull_request run
+    # Prints: status<TAB>conclusion<TAB>html_url<TAB>id for the newest pull_request run
     # of the given workflow file on HEAD_SHA, or nothing if no run exists yet.
     local file="$1"
     printf '%s' "$RUNS_JSON" | jq -r --arg path ".github/workflows/${file}" '
         [ .workflow_runs[] | select(.path == $path) ]
-        | sort_by(.created_at) | last
-        | if . == null then empty else [.status, (.conclusion // ""), .html_url] | @tsv end'
+        | sort_by(.run_number, .run_attempt) | last
+        | if . == null then empty else [.status, (.conclusion // "pending"), .html_url, .id] | @tsv end'
 }
 
 while :; do
-    RUNS_JSON="$(gh api "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100")"
+    RUNS_JSON="$(gh api --paginate --slurp "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100" \
+        | jq '{workflow_runs: [.[].workflow_runs[]]}')"
     elapsed_min=$(( ( $(date +%s) - start_epoch ) / 60 ))
     pending=0
 
@@ -219,7 +215,7 @@ while :; do
             continue
         fi
 
-        IFS=$'\t' read -r status conclusion url <<< "$line"
+        IFS=$'\t' read -r status conclusion url run_id <<< "$line"
         if [ "$status" != "completed" ]; then
             pending=1
             continue
@@ -231,6 +227,20 @@ while :; do
             echo "::error::${file} concluded with '${conclusion}': ${url}"
             echo "After re-running that workflow, re-run this check as well."
             exit 1
+        fi
+        if [ "$file" = "security.yml" ]; then
+            jobs_json="$(gh api --paginate --slurp "repos/${REPO}/actions/runs/${run_id}/jobs?filter=latest&per_page=100")"
+            # A successful workflow can contain skipped jobs. The blocking secret scan
+            # must actually have run, as must the report-only scanners (tool errors fail).
+            if ! printf '%s' "$jobs_json" | jq -e '
+                [.[].jobs[]] as $jobs
+                | ($jobs | length > 0)
+                and all($jobs[]; .status == "completed" and .conclusion == "success")
+                and all(["Gitleaks (secret scan)", "Semgrep (SAST)", "Actions Security (zizmor + actionlint)"][];
+                    . as $expected | any($jobs[]; .name | endswith($expected)))' >/dev/null; then
+                echo "::error::Security Scan did not successfully execute every expected scanner: ${url}"
+                exit 1
+            fi
         fi
     done
 
@@ -246,4 +256,4 @@ while :; do
     sleep "$POLL_SECONDS"
 done
 
-echo "All triggered extension workflows succeeded."
+echo "All required pull request workflows succeeded."

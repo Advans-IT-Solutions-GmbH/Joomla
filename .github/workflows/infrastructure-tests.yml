@@ -1,0 +1,37 @@
+name: Infrastructure Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/**'
+      - 'shared/build/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/**'
+      - 'shared/build/**'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Test publication ordering and failure recovery without API writes
+        run: python3 .github/scripts/test-publish-release.py
+      - name: Test required workflow gate with fixture API responses
+        run: bash .github/scripts/test-collect-results.sh
+      - name: Test mandatory package verification
+        run: bash .github/scripts/test-package-build.sh

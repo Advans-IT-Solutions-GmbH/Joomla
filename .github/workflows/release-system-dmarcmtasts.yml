@@ -164,13 +164,17 @@ jobs:
           git commit -m "$TITLE"
           git push --force-with-lease origin "$BRANCH"
           PR_BODY=$'Automated release version bump for `system-dmarcmtasts`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
+          echo "::notice::Release PR CI created by GITHUB_TOKEN requires a writer to select 'Approve workflows to run' before review and merge."
           gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING_PR" ]; then
-            gh pr edit "$EXISTING_PR" --title "$TITLE" --body "$PR_BODY" --add-label release || true
+            gh pr edit "$EXISTING_PR" --title "$TITLE" --body "$PR_BODY" --add-label release
             echo "::notice::Updated existing release PR #$EXISTING_PR"
           else
-            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$PR_BODY")
+            if ! PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$PR_BODY"); then
+              echo "::error::Release branch $BRANCH was pushed, but opening its PR failed. An owner must allow GitHub Actions to create and approve pull requests in Settings > Actions > General (including any organisation restriction). See README.md#release-permissions-and-ci-approval. The branch is preserved for recovery."
+              exit 1
+            fi
             gh pr edit "$PR_URL" --add-label release || true
             echo "::notice::Opened release PR: $PR_URL"
           fi
