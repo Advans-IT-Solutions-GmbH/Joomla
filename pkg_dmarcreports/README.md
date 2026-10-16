@@ -21,7 +21,7 @@ The package itself holds no code and no database tables: it is a manifest (`type
 | [`plg_task_dmarcreports`](../plg_task_dmarcreports) | Task plugin (`task`) | Scheduler task that automatically fetches, parses and stores reports from every active IMAP source on a configurable interval, reusing the component's ingestion and locking |
 | [`plg_system_dmarcmtasts`](../plg_system_dmarcmtasts) | System plugin (`system`) | Serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` so the published policy stays in sync with the component options |
 
-The whole solution runs entirely on your own server. The only outbound traffic it causes on its own behalf is Joomla's periodic extension-update check against the registered update server on GitHub (version metadata only) and the IMAP/HTTP(S) connections the component and its plugins make to fetch reports and validate policies that you configure.
+Report parsing and storage run on your own server; report contents are not uploaded to an analysis service. Mailbox ingestion makes outbound IMAP connections to configured sources, manually or via a configured Scheduler task and trigger. Optional live diagnostics (off by default) disclose queried domain names through DNS; MTA-STS validation also fetches the policy over HTTPS, disclosing the policy host, path and server connection metadata to that host. Policy hosting itself serves inbound requests. Joomla's updater separately checks GitHub for version metadata and downloads packages when requested. See the [component's network/privacy description](../com_dmarcreports/README.md#description) for the opt-in gates and surfaces.
 
 ## Features
 
@@ -46,14 +46,16 @@ Every bundled extension selects the correct database and HTTP APIs at runtime an
 
 ## Installation
 
-1. Download `pkg_dmarcreports_<version>.zip` from the latest release
+**Availability:** No package release or `pkgdmarcreports-v*` tag has been published yet; the component, module and both plugins also have no published releases. Build from source using the [Building](#building) instructions below. All four extensions remain individually buildable, but the package is the intended single delivery/update channel (including the module), not a download that exists already.
+
+1. Use the generated `pkg_dmarcreports_<version>.zip`
 2. **System → Install → Extensions**
 3. Upload and install — Joomla installs the component, the module and both plugins in one step
 4. Enable the plugins under **System → Manage → Plugins** (`Task - DMARC Reports` and `System - DMARC Reports MTA-STS`) and publish the module on the `cpanel` position if you want the dashboard tile
 
 ## Updating
 
-The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). New versions appear under **System → Update → Extensions**. The package is the only update channel: the bundled extensions ship without their own update servers, and if one of them was installed on its own before, the package's installer script removes that extension's old update-site link (and the update site, once nothing else uses it) on install and on every update, so the extensions can no longer be updated apart from the package. You can also install a newer ZIP over the existing installation. Because each bundled extension migrates its own tables, updating the package keeps all collected DMARC and TLS-RPT data and the stored IMAP credentials.
+The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions will appear under **System → Update → Extensions** once releases exist. Release retention is latest-only per extension/tag family; the monorepo's global latest release may belong to an unrelated extension. The package is the only update channel: the bundled extensions ship without their own update servers, and if one of them was installed on its own before, the package's installer script removes that extension's old update-site link (and the update site, once nothing else uses it) on install and on every update, so the extensions can no longer be updated apart from the package. You can also install a newer built ZIP over the existing installation. Because each bundled extension migrates its own tables, updating the package keeps all collected DMARC and TLS-RPT data and the stored IMAP credentials.
 
 ## Uninstall
 

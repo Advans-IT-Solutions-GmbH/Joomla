@@ -40,8 +40,30 @@ class ImportModel extends BaseDatabaseModel
 
     public function importProductFull(array $data, array $options = []): array
     {
-        if (trim((string) ($data['title'] ?? '')) === '') {
+        $options = $this->normalizeImportOptions($options);
+        if (!is_string($data['title'] ?? null) || trim($data['title']) === '') {
             throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_TITLE_REQUIRED'));
+        }
+        foreach (['variants', 'product_images', 'options', 'filters', 'files', 'tags', 'custom_fields', 'metafields', 'menu_item'] as $key) {
+            if (isset($data[$key]) && !is_array($data[$key])) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+            }
+        }
+        foreach (['variants', 'options', 'filters', 'files', 'tags', 'custom_fields', 'metafields'] as $key) {
+            foreach ($data[$key] ?? [] as $item) {
+                if (!is_array($item)) {
+                    throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+            }
+        }
+        foreach ($data['variants'] ?? [] as $variant) {
+            if (isset($variant['tier_prices']) && !is_array($variant['tier_prices'])) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+            }
+        }
+        if ($options['create_menu'] && !empty($data['menu_item'])
+            && (!is_string($data['menu_item']['title'] ?? null) || trim($data['menu_item']['title']) === '')) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
 
         $db = $this->getDatabase();
@@ -850,16 +872,16 @@ class ImportModel extends BaseDatabaseModel
         $menutype = $menuData['menutype'] ?? $options['default_menutype'] ?? 'mainmenu';
         $alias = $menuData['alias'] ?? ApplicationHelper::stringURLSafe($menuData['title']);
 
-        $menu = (object) [
+        $menu = new MenuTable($db);
+        $row = [
             'menutype' => $menutype,
             'title' => $menuData['title'],
             'alias' => $alias,
             'path' => $alias,
             'link' => 'index.php?option=com_content&view=article&id=' . $articleId,
             'type' => 'component',
-            'published' => $menuData['published'] ?? ($options['menu_published'] ?? 1),
+            'published' => (int) ($menuData['published'] ?? ($options['menu_published'] ?? 1)),
             'parent_id' => $menuData['parent_id'] ?? 1,
-            'level' => 1,
             'component_id' => $this->getComponentId('com_content'),
             'access' => $menuData['access'] ?? ($options['menu_access'] ?? 1),
             'language' => $menuData['language'] ?? '*',
@@ -867,8 +889,20 @@ class ImportModel extends BaseDatabaseModel
             'client_id' => 0,
         ];
 
-        $db->insertObject('#__menu', $menu);
-        (new MenuTable($db))->rebuild();
+        $existing = $menu->load([
+            'link' => $row['link'],
+            'parent_id' => (int) $row['parent_id'],
+            'menutype' => $menutype,
+            'client_id' => 0,
+            'type' => 'component',
+        ]);
+        $row['home'] = (int) $menu->home;
+        if (!$existing) {
+            $menu->setLocation((int) $row['parent_id'], 'last-child');
+        }
+        if (!$menu->bind($row) || !$menu->check() || !$menu->store()) {
+            throw new \RuntimeException($menu->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
     }
 
     protected function getComponentId(string $element): int
@@ -884,72 +918,73 @@ class ImportModel extends BaseDatabaseModel
         return (int) $db->loadResult();
     }
 
-    // Legacy methods for backward compatibility
-    public function previewFile(string $filePath, int $limit = 10): array
+    /**
+     * Validate options for both HTTP imports and direct model callers.
+     * Menu/category values are defaults; explicit values in a full export win.
+     */
+    public function normalizeImportOptions(array $options): array
     {
-        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $defaults = [
+            'update_existing' => true,
+            'create_menu' => false,
+            'menu_published' => true,
+            'quantity_mode' => 'replace',
+            'default_category' => 2,
+            'default_menutype' => 'mainmenu',
+            'menu_access' => 1,
+        ];
 
-        if ($ext === 'json') {
-            $content = file_get_contents($filePath);
-            $data = json_decode($content, true);
-            
-            // Handle JSON with _documentation wrapper
-            if (isset($data['products'])) {
-                $data = $data['products'];
+        foreach ($options as $key => $value) {
+            if (!array_key_exists($key, $defaults)) {
+                throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', $key));
             }
-            
-            return [
-                'headers' => !empty($data[0]) ? array_keys($data[0]) : [],
-                'rows' => array_slice($data, 0, $limit),
-                'total' => count($data),
-            ];
+        }
+        $options += $defaults;
+
+        foreach (['update_existing', 'create_menu', 'menu_published'] as $key) {
+            if (!in_array($options[$key], [true, false, 1, 0, '1', '0'], true)) {
+                throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', $key));
+            }
+            $options[$key] = (bool) $options[$key];
         }
 
-        if ($ext === 'csv') {
-            return $this->previewCSV($filePath, $limit);
+        if (!in_array($options['quantity_mode'], ['replace', 'add'], true)) {
+            throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', 'quantity_mode'));
         }
 
-        return ['headers' => [], 'rows' => [], 'total' => 0];
+        foreach (['default_category', 'menu_access'] as $key) {
+            if ((!is_int($options[$key]) && !is_string($options[$key]))
+                || filter_var($options[$key], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+                throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', $key));
+            }
+            $options[$key] = (int) $options[$key];
+        }
+
+        if (!is_string($options['default_menutype']) || strlen($options['default_menutype']) > 24
+            || ($options['create_menu'] && trim($options['default_menutype']) === '')) {
+            throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', 'default_menutype'));
+        }
+
+        return $options;
     }
 
-    /**
-     * Preview CSV file, skipping comment lines
-     */
-    protected function previewCSV(string $filePath, int $limit = 10): array
+    public function previewFile(string $filePath, int $limit = 10): array
     {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            return ['headers' => [], 'rows' => [], 'total' => 0];
-        }
-
+        $data = strtolower(pathinfo($filePath, PATHINFO_EXTENSION)) === 'csv'
+            ? $this->readCSV($filePath)
+            : $this->parseImportFile($filePath);
         $headers = [];
         $rows = [];
         $total = 0;
-
-        while (($line = fgetcsv($handle)) !== false) {
-            // Skip empty lines
-            if (empty($line) || (count($line) === 1 && empty($line[0]))) {
-                continue;
+        foreach ($data as $item) {
+            if ($total === 0) {
+                $headers = array_keys($item);
             }
-            
-            // Skip comment lines (starting with #)
-            if (isset($line[0]) && strpos(trim($line[0]), '#') === 0) {
-                continue;
-            }
-
-            // First non-comment line is headers
-            if (empty($headers)) {
-                $headers = $line;
-                continue;
-            }
-
             $total++;
             if (count($rows) < $limit) {
-                $rows[] = array_combine($headers, $line);
+                $rows[] = $item;
             }
         }
-
-        fclose($handle);
 
         return [
             'headers' => $headers,
@@ -958,56 +993,21 @@ class ImportModel extends BaseDatabaseModel
         ];
     }
 
-    /**
-     * Parse CSV file into array, skipping comment lines
-     */
-    protected function parseCSV(string $filePath): array
-    {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            return [];
-        }
-
-        $headers = [];
-        $data = [];
-
-        while (($line = fgetcsv($handle)) !== false) {
-            // Skip empty lines
-            if (empty($line) || (count($line) === 1 && empty($line[0]))) {
-                continue;
-            }
-            
-            // Skip comment lines (starting with #)
-            if (isset($line[0]) && strpos(trim($line[0]), '#') === 0) {
-                continue;
-            }
-
-            // First non-comment line is headers
-            if (empty($headers)) {
-                $headers = $line;
-                continue;
-            }
-
-            // Combine headers with values
-            if (count($line) === count($headers)) {
-                $data[] = array_combine($headers, $line);
-            }
-        }
-
-        fclose($handle);
-
-        return $data;
-    }
-
-    public function importData(string $filePath, string $type, array $mapping, array $options = []): array
+    private function parseImportFile(string $filePath): array
     {
         $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        
+
         if ($ext === 'json') {
             $content = file_get_contents($filePath);
-            $data = json_decode($content, true);
-            
-            // Handle JSON with _documentation wrapper
+            if ($content === false) {
+                throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND'));
+            }
+            try {
+                $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'), 0, $e);
+            }
+
             if (isset($data['products'])) {
                 $data = $data['products'];
             }
@@ -1017,6 +1017,153 @@ class ImportModel extends BaseDatabaseModel
             throw new \RuntimeException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UNSUPPORTED_FORMAT', $ext));
         }
 
+        if (!is_array($data) || !array_is_list($data)) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+        }
+        foreach ($data as $item) {
+            if (!is_array($item) || array_is_list($item)) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Parse CSV file into array, skipping comment lines
+     */
+    protected function parseCSV(string $filePath): array
+    {
+        return iterator_to_array($this->readCSV($filePath), false);
+    }
+
+    private function readCSV(string $filePath): \Generator
+    {
+        // Prefer doubled quotes, but preserve PHP's legacy CSV escape dialect.
+        // Choose one dialect for the whole file before exposing any records.
+        $escape = '';
+        try {
+            foreach ($this->readCSVDialect($filePath, '') as $item) {
+            }
+        } catch (\InvalidArgumentException $e) {
+            $escape = '\\';
+        }
+
+        yield from $this->readCSVDialect($filePath, $escape);
+    }
+
+    private function readCSVDialect(string $filePath, string $escape): \Generator
+    {
+        $handle = fopen($filePath, 'rb');
+        if (!$handle) {
+            throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_FILE_NOT_FOUND'));
+        }
+        try {
+            // fgetcsv must see the opening quote, not the BOM preceding it.
+            if (fread($handle, 3) !== "\xEF\xBB\xBF") {
+                rewind($handle);
+            }
+            $headers = [];
+            while (true) {
+                $start = ftell($handle);
+                $line = fgetcsv($handle, 0, ',', '"', $escape);
+                if ($line === false) {
+                    break;
+                }
+                if (empty($line) || (count($line) === 1 && empty($line[0]))) {
+                    continue;
+                }
+                if (isset($line[0]) && strpos(trim($line[0]), '#') === 0) {
+                    continue;
+                }
+                $end = ftell($handle);
+                if ($start === false || $end === false) {
+                    throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+                $record = stream_get_contents($handle, $end - $start, $start);
+                if ($record === false || strlen($record) !== $end - $start) {
+                    throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+                if (!$this->isValidCSVRecord($record, $escape)) {
+                    throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+                if (empty($headers)) {
+                    $headers = $line;
+                    if (in_array('', $headers, true) || count(array_unique($headers)) !== count($headers)) {
+                        throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                    }
+                    continue;
+                }
+                if (count($line) !== count($headers)) {
+                    throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                }
+
+                $item = array_combine($headers, $line);
+                foreach (['variants', 'product_images', 'options', 'filters', 'files', 'tags', 'custom_fields', 'metafields', 'menu_item'] as $key) {
+                    if (isset($item[$key])) {
+                        try {
+                            $item[$key] = $item[$key] === '' ? [] : json_decode($item[$key], true, 512, JSON_THROW_ON_ERROR);
+                        } catch (\JsonException $e) {
+                            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'), 0, $e);
+                        }
+                        if (!is_array($item[$key])) {
+                            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+                        }
+                    }
+                }
+                yield $item;
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    private function isValidCSVRecord(string $record, string $escape): bool
+    {
+        $record = preg_replace('/\r\n$|[\r\n]$/D', '', $record);
+        $quoted = false;
+        $fieldStart = true;
+        $closed = false;
+        $length = strlen($record);
+        for ($i = 0; $i < $length; $i++) {
+            $char = $record[$i];
+            if ($quoted) {
+                if ($escape !== '' && $char === $escape && $i + 1 < $length) {
+                    $i++;
+                } elseif ($char === '"') {
+                    if (($record[$i + 1] ?? '') === '"') {
+                        $i++;
+                    } else {
+                        $quoted = false;
+                        $closed = true;
+                    }
+                }
+            } elseif ($char === ',') {
+                $fieldStart = true;
+                $closed = false;
+            } elseif ($closed || $char === "\r" || $char === "\n") {
+                return false;
+            } elseif ($char === '"') {
+                if (!$fieldStart) {
+                    return false;
+                }
+                $quoted = true;
+                $fieldStart = false;
+            } else {
+                $fieldStart = false;
+            }
+        }
+        return !$quoted;
+    }
+
+    public function importData(string $filePath, string $type, array $mapping, array $options = []): array
+    {
+        if ($type !== 'products_full') {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_UNSUPPORTED_TYPE'));
+        }
+        $options = $this->normalizeImportOptions($options);
+        $data = $this->parseImportFile($filePath);
+
         if (empty($data)) {
             return ['total' => 0, 'imported' => 0, 'updated' => 0, 'failed' => 0, 'errors' => [Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_NO_DATA')]];
         }
@@ -1025,10 +1172,8 @@ class ImportModel extends BaseDatabaseModel
 
         foreach ($data as $index => $item) {
             try {
-                if ($type === 'products_full') {
-                    $this->importProductFull($item, $options);
-                    $results['imported']++;
-                }
+                $this->importProductFull($item, $options);
+                $results['imported']++;
             } catch (\Exception $e) {
                 $results['failed']++;
                 // Shown to the administrator: the row frame is translated, the reason is the

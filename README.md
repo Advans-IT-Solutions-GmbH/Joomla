@@ -70,20 +70,25 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 
 | File under `shared/` | Starts |
 |---|---|
-| `build/build.sh`, `build/verify-package.sh` | all nine (every `build.sh` is a wrapper) |
-| `tests/run-tests.sh` | all nine (every `tests/run-tests.sh` is a wrapper) |
-| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | all nine (job `Language Files`) |
-| `tests/scripts/shared-test-helpers.php` | all nine (loaded by the shared suites) |
-| `tests/scripts/shared-install-messages.php` | all nine (in every `test.env`) |
+| `build/build.sh`, `build/verify-package.sh` | every extension workflow (the DMARC package also verifies its assembled bundle) |
+| `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
+| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`) |
+| `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
+| `tests/scripts/shared-install-messages.php` | every extension workflow (installer-message suites) |
+| `tests/scripts/shared-backend-views.php` | Appointments, DMARC Reports component, Import/Export, Cleanup |
 | `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
 
 `Shared Path Coverage` (`shared-path-coverage.yml`) fails if a file under `shared/` is matched by the `pull_request.paths` of no other workflow and is not on the documented exception list in `.github/scripts/check-shared-path-coverage.sh`. It requires one match, not every workflow that uses the file: it excludes itself from the search and ignores workflows without a `paths` filter, and it cannot tell whether a lane really reads the file. The table above stays the record of which workflow consumes what. **A new file under `shared/` has to be added to the workflows that use it, otherwise that check fails.**
 
-**Superseded runs are cancelled.** Every `Build & Test` workflow has a `concurrency` group of workflow plus ref with `cancel-in-progress: true`, so a new push to a pull request or branch cancels the previous run of that same ref instead of letting it finish. Runs of different pull requests never cancel each other. On `main` and for a manual run (`workflow_dispatch`) the group key is the unique run id instead, so nothing on the default branch is ever cancelled and no manual run cancels another one: a dispatch is started deliberately, nothing supersedes it, and it may carry its own inputs (the OSMap workflow takes a `j2commerce6_ref`). The publish and release workflows have no concurrency group at all.
+**Superseded test runs are cancelled.** Every `Build & Test` workflow has a `concurrency` group of workflow plus ref with `cancel-in-progress: true`, so a new push to a pull request or branch cancels the previous run of that same ref instead of letting it finish. Runs of different pull requests never cancel each other. On `main` and for a manual run (`workflow_dispatch`) the group key is the unique run id instead, so no test run on the default branch is cancelled and no manual test run cancels another one: a dispatch is started deliberately and may carry its own inputs (the OSMap workflow takes a `j2commerce6_ref`). Release preparation has no concurrency group. Publication is serialized per extension with `cancel-in-progress: false`, so an active publication is never interrupted by a newer one; GitHub may replace an older pending run in that group.
 
-Besides the test suites, every workflow lints all PHP files of the extension and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks, every key the code uses defined in every language, no unused and no assembled keys) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately. The shop runtimes are never pinned either: the job *Resolve Shop Releases* (composite action `.github/actions/resolve-shops`) resolves the newest aligned J2Commerce 6 commit of `j2commerce/j2commerce` `main` and the latest J2Store 4 release of `j2commerce/j2cart` (download verified against its sha256 digest) once per run and lists them in its job summary, so every job of a run tests the same versions. The pull request check **Collect Results** (`collect-results.yml`) determines which of the workflows above are triggered by the changed files, waits for them and fails unless all succeeded; a pull request that triggers none of them passes immediately. After re-running a failed workflow, re-run *Collect Results* as well.
+Besides the test suites, every extension workflow lints its PHP files on the minimum supported PHP 8.1 and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks, every key the code uses defined in every language, no unused and no assembled keys) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately.
+
+Shop-dependent workflows use *Resolve Shop Releases* (`.github/actions/resolve-shops`) to resolve the newest aligned J2Commerce 6 commit of `j2commerce/j2commerce` `main` and the latest J2Store 4 release of `j2commerce/j2cart` (download verified against its sha256 digest) once per run. Shop-free DMARC and Appointments workflows do not resolve or install a shop. AJAX Forms and Cleanup build the resolved J2Commerce 6 package once and share that artifact between jobs; each test job still creates a fresh container and retains the full suite/platform matrix. Intermediate packages expire after one day; test-log artifacts after at most three.
+
+**Collect Results** (`collect-results.yml`) determines which path-filtered workflows are triggered by the changed files and also requires every unconditional PR workflow, including **Security Scan**. It waits for successful runs on the current PR head; missing, failed, cancelled or skipped required runs fail closed. Security Scan must actually execute its expected scanner jobs: Gitleaks blocks secret findings; Semgrep and zizmor findings remain report-only, while scanner/tool errors fail. Documentation-only PRs still require Security Scan. After re-running a failed workflow, re-run *Collect Results* as well. **Infrastructure Tests** exercises the publish helper and gate against offline fixtures without making release API writes.
 
 Local test prerequisites and commands: [`.claude/skills/joomla-extensions/references/testing.md`](.claude/skills/joomla-extensions/references/testing.md).
 
@@ -116,6 +121,12 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 Run release workflows one at a time. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
 
+### Release permissions and CI approval
+
+Release preparation uses the built-in `GITHUB_TOKEN`, with `contents: write` and `pull-requests: write`; no App or PAT is configured. A repository owner must enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**, subject to organisation policy. Without that permission the branch push can succeed but PR creation fails; the workflow reports an error and preserves the branch. Enable the permission and rerun preparation, or open the PR from that branch manually rather than deleting it.
+
+For PRs created or updated using `GITHUB_TOKEN`, the `pull_request` events `opened`, `synchronize` and `reopened` create **approval-required** CI runs. A user with write access must select **Approve workflows to run** in the PR before checks can execute. Review and merge only after those checks pass; the merge must be performed by a human, not by the token. See [GitHub's workflow-trigger documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
 Auto-detect uses [Conventional Commits](https://www.conventionalcommits.org/) since the last tag:
 
 | Commit Prefix | Version Bump | Example |
@@ -143,7 +154,7 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 | `release-privacy.yml` | `privacy-v*` |
 | `release-osmap-j2commerce.yml` | `osmap-j2commerce-v*` |
 
-After a new release is created, the publish workflow deletes older releases and tags of the same extension prefix; only the latest release of each extension is kept.
+Only the newest release per extension is kept, intentionally. The shared publish helper checks numeric version order against remote tags and releases before any writes, rejects obsolete reruns and refuses an existing version tag that points anywhere except the actual built checkout commit. Retrying the same version from the same commit is supported without deleting its working release or overwriting existing assets. New releases are staged as drafts, downloaded and verified before publication; only then are strictly older releases and tags of that same prefix deleted. Failures are reported rather than silently skipping cleanup. Extension update URLs continue to use their explicit version tags, never the repository-wide `/releases/latest` endpoint, which cannot represent independent extension releases.
 
 View all releases: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases
 

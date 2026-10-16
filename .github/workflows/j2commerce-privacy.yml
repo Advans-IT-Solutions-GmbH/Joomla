@@ -19,6 +19,7 @@ on:
       - '.github/workflows/j2commerce-privacy.yml'
       - '.github/actions/resolve-shops/**'
       - '.github/scripts/check-sql-alignment.php'
+      - '.github/scripts/phpunit-bootstrap.php'
   pull_request:
     branches: [main]
     paths:
@@ -36,6 +37,7 @@ on:
       - '.github/workflows/j2commerce-privacy.yml'
       - '.github/actions/resolve-shops/**'
       - '.github/scripts/check-sql-alignment.php'
+      - '.github/scripts/phpunit-bootstrap.php'
 
 permissions: {}
 
@@ -110,11 +112,18 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
-          php-version: '8.2'
+          php-version: '8.1'
+          extensions: mbstring, dom, xml
+          tools: composer
       - name: Check PHP syntax
         run: |
           # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
           find j2commerce/plg_privacy_j2commerce -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+      - name: Run existing standalone unit tests
+        working-directory: j2commerce/plg_privacy_j2commerce
+        run: |
+          composer install --no-interaction --no-progress
+          vendor/bin/phpunit --no-configuration --bootstrap ../../.github/scripts/phpunit-bootstrap.php --fail-on-warning --fail-on-risky --fail-on-skipped tests/Unit/RetentionPeriodTest.php
 
   language-lint:
     name: Language Files

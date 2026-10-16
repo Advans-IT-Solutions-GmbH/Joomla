@@ -41,8 +41,9 @@ fixture flaky.
 
 ## Shop Releases Under Test
 
-The shop runtimes are not pinned either: every workflow tests against the latest releases (same
-approach as our other repositories). The job `Resolve Shop Releases` resolves them once per workflow
+The shop runtimes are not pinned either: shop-dependent workflows test against the latest releases.
+Shop-free DMARC and Appointments workflows do not resolve or install a shop.
+The job `Resolve Shop Releases` resolves them once per workflow
 run with the composite action `.github/actions/resolve-shops` and hands them to the lane jobs through
 `needs`, so all jobs of one run test the same versions. Its job summary lists them under "Shop
 releases under test".
@@ -124,7 +125,7 @@ docker build \
 J2Commerce 6 publishes no release ZIP. CI builds it from the latest aligned commit of
 `j2commerce/j2commerce` `main` (see "Shop Releases Under Test"; PHP 8.3 with the `zip` extension),
 with `--no-minify` (without it, `build_package.php` requires esbuild). Every Joomla 6 job reads the
-commit from `J2C6_REF`, set from the outputs of the job `Resolve Shop Releases` (Cleanup builds the
+commit from `J2C6_REF`, set from the outputs of the job `Resolve Shop Releases` (AJAX Forms and Cleanup build the
 package once in the job `Build J2Commerce 6`).
 
 Commands from the workflow step `Build J2Commerce 6 from source (latest aligned)`; only
@@ -254,11 +255,12 @@ Notable test details:
 
 - **Triggers:** each `Build & Test` workflow runs on push and pull request to `main` for
   `<extension path>/**`, the files under `shared/` the extension really uses, its own workflow
-  file and the shop resolution (`.github/actions/resolve-shops/**`,
-  `.github/scripts/check-sql-alignment.php`), and manually (`workflow_dispatch`).
+  file, and manually (`workflow_dispatch`). Only shop-dependent workflows additionally watch
+  `.github/actions/resolve-shops/**` and `.github/scripts/check-sql-alignment.php`.
 - **Narrowed shared paths:** no `Build & Test` workflow lists `shared/**` as a whole. The build scripts,
   `run-tests.sh`, the three static checks and the shared suites `shared-test-helpers.php` and
-  `shared-install-messages.php` are used by all nine extensions and start all nine.
+  `shared-install-messages.php` are used by every extension workflow.
+  `shared-backend-views.php` is used by Appointments, the DMARC component, Import/Export and Cleanup.
   `shared-update-from-previous.php`, `shared-deprecations.php` and `shared-deprecation-tracer.php`
   are used only by AJAX Forms, OSMap and Privacy (update lane and production-like lane) and start
   only those three. `shared/tests/Dockerfile.template`, `shared/tests/scripts/docker-entrypoint.sh`
@@ -278,10 +280,11 @@ Notable test details:
   manual run (`workflow_dispatch`) the group key is the unique run id instead, so no run on the
   default branch is ever cancelled and no manual run cancels another one: a dispatch is started
   deliberately, nothing supersedes it, and it may carry its own inputs (OSMap's `j2commerce6_ref`).
-  The publish and release workflows have no concurrency group at all. Nothing else changed: every
+  Release preparation has no concurrency group. Publication is serialized per extension without
+  cancelling an active publication; GitHub may replace an older pending run. Every
   suite keeps its own job on every lane, and a pull request runs the same full matrix as `main`.
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
-  extension; AJAX Forms does this in `Validate Package`); `Language Files`
+  extension on the declared minimum PHP 8.1; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
   keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
   fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
@@ -305,6 +308,10 @@ Notable test details:
     `tests/docker-compose.production.yml`; AJAX Forms via `tests-j2c6/Dockerfile` built with
     `--build-arg JOOMLA_BASE_IMAGE=joomla:6-php8.4-apache --build-arg PHP_STRICT_DEPRECATIONS=1`.
     Runs all suites (`./run-tests.sh all`; OSMap runs each suite by name without the SEF-only `sitemap-http-sef`), then `shared-deprecations.php`.
+- **Standalone PHPUnit coverage:** Privacy's real `RetentionPeriodTest.php` and Product Compare's
+  `ProductCompareTest.php` run in their existing syntax jobs on PHP 8.1 with a minimal bootstrap.
+  The selected tests need no Joomla runtime; Privacy's always-skipped placeholder class is not
+  part of this standalone command. Tests fail on warnings, risky tests and skips.
 - **Latest shop releases:** every `Build & Test` workflow of a shop extension starts with the job
   `Resolve Shop Releases` (composite action `.github/actions/resolve-shops`); the lane jobs `need` it
   and build J2Commerce 6 from its `j2c6_ref` with `build_package.php --no-minify` and the Joomla 5
@@ -314,14 +321,23 @@ Notable test details:
   (`com_dmarcreports`, `mod_dmarcreports`, `plg_task_dmarcreports`, `plg_system_dmarcmtasts`,
   `pkg_dmarcreports`, `com_appointments`) install no shop, so they neither resolve shop releases nor
   watch those paths.
+- **Shared shop builds and retention:** AJAX Forms and Cleanup build the resolved J2Commerce 6
+  source once per run and download the same package in dependent lanes; containers remain fresh
+  per job and suite/platform matrices are unchanged. Intermediate package artifacts expire after
+  one day, test-log artifacts after at most three days.
 - **Required check:** only `collect-results.yml` produces the required status check
   `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every
-  workflow, matches them against the files changed by the pull request, waits for those workflow runs
-  on the pull request head commit and fails unless each concluded `success`. A pull request that
-  triggers no extension workflow passes immediately. **After re-running a failed extension workflow,
+  workflow, matches them against the files changed by the pull request, and includes unconditional
+  PR workflows such as Security Scan even on documentation-only PRs. It waits for those runs
+  on the PR head and requires `success`; missing, cancelled and skipped runs fail closed.
+  Security Scan must also have successfully executed its expected scanner jobs.
+  **After re-running a failed workflow,
   re-run `Collect Results` as well.**
 - **Security Scan** (`security.yml`) runs on push and pull request to `main` and manually: Gitleaks is
   blocking; Semgrep and zizmor are report-only.
+- **Infrastructure Tests:** `.github/scripts/test-publish-release.py` and
+  `.github/scripts/test-collect-results.sh` run offline publication and required-gate fixtures
+  without release API writes. The shell fixture runner requires Bash, jq and Mike Farah's yq.
 
 ## Known Limitations
 

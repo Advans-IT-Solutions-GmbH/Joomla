@@ -17,15 +17,19 @@ e-mail delivery, iCalendar generation and the conference link. **No third-party 
 is required or contacted**, and the component works on a server whose outbound internet access is
 blocked.
 
-> **Status: pre-release.** The features below are implemented in the component source. Installation
-> packages and version changes are published only through the repository's reviewed release workflow.
+> **Status: unreleased.** The features below are implemented in the component source, but no
+> Appointments release or downloadable installation package has been published yet. For evaluation,
+> build a package from source as described below. Official packages and version changes will be
+> published only through the repository's reviewed release workflow.
 
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or later
-- MySQL or MariaDB. The installer refuses any other database server, because the booking table uses
-  a generated column to guarantee that one time slot can be held by exactly one booking.
+- MySQL or MariaDB only. The component ships its schema only for these servers; the installer
+  refuses other database servers. The booking table uses a generated column to guarantee that one
+  time slot can be held by exactly one booking. PostgreSQL is not supported by this component,
+  even though Joomla itself supports it.
 - Administrator access for configuration
 
 ## Joomla 6 Compatibility
@@ -36,14 +40,38 @@ configuration is required.
 
 ## Installation
 
-1. Download the package `com_appointments_<version>.zip` from the repository releases.
+### Currently: build from source
+
+Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip` and
+`unzip` available. From the repository root:
+
+```bash
+cd com_appointments
+bash ./build.sh
+```
+
+The shared packager reads `build.env` and creates `com_appointments_<version>.zip` in that
+directory. This is a locally built pre-release package, not a published release; do not change
+version files manually. Docker is needed for the integration tests, not for this package build.
+
+1. Use the ZIP produced by the build.
 2. Install it in Joomla through **System → Install → Extensions**.
 3. Open **Components → Appointments**.
 
+### Once a release is published
+
+Download `com_appointments_<version>.zip` from the repository's
+[releases](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases) under the matching
+`appointments-v<version>` tag, then follow the installation steps above. Only the newest release
+in the Appointments tag family is retained; releases of other extensions are not Appointments
+packages.
+
 ## Updating
 
-The component registers its own update site during installation, so later versions appear under
-**System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
+The component registers its own update site during installation. Once releases are published,
+later versions will appear under **System → Update → Extensions**. You can also install a newer
+ZIP over the existing installation. The update-site registration does not mean that a release is
+currently available.
 
 ## Features
 
