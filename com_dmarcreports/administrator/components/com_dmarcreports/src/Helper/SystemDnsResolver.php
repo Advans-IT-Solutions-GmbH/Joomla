@@ -13,7 +13,7 @@ defined('_JEXEC') or die;
 
 /**
  * The default resolver, backed by PHP's dns_get_record(). It performs only
- * read-only TXT lookups and never writes to DNS. It does, however, transmit
+ * read-only TXT/MX lookups and never writes to DNS. It does, however, transmit
  * the host being queried: like any DNS lookup, each call discloses the
  * monitored domain (and its _dmarc subdomain) to the system resolver and the
  * upstream DNS servers it consults, consistent with the note on
@@ -23,6 +23,32 @@ defined('_JEXEC') or die;
  */
 final class SystemDnsResolver implements DnsResolverInterface
 {
+    public function mx(string $host): ?array
+    {
+        if (!\function_exists('dns_get_record')) {
+            return null;
+        }
+
+        $records = @dns_get_record($host, DNS_MX);
+
+        // A failed MX query must not be mistaken for confirmed coverage.
+        if (!\is_array($records)) {
+            return null;
+        }
+
+        $targets = [];
+
+        foreach ($records as $record) {
+            $target = strtolower(rtrim((string) ($record['target'] ?? ''), '.'));
+
+            if ($target !== '' && !in_array($target, $targets, true)) {
+                $targets[] = $target;
+            }
+        }
+
+        return $targets;
+    }
+
     public function txt(string $host): ?array
     {
         // Without the function the lookup cannot be performed at all, which is a

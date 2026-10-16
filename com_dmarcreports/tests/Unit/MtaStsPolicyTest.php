@@ -20,6 +20,29 @@ use PHPUnit\Framework\TestCase;
  */
 class MtaStsPolicyTest extends TestCase
 {
+    public function testMxMatchingFollowsRfc8461LabelBoundaries(): void
+    {
+        $cases = [
+            ['MAIL.EXAMPLE.ORG.', ['mail.example.org'], true],
+            ['mail.example.org', ['MAIL.EXAMPLE.ORG.'], true],
+            ['mail.example.org', ['*.example.org'], true],
+            ['example.org', ['*.example.org'], false],
+            ['mail.eu.example.org', ['*.example.org'], false],
+            ['mail.eu.example.org', ['*.eu.example.org'], true],
+            ['notexample.org', ['*.example.org'], false],
+            ['mail.example.org.attacker.example', ['*.example.org'], false],
+            ['mail.example.org', ['mail.*.org', 'm*.example.org', '*'], false],
+            ['mail.example.org', ['other.example.org', '*.example.org'], true],
+            ['mail.example.org', [], false],
+            ['.', ['*.example.org'], false],
+            ['bad_host.example.org', ['*.example.org'], false],
+        ];
+
+        foreach ($cases as [$host, $patterns, $expected]) {
+            $this->assertSame($expected, MtaStsPolicy::matchesMx($host, $patterns), $host . ' / ' . implode(', ', $patterns));
+        }
+    }
+
     public function testPolicyBodyContainsVersionModeAndMx(): void
     {
         $body = MtaStsPolicy::policyBody('enforce', ['mx1.example.org', 'mx2.example.org'], 604800);

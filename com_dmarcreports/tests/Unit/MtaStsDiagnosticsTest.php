@@ -9,6 +9,8 @@
 namespace Advans\Component\DmarcReports\Tests\Unit;
 
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
+use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
+use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\PolicyFetcherInterface;
 use Advans\Component\DmarcReports\Administrator\Helper\DnsResolverInterface;
 use PHPUnit\Framework\TestCase;
@@ -22,13 +24,19 @@ class MtaStsDiagnosticsTest extends TestCase
 {
     /**
      * @param   array<string, array<int, string>|null>  $records
+     * @param   array<string, array<int, string>|null>  $mx
      */
-    private function resolver(array $records): DnsResolverInterface
+    private function resolver(array $records, array $mx = ['example.org' => ['mail.example.org']]): DnsResolverInterface
     {
-        return new class ($records) implements DnsResolverInterface {
+        return new class ($records, $mx) implements DnsResolverInterface {
             /** @param array<string, array<int, string>|null> $records */
-            public function __construct(private array $records)
+            public function __construct(private array $records, private array $mx)
             {
+            }
+
+            public function mx(string $host): ?array
+            {
+                return array_key_exists($host, $this->mx) ? $this->mx[$host] : [];
             }
 
             public function txt(string $host): ?array
@@ -215,6 +223,139 @@ class MtaStsDiagnosticsTest extends TestCase
         $result = $diagnostics->inspect($this->generated(['mode' => 'testing']), true);
 
         $this->assertContains('mtasts_mode_testing', $this->codes($result));
+    }
+
+    public function testUncoveredMxBlocksEnforceAdviceAndReachesActionCenter(): void
+    {
+        foreach (['testing' => 2, 'enforce' => 3] as $mode => $severity) {
+            $diagnostics = new MtaStsDiagnostics($this->resolver([
+                '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+                '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+            ], ['example.org' => ['mail.example.org', 'backup.example.net']]),
+                $this->fetcher($this->policyBody($mode, ['mail.example.org'])));
+            $result = $diagnostics->inspect($this->generated(['mode' => $mode]), true);
+
+            $this->assertSame(['mtasts_mx_uncovered'], $this->codes($result));
+            $this->assertSame($severity, $result['findings'][0]['severity']);
+            $this->assertSame(['example.org', 'backup.example.net'], $result['findings'][0]['params']);
+            $this->assertSame('mtasts', $result['findings'][0]['category']);
+
+            $actions = ActionCenter::generate(['domain_id' => 1, 'total' => 0], [], $result['findings']);
+            $matching = array_values(array_filter($actions, static fn (array $item): bool => $item['code'] === 'mtasts_mx_uncovered'));
+            $this->assertCount(1, $matching);
+            $this->assertSame($result['findings'][0]['params'], $matching[0]['params']);
+        }
+    }
+
+    public function testMxLookupFailureAndEmptyAnswerCannotRecommendEnforce(): void
+    {
+        foreach (['mtasts_mx_lookup_error' => null, 'mtasts_mx_no_answer' => []] as $code => $hosts) {
+            $diagnostics = new MtaStsDiagnostics($this->resolver([
+                '_mta-sts.example.org'   => ['v=STSv1; id=abc123'],
+                '_smtp._tls.example.org' => ['v=TLSRPTv1; rua=mailto:tls@example.org'],
+            ], ['example.org' => $hosts]), $this->fetcher($this->policyBody('testing', ['mail.example.org'])));
+
+            $result = $diagnostics->inspect($this->generated(['mode' => 'testing']), true);
+
+            $this->assertSame([$code], $this->codes($result));
+            $this->assertSame(['example.org'], $result['findings'][0]['params']);
+            $this->assertSame(2, $result['findings'][0]['severity']);
+        }
+    }
+
+    public function testMxCoverageIsCheckedEvenBeforeStsRecordIsPublished(): void
+    {
+        $diagnostics = new MtaStsDiagnostics(
+            $this->resolver([], ['example.org' => ['backup.example.net']]),
+            $this->fetcher(null)
+        );
+        $result = $diagnostics->inspect($this->generated(), true);
+
+        $this->assertContains('mtasts_mx_uncovered', $this->codes($result));
+        $this->assertContains('mtasts_publish', $this->codes($result));
+    }
+
+    public function testSharedUnionPolicyChecksEachDomainsActualMxInSummary(): void
+    {
+        $patterns = ['*.example.org', 'mail.example.net'];
+        $diagnostics = new MtaStsDiagnostics($this->resolver([
+            '_mta-sts.example.org' => ['v=STSv1; id=abc123'],
+            '_mta-sts.example.net' => ['v=STSv1; id=abc123'],
+            '_mta-sts.example.com' => ['v=STSv1; id=abc123'],
+        ], [
+            'example.org' => ['MAIL.EXAMPLE.ORG.', 'backup.example.org'],
+            'example.net' => ['mail.example.net'],
+            'example.com' => ['mail.eu.example.org'],
+        ]), $this->fetcher(MtaStsPolicy::policyBody('testing', $patterns, 604800)));
+
+        $generated = [];
+
+        foreach (['example.org', 'example.net', 'example.com'] as $domain) {
+            $generated[] = $this->generated([
+                'domain'          => $domain,
+                'sts_record_host' => '_mta-sts.' . $domain,
+                'mode'            => 'testing',
+                'mx'              => $patterns,
+                'tlsrpt_enabled'  => false,
+            ]);
+        }
+
+        $summary = $diagnostics->summarize(true, $generated, true);
+
+        $this->assertCount(3, $summary['domains']);
+        $this->assertSame(['mtasts_mode_testing'], $this->codes($summary['domains'][0]));
+        $this->assertSame(['mtasts_mode_testing'], $this->codes($summary['domains'][1]));
+        $this->assertSame(['mtasts_mx_uncovered'], $this->codes($summary['domains'][2]));
+        $this->assertSame(['example.com', 'mail.eu.example.org'], $summary['domains'][2]['findings'][0]['params']);
+    }
+
+    public function testOptOutAndDisabledMtaStsNeverQueryMxOrFetchPolicy(): void
+    {
+        $resolver = new class implements DnsResolverInterface {
+            public function txt(string $host): ?array
+            {
+                throw new \LogicException('Unexpected DNS query.');
+            }
+
+            public function mx(string $host): ?array
+            {
+                throw new \LogicException('Unexpected MX query.');
+            }
+        };
+        $fetcher = new class implements PolicyFetcherInterface {
+            public function fetch(string $url): ?string
+            {
+                throw new \LogicException('Unexpected HTTPS request.');
+            }
+        };
+        $diagnostics = new MtaStsDiagnostics($resolver, $fetcher);
+
+        $this->assertSame(
+            ['mtasts_publish', 'tlsrpt_publish'],
+            $this->codes($diagnostics->inspect($this->generated(), false))
+        );
+        $this->assertSame([], $diagnostics->inspect(
+            $this->generated(['enabled' => false, 'tlsrpt_enabled' => false]),
+            true
+        )['findings']);
+    }
+
+    public function testTlsRptOnlyNeverChecksMxCoverage(): void
+    {
+        $resolver = new class implements DnsResolverInterface {
+            public function txt(string $host): ?array
+            {
+                return ['v=TLSRPTv1; rua=mailto:tls@example.org'];
+            }
+
+            public function mx(string $host): ?array
+            {
+                throw new \LogicException('TLS-RPT alone must not query MX.');
+            }
+        };
+        $diagnostics = new MtaStsDiagnostics($resolver, $this->fetcher(null));
+
+        $this->assertSame([], $diagnostics->inspect($this->generated(['enabled' => false]), true)['findings']);
     }
 
     public function testFullyConsistentEnforceHasNoFindings(): void

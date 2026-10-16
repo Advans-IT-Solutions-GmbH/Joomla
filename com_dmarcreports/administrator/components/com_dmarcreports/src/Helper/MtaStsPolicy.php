@@ -251,6 +251,37 @@ final class MtaStsPolicy
     }
 
     /**
+     * RFC 8461 section 4.1: a wildcard matches exactly one whole left-most
+     * label, not the bare suffix or a deeper descendant.
+     *
+     * @param string[] $patterns
+     */
+    public static function matchesMx(string $host, array $patterns): bool
+    {
+        $host = strtolower(rtrim($host, '.'));
+
+        if ($host === '' || !filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+            return false;
+        }
+
+        foreach (self::normalizeMxList($patterns) as $pattern) {
+            if ($host === $pattern) {
+                return true;
+            }
+
+            if (str_starts_with($pattern, '*.')) {
+                $dot = strpos($host, '.');
+
+                if ($dot !== false && substr($host, $dot + 1) === substr($pattern, 2)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param   string[]  $mx
      *
      * @return  string[]

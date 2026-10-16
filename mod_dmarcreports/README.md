@@ -40,14 +40,16 @@ The module contains no direct database access — it reads everything through th
 
 ## Installation
 
-1. Download `mod_dmarcreports_<version>.zip` from the latest release
+**Availability:** No module release or `moddmarcreports-v*` tag has been published yet. The module remains individually buildable, but is intended to be delivered with the [DMARC Reports package](../pkg_dmarcreports), not as a second installation alongside it. Until releases exist, build the package from source, or build this module alone with `cd mod_dmarcreports` and `./build.sh` (Bash, rsync and zip required).
+
+1. Use the generated `mod_dmarcreports_<version>.zip` for a standalone installation
 2. **System → Install → Extensions**
 3. Upload and install
 4. Publish the module under **Content → Site Modules** … **Administrator Modules** (**System → Manage → Administrator Modules**), set its position to `cpanel` and status to published
 
 ## Updating
 
-The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
+The standalone manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions will appear under **System → Update → Extensions** once releases exist. A package installation uses only the package update channel. You can also install a newer built ZIP over the existing installation. Release retention is latest-only within each extension's tag family, not the monorepo's global latest release.
 
 ## Uninstall
 

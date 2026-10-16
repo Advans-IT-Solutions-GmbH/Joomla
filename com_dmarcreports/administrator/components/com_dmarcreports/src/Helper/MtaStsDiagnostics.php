@@ -160,7 +160,48 @@ final class MtaStsDiagnostics
             return [$this->finding('mtasts_publish', 1, [$stsHost, $stsRecord, $wellKnownUrl])];
         }
 
-        return $this->inspectStsRecord($generated);
+        $findings = array_merge($this->inspectMxCoverage($generated), $this->inspectStsRecord($generated));
+
+        if ($findings === [] && ($generated['mode'] ?? '') === MtaStsPolicy::MODE_TESTING) {
+            $findings[] = $this->finding('mtasts_mode_testing', 1, [$domain]);
+        }
+
+        return $findings;
+    }
+
+    /**
+     * @param array<string, mixed> $generated
+     *
+     * @return array<int, array{code:string, severity:int, params:array<int,mixed>}>
+     */
+    private function inspectMxCoverage(array $generated): array
+    {
+        $domain = (string) ($generated['domain'] ?? '');
+        $hosts  = $this->resolver->mx($domain);
+
+        if ($hosts === null) {
+            return [$this->finding('mtasts_mx_lookup_error', 2, [$domain])];
+        }
+
+        if ($hosts === []) {
+            return [$this->finding('mtasts_mx_no_answer', 2, [$domain])];
+        }
+
+        $uncovered = [];
+
+        foreach ($hosts as $host) {
+            if (!MtaStsPolicy::matchesMx($host, (array) ($generated['mx'] ?? []))) {
+                $uncovered[] = $host;
+            }
+        }
+
+        if ($uncovered === []) {
+            return [];
+        }
+
+        $severity = ($generated['mode'] ?? '') === MtaStsPolicy::MODE_ENFORCE ? 3 : 2;
+
+        return [$this->finding('mtasts_mx_uncovered', $severity, [$domain, implode(', ', $uncovered)])];
     }
 
     /**
@@ -235,7 +276,6 @@ final class MtaStsDiagnostics
      */
     private function inspectHostedPolicy(array $generated): array
     {
-        $domain       = (string) ($generated['domain'] ?? '');
         $mode         = (string) ($generated['mode'] ?? '');
         $maxAge       = (int) ($generated['max_age'] ?? 0);
         $mx           = array_map('strval', (array) ($generated['mx'] ?? []));
@@ -265,13 +305,6 @@ final class MtaStsDiagnostics
             || $hosted['max_age'] !== $maxAge
             || $hostedMx !== $mx) {
             return [$this->finding('mtasts_policy_drift', 2, [$wellKnownUrl])];
-        }
-
-        // Record, policy and reporting are consistent. A policy left in testing
-        // mode never makes receivers enforce TLS; nudge the operator to switch
-        // to enforce once they are confident, mirroring the DMARC rollout advice.
-        if ($mode === MtaStsPolicy::MODE_TESTING) {
-            return [$this->finding('mtasts_mode_testing', 1, [$domain])];
         }
 
         return [];

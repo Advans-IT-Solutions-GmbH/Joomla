@@ -25,6 +25,11 @@ class DnsDiagnosticsTest extends TestCase
     private function resolver(array $records): DnsResolverInterface
     {
         return new class ($records) implements DnsResolverInterface {
+            public function mx(string $host): ?array
+            {
+                throw new \LogicException('TXT diagnostics must not query MX.');
+            }
+
             /** @param array<string, array<int, string>> $records */
             public function __construct(private array $records)
             {
@@ -276,6 +281,11 @@ class DnsDiagnosticsTest extends TestCase
 
     public function testResolverFailureIsReportedAsLookupErrorNotMissingRecords(): void    {
         $resolver = new class implements DnsResolverInterface {
+            public function mx(string $host): ?array
+            {
+                throw new \LogicException('TXT diagnostics must not query MX.');
+            }
+
             public function txt(string $host): ?array
             {
                 return null;
