@@ -34,19 +34,21 @@ Products are matched and updated (instead of duplicated) using three methods:
 3. **SKU** - Product variant SKU
 
 ### Import Options
-- Update existing products or create new only
-- Create menu items automatically
-- Configure menu type and access level
-- Set default category for new products
+- Update matching products, or create new records without updating matches
+- Create menu items from the file's `menu_item` records
+- Configure default menu type, publication state and access level
+- Create menus through Joomla's validated nested-set table API, including required database defaults
+- Re-imports update the article's existing menu entry in the requested menu and parent instead of duplicating it
+- Set a default category when the record has no category ID or path
 - Import without stock management (unlimited inventory)
 - **Quantity Update Mode** - Choose how stock quantities are updated:
   - **Replace**: Overwrite existing stock with imported value (default)
   - **Add**: Add imported quantity to existing stock (useful for restocking)
 
 ### Supported Formats
-- **JSON** - Recommended for full export, includes field documentation
-- **CSV** - Excel-compatible with UTF-8 BOM, comment lines supported
-- **XML** - With field documentation section
+- **JSON** - Recommended for complete product export/import, includes field documentation
+- **CSV** - Export and complete product import; UTF-8 BOM and comment lines supported
+- **XML** - Export only, with field documentation section
 
 ## Requirements
 
@@ -109,12 +111,30 @@ The export includes all product data in a single JSON file that can be re-import
 2. Upload the JSON or CSV file (maximum 10 MB)
 3. Configure options:
    - **Update existing products** - Update if article_id, alias, or SKU matches
-   - **Create menu items** - Auto-create menu entries
-   - **Menu type** - Target menu for new items
-   - **Access level** - Visibility of menu items
+   - **Create menu items** - Create entries from `menu_item` records in the file
+   - **Menu type / Access level / Published** - Defaults when the menu record omits these values
+   - **Default category** - Used when a product has neither `catid` nor `category_path`
    - **Quantity Update Mode** - Replace or add to existing stock
-4. Click **Preview** to verify data
+4. Click **Upload File**; the dashboard uploads the file and requests **Preview** automatically
 5. Click **Start Import**
+
+Unchecked checkboxes are sent to the model as false. Options are validated server-side;
+invalid quantity modes, checkbox values and category/access ID formats are rejected.
+The preview and import use the same parser. Invalid JSON, inconsistent CSV columns and
+unsupported types fail explicitly instead of reporting a successful zero-row import.
+CSV preview validates/counts the entire file while retaining only its requested sample;
+quoted headers, BOM-prefixed documentation rows and escaped quotes inside nested JSON are supported.
+Standard doubled-quote CSV is preferred. If that dialect cannot parse the complete file,
+the parser accepts PHP's legacy backslash-escape dialect used by existing exports.
+Both preview and import select one dialect for the whole file; files invalid in both are rejected.
+Quoting is checked against the raw CSV records before accepting a dialect, including
+scalar text and serialized article-image fields; matching column counts alone are not sufficient.
+Row errors and partial-import counts are shown without an automatic page reload.
+
+Complete product JSON accepts an array of records or a `{"products": [...]}` wrapper.
+For CSV, use comma-separated columns with a `title`; nested collection columns such as
+`variants` must contain JSON arrays (quoted according to CSV rules). JSON is recommended
+for complete round trips. XML uploads are rejected.
 
 ### Quantity Update Mode
 When importing products with stock quantities, you can choose how the quantity is updated:
@@ -139,12 +159,25 @@ Server path: /var/www/html/images/products/phone.jpg
 Import value: images/products/phone.jpg
 ```
 
-### Simple Export/Import
-For bulk updates of specific data:
+### Additional Export Types
+These types are export-only; they are not partial-update import formats:
 - **Products (J2Store only)** - Basic product data
 - **Variants** - SKU, prices, stock
 - **Prices** - Tier pricing only
 - **Categories** — export only
+
+Only `type=products_full` is accepted by the import endpoint, including when the type
+is omitted. Requests for `products`, `variants`, `prices` or other types are rejected
+before any records are written. Export types and formats are unchanged.
+
+### Import HTTP Responses
+All three import tasks return flat JSON with a boolean `success` and a `message` on
+failure. Upload returns `file`; preview returns `preview` containing `headers`, `rows`
+and `total`; process returns `imported`, `failed` and `errors`. The dashboard calls
+upload, then preview, and enables processing only after a non-empty preview.
+Clients must send the upload response's `file` identifier with both preview and process
+requests. It must still match the session's current upload; uploads superseded by another
+tab are rejected rather than importing a different file from the displayed preview.
 
 ## Export Formats
 
@@ -279,7 +312,20 @@ This component has automated tests that run via GitHub Actions (`j2commerce-impo
 
 The compatibility jobs install the extension ZIP into official Joomla Docker images with real J2Commerce runtimes: the newest Joomla 5.4.x (PHP 8.3) with the latest J2Store/J2Commerce 4 release and the newest Joomla 6.x (PHP 8.4) with a J2Commerce 6 package built from the newest aligned commit of the official `j2commerce/j2commerce` repository, both resolved once per run and never pinned. No Joomla patch version is pinned, so incompatibilities with a new Joomla release show up immediately; each job log prints the tested versions (`Tested versions: Joomla X.Y.Z, PHP A.B.C`). Model tests seed and exercise the real `#__j2store_*` and `#__j2commerce_*` tables instead of stub schemas.
 
-The export controller is now covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs a multipart upload to `task=import.upload`, runs `task=import.process`, asserts the product is actually created in the live `#__j2store_*` / `#__j2commerce_*` tables, and verifies the upload is rejected without a CSRF token. Both HTTP tests run on both stacks.
+The export controller is covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs upload, preview and process requests; asserts flat response shapes, rejected types/options and CSRF protection; and verifies actual products, default category/menu settings and stock add/replace behavior in the live database. Both HTTP tests run on both stacks.
+
+Lightweight contract checks can run without Docker or Joomla, from the repository root:
+
+```sh
+php -d memory_limit=32M j2commerce/com_j2commerce_importexport/tests/import-contract.php
+node --test j2commerce/com_j2commerce_importexport/tests/import-dashboard.test.cjs
+```
+
+The PHP check uses framework doubles around the real controller, parser and quantity helper.
+It also previews 100,000 CSV records under a 32 MiB peak-memory threshold and verifies that
+malformed rows beyond the preview sample are still rejected.
+The Node.js check renders the actual PHP template and exercises its script with a simulated
+DOM and HTTP responses. These checks do not replace the real Joomla HTTP suites or browser testing.
 
 ### Test Suites
 
@@ -292,7 +338,7 @@ Order as in `tests/test.env`:
 5. **Round-Trip** (`04b-roundtrip.php`) — imports a product via `importProductFull()`, exports it via `exportData('products_full')` and verifies the exported record matches the imported data
 6. **Export Controller** — `core.manage` access check and structure (reflection)
 7. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)
-8. **Import HTTP (CSRF)** — real multipart upload + process creating a product in the DB, with CSRF rejection (J2Commerce 4 and 6)
+8. **Import HTTP (CSRF)** — upload + preview + process, rejected options/types, category/menu defaults and persisted stock add/replace, with CSRF rejection (J2Commerce 4 and 6)
 9. **Active Shop Detection** (`09-active-shop-detection.php`) — adds the other shop's tables with different test data next to the installed shop and asserts via `exportData('variants')` that the enabled shop component decides which data is exported: installed or other shop enabled alone, both enabled (J2Commerce 6 wins), the fallback when no shop component is enabled, and — before the other shop's tables are created — an enabled component without its tables being skipped. Every constellation uses a new model instance; the temporary tables, rows and `#__extensions` changes are removed afterwards and the cleanup is verified (J2Commerce 4 and 6)
 10. **Backend Views** (`shared-backend-views.php`) — shared suite: logs into `/administrator` and really renders every backend view of the component. It requests the entry point without a view, every `View\<Name>\HtmlView` class, every `tmpl/<name>` folder and every name in `BACKEND_VIEWS_EXTRA` (here `import,export`), and asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the extension's own language file on the page. Reflection alone never opens a page, which is why a view calling a method it did not have shipped green
 11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
@@ -327,7 +373,7 @@ CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command 
 
 ### Import Fails with "Invalid file type"
 **Problem:** Upload rejected immediately  
-**Solution:** Only CSV, XML and JSON files are accepted. Verify the file extension and that the file is not corrupted.
+**Solution:** Only CSV and JSON files are accepted for import. XML is export-only. Verify the file extension and that the file is not corrupted.
 
 ### Upload Rejected Because the File Is Too Large
 **Problem:** Upload fails for a large import file  
