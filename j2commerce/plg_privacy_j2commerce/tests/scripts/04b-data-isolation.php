@@ -1016,13 +1016,43 @@ class DataIsolationTest
                 'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT',
             ], json_encode($keys));
 
+            // A newsletter subscriber kept by a failing listener (removeAcyMailingSubscriber()).
+            $keptFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'newsletterKept');
+            $keptFlag->setAccessible(true);
+            $keptKeys = [];
+
+            foreach ([[true, 1], [true, 0], [false, 1], [false, 0]] as [$guest, $deleteAddresses]) {
+                $mailPlugin = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['delete_addresses' => $deleteAddresses])]);
+                $guestFlag->setValue($mailPlugin, $guest);
+                $keptFlag->setValue($mailPlugin, true);
+                $keptKeys[] = $mailPlugin->call('customerNoticeBodyKey');
+            }
+
+            $newsletterKeptKeys = [
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_NEWSLETTER_KEPT',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT_NEWSLETTER_KEPT',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_NEWSLETTER_KEPT',
+                'PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT_NEWSLETTER_KEPT',
+            ];
+            $this->test('Customer e-mail text names a kept newsletter subscriber', $keptKeys === $newsletterKeptKeys, json_encode($keptKeys));
+
             foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
                 $ini    = JPATH_BASE . '/plugins/privacy/j2commerce/language/' . $tag . '/plg_privacy_j2commerce.ini';
                 $values = is_file($ini) ? (parse_ini_file($ini, false, INI_SCANNER_RAW) ?: []) : [];
-                $kept   = [(string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT'] ?? ''), (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT'] ?? '')];
+                $kept   = [
+                    (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT'] ?? ''),
+                    (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT'] ?? ''),
+                    (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_GUEST_ADDRESSES_KEPT_NEWSLETTER_KEPT'] ?? ''),
+                    (string) ($values['PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_BODY_ADDRESSES_KEPT_NEWSLETTER_KEPT'] ?? ''),
+                ];
                 $this->test("$tag: texts for kept addresses exist and do not mention the saved addresses as deleted",
-                    $kept[0] !== '' && $kept[1] !== ''
+                    !\in_array('', $kept, true)
                     && !preg_match('/(saved addresses|gespeicherten Adressen|adresses enregistrées)[^.]*(were deleted|wurden gelöscht|ont été supprimées)/iu', implode(' ', $kept)));
+
+                $newsletter = array_map(static fn (string $key): string => (string) ($values[$key] ?? ''), $newsletterKeptKeys);
+                $this->test("$tag: texts for a kept newsletter subscriber exist and do not mention the newsletter data as deleted",
+                    !\in_array('', $newsletter, true)
+                    && !preg_match('/newsletter[^.]*(were deleted|was deleted|wurden gelöscht|wurde gelöscht|ont été supprimé|a été supprimé)/iu', implode(' ', $newsletter)));
             }
 
             // Matching rules
