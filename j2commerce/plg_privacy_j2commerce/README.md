@@ -325,6 +325,8 @@ The integration uses **direct DB queries** against AcyMailing's tables — no Ac
 - Works whether AcyMailing is enabled or disabled in Joomla
 - Gracefully skipped when AcyMailing is not installed — no errors, no impact on existing behaviour
 
+**An unsubscribe outlives a removal request.** Before a subscriber is removed, the plugin fires `onJ2CommercePrivacyBeforeNewsletterRemoval` (plugin group `j2commerce`, arguments `email` and `acymId`) while the subscriber still exists. A shop plugin can keep a minimal suppression record there, so the address is never subscribed again automatically after its list rows (including an unsubscribed status) are gone. If a listener throws, the subscriber is kept, the error is logged (`plg_privacy_j2commerce`, User Actions Log entry "AcyMailing subscriber kept") and the administrator gets a warning to repeat the removal. The rest of the removal request is carried out.
+
 The plugin detects AcyMailing by scanning the database for a table ending in `acym_configuration`. If not found, all AcyMailing code paths are bypassed.
 
 ### Privacy Suite: what is exported and deleted

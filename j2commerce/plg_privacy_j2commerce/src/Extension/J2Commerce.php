@@ -28,6 +28,7 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
@@ -40,6 +41,8 @@ use Joomla\Component\Privacy\Administrator\Removal\Status;
 use Joomla\Component\Privacy\Administrator\Table\RequestTable;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
+use Joomla\Event\DispatcherInterface;
+use Joomla\Event\Event;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Utilities\IpHelper;
 
@@ -67,6 +70,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** Order e-mail of anonymized orders; never matched as a customer address. */
     public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
+
+    /**
+     * Fired (plugin group j2commerce) with the arguments `email` and `acymId` right before an
+     * AcyMailing subscriber is removed for a privacy request. A listener keeps what the shop needs
+     * so that the address is never subscribed again automatically, e.g. a suppression record. If a
+     * listener throws, the subscriber is kept: removing it would erase its unsubscribe status.
+     */
+    public const EVENT_BEFORE_NEWSLETTER_REMOVAL = 'onJ2CommercePrivacyBeforeNewsletterRemoval';
 
     /**
      * Route of the confirmation page for privacy requests (com_ajax, this plugin). The bundled
@@ -862,6 +873,34 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     {
         $db = $this->getDatabase();
 
+        // An unsubscribe outlives the removal request: the shop is told before the subscriber, its
+        // list rows (unsubscribed included) and its history go, so it can keep a suppression
+        // record. If that fails, the subscriber stays and the administrator is told.
+        try {
+            $email = (string) $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName('email'))
+                    ->from($db->quoteName($prefix . 'user'))
+                    ->where($db->quoteName('id') . ' = ' . $acymId)
+            )->loadResult();
+
+            $this->dispatchBeforeNewsletterRemoval($email, $acymId);
+        } catch (\Throwable $e) {
+            Log::add(
+                'AcyMailing subscriber ' . $acymId . ' not removed: ' . self::EVENT_BEFORE_NEWSLETTER_REMOVAL . ' failed (' . \get_class($e) . ': ' . $e->getMessage() . ')',
+                Log::ERROR,
+                'plg_privacy_j2commerce'
+            );
+            $this->logActivity('acymailing_subscriber_kept', $userId);
+            $app = $this->feedbackApplication();
+
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_ACYM_REMOVAL_KEPT'), 'warning');
+            }
+
+            return;
+        }
+
         try {
             // Tables referencing acym_user.id — delete before the subscriber record (FK constraints)
             $relatedTables = [
@@ -900,6 +939,35 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         } catch (\Exception $e) {
             Log::add('AcyMailing subscriber deletion failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
+    }
+
+    /**
+     * Fire EVENT_BEFORE_NEWSLETTER_REMOVAL for one subscriber. The j2commerce plugin group is
+     * imported first, so a shop plugin listens even in the administrator request of com_privacy.
+     * Any exception reaches the caller, which then keeps the subscriber.
+     */
+    protected function dispatchBeforeNewsletterRemoval(string $email, int $acymId): void
+    {
+        $dispatcher = $this->newsletterDispatcher();
+        PluginHelper::importPlugin('j2commerce', null, true, $dispatcher);
+        $event = new Event(self::EVENT_BEFORE_NEWSLETTER_REMOVAL, ['email' => $email, 'acymId' => $acymId]);
+        $dispatcher->dispatch($event->getName(), $event);
+    }
+
+    /** The dispatcher of the application, or the container's one without an application (CLI). */
+    protected function newsletterDispatcher(): DispatcherInterface
+    {
+        try {
+            $app = Factory::getApplication();
+
+            if (method_exists($app, 'getDispatcher')) {
+                return $app->getDispatcher();
+            }
+        } catch (\Throwable $e) {
+            // No application: the container's dispatcher below.
+        }
+
+        return Factory::getContainer()->get(DispatcherInterface::class);
     }
 
     /**
@@ -2110,6 +2178,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     private const ACTIVITY_LOG_KEYS = [
         'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+        'acymailing_subscriber_kept'    => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_KEPT',
         'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
         'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
         'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',

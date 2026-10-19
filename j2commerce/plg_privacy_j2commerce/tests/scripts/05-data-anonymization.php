@@ -579,6 +579,7 @@ class DataAnonymizationTest
 
         $expected = [
             'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+            'acymailing_subscriber_kept'    => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_KEPT',
             'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
             'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
             'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',
