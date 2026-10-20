@@ -76,7 +76,7 @@ final class JitsiProvider implements ConferenceProviderInterface
         return '<fieldset name="jitsi">'
             . '<field name="base_url" type="url" label="Base URL" required="true" />'
             . '<field name="room_pattern" type="text" label="Room pattern" default="{prefix}-{alias}-{random}" />'
-            . '<field name="prefix" type="text" label="Room prefix" default="meeting" />'
+            . '<field name="prefix" type="text" label="Room prefix" default="appointment" />'
             . '<field name="alias" type="text" label="Event alias" default="event" />'
             . '<field name="entropy" type="number" label="Random characters" min="16" max="64" default="24" />'
             . '<field name="auth" type="list" label="Authentication" default="none">'

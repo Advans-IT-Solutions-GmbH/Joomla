@@ -1604,7 +1604,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         if ($lifetime !== []) {
-            $text .= $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER') . "\n\n";
+            // "Anonymize Orders" off: these orders stay unchanged, the heading says so.
+            $text .= $language->_((int) $this->params->get('anonymize_orders', 1)
+                ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER'
+                : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT') . "\n\n";
 
             foreach ($lifetime as $i => $order) {
                 $text .= ($i + 1) . '. ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";

@@ -1017,6 +1017,23 @@ class DataAnonymizationTest
                     && !str_contains($log[1][2] ?? '', 'PLG_PRIVACY_J2COMMERCE_'), json_encode($log));
             }
 
+            // Expired lifetime-license orders stay unchanged too: their heading must
+            // not call them anonymized.
+            $lifetimeOnly = [['order_number' => 'FB-3', 'order_date' => '01.02.2010']];
+            $lifetimeText = (string) $plugin->call('formatRetainedOrders', [], $lifetimeOnly);
+            $this->test('orders kept by the option: the lifetime heading says the orders stay unchanged',
+                str_contains($lifetimeText, Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT'))
+                && !str_contains($lifetimeText, Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER'))
+                && str_contains($lifetimeText, 'FB-3'), $lifetimeText);
+
+            FeedbackTestApp::$log = [];
+            $plugin->mailState    = 'sent';
+            $plugin->call('reportRetainedOrders', [], $lifetimeOnly, $email, 'de-DE');
+            $log = FeedbackTestApp::$log;
+            $this->test('orders kept by the option, lifetime orders only: the message uses the unchanged heading',
+                str_contains($log[1][2] ?? '', htmlspecialchars(Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT'), ENT_QUOTES, 'UTF-8'))
+                && !str_contains($log[1][2] ?? '', 'PLG_PRIVACY_J2COMMERCE_'), json_encode($log));
+
             $keptFlag->setValue($plugin, true);
             FeedbackTestApp::$log = [];
             $plugin->call('reportRetainedOrders', [], [], $email, 'de-DE');
