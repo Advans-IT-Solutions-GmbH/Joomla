@@ -334,6 +334,14 @@ class RegistrationTest
     {
         $username = 'ajaxforms_' . $suffix;
 
+        // A site may add consent fields to the registration form (privacy consent,
+        // terms). They are required exactly as in com_users, so the visitor ticks
+        // them. Fields the form does not have are dropped by its filter.
+        $extra['jform'] = ($extra['jform'] ?? []) + [
+            'privacyconsent' => ['privacy' => '1'],
+            'terms'          => ['terms' => '1'],
+        ];
+
         return ajaxforms_post_task($this->baseUrl, 'register', $extra + [
             'name'      => 'AJAX Forms ' . $suffix,
             'username'  => $username,
@@ -369,7 +377,7 @@ class RegistrationTest
             'minimum_lowercase'     => 1,
         ]);
 
-        $suffixes = ['regshort', 'regdigit', 'regsymbol', 'regupper', 'reglower', 'regok', 'regclosed', 'regcaptcha'];
+        $suffixes = ['regshort', 'regdigit', 'regsymbol', 'regupper', 'reglower', 'regok', 'regconsent', 'regclosed', 'regcaptcha'];
 
         try {
             foreach ($suffixes as $suffix) {
@@ -403,6 +411,29 @@ class RegistrationTest
                 'answer: ' . var_export($answer, true)
             );
             $this->test('Account created for the valid password', ajaxforms_user_record('ajaxforms_regok') !== null);
+
+            // Where the site adds the privacy consent to the registration form, it
+            // is required on the AJAX path exactly as in com_users.
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $db->setQuery(
+                (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                    ->select('COUNT(*)')
+                    ->from($db->quoteName('#__extensions'))
+                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                    ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
+                    ->where($db->quoteName('element') . ' = ' . $db->quote('privacyconsent'))
+                    ->where($db->quoteName('enabled') . ' = 1')
+            );
+
+            if ((int) $db->loadResult() > 0) {
+                [, $answer] = $this->register('regconsent', 'Abcdefghij1!', ['jform' => ['privacyconsent' => ['privacy' => '']]]);
+                $this->test(
+                    'Registration without the privacy consent of the form is refused',
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test('No account created without the privacy consent', ajaxforms_user_record('ajaxforms_regconsent') === null);
+            }
 
             // The captcha of the Users options: a test provider that accepts
             // exactly "ajaxforms-ok" (see ajaxforms_install_test_captcha()).

@@ -571,14 +571,18 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 unset($pluginFields[$serverField]);
             }
 
-            if ($pluginFields !== []) {
-                $user->bind($pluginFields);
+            // The submitted password goes into the same bind, so User::bind() hashes
+            // it and the save hooks receive the credential of this account.
+            $pluginFields['password']  = $password;
+            $pluginFields['password2'] = $password2;
+
+            if (!$user->bind($pluginFields)) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_REGISTRATION_FAILED'));
             }
 
             $user->name     = $name;
             $user->username = $username;
             $user->email    = $email;
-            $user->password = UserHelper::hashPassword($password);
 
             $userActivation = $usersConfig->get('useractivation');
             $defaultGroup = $usersConfig->get('new_usertype', 2);
