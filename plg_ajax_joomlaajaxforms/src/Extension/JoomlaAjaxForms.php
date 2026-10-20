@@ -554,6 +554,27 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         try {
             // new User() is removed in Joomla 6 — use UserFactoryInterface instead.
             $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById(0);
+
+            // The fields a plugin added to the registration form (for example a
+            // profile) go along, as in RegistrationModel::register(), so the save
+            // hooks receive them. The form keeps only its own fields. The core
+            // fields and every account property the server decides are set below
+            // and are never taken from the request.
+            $pluginFields = $validated;
+
+            foreach ([
+                'name', 'username', 'email', 'email1', 'email2', 'password', 'password1', 'password2',
+                'password_clear', 'captcha', 'id', 'groups', 'block', 'activation', 'sendEmail',
+                'registerDate', 'lastvisitDate', 'lastResetTime', 'resetCount', 'requireReset',
+                'otpKey', 'otep', 'authProvider', 'guest',
+            ] as $serverField) {
+                unset($pluginFields[$serverField]);
+            }
+
+            if ($pluginFields !== []) {
+                $user->bind($pluginFields);
+            }
+
             $user->name     = $name;
             $user->username = $username;
             $user->email    = $email;
@@ -762,10 +783,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // Always return success to prevent email enumeration
         try {
             $db = $this->getDatabase();
+            // Matched like com_users, regardless of the case of the address.
             $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
-                ->where($db->quoteName('email') . ' = :email')
+                ->where('LOWER(' . $db->quoteName('email') . ') = LOWER(:email)')
                 ->where($db->quoteName('block') . ' = 0')
                 ->bind(':email', $email);
             $db->setQuery($query);
@@ -779,26 +801,47 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById((int) $user->id)
                 : null;
 
+            // The state the limit is checked against, before withinResetLimit()
+            // moves it on.
+            $readCount = $user ? (int) $user->resetCount : 0;
+            $readTime  = $user && $user->lastResetTime !== null ? (string) $user->lastResetTime : null;
+
             if ($user && $account && !$account->authorise('core.admin') && $this->withinResetLimit($user)) {
                 $token = UserHelper::genRandomPassword(32);
                 $hashedToken = UserHelper::hashPassword($token);
                 $resetTime  = (string) $user->lastResetTime;
                 $resetCount = (int) $user->resetCount;
 
+                // Reserve the request atomically: the row is only updated while
+                // it still holds the state that was checked. Of two concurrent
+                // requests on the same state only one updates the row and sends
+                // a mail, so the limit cannot be passed by parallel requests.
                 $query = $this->createDbQuery($db)
                     ->update($db->quoteName('#__users'))
                     ->set($db->quoteName('activation') . ' = :activation')
                     ->set($db->quoteName('lastResetTime') . ' = :resetTime')
                     ->set($db->quoteName('resetCount') . ' = :resetCount')
                     ->where($db->quoteName('id') . ' = :userId')
+                    ->where($db->quoteName('resetCount') . ' = :readCount')
                     ->bind(':activation', $hashedToken)
                     ->bind(':resetTime', $resetTime)
                     ->bind(':resetCount', $resetCount, ParameterType::INTEGER)
-                    ->bind(':userId', $user->id, ParameterType::INTEGER);
+                    ->bind(':userId', $user->id, ParameterType::INTEGER)
+                    ->bind(':readCount', $readCount, ParameterType::INTEGER);
+
+                if ($readTime === null) {
+                    $query->where($db->quoteName('lastResetTime') . ' IS NULL');
+                } else {
+                    $query->where($db->quoteName('lastResetTime') . ' = :readTime')
+                        ->bind(':readTime', $readTime);
+                }
+
                 $db->setQuery($query);
                 $db->execute();
 
-                $this->sendResetEmail($user, $token);
+                if ($db->getAffectedRows() === 1) {
+                    $this->sendResetEmail($user, $token);
+                }
             }
         } catch (\Exception $e) {
             Log::add('Password reset error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');

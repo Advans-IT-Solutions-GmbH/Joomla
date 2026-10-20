@@ -451,6 +451,39 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * Whether the form carries a captcha (a widget or the captcha field of com_users).
+     *
+     * @param {HTMLFormElement} form - The form element
+     * @returns {boolean}
+     */
+    hasCaptcha: function(form) {
+        return !!form.querySelector(
+            '[name="jform[captcha]"], [name="g-recaptcha-response"], [name="h-captcha-response"], ' +
+            '[name="cf-turnstile-response"], .g-recaptcha, .h-captcha, .cf-turnstile'
+        );
+    },
+
+    /**
+     * Renew the answer of the captcha widgets that offer a reset.
+     *
+     * @returns {boolean} true when a widget was reset
+     */
+    resetCaptcha: function() {
+        var reset = false;
+        ['grecaptcha', 'hcaptcha', 'turnstile'].forEach(function(api) {
+            if (window[api] && typeof window[api].reset === 'function') {
+                try {
+                    window[api].reset();
+                    reset = true;
+                } catch (error) {
+                    // A widget that cannot be reset is treated like no reset.
+                }
+            }
+        });
+        return reset;
+    },
+
+    /**
      * Convert registration form to AJAX
      *
      * @param {HTMLFormElement} form - The form element
@@ -459,6 +492,12 @@ const JoomlaAjaxForms = {
         const messageContainer = JoomlaAjaxForms.createMessageContainer(form);
 
         form.addEventListener('submit', function(e) {
+            // A captcha whose answer cannot be renewed on this page: after a failed
+            // attempt the form goes to com_users the normal way, which shows a new one.
+            if (form.dataset.joomlaajaxformsNative === '1') {
+                return;
+            }
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -516,6 +555,12 @@ const JoomlaAjaxForms = {
                     form.reset();
                 } else {
                     var errorMsg = serverErrorMsg || JoomlaAjaxForms.getErrorMessage(data);
+
+                    // A captcha answer is used up by the attempt. Renew it, or let the
+                    // next submission go to com_users when the captcha offers no reset.
+                    if (JoomlaAjaxForms.hasCaptcha(form) && !JoomlaAjaxForms.resetCaptcha()) {
+                        form.dataset.joomlaajaxformsNative = '1';
+                    }
                     JoomlaAjaxForms.showMessage(messageContainer, errorMsg, 'error');
                 }
             })
