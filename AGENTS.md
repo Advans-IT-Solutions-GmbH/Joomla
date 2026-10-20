@@ -32,9 +32,10 @@
   fertig, auch nicht mit 0 Funden, ohne „Previously missed“ und mit grüner CI: den genannten Grund
   beheben und Copilot erneut anfordern, bis 🟢 dasteht.
 - **Kein Release vor dem Test wie von einem Menschen** (seit 21.10.2026). Der Merge auf `main`
-  folgt der Definition oben. Ein Release-Workflow (`release-*.yml`) wird erst gestartet, wenn das
-  CI-Paket der Extension aus dem freizugebenden `main`-Stand auf einer Testinstallation (nie einer
-  Produktivseite) positiv und negativ getestet ist: jedes seit dem letzten Release geänderte
+  folgt der Definition oben. Der Release-Workflow (`release-*.yml`) bereitet nur den Release-PR
+  vor und darf vorher laufen. Der Release-PR `release: <prefix> vX.Y.Z` wird erst gemergt, wenn
+  das CI-Paket seines Kopfs auf einer Testinstallation (nie einer Produktivseite) positiv und
+  negativ getestet ist: jedes seit dem letzten Release geänderte
   Formular, jede Funktion und jedes Layout, bei 1600 und 375 px. Negativ heisst jede Feldregel,
   Grenzwerte, Pflichtfelder, doppeltes Absenden, falsche und manipulierte Eingaben und
   Berechtigungen. Der Bericht kommt als Kommentar in den Release-PR, ohne Hostnamen und
