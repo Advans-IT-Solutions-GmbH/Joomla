@@ -721,3 +721,120 @@ function ajaxforms_user_record(string $username): ?object
 
     return $db->loadObject() ?: null;
 }
+
+/**
+ * Folder of the captcha plugin the registration tests install.
+ */
+function ajaxforms_test_captcha_dir(): string
+{
+    return JPATH_ROOT . '/plugins/captcha/ajaxformstest';
+}
+
+/**
+ * Install a minimal captcha plugin for the tests.
+ *
+ * Joomla no longer ships a captcha plugin, and a captcha plugin that is not
+ * installed makes the captcha field drop out of the form. The test plugin
+ * registers a provider through onCaptchaSetup that accepts exactly the answer
+ * "ajaxforms-ok", so the captcha rule of the registration can be tested with
+ * a refused and an accepted answer and without an external service.
+ */
+function ajaxforms_install_test_captcha(): void
+{
+    ajaxforms_remove_test_captcha();
+
+    $dir = ajaxforms_test_captcha_dir();
+    mkdir($dir . '/services', 0755, true);
+
+    file_put_contents($dir . '/services/provider.php', <<<'PHP'
+<?php
+defined('_JEXEC') or die;
+
+use Joomla\CMS\Captcha\CaptchaProviderInterface;
+use Joomla\CMS\Extension\PluginInterface;
+use Joomla\CMS\Form\FormField;
+use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\DI\Container;
+use Joomla\DI\ServiceProviderInterface;
+use Joomla\Event\DispatcherInterface;
+use Joomla\Event\SubscriberInterface;
+
+return new class () implements ServiceProviderInterface {
+    public function register(Container $container): void
+    {
+        $container->set(PluginInterface::class, function (Container $container) {
+            $plugin = new class (['name' => 'ajaxformstest', 'type' => 'captcha', 'params' => '{}']) extends CMSPlugin implements SubscriberInterface {
+                public static function getSubscribedEvents(): array
+                {
+                    return ['onCaptchaSetup' => 'onCaptchaSetup'];
+                }
+
+                public function onCaptchaSetup($event): void
+                {
+                    $event->getCaptchaRegistry()->add(new class () implements CaptchaProviderInterface {
+                        public function getName(): string
+                        {
+                            return 'ajaxformstest';
+                        }
+
+                        public function display(string $name = '', array $attributes = []): string
+                        {
+                            return '<input type="text" name="' . htmlspecialchars($name, ENT_QUOTES) . '">';
+                        }
+
+                        public function checkAnswer(?string $code = null): bool
+                        {
+                            return $code === 'ajaxforms-ok';
+                        }
+
+                        public function setupField(FormField $field, \SimpleXMLElement $element): void
+                        {
+                        }
+                    });
+                }
+            };
+            $plugin->setDispatcher($container->get(DispatcherInterface::class));
+
+            return $plugin;
+        });
+    }
+};
+PHP);
+
+    $db     = Factory::getContainer()->get(DatabaseInterface::class);
+    $record = (object) [
+        'name'           => 'plg_captcha_ajaxformstest',
+        'type'           => 'plugin',
+        'element'        => 'ajaxformstest',
+        'folder'         => 'captcha',
+        'client_id'      => 0,
+        'enabled'        => 1,
+        'access'         => 1,
+        'protected'      => 0,
+        'manifest_cache' => '{}',
+        'params'         => '{}',
+        'custom_data'    => '',
+        'ordering'       => 0,
+        'state'          => 0,
+    ];
+    $db->insertObject('#__extensions', $record, 'extension_id');
+}
+
+/**
+ * Remove the test captcha plugin again. Safe to call more than once.
+ */
+function ajaxforms_remove_test_captcha(): void
+{
+    $db    = Factory::getContainer()->get(DatabaseInterface::class);
+    $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        ->delete($db->quoteName('#__extensions'))
+        ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+        ->where($db->quoteName('folder') . ' = ' . $db->quote('captcha'))
+        ->where($db->quoteName('element') . ' = ' . $db->quote('ajaxformstest'));
+    $db->setQuery($query)->execute();
+
+    $dir = ajaxforms_test_captcha_dir();
+    @unlink($dir . '/services/provider.php');
+    @rmdir($dir . '/services');
+    @rmdir($dir);
+}

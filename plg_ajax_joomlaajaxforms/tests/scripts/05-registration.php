@@ -404,18 +404,29 @@ class RegistrationTest
             );
             $this->test('Account created for the valid password', ajaxforms_user_record('ajaxforms_regok') !== null);
 
-            // A captcha plugin that is not installed cannot confirm any answer:
-            // the field then fails like a missing answer. This proves that the
-            // captcha of the Users options is applied, without a call to an
-            // external captcha service.
-            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsnocaptcha']);
-            [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!');
+            // The captcha of the Users options: a test provider that accepts
+            // exactly "ajaxforms-ok" (see ajaxforms_install_test_captcha()).
+            ajaxforms_install_test_captcha();
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformstest']);
+
+            foreach (['no answer' => null, 'a wrong answer' => 'wrong'] as $what => $captcha) {
+                [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!', $captcha === null ? [] : ['jform' => ['captcha' => $captcha]]);
+                $this->test(
+                    "Registration with $what to the captcha of the Users options is refused",
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test("No account created with $what to the captcha", ajaxforms_user_record('ajaxforms_regcaptcha') === null);
+            }
+
+            [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!', ['jform' => ['captcha' => 'ajaxforms-ok']]);
             $this->test(
-                'Registration is refused while the captcha of the Users options is not answered',
-                $answer !== null && ($answer['success'] ?? null) === false,
+                'Registration with the right answer to the captcha is accepted',
+                $answer !== null && ($answer['success'] ?? null) === true,
                 'answer: ' . var_export($answer, true)
             );
-            $this->test('No account created without a captcha answer', ajaxforms_user_record('ajaxforms_regcaptcha') === null);
+            $this->test('Account created with the right answer to the captcha', ajaxforms_user_record('ajaxforms_regcaptcha') !== null);
+            ajaxforms_delete_test_user('regcaptcha');
 
             ajaxforms_set_component_params('com_users', ['captcha' => '0', 'allowUserRegistration' => 0]);
             [, $answer] = $this->register('regclosed', 'Abcdefghij1!');
@@ -427,6 +438,7 @@ class RegistrationTest
             $this->test('No account created while registration is off', ajaxforms_user_record('ajaxforms_regclosed') === null);
         } finally {
             ajaxforms_restore_component_params('com_users', $original);
+            ajaxforms_remove_test_captcha();
 
             foreach ($suffixes as $suffix) {
                 ajaxforms_delete_test_user($suffix);
