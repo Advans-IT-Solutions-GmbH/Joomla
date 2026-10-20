@@ -896,7 +896,7 @@ class ConsentLoggingTest
             // buildEvidenceRemovedBody() would build the German (acting person's) text and fail.
             $siteRemoved   = 'after its retention period';           // en-GB CONSENT_BODY_EVIDENCE_REMOVED
             $editorRemoved = 'nach Ablauf ihrer Aufbewahrungsfrist'; // de-DE CONSENT_BODY_EVIDENCE_REMOVED
-            $editorBody    = 'der Datenschutzerklärung zugestimmt';  // de-DE CONSENT_BODY
+            $editorBody    = 'die Datenschutzerklärung zur Kenntnis genommen';  // de-DE CONSENT_BODY
 
             $editorLang = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage('de-DE');
             $stubApp    = new class ($editorLang) {

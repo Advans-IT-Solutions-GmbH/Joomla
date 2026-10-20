@@ -34,7 +34,8 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │       ├── deleteCartData()
 │       ├── anonymizeOrders()        — if anonymize_orders; cutoff Retention\RetentionPeriod;
 │       │                              lifetime orders keep user_email; consent IP/UA removed
-│       ├── removeAcyMailingData()   — lookup by captured e-mails
+│       ├── removeAcyMailingData()   — lookup by captured e-mails; fires onJ2CommercePrivacyBeforeNewsletterRemoval
+│       │                              (group j2commerce, email/acymId) before each subscriber, keeps it if a listener throws
 │       └── reportRetainedOrders()   — customer e-mail first, then administrator message
 └── onAjaxJ2commercePrivacy()     — com_ajax entry (result via $event->addResult())
     ├── handleAccountTask()      — deleteAddress (logged-in, form token)

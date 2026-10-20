@@ -579,6 +579,7 @@ class DataAnonymizationTest
 
         $expected = [
             'acymailing_subscriber_deleted' => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_DELETED',
+            'acymailing_subscriber_kept'    => 'PLG_PRIVACY_J2COMMERCE_LOG_ACYMAILING_SUBSCRIBER_KEPT',
             'address_deleted'               => 'PLG_PRIVACY_J2COMMERCE_LOG_ADDRESS_DELETED',
             'all_addresses_deleted'         => 'PLG_PRIVACY_J2COMMERCE_LOG_ALL_ADDRESSES_DELETED',
             'data_deletion_requested'       => 'PLG_PRIVACY_J2COMMERCE_LOG_DATA_DELETION_REQUESTED',
@@ -955,6 +956,38 @@ class DataAnonymizationTest
         $this->test('nothing retained: no e-mail, success message',
             count(FeedbackTestApp::$log) === 1 && FeedbackTestApp::$log[0][1] === 'message'
             && str_contains(FeedbackTestApp::$log[0][2], Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED')));
+
+        // A newsletter subscriber kept by a failing listener: every message says so, as a warning.
+        $keptFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'newsletterKept');
+        $keptFlag->setAccessible(true);
+        $keptFlag->setValue($plugin, true);
+
+        try {
+            FeedbackTestApp::$log = [];
+            $plugin->call('reportRetainedOrders', [], [], $email, 'de-DE');
+            $this->test('newsletter kept, nothing retained: warning that names the subscriber as kept',
+                count(FeedbackTestApp::$log) === 1 && FeedbackTestApp::$log[0][1] === 'warning'
+                && str_contains(FeedbackTestApp::$log[0][2], Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT'))
+                && !str_contains(FeedbackTestApp::$log[0][2], 'PLG_PRIVACY_J2COMMERCE_'), json_encode(FeedbackTestApp::$log));
+
+            $keptCases = [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NEWSLETTER_KEPT',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_NEWSLETTER_KEPT',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_NEWSLETTER_KEPT',
+            ];
+
+            foreach ($keptCases as $state => $key) {
+                FeedbackTestApp::$log = [];
+                $plugin->mailState    = $state;
+                $plugin->call('reportRetainedOrders', $retained, [], $email, 'de-DE');
+                $log = FeedbackTestApp::$log;
+                $this->test("newsletter kept, mail '$state': warning with the matching text",
+                    ($log[1][1] ?? '') === 'warning' && str_contains($log[1][2] ?? '', htmlspecialchars(Text::sprintf($key, $email), ENT_QUOTES, 'UTF-8'))
+                    && !str_contains($log[1][2] ?? '', 'PLG_PRIVACY_J2COMMERCE_'), json_encode($log));
+            }
+        } finally {
+            $keptFlag->setValue($plugin, false);
+        }
 
         $german = $plugin->call('formatRetainedOrders', $retained, [['order_number' => 'FB-2', 'order_date' => '01.02.2010']], $plugin->call('pluginLanguage', 'de-DE'));
         $this->test('customer text in German (customer language) incl. lifetime-license notes',

@@ -5,7 +5,8 @@
  * Validates the AcyMailing schema the plugin relies on, the export queries,
  * the removal of a subscriber through the plugin's privacy removal handler
  * (onPrivacyRemoveData) and that the handler leaves AcyMailing data alone when
- * AcyMailing is not installed.
+ * AcyMailing is not installed. The shop is told before a subscriber goes
+ * (onJ2CommercePrivacyBeforeNewsletterRemoval), and a failing listener keeps it.
  *
  * Requires AcyMailing schema and test data inserted by docker-entrypoint.sh.
  */
@@ -20,12 +21,49 @@ require_once JPATH_BASE . '/includes/framework.php';
 JLoader::register('JNamespacePsr4Map', JPATH_LIBRARIES . '/namespacemap.php');
 (new JNamespacePsr4Map())->load();
 
+use Joomla\CMS\Application\AdministratorApplication;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Language;
+use Joomla\CMS\Language\LanguageFactoryInterface;
+use Joomla\CMS\Session\Session;
 use Joomla\CMS\User\User;
+use Joomla\Event\DispatcherInterface;
+use Joomla\Session\SessionInterface;
+use Joomla\Session\Storage\RuntimeStorage;
+
+/**
+ * The administrator application of a com_privacy request, with a guest identity and the plugin
+ * language: PluginHelper::importPlugin() reads the view levels of the current user from it, and
+ * the plugin enqueues its messages there. The session is held in memory (no cookie, no row).
+ */
+function bootAdministratorApplication(): AdministratorApplication
+{
+    $container = Factory::getContainer();
+    $container->share(
+        'session.acymtest',
+        static fn ($c) => new Session(new RuntimeStorage(), $c->get(DispatcherInterface::class)),
+        true
+    );
+
+    foreach (['session.web', 'session', 'JSession', Session::class, \Joomla\Session\Session::class, SessionInterface::class] as $alias) {
+        $container->alias($alias, 'session.acymtest');
+    }
+
+    $app      = $container->get(AdministratorApplication::class);
+    $language = $container->get(LanguageFactoryInterface::class)->createLanguage('en-GB');
+    $language->load('plg_privacy_j2commerce', JPATH_BASE . '/plugins/privacy/j2commerce');
+    $app->loadLanguage($language);
+    $app->loadIdentity(new User());
+    Factory::$application = $app;
+    Factory::$language    = $language;
+
+    return $app;
+}
 
 class AcyMailingIntegrationTest
 {
     private $db;
+    private AdministratorApplication $app;
     private int $passed = 0;
     private int $failed = 0;
 
@@ -48,7 +86,17 @@ class AcyMailingIntegrationTest
 
     public function __construct()
     {
-        $this->db = Factory::getContainer()->get('DatabaseDriver');
+        $this->db  = Factory::getContainer()->get('DatabaseDriver');
+        $this->app = bootAdministratorApplication();
+    }
+
+    /** Messages enqueued since the last call, as "type: text" (the queue is cleared). */
+    private function takeMessages(): array
+    {
+        return array_map(
+            static fn (array $message): string => $message['type'] . ': ' . $message['message'],
+            $this->app->getMessageQueue(true)
+        );
     }
 
     private function test(string $name, bool $condition, string $message = ''): bool
@@ -366,6 +414,123 @@ class AcyMailingIntegrationTest
     }
 
     /**
+     * Owner decision 2026-10-19 («Abmeldung bleibt nach Löschbegehren»): before a subscriber is
+     * removed, the plugin fires onJ2CommercePrivacyBeforeNewsletterRemoval with the subscriber's
+     * e-mail, while the subscriber still exists, so a shop plugin can keep a suppression record. If
+     * a listener throws, the subscriber and its unsubscribed list row are kept and the removal
+     * request itself still completes.
+     */
+    private function testUnsubscribeOutlivesRemoval(): void
+    {
+        echo "\n--- The unsubscribe outlives the removal request ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        if ($prefix === null) {
+            $this->strictSkip('AcyMailing schema available', 'the test environment installs it; getAcymPrefix() returned null');
+            return;
+        }
+
+        $plugin = $this->createPlugin();
+        if ($plugin === null) {
+            return;
+        }
+
+        $class = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class;
+        $name  = $class::EVENT_BEFORE_NEWSLETTER_REMOVAL;
+        $this->test('Event name is onJ2CommercePrivacyBeforeNewsletterRemoval', $name === 'onJ2CommercePrivacyBeforeNewsletterRemoval');
+
+        $this->test('Administrator application with an identity registered', Factory::getApplication() === $this->app && $this->app->getIdentity() !== null);
+        $dispatcher = (new \ReflectionMethod($plugin, 'newsletterDispatcher'))->invoke($plugin);
+        $this->test('Listener test uses the application dispatcher', $dispatcher === $this->app->getDispatcher());
+        $strings    = $this->app->getLanguage();
+        $doneText   = $strings->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED');
+        $keptText   = $strings->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT');
+        $this->test('Plugin language loaded for the removal messages', !str_starts_with($doneText, 'PLG_') && !str_starts_with($keptText, 'PLG_'));
+        $email      = 'acym-suppress@example.com';
+        $count      = function () use ($prefix, $email): int {
+            return (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote($email)
+            )->loadResult();
+        };
+        $unsubscribed = function (int $subId) use ($prefix): int {
+            return (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $subId . ' AND status = 0'
+            )->loadResult();
+        };
+        $insert = function () use ($prefix, $email): int {
+            $subId = $this->insertSubscriber($prefix, $email, 'Unsubscribed Earlier');
+            $this->db->setQuery(
+                'INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($subId, 1, 0, NOW())"
+            )->execute();
+
+            return $subId;
+        };
+        $cleanup = function () use ($prefix, $email): void {
+            $ids = $this->db->setQuery(
+                'SELECT id FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote($email)
+            )->loadColumn() ?: [];
+
+            foreach (array_map('intval', $ids) as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $id)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $id)->execute();
+            }
+        };
+
+        // 1. A listener that succeeds: it is called once, with the e-mail, while the subscriber exists.
+        $seen     = [];
+        $listener = function ($event) use (&$seen, $count): void {
+            $seen[] = [(string) $event->getArgument('email', ''), $count()];
+        };
+        $dispatcher->addListener($name, $listener);
+
+        try {
+            $cleanup();
+            $subId = $insert();
+            $this->test('Unsubscribed subscriber inserted', $subId > 0 && $unsubscribed($subId) === 1);
+            $this->takeMessages();
+            $error = $this->removeThroughPlugin($plugin, self::DELETE_USER_ID, $email);
+            $this->test('Removal runs without error', $error === null, (string) $error);
+            $this->test('Listener called once with the subscriber e-mail, before the subscriber was deleted', $seen === [[$email, 1]], json_encode($seen));
+            $this->test('Subscriber deleted after the listener succeeded', $count() === 0);
+            $messages = $this->takeMessages();
+            $this->test('Administrator message names the newsletter data as removed', $messages === ['message: ' . $doneText], json_encode($messages));
+        } catch (\Throwable $e) {
+            $this->test('Successful-listener case executes without error', false, $e->getMessage());
+        } finally {
+            $dispatcher->removeListener($name, $listener);
+            $cleanup();
+        }
+
+        // 2. A listener that throws: the subscriber and its unsubscribed row stay, the request completes.
+        $failing = function (): void {
+            throw new \RuntimeException('suppression record not stored');
+        };
+        $dispatcher->addListener($name, $failing);
+
+        try {
+            $subId = $insert();
+            $this->takeMessages();
+            $error = $this->removeThroughPlugin($plugin, self::DELETE_USER_ID, $email);
+            $this->test('Removal request still completes when the listener throws', $error === null, (string) $error);
+            $this->test('Subscriber kept when the listener throws', $count() === 1);
+            $this->test('Unsubscribed list row kept when the listener throws', $unsubscribed($subId) === 1);
+            $messages = $this->takeMessages();
+            $this->test('Administrator gets the warning and a removal message that names the subscriber as kept',
+                $messages === ['warning: ' . $strings->_('PLG_PRIVACY_J2COMMERCE_ACYM_REMOVAL_KEPT'), 'warning: ' . $keptText], json_encode($messages));
+            $this->takeMessages();
+            $error = $this->removeThroughPlugin($plugin, self::KEEP_USER_ID, 'acym-no-subscriber@example.com');
+            $messages = $this->takeMessages();
+            $this->test('Next removal request without a subscriber: the kept state is not carried over', $error === null && $messages === ['message: ' . $doneText], json_encode($messages));
+        } catch (\Throwable $e) {
+            $this->test('Failing-listener case executes without error', false, $e->getMessage());
+        } finally {
+            $dispatcher->removeListener($name, $failing);
+            $cleanup();
+        }
+    }
+
+    /**
      * Joomla's privacy user plugin pseudonymises name, username and e-mail of the User object of
      * the request in onPrivacyRemoveData() and can run before this plugin (same ordering, lower
      * extension ID). com_privacy dispatches onPrivacyCanRemoveData() to all plugins first.
@@ -626,6 +791,7 @@ class AcyMailingIntegrationTest
         $this->testDetection();
         $this->testExportQuery();
         $this->testDeletion();
+        $this->testUnsubscribeOutlivesRemoval();
         $this->testRemovalAfterPseudonymisation();
         $this->testExportBothAddresses();
         $this->testCollationPairs();
