@@ -31,6 +31,18 @@
   „🟢 Approval recommended“ lauten. „🔵 Needs a closer look“ oder „🟡 Changes recommended“ ist nie
   fertig, auch nicht mit 0 Funden, ohne „Previously missed“ und mit grüner CI: den genannten Grund
   beheben und Copilot erneut anfordern, bis 🟢 dasteht.
+- **Kein Release vor dem Test wie von einem Menschen** (seit 21.10.2026). Der Merge auf `main`
+  folgt der Definition oben. Ein Release-Workflow (`release-*.yml`) wird erst gestartet, wenn das
+  CI-Paket der Extension aus dem freizugebenden `main`-Stand auf einer Testinstallation (nie einer
+  Produktivseite) positiv und negativ getestet ist: jedes seit dem letzten Release geänderte
+  Formular, jede Funktion und jedes Layout, bei 1600 und 375 px. Negativ heisst jede Feldregel,
+  Grenzwerte, Pflichtfelder, doppeltes Absenden, falsche und manipulierte Eingaben und
+  Berechtigungen. Der Bericht kommt als Kommentar in den Release-PR, ohne Hostnamen und
+  Kundendaten. Vor jedem Release zusätzlich ein Text-gegen-Code- und Sicherheitsaudit des ganzen
+  Repos. Vor jedem Push prüft der Autor jeden geänderten Text gegen den Code. Sicherheitsrelevante
+  Änderungen (Anmeldung, Registrierung, Passwort, Zurücksetzen, Lizenz, Zahlung, Datenschutz, 2FA)
+  erhalten vor dem Merge ein zweites Review aus Angreifersicht. Massgeblich ist die intern
+  gepflegte SSOT.
 - **Kein Skill-/Instruktions-Drift.** `AGENTS.md`, `CLAUDE.md` und die intern gepflegte
   SSOT (Single Source of Truth) müssen konsistent bleiben und nur das Minimum
   tragen (kurze Zusammenfassungen plus Verweise, kein duplizierter voller Regelsatz). Jede AI,

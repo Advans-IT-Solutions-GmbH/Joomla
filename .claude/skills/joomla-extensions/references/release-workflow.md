@@ -13,6 +13,12 @@ prepare version + PR       review          squash         tag + GitHub release
 ## Agent-relevant notes (intentionally not in the README)
 
 - **Never self-merge** the `release: …` PR — a human reviews and merges it.
+- **No release before the human-like test.** Merging to `main` follows the Definition of Done.
+  A `Release - …` workflow is dispatched only after the CI package of that extension, built from
+  the `main` commit to be released, has been tested on a test installation (never a production
+  site): every form, function and layout changed since the last release, positive and negative,
+  at 1600 and 375 px. The report goes into the release PR as a comment, free of host names and
+  customer data. Rule and negative-test scope: `AGENTS.md`.
 - **Never set `VERSION`, plugin XML or `update.xml` manually** — the release
   workflow owns version bumps.
 - **Run one release workflow at a time.**
