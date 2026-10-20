@@ -480,6 +480,22 @@ const JoomlaAjaxForms = {
             body.append('password', password);
             body.append('password2', password2);
 
+            // Every further field goes along unchanged: the answer of a captcha
+            // and the fields a plugin adds to the registration form (for example
+            // the privacy consent). The server validates them with the
+            // registration form of com_users.
+            const handled = [
+                'option', 'plugin', 'format', 'task', tokenName,
+                'name', 'username', 'email', 'email2', 'password', 'password2',
+                'jform[name]', 'jform[username]', 'jform[email1]', 'jform[email2]',
+                'jform[password1]', 'jform[password2]'
+            ];
+            formData.forEach(function(value, key) {
+                if (handled.indexOf(key) === -1 && typeof value === 'string') {
+                    body.append(key, value);
+                }
+            });
+
             const submitBtn = JoomlaAjaxForms.disableSubmit(form);
             messageContainer.style.display = 'none';
 

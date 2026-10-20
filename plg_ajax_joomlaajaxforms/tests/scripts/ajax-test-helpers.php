@@ -586,3 +586,138 @@ function ajaxforms_selector_matches(string $html, string $selector): ?bool
 
     return false;
 }
+
+/**
+ * The stored options of a component, as JSON.
+ */
+function ajaxforms_component_params(string $element): string
+{
+    $db    = Factory::getContainer()->get(DatabaseInterface::class);
+    $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        ->select($db->quoteName('params'))
+        ->from($db->quoteName('#__extensions'))
+        ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+        ->where($db->quoteName('element') . ' = ' . $db->quote($element));
+
+    $db->setQuery($query);
+
+    return (string) ($db->loadResult() ?: '{}');
+}
+
+/**
+ * Store options of a component, so a request to the site reads them.
+ *
+ * @param   array<string, mixed>  $changes  Options to set, the others are kept
+ *
+ * @return  string  The options before the change, for ajaxforms_restore_component_params()
+ */
+function ajaxforms_set_component_params(string $element, array $changes): string
+{
+    $original = ajaxforms_component_params($element);
+    $params   = json_decode($original, true);
+    $params   = is_array($params) ? array_merge($params, $changes) : $changes;
+
+    ajaxforms_restore_component_params($element, (string) json_encode($params));
+
+    return $original;
+}
+
+/**
+ * Write the options of a component back.
+ */
+function ajaxforms_restore_component_params(string $element, string $json): void
+{
+    $db    = Factory::getContainer()->get(DatabaseInterface::class);
+    $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        ->update($db->quoteName('#__extensions'))
+        ->set($db->quoteName('params') . ' = ' . $db->quote($json))
+        ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+        ->where($db->quoteName('element') . ' = ' . $db->quote($element));
+
+    $db->setQuery($query)->execute();
+}
+
+/**
+ * Start a guest session in a cookie jar and read a CSRF token for it.
+ *
+ * Redirects are followed and the cookies are kept across them, because the
+ * token only counts together with the session it was issued for.
+ *
+ * @param   string[]  $pages  Pages to read the token from, in this order
+ *
+ * @return  array{0: string, 1: string}  cookie jar path, token ('' if none)
+ */
+function ajaxforms_session_and_token(string $baseUrl, array $pages): array
+{
+    $cookieJar = (string) tempnam(sys_get_temp_dir(), 'ajaxforms-cookies-');
+
+    foreach ($pages as $page) {
+        $ch = curl_init($baseUrl . $page);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+        curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+        $response = (string) curl_exec($ch);
+        curl_close($ch);
+
+        if (preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $response, $m)
+            || preg_match('/"csrf\.token"\s*:\s*"([a-f0-9]{32})"/i', $response, $m)) {
+            return [$cookieJar, $m[1]];
+        }
+    }
+
+    return [$cookieJar, ''];
+}
+
+/**
+ * Send one task to the AJAX endpoint of the site in a fresh guest session.
+ *
+ * @param   array<string, mixed>  $fields  POST fields besides task and token
+ * @param   string[]              $pages   Pages to read the token from
+ *
+ * @return  array{0: string, 1: array<string, mixed>|null}  token ('' if none), decoded answer
+ */
+function ajaxforms_post_task(string $baseUrl, string $task, array $fields, array $pages): array
+{
+    [$cookieJar, $token] = ajaxforms_session_and_token($baseUrl, $pages);
+
+    $fields['task'] = $task;
+
+    if ($token !== '') {
+        $fields[$token] = '1';
+    }
+
+    $ch = curl_init($baseUrl . '/index.php?option=com_ajax&plugin=joomlaajaxforms&group=ajax&format=json&task=' . $task);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($fields));
+    curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+    curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+    $body = (string) curl_exec($ch);
+    curl_close($ch);
+
+    @unlink($cookieJar);
+
+    return [$token, ajaxforms_decode_response($body)];
+}
+
+/**
+ * The record of an account in #__users, null when there is none.
+ */
+function ajaxforms_user_record(string $username): ?object
+{
+    $db    = Factory::getContainer()->get(DatabaseInterface::class);
+    $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+        ->select('*')
+        ->from($db->quoteName('#__users'))
+        ->where($db->quoteName('username') . ' = ' . $db->quote($username));
+
+    $db->setQuery($query);
+
+    return $db->loadObject() ?: null;
+}

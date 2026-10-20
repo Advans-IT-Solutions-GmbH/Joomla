@@ -325,6 +325,115 @@ class RegistrationTest
             stripos($text, 'COM_USERS_EMAIL_') === false);
     }
 
+    /**
+     * One registration through the endpoint of the site.
+     *
+     * @return  array{0: string, 1: array<string, mixed>|null}  token, decoded answer
+     */
+    private function register(string $suffix, string $password, array $extra = []): array
+    {
+        $username = 'ajaxforms_' . $suffix;
+
+        return ajaxforms_post_task($this->baseUrl, 'register', $extra + [
+            'name'      => 'AJAX Forms ' . $suffix,
+            'username'  => $username,
+            'email'     => $username . '@example.test',
+            'email2'    => $username . '@example.test',
+            'password'  => $password,
+            'password2' => $password,
+        ], [
+            '/index.php?option=com_users&view=registration',
+            '/index.php?option=com_users&view=login',
+            '/',
+        ]);
+    }
+
+    /**
+     * The registration must apply the rules of the core registration: the
+     * switch "Allow User Registration", the password rules of the Users options
+     * and the captcha chosen there. Every case runs through the real endpoint,
+     * so the options are read the way a visitor's request reads them.
+     */
+    private function testCoreRegistrationRules(): void
+    {
+        echo "\n--- HTTP: registration follows the rules of com_users ---\n";
+
+        $original = ajaxforms_set_component_params('com_users', [
+            'allowUserRegistration' => 1,
+            'useractivation'        => 0,
+            'captcha'               => '0',
+            'minimum_length'        => 12,
+            'minimum_integers'      => 1,
+            'minimum_symbols'       => 1,
+            'minimum_uppercase'     => 1,
+            'minimum_lowercase'     => 1,
+        ]);
+
+        $suffixes = ['regshort', 'regdigit', 'regsymbol', 'regupper', 'reglower', 'regok', 'regclosed', 'regcaptcha'];
+
+        try {
+            foreach ($suffixes as $suffix) {
+                ajaxforms_delete_test_user($suffix);
+            }
+
+            $refused = [
+                'regshort'  => ['Ab1!', 'shorter than the minimum length'],
+                'regdigit'  => ['Abcdefghijk!', 'without a digit'],
+                'regsymbol' => ['Abcdefghijk1', 'without a symbol'],
+                'regupper'  => ['abcdefghij1!', 'without an upper case letter'],
+                'reglower'  => ['ABCDEFGHIJ1!', 'without a lower case letter'],
+            ];
+
+            foreach ($refused as $suffix => [$password, $what]) {
+                [$token, $answer] = $this->register($suffix, $password);
+
+                $this->test("Token found for the case $what", $token !== '');
+                $this->test(
+                    "Password $what is refused",
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test("No account created for a password $what", ajaxforms_user_record('ajaxforms_' . $suffix) === null);
+            }
+
+            [, $answer] = $this->register('regok', 'Abcdefghij1!');
+            $this->test(
+                'Password that meets every rule is accepted',
+                $answer !== null && ($answer['success'] ?? null) === true,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('Account created for the valid password', ajaxforms_user_record('ajaxforms_regok') !== null);
+
+            // A captcha plugin that is not installed cannot confirm any answer:
+            // the field then fails like a missing answer. This proves that the
+            // captcha of the Users options is applied, without a call to an
+            // external captcha service.
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsnocaptcha']);
+            [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!');
+            $this->test(
+                'Registration is refused while the captcha of the Users options is not answered',
+                $answer !== null && ($answer['success'] ?? null) === false,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('No account created without a captcha answer', ajaxforms_user_record('ajaxforms_regcaptcha') === null);
+
+            ajaxforms_set_component_params('com_users', ['captcha' => '0', 'allowUserRegistration' => 0]);
+            [, $answer] = $this->register('regclosed', 'Abcdefghij1!');
+            $this->test(
+                'Registration is refused while "Allow User Registration" is off',
+                $answer !== null && ($answer['success'] ?? null) === false,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('No account created while registration is off', ajaxforms_user_record('ajaxforms_regclosed') === null);
+        } finally {
+            ajaxforms_restore_component_params('com_users', $original);
+
+            foreach ($suffixes as $suffix) {
+                ajaxforms_delete_test_user($suffix);
+            }
+        }
+    }
+
     public function run(): bool
     {
         echo "=== Registration Tests ===\n";
@@ -334,6 +443,7 @@ class RegistrationTest
         $this->testNoTokenRejected();
         $this->testDuplicateUsernameRejected();
         $this->testLanguageKeys();
+        $this->testCoreRegistrationRules();
         $this->testRegistrationMailsCarryTheSiteDesign();
 
         echo "\n=== Registration Test Summary ===\n";
