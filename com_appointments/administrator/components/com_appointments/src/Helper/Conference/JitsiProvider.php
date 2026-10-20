@@ -25,8 +25,8 @@ final class JitsiProvider implements ConferenceProviderInterface
     public function __construct(KeyProvider $keys, array $config)
     {
         $this->config = array_replace([
-            'room_pattern' => '{prefix}-{alias}-{random}', 'prefix' => 'meeting', 'alias' => 'event',
-            'entropy' => 24, 'auth' => 'none', 'host_lead_minutes' => 30, 'grace_minutes' => 15,
+            'room_pattern' => '{prefix}-{alias}-{random}', 'prefix' => 'appointment', 'alias' => 'event',
+            'entropy' => 24, 'auth' => 'none', 'host_lead_minutes' => 30, 'grace_minutes' => 60,
             'jwt_audience' => 'jitsi', 'jwt_issuer' => $config['jwt_app_id'] ?? '',
         ], $config);
         $this->baseUrl = rtrim(ConferenceUrl::validate((string) ($config['base_url'] ?? '')), '/');
@@ -87,7 +87,7 @@ final class JitsiProvider implements ConferenceProviderInterface
             . '<field name="jwt_issuer" type="text" label="JWT issuer" />'
             . '<field name="jwt_subject" type="text" label="JWT subject (default: server hostname)" />'
             . '<field name="host_lead_minutes" type="number" label="Host token lead minutes" min="0" max="1440" default="30" />'
-            . '<field name="grace_minutes" type="number" label="Token grace minutes" min="0" max="1440" default="15" />'
+            . '<field name="grace_minutes" type="number" label="Token grace minutes" min="0" max="1440" default="60" />'
             . '</fieldset>';
     }
 

@@ -238,7 +238,7 @@ value inherits this default; zero removes completed data on the next run. The co
 host and booking locks, so a concurrently rescheduled appointment is not erased from a stale
 candidate list. Retention uses the same erasure transaction and audit contract as self-service.
 
-**Audit retention** defaults to three calendar years and is independent of booking retention.
+**Audit retention** defaults to three years, counted from the audit entry, and is independent of booking retention.
 Expired keyed rate-limit windows become eligible for cleanup after one day. Each task's **Batch
 size** defaults to 100 (1–1000); the retention routine processes at most that many bookings, audit
 rows and rate-limit windows per invocation. Run additional batches or increase the frequency when

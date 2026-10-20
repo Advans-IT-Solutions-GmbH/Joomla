@@ -43,7 +43,7 @@ Joomla/
 |-----------|-------------|
 | [Import/Export](j2commerce/com_j2commerce_importexport/) | Bulk data import/export for J2Commerce |
 | [J2Store Cleanup](j2commerce/com_j2store_cleanup/) | Detect incompatible extensions after J2Store-to-J2Commerce migration |
-| [OSMap J2Commerce](j2commerce/plg_osmap_j2commerce/) | Adds J2Commerce products to the OSMap sitemap automatically |
+| [OSMap J2Commerce](j2commerce/plg_osmap_j2commerce/) | Adds enabled, visible J2Commerce products whose article is published and accessible to guests to the OSMap sitemap automatically |
 | [Product Compare](j2commerce/plg_j2commerce_productcompare/) | Compare products side-by-side |
 | [Privacy](j2commerce/plg_privacy_j2commerce/) | GDPR compliance for J2Commerce |
 

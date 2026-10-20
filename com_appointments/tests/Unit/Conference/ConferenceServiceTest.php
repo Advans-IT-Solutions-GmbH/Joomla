@@ -316,7 +316,7 @@ final class ConferenceServiceTest extends TestCase
             'conference_provider' => 'jitsi', 'conference_jitsi_base_url' => 'https://meet.example.com',
         ])->provision($this->row, $this->now());
         self::assertSame('ok', $result['conference_state']);
-        self::assertStringStartsWith('meeting-' . str_repeat('a', 64) . '-', $result['conference_room']);
+        self::assertStringStartsWith('appointment-' . str_repeat('a', 64) . '-', $result['conference_room']);
     }
 
     public function testRetryAdvancesSequenceAndModifiedStrictlyOnlyOnSuccess(): void
