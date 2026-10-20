@@ -692,6 +692,21 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             if ($result !== false) {
                 $validated = (array) $result;
 
+                // The privacy consent and the terms plugins refuse a "not agreed"
+                // answer only in onUserBeforeSave, and only for option=com_users.
+                // The form filter turns the missing tick into 0, which passes the
+                // required check. The same refusal is therefore made here.
+                $consents = [
+                    ['privacy', 'privacyconsent', 'PLG_SYSTEM_PRIVACYCONSENT_FIELD_ERROR'],
+                    ['terms', 'terms', 'PLG_USER_TERMS_FIELD_ERROR'],
+                ];
+
+                foreach ($consents as [$field, $group, $message]) {
+                    if ($form->getField($field, $group) && empty($validated[$group][$field])) {
+                        return Text::_($message);
+                    }
+                }
+
                 return null;
             }
 

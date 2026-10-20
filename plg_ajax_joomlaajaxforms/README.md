@@ -32,7 +32,7 @@ The AJAX registration applies the same rules as the registration of com_users. I
 before the account is saved. The password rules of the Users options (minimum length, digits,
 symbols, upper and lower case), the captcha chosen there (or the captcha of the Global Configuration
 for "Use Default"), the allowed e-mail domains and every field a plugin adds to that form (for
-example the privacy consent) therefore apply unchanged. The script sends these further fields of the
+example the privacy consent) therefore apply unchanged. The privacy consent and terms plugins refuse an unticked box only for `option=com_users` (in `onUserBeforeSave`), so the plugin makes the same refusal itself. The script sends these further fields of the
 form along with the answer of the captcha. The first validation message of the form is the answer.
 
 The AJAX password reset follows the limit of the Users options: at most **Maximum Reset Count**
