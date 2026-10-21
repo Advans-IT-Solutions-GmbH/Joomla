@@ -179,8 +179,9 @@ into the existing rule as one more negated condition next to its other exception
 # with any character other than letters, digits, "_" and "-" keep the request under the rule.
 # PHP rewrites such names: it decodes "%6F" and "+" (a space), strips leading spaces, turns
 # "." and " " into "_" and reads "[" as an array, so "+option" or "opti%6Fn" would also select
-# a component.
-RewriteCond %{QUERY_STRING} !^(?=.*(?:^|&)option=com_appointments(?:&|$))(?!.*(?:^|&)option(?:&|$|=(?!com_appointments(?:&|$))))(?!.*(?:^|&)[^=&]*[^A-Za-z0-9_=&-])
+# a component. The option must be the first parameter, as in every link the component builds:
+# PHP reads at most max_input_vars parameters, so a later one could be dropped unread.
+RewriteCond %{QUERY_STRING} !^(?=option=com_appointments(?:&|$))(?!.*(?:^|&)option(?:&|$|=(?!com_appointments(?:&|$))))(?!.*(?:^|&)[^=&]*[^A-Za-z0-9_=&-])
 
 # Rule that redirects or blocks /component/<x>. A query on such an address stays under the
 # ?option= rule above, so another component cannot be reached through this path.
