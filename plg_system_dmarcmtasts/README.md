@@ -78,14 +78,20 @@ and takes precedence over a static file at the same path:
 
 ```apache
 # MTA-STS (RFC 8461): let Joomla answer the policy request.
+RewriteCond %{QUERY_STRING} ^$
 RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]
 ```
+
+The condition is part of the rule. Senders request the path without a query. Without the
+condition, `/.well-known/mta-sts.txt?option=com_content` would be handed to Joomla too, and a site
+that exempts internal rewrites from its own rules (`RewriteCond %{ENV:REDIRECT_STATUS} !^$`) would
+then let that query pass its `?option=` restrictions on the second pass.
 
 The document root of the `mta-sts.<domain>` host must be the Joomla root, because the policy path
 is fixed at the root of that host. On any other web server, route the same exact path to
 `index.php`. The package's integration tests install this rule
 and request the exact URL (with a stale static file in place that must not be served), so the
-documented setup is the tested one.
+documented setup is the tested one. They also check that the rule does not route the path with a query string.
 
 ### Why does `/.well-known/mta-sts.txt` answer 404?
 

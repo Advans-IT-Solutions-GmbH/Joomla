@@ -55,7 +55,7 @@ and the served `mta-sts.txt` changes with it.
 The web server must hand the exact path to `index.php`. Joomla's generic fallback only works with
 `htaccess.txt` active as `.htaccess` and only for paths that are not existing files, so the documented
 setup is one dedicated rule placed after `RewriteEngine On`:
-`RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]`. It is documented in the plugin README
+`RewriteCond %{QUERY_STRING} ^$` followed by `RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]` (the condition keeps a query from reaching Joomla past a site's `?option=` rules). It is documented in the plugin README
 (section "Web-server rule"); `pkg_dmarcreports/tests/scripts/06-mta-sts.php` installs the same rule,
 puts a stale static `mta-sts.txt` in place that must not be served, and requests the exact RFC path
 (never an `index.php/…` route), so keep the README and the test identical.
