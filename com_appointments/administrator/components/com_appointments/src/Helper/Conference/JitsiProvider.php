@@ -25,8 +25,8 @@ final class JitsiProvider implements ConferenceProviderInterface
     public function __construct(KeyProvider $keys, array $config)
     {
         $this->config = array_replace([
-            'room_pattern' => '{prefix}-{alias}-{random}', 'prefix' => 'meeting', 'alias' => 'event',
-            'entropy' => 24, 'auth' => 'none', 'host_lead_minutes' => 30, 'grace_minutes' => 15,
+            'room_pattern' => '{prefix}-{alias}-{random}', 'prefix' => 'appointment', 'alias' => 'event',
+            'entropy' => 24, 'auth' => 'none', 'host_lead_minutes' => 30, 'grace_minutes' => 60,
             'jwt_audience' => 'jitsi', 'jwt_issuer' => $config['jwt_app_id'] ?? '',
         ], $config);
         $this->baseUrl = rtrim(ConferenceUrl::validate((string) ($config['base_url'] ?? '')), '/');
@@ -76,7 +76,7 @@ final class JitsiProvider implements ConferenceProviderInterface
         return '<fieldset name="jitsi">'
             . '<field name="base_url" type="url" label="Base URL" required="true" />'
             . '<field name="room_pattern" type="text" label="Room pattern" default="{prefix}-{alias}-{random}" />'
-            . '<field name="prefix" type="text" label="Room prefix" default="meeting" />'
+            . '<field name="prefix" type="text" label="Room prefix" default="appointment" />'
             . '<field name="alias" type="text" label="Event alias" default="event" />'
             . '<field name="entropy" type="number" label="Random characters" min="16" max="64" default="24" />'
             . '<field name="auth" type="list" label="Authentication" default="none">'
@@ -87,7 +87,7 @@ final class JitsiProvider implements ConferenceProviderInterface
             . '<field name="jwt_issuer" type="text" label="JWT issuer" />'
             . '<field name="jwt_subject" type="text" label="JWT subject (default: server hostname)" />'
             . '<field name="host_lead_minutes" type="number" label="Host token lead minutes" min="0" max="1440" default="30" />'
-            . '<field name="grace_minutes" type="number" label="Token grace minutes" min="0" max="1440" default="15" />'
+            . '<field name="grace_minutes" type="number" label="Token grace minutes" min="0" max="1440" default="60" />'
             . '</fieldset>';
     }
 

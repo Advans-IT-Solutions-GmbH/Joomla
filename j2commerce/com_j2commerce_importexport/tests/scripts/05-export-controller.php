@@ -96,6 +96,34 @@ class ExportControllerTest
             return true;
         });
 
+        // --- CSV control characters from the options ---
+        // The option "Tab" is stored as backslash and t. fputcsv() needs exactly one
+        // character and throws a ValueError otherwise, so every CSV export with Tab failed.
+        $csvCharacter = $rc->getMethod('csvCharacter');
+        $csvCharacter->setAccessible(true);
+
+        $this->test('The stored option Tab becomes the tab character', function () use ($csvCharacter) {
+            return $csvCharacter->invoke(null, '\t', ',') === "\t";
+        });
+
+        $this->test('A single character is used unchanged', function () use ($csvCharacter) {
+            return $csvCharacter->invoke(null, ';', ',') === ';' && $csvCharacter->invoke(null, "'", '"') === "'";
+        });
+
+        $this->test('An empty or longer value falls back to the default', function () use ($csvCharacter) {
+            return $csvCharacter->invoke(null, '', ',') === ',' && $csvCharacter->invoke(null, ';;', ',') === ',';
+        });
+
+        $this->test('fputcsv() accepts the mapped tab character', function () use ($csvCharacter) {
+            $handle = fopen('php://memory', 'w+');
+            fputcsv($handle, ['a', 'b'], $csvCharacter->invoke(null, '\t', ','), '"', '');
+            rewind($handle);
+            $line = (string) stream_get_contents($handle);
+            fclose($handle);
+
+            return $line === "a\tb\n";
+        });
+
         echo "\n=== Export Controller Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";

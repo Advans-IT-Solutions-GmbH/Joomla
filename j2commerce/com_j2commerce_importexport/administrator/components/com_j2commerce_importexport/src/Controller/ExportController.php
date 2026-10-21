@@ -127,7 +127,8 @@ class ExportController extends BaseController
                     $this->exportJSON($data, $filename, $includeHelp);
                     break;
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // \Throwable: fputcsv() throws a ValueError (an \Error) for an invalid character.
             Log::add('Export error: ' . $e->getMessage(), Log::ERROR, 'com_j2commerce_importexport');
             echo new JsonResponse(['error' => Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_EXPORT_FAILED')], '', true);
         }
@@ -139,8 +140,8 @@ class ExportController extends BaseController
     {
         $params = ComponentHelper::getParams('com_j2commerce_importexport');
 
-        $delimiter = $params->get('csv_delimiter', ',');
-        $enclosure = $params->get('csv_enclosure', '"');
+        $delimiter = self::csvCharacter((string) $params->get('csv_delimiter', ','), ',');
+        $enclosure = self::csvCharacter((string) $params->get('csv_enclosure', '"'), '"');
 
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
@@ -160,19 +161,40 @@ class ExportController extends BaseController
                 foreach ($headers as $header) {
                     $descRow[] = '# ' . ($descriptions[$header] ?? $header);
                 }
-                fputcsv($output, $descRow, $delimiter, $enclosure);
+                fputcsv($output, $descRow, $delimiter, $enclosure, '');
             }
             
             // Headers
-            fputcsv($output, $headers, $delimiter, $enclosure);
+            fputcsv($output, $headers, $delimiter, $enclosure, '');
             
             // Data
             foreach ($data as $row) {
-                fputcsv($output, $row, $delimiter, $enclosure);
+                fputcsv($output, $row, $delimiter, $enclosure, '');
             }
         }
 
         fclose($output);
+    }
+
+    /**
+     * One CSV control character from a stored option.
+     *
+     * The option "Tab" is stored as the two characters backslash and t, which
+     * fputcsv() refuses with a ValueError. Anything else that is not exactly one
+     * character falls back to the default.
+     *
+     * @param   string  $value     The stored option
+     * @param   string  $fallback  The default character
+     *
+     * @return  string  Exactly one character
+     */
+    private static function csvCharacter(string $value, string $fallback): string
+    {
+        if ($value === '\t') {
+            return "\t";
+        }
+
+        return \strlen($value) === 1 ? $value : $fallback;
     }
 
     protected function exportXML($data, $filename, $includeHelp = true)

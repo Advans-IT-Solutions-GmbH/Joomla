@@ -92,10 +92,10 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Batch Size | 100 | Records per batch (10-1000) |
-| Default Format | JSON | Export format |
-| CSV Delimiter | `,` | Field separator (`,`, `;` or Tab) |
-| CSV Enclosure | " | Text qualifier for CSV |
+| Batch Size | 100 | Currently has no effect (the import does not use this option) |
+| Default Format | JSON | Currently has no effect (the export form always preselects JSON) |
+| CSV Delimiter | `,` | Field separator of the CSV export (`,`, `;` or Tab). The import always expects commas. |
+| CSV Enclosure | " | Text qualifier of the CSV export. The import always expects double quotes. |
 
 ## Usage
 
