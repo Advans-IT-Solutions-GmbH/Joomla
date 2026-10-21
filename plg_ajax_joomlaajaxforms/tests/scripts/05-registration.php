@@ -325,6 +325,158 @@ class RegistrationTest
             stripos($text, 'COM_USERS_EMAIL_') === false);
     }
 
+    /**
+     * One registration through the endpoint of the site.
+     *
+     * @return  array{0: string, 1: array<string, mixed>|null}  token, decoded answer
+     */
+    private function register(string $suffix, string $password, array $extra = []): array
+    {
+        $username = 'ajaxforms_' . $suffix;
+
+        // A site may add consent fields to the registration form (privacy consent,
+        // terms). They are required exactly as in com_users, so the visitor ticks
+        // them. Fields the form does not have are dropped by its filter.
+        $extra['jform'] = ($extra['jform'] ?? []) + [
+            'privacyconsent' => ['privacy' => '1'],
+            'terms'          => ['terms' => '1'],
+        ];
+
+        return ajaxforms_post_task($this->baseUrl, 'register', $extra + [
+            'name'      => 'AJAX Forms ' . $suffix,
+            'username'  => $username,
+            'email'     => $username . '@example.test',
+            'email2'    => $username . '@example.test',
+            'password'  => $password,
+            'password2' => $password,
+        ], [
+            '/index.php?option=com_users&view=registration',
+            '/index.php?option=com_users&view=login',
+            '/',
+        ]);
+    }
+
+    /**
+     * The registration must apply the rules of the core registration: the
+     * switch "Allow User Registration", the password rules of the Users options
+     * and the captcha chosen there. Every case runs through the real endpoint,
+     * so the options are read the way a visitor's request reads them.
+     */
+    private function testCoreRegistrationRules(): void
+    {
+        echo "\n--- HTTP: registration follows the rules of com_users ---\n";
+
+        $original = ajaxforms_set_component_params('com_users', [
+            'allowUserRegistration' => 1,
+            'useractivation'        => 0,
+            'captcha'               => '0',
+            'minimum_length'        => 12,
+            'minimum_integers'      => 1,
+            'minimum_symbols'       => 1,
+            'minimum_uppercase'     => 1,
+            'minimum_lowercase'     => 1,
+        ]);
+
+        $suffixes = ['regshort', 'regdigit', 'regsymbol', 'regupper', 'reglower', 'regok', 'regconsent', 'regclosed', 'regcaptcha'];
+
+        try {
+            foreach ($suffixes as $suffix) {
+                ajaxforms_delete_test_user($suffix);
+            }
+
+            $refused = [
+                'regshort'  => ['Ab1!', 'shorter than the minimum length'],
+                'regdigit'  => ['Abcdefghijk!', 'without a digit'],
+                'regsymbol' => ['Abcdefghijk1', 'without a symbol'],
+                'regupper'  => ['abcdefghij1!', 'without an upper case letter'],
+                'reglower'  => ['ABCDEFGHIJ1!', 'without a lower case letter'],
+            ];
+
+            foreach ($refused as $suffix => [$password, $what]) {
+                [$token, $answer] = $this->register($suffix, $password);
+
+                $this->test("Token found for the case $what", $token !== '');
+                $this->test(
+                    "Password $what is refused",
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test("No account created for a password $what", ajaxforms_user_record('ajaxforms_' . $suffix) === null);
+            }
+
+            [, $answer] = $this->register('regok', 'Abcdefghij1!');
+            $this->test(
+                'Password that meets every rule is accepted',
+                $answer !== null && ($answer['success'] ?? null) === true,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('Account created for the valid password', ajaxforms_user_record('ajaxforms_regok') !== null);
+
+            // Where the site adds the privacy consent to the registration form, it
+            // is required on the AJAX path exactly as in com_users.
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $db->setQuery(
+                (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+                    ->select('COUNT(*)')
+                    ->from($db->quoteName('#__extensions'))
+                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                    ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
+                    ->where($db->quoteName('element') . ' = ' . $db->quote('privacyconsent'))
+                    ->where($db->quoteName('enabled') . ' = 1')
+            );
+
+            if ((int) $db->loadResult() > 0) {
+                [, $answer] = $this->register('regconsent', 'Abcdefghij1!', ['jform' => ['privacyconsent' => ['privacy' => '']]]);
+                $this->test(
+                    'Registration without the privacy consent of the form is refused',
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test('No account created without the privacy consent', ajaxforms_user_record('ajaxforms_regconsent') === null);
+            }
+
+            // The captcha of the Users options: a test provider that accepts
+            // exactly "ajaxforms-ok" (see ajaxforms_install_test_captcha()).
+            ajaxforms_install_test_captcha();
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformstest']);
+
+            foreach (['no answer' => null, 'a wrong answer' => 'wrong'] as $what => $captcha) {
+                [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!', $captcha === null ? [] : ['jform' => ['captcha' => $captcha]]);
+                $this->test(
+                    "Registration with $what to the captcha of the Users options is refused",
+                    $answer !== null && ($answer['success'] ?? null) === false,
+                    'answer: ' . var_export($answer, true)
+                );
+                $this->test("No account created with $what to the captcha", ajaxforms_user_record('ajaxforms_regcaptcha') === null);
+            }
+
+            [, $answer] = $this->register('regcaptcha', 'Abcdefghij1!', ['jform' => ['captcha' => 'ajaxforms-ok']]);
+            $this->test(
+                'Registration with the right answer to the captcha is accepted',
+                $answer !== null && ($answer['success'] ?? null) === true,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('Account created with the right answer to the captcha', ajaxforms_user_record('ajaxforms_regcaptcha') !== null);
+            ajaxforms_delete_test_user('regcaptcha');
+
+            ajaxforms_set_component_params('com_users', ['captcha' => '0', 'allowUserRegistration' => 0]);
+            [, $answer] = $this->register('regclosed', 'Abcdefghij1!');
+            $this->test(
+                'Registration is refused while "Allow User Registration" is off',
+                $answer !== null && ($answer['success'] ?? null) === false,
+                'answer: ' . var_export($answer, true)
+            );
+            $this->test('No account created while registration is off', ajaxforms_user_record('ajaxforms_regclosed') === null);
+        } finally {
+            ajaxforms_restore_component_params('com_users', $original);
+            ajaxforms_remove_test_captcha();
+
+            foreach ($suffixes as $suffix) {
+                ajaxforms_delete_test_user($suffix);
+            }
+        }
+    }
+
     public function run(): bool
     {
         echo "=== Registration Tests ===\n";
@@ -334,6 +486,7 @@ class RegistrationTest
         $this->testNoTokenRejected();
         $this->testDuplicateUsernameRejected();
         $this->testLanguageKeys();
+        $this->testCoreRegistrationRules();
         $this->testRegistrationMailsCarryTheSiteDesign();
 
         echo "\n=== Registration Test Summary ===\n";
