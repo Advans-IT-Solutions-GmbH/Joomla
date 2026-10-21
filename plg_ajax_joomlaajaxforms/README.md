@@ -16,14 +16,30 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 |---------|-----------|-------------|
 | Login | `login` | Authentication with redirect to Joomla's MFA captive page when 2FA is enabled |
 | Logout | `logout` | Session termination with redirect (requires a logged-in user) |
-| Registration | `register` | User registration with email verification and admin approval |
-| Password Reset | `reset` | Password reset email request |
+| Registration | `register` | User registration with email verification and admin approval, validated with the registration form of com_users |
+| Password Reset | `reset` | Password reset email request, limited like com_users |
 | Username Reminder | `remind` | Username reminder email request |
 | Profile Editing | `saveProfile` | Update name, email, password |
 | Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
 Login, registration, password reset, username reminder, the profile save and the J2Store cart tasks can be disabled individually via plugin parameters (`enable_login`, `enable_registration`, `enable_reset`, `enable_remind`, `enable_profile`, `enable_j2store_cart`); a disabled task answers with the message of `PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED`. Only `logout` is always available.
+
+### Rules of the core registration and reset
+
+The AJAX registration applies the same rules as the registration of com_users. It is refused while
+**Allow User Registration** is off, and it is validated with the registration form of com_users
+before the account is saved. The password rules of the Users options (minimum length, digits,
+symbols, upper and lower case), the captcha chosen there (or the captcha of the Global Configuration
+for "Use Default"), the allowed e-mail domains and every field a plugin adds to that form (for
+example the privacy consent) therefore apply unchanged. The privacy consent and terms plugins refuse an unticked box only for `option=com_users` (in `onUserBeforeSave`), so the plugin makes the same refusal itself. The script sends these further fields of the
+form along with the answer of the captcha. The first validation message of the form is the answer.
+
+The AJAX password reset follows the limit of the Users options: at most **Maximum Reset Count**
+requests within **Time in Hours** per account, counted from the first request of the window, as in
+`ResetModel::checkResetLimit()`. Like com_users it never resets the password of a Super User from
+the site. A refused request gets the same answer as an accepted one and sends nothing, so the form
+reveals nothing about the account.
 
 ## Requirements
 

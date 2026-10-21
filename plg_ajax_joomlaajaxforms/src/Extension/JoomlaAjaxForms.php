@@ -16,6 +16,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Form\Form;
 use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Language\Text;
@@ -535,13 +536,53 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_EMAIL_EXISTS'));
         }
 
+        // The rules of the core registration apply unchanged: password rules,
+        // captcha, allowed e-mail domains and every field a plugin adds to the
+        // registration form (for example the privacy consent).
+        $validated = [];
+        $coreError = $this->coreRegistrationError($name, $username, $email, $password, $password2, $validated);
+
+        if ($coreError !== null) {
+            return $this->jsonError($coreError);
+        }
+
+        // Save what the form filtered and validated, not the raw input.
+        $name     = (string) ($validated['name'] ?? $name);
+        $username = (string) ($validated['username'] ?? $username);
+        $email    = (string) ($validated['email1'] ?? $email);
+
         try {
             // new User() is removed in Joomla 6 — use UserFactoryInterface instead.
             $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById(0);
+
+            // The fields a plugin added to the registration form (for example a
+            // profile) go along, as in RegistrationModel::register(), so the save
+            // hooks receive them. The form keeps only its own fields. The core
+            // fields and every account property the server decides are set below
+            // and are never taken from the request.
+            $pluginFields = $validated;
+
+            foreach ([
+                'name', 'username', 'email', 'email1', 'email2', 'password', 'password1', 'password2',
+                'password_clear', 'captcha', 'id', 'groups', 'block', 'activation', 'sendEmail',
+                'registerDate', 'lastvisitDate', 'lastResetTime', 'resetCount', 'requireReset',
+                'otpKey', 'otep', 'authProvider', 'guest',
+            ] as $serverField) {
+                unset($pluginFields[$serverField]);
+            }
+
+            // The submitted password goes into the same bind, so User::bind() hashes
+            // it and the save hooks receive the credential of this account.
+            $pluginFields['password']  = $password;
+            $pluginFields['password2'] = $password2;
+
+            if (!$user->bind($pluginFields)) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_REGISTRATION_FAILED'));
+            }
+
             $user->name     = $name;
             $user->username = $username;
             $user->email    = $email;
-            $user->password = UserHelper::hashPassword($password);
 
             $userActivation = $usersConfig->get('useractivation');
             $defaultGroup = $usersConfig->get('new_usertype', 2);
@@ -590,6 +631,157 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Validate a registration with the registration form of com_users.
+     *
+     * The form is the one the core registration validates against, so the same
+     * rules apply: the password rules of the Users options (minimum length,
+     * digits, symbols, upper and lower case), the captcha chosen there, the
+     * allowed e-mail domains and every field a user or system plugin adds in
+     * onContentPrepareForm. The script forwards those further fields together
+     * with the answer of the captcha.
+     *
+     * @param   string  $name       The name of the account
+     * @param   string  $username   The username
+     * @param   string  $email      The e-mail address
+     * @param   string  $password   The password
+     * @param   string  $password2  The repeated password
+     * @param   array   $validated  Receives the filtered and validated data
+     *
+     * @return  string|null  The first validation message, null when the data is valid
+     */
+    protected function coreRegistrationError(
+        string $name,
+        string $username,
+        string $email,
+        string $password,
+        string $password2,
+        array &$validated = []
+    ): ?string {
+        $app = $this->getApplication();
+
+        $data = $app->getInput()->post->get('jform', [], 'array');
+        $data = \is_array($data) ? $data : [];
+
+        $data['name']      = $name;
+        $data['username']  = $username;
+        $data['email1']    = $email;
+        $data['password1'] = $password;
+        $data['password2'] = $password2;
+
+        try {
+            $app->getLanguage()->load('com_users', JPATH_SITE);
+
+            // A form of com_users is only found on the paths of the component
+            // that dispatches the request, here com_ajax.
+            Form::addFormPath(JPATH_SITE . '/components/com_users/forms');
+
+            $model = $app->bootComponent('com_users')->getMVCFactory()
+                ->createModel('Registration', 'Site', ['ignore_request' => true]);
+            $form = $model ? $model->getForm([], false) : false;
+
+            if (!$form) {
+                return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_REGISTRATION_FAILED');
+            }
+
+            // The captcha follows the Users options, as in com_users. Outside of
+            // com_users the captcha field would read the options of com_ajax.
+            $form->setFieldAttribute('captcha', 'plugin', $this->registrationCaptchaPlugin());
+
+            $result = $model->validate($form, $data);
+
+            if ($result !== false) {
+                $validated = (array) $result;
+
+                // The privacy consent and the terms plugins refuse a "not agreed"
+                // answer only in onUserBeforeSave, and only for option=com_users.
+                // The form filter turns the missing tick into 0, which passes the
+                // required check. The same refusal is therefore made here.
+                $consents = [
+                    ['privacy', 'privacyconsent', 'PLG_SYSTEM_PRIVACYCONSENT_FIELD_ERROR'],
+                    ['terms', 'terms', 'PLG_USER_TERMS_FIELD_ERROR'],
+                ];
+
+                foreach ($consents as [$field, $group, $message]) {
+                    if ($form->getField($field, $group) && empty($validated[$group][$field])) {
+                        return Text::_($message);
+                    }
+                }
+
+                return null;
+            }
+
+            foreach ((method_exists($model, 'getErrors') ? $model->getErrors() : []) as $error) {
+                $message = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+
+                if ($message !== '') {
+                    return $message;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::add('Registration validation error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+        }
+
+        return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_REGISTRATION_FAILED');
+    }
+
+    /**
+     * The captcha plugin of the registration, as the Users options define it.
+     *
+     * An empty value means "Use Default", the captcha of the Global
+     * Configuration. "0" switches the captcha off.
+     *
+     * @return  string  The plugin element, "0" for none
+     */
+    protected function registrationCaptchaPlugin(): string
+    {
+        $plugin = (string) ComponentHelper::getParams('com_users')->get('captcha', '');
+
+        if ($plugin === '') {
+            $plugin = (string) $this->getApplication()->get('captcha', '0');
+        }
+
+        return $plugin === '' ? '0' : $plugin;
+    }
+
+    /**
+     * Whether another reset request is allowed for this account.
+     *
+     * The same rule as com_users (ResetModel::checkResetLimit()): at most
+     * reset_count requests within reset_time hours, counted from the first
+     * request of the window. The Users options are read directly, because the
+     * request runs in com_ajax, whose options do not carry these values.
+     * The counter and the start of the window are set on $account.
+     *
+     * @param   object  $account  The user, with lastResetTime and resetCount
+     *
+     * @return  boolean  True when the request may be sent
+     */
+    protected function withinResetLimit(object $account): bool
+    {
+        $usersConfig = ComponentHelper::getParams('com_users');
+        $maxCount    = (int) $usersConfig->get('reset_count', 10);
+        $resetHours  = (int) $usersConfig->get('reset_time', 1);
+
+        $lastReset  = empty($account->lastResetTime) ? 0 : (int) strtotime((string) $account->lastResetTime);
+        $hoursSince = (strtotime(Factory::getDate()->toSql()) - $lastReset) / 3600;
+
+        if ($hoursSince > $resetHours) {
+            $account->lastResetTime = Factory::getDate()->toSql();
+            $account->resetCount    = 1;
+
+            return true;
+        }
+
+        if ((int) $account->resetCount < $maxCount) {
+            $account->resetCount = (int) $account->resetCount + 1;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Handle password reset request
      *
      * @return  string  JSON response
@@ -610,32 +802,65 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // Always return success to prevent email enumeration
         try {
             $db = $this->getDatabase();
+            // Matched like com_users, regardless of the case of the address.
             $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__users'))
-                ->where($db->quoteName('email') . ' = :email')
+                ->where('LOWER(' . $db->quoteName('email') . ') = LOWER(:email)')
                 ->where($db->quoteName('block') . ' = 0')
                 ->bind(':email', $email);
             $db->setQuery($query);
             $user = $db->loadObject();
 
-            if ($user) {
+            // The same refusals as com_users, but with the same neutral answer, so
+            // the form still reveals nothing about the account: no reset of a
+            // Super User from the site, and at most reset_count requests within
+            // reset_time hours.
+            $account = $user
+                ? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById((int) $user->id)
+                : null;
+
+            // The state the limit is checked against, before withinResetLimit()
+            // moves it on.
+            $readCount = $user ? (int) $user->resetCount : 0;
+            $readTime  = $user && $user->lastResetTime !== null ? (string) $user->lastResetTime : null;
+
+            if ($user && $account && !$account->authorise('core.admin') && $this->withinResetLimit($user)) {
                 $token = UserHelper::genRandomPassword(32);
                 $hashedToken = UserHelper::hashPassword($token);
-                $tokenCreated = Factory::getDate()->toSql();
+                $resetTime  = (string) $user->lastResetTime;
+                $resetCount = (int) $user->resetCount;
 
+                // Reserve the request atomically: the row is only updated while
+                // it still holds the state that was checked. Of two concurrent
+                // requests on the same state only one updates the row and sends
+                // a mail, so the limit cannot be passed by parallel requests.
                 $query = $this->createDbQuery($db)
                     ->update($db->quoteName('#__users'))
                     ->set($db->quoteName('activation') . ' = :activation')
                     ->set($db->quoteName('lastResetTime') . ' = :resetTime')
+                    ->set($db->quoteName('resetCount') . ' = :resetCount')
                     ->where($db->quoteName('id') . ' = :userId')
+                    ->where($db->quoteName('resetCount') . ' = :readCount')
                     ->bind(':activation', $hashedToken)
-                    ->bind(':resetTime', $tokenCreated)
-                    ->bind(':userId', $user->id, ParameterType::INTEGER);
+                    ->bind(':resetTime', $resetTime)
+                    ->bind(':resetCount', $resetCount, ParameterType::INTEGER)
+                    ->bind(':userId', $user->id, ParameterType::INTEGER)
+                    ->bind(':readCount', $readCount, ParameterType::INTEGER);
+
+                if ($readTime === null) {
+                    $query->where($db->quoteName('lastResetTime') . ' IS NULL');
+                } else {
+                    $query->where($db->quoteName('lastResetTime') . ' = :readTime')
+                        ->bind(':readTime', $readTime);
+                }
+
                 $db->setQuery($query);
                 $db->execute();
 
-                $this->sendResetEmail($user, $token);
+                if ($db->getAffectedRows() === 1) {
+                    $this->sendResetEmail($user, $token);
+                }
             }
         } catch (\Exception $e) {
             Log::add('Password reset error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');

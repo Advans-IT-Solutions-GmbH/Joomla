@@ -529,7 +529,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 continue;
             }
 
-            $domain ??= $this->createDomain('checkout_consents', 'J2Commerce checkout consents of guest orders');
+            $domain ??= $this->createDomain('checkout_consents', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_CHECKOUT_CONSENTS'));
             $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
 
             $domain->addItem($this->createItemFromArray([
@@ -559,7 +559,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $domain = null;
 
         foreach ((new ConsentRepository($this->getDatabase()))->findLegacyGuestConsents($emails) as $record) {
-            $domain ??= $this->createDomain('legacy_consents', 'Privacy consents of an earlier shop template (guest records)');
+            $domain ??= $this->createDomain('legacy_consents', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_LEGACY_CONSENTS'));
             $text     = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
 
             $domain->addItem($this->createItemFromArray([
@@ -1018,7 +1018,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function createOrdersDomain(?User $user, array $emails = []): Domain
     {
-        $domain = $this->createDomain('orders', 'J2Commerce order data');
+        $domain = $this->createDomain('orders', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_ORDERS'));
         $db     = $this->getDatabase();
         $owner  = $this->ownerCondition((int) ($user->id ?? 0), $emails, 'user_email', 'o');
 
@@ -1200,7 +1200,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function createAddressesDomain(?User $user, array $emails = []): Domain
     {
-        $domain = $this->createDomain('addresses', 'J2Commerce address data');
+        $domain = $this->createDomain('addresses', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_ADDRESSES'));
         $db     = $this->getDatabase();
 
         $table = $this->isJ2Commerce4() ? '#__j2store_addresses' : '#__j2commerce_addresses';
@@ -1223,7 +1223,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     protected function createJoomlaUserDomain(User $user): Domain
     {
-        $domain = $this->createDomain('joomla_user', 'Joomla user account data');
+        $domain = $this->createDomain('joomla_user', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_JOOMLA_USER'));
         $db = $this->getDatabase();
 
         $query = $this->createDbQuery()
@@ -1244,7 +1244,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     protected function createJoomlaProfileDomain(User $user): Domain
     {
-        $domain = $this->createDomain('joomla_user_profiles', 'Joomla user profile data');
+        $domain = $this->createDomain('joomla_user_profiles', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_JOOMLA_USER_PROFILES'));
         $db = $this->getDatabase();
 
         $query = $this->createDbQuery()
@@ -1265,7 +1265,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     protected function createJoomlaActionLogsDomain(User $user): Domain
     {
-        $domain = $this->createDomain('joomla_action_logs', 'Joomla user activity logs');
+        $domain = $this->createDomain('joomla_action_logs', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_JOOMLA_ACTION_LOGS'));
         $db = $this->getDatabase();
 
         $tables = $db->getTableList();
@@ -1385,10 +1385,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Process data removal request.
      * 
      * Per Swiss law (OR Art. 958f, MWSTG Art. 70):
-     * - Orders within retention period (10 years) are KEPT with full address data
-     * - Orders outside retention period are anonymized
-     * - Address book entries are always deleted
-     * - Cart data is always deleted
+     * - Orders within the configured retention period are KEPT with full address data
+     * - Orders outside the retention period are anonymized while Anonymize Orders is on
+     * - Address book entries are deleted while Delete Addresses is on
+     * - Carts of the account are deleted (guest carts carry no e-mail address and are never touched)
      *
      * Joomla's own privacy user plugin pseudonymises the account in the same request. Orders
      * within the retention period are listed to the administrator (message, notification, log)
@@ -1453,7 +1453,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
         // #__j2store_* copies; personal data must not survive there).
         $this->forEachDataSet(function () use ($userId, $emails): void {
-            // Always delete address book entries (not order-related)
+            // Delete address book entries while Delete Addresses is on
             if ($this->params->get('delete_addresses', 1)) {
                 $this->deleteAddresses($userId, $emails);
             }
@@ -1604,7 +1604,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         if ($lifetime !== []) {
-            $text .= $language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER') . "\n\n";
+            // "Anonymize Orders" off: these orders stay unchanged, the heading says so.
+            $text .= $language->_((int) $this->params->get('anonymize_orders', 1)
+                ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER'
+                : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT') . "\n\n";
 
             foreach ($lifetime as $i => $order) {
                 $text .= ($i + 1) . '. ' . $sprintf('PLG_PRIVACY_J2COMMERCE_RETENTION_ORDER_TITLE', $order['order_number']) . "\n";
@@ -1643,24 +1646,42 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         // A kept newsletter subscriber: the texts do not name the newsletter data as removed.
+        // "Anonymize Orders" off: the texts do not claim that expired orders were anonymized.
+        $ordersKept = !(int) $this->params->get('anonymize_orders', 1);
+
         if ($mailState === 'none') {
-            $app->enqueueMessage(
-                Text::_($this->newsletterKept ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT' : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED'),
-                $this->newsletterKept ? 'warning' : 'message'
-            );
+            $key = $ordersKept
+                ? ($this->newsletterKept ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT_ORDERS_KEPT' : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_ORDERS_KEPT')
+                : ($this->newsletterKept ? 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT' : 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED');
+
+            $app->enqueueMessage(Text::_($key), $this->newsletterKept ? 'warning' : 'message');
 
             return;
         }
 
-        $key = ($this->newsletterKept ? [
-            'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NEWSLETTER_KEPT',
-            'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_NEWSLETTER_KEPT',
-            'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_NEWSLETTER_KEPT',
-        ] : [
-            'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED',
-            'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS',
-            'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED',
-        ])[$mailState];
+        if ($ordersKept) {
+            $keys = $this->newsletterKept ? [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NEWSLETTER_KEPT_ORDERS_KEPT',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_NEWSLETTER_KEPT_ORDERS_KEPT',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_NEWSLETTER_KEPT_ORDERS_KEPT',
+            ] : [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_ORDERS_KEPT',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_ORDERS_KEPT',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_ORDERS_KEPT',
+            ];
+        } else {
+            $keys = $this->newsletterKept ? [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NEWSLETTER_KEPT',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_NEWSLETTER_KEPT',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_NEWSLETTER_KEPT',
+            ] : [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED',
+            ];
+        }
+
+        $key = $keys[$mailState];
 
         $app->enqueueMessage(
             nl2br(htmlspecialchars(Text::sprintf($key, $customerEmail) . "\n\n" . $this->formatRetainedOrders($retained, $lifetime), ENT_QUOTES, 'UTF-8')),
@@ -2392,7 +2413,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             case 'deleteAddress':
                 return $this->deleteUserAddress($app->getInput()->getInt('address_id', 0), $user->id);
             default:
-                return ['success' => false, 'message' => 'Invalid task'];
+                return ['success' => false, 'message' => Text::_('PLG_PRIVACY_J2COMMERCE_INVALID_TASK')];
         }
     }
 

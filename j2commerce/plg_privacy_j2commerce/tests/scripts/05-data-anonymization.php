@@ -989,7 +989,64 @@ class DataAnonymizationTest
             $keptFlag->setValue($plugin, false);
         }
 
-        $german = $plugin->call('formatRetainedOrders', $retained, [['order_number' => 'FB-2', 'order_date' => '01.02.2010']], $plugin->call('pluginLanguage', 'de-DE'));
+        // "Anonymize Orders" off: no message claims that expired orders were anonymized.
+        $plugin->params->set('anonymize_orders', 0);
+
+        try {
+            FeedbackTestApp::$log = [];
+            $plugin->call('reportRetainedOrders', [], [], $email, 'de-DE');
+            $this->test('orders kept by the option, nothing retained: message without the anonymization claim',
+                count(FeedbackTestApp::$log) === 1
+                && str_contains(FeedbackTestApp::$log[0][2], Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_ORDERS_KEPT'))
+                && !str_contains(FeedbackTestApp::$log[0][2], Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED'))
+                && !str_contains(FeedbackTestApp::$log[0][2], 'PLG_PRIVACY_J2COMMERCE_'), json_encode(FeedbackTestApp::$log));
+
+            $ordersKeptCases = [
+                'sent'    => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_ORDERS_KEPT',
+                'invalid' => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_NO_ADDRESS_ORDERS_KEPT',
+                'failed'  => 'PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_RETAINED_MAIL_FAILED_ORDERS_KEPT',
+            ];
+
+            foreach ($ordersKeptCases as $state => $key) {
+                FeedbackTestApp::$log = [];
+                $plugin->mailState    = $state;
+                $plugin->call('reportRetainedOrders', $retained, [], $email, 'de-DE');
+                $log = FeedbackTestApp::$log;
+                $this->test("orders kept by the option, mail '$state': the matching text",
+                    str_contains($log[1][2] ?? '', htmlspecialchars(Text::sprintf($key, $email), ENT_QUOTES, 'UTF-8'))
+                    && !str_contains($log[1][2] ?? '', 'PLG_PRIVACY_J2COMMERCE_'), json_encode($log));
+            }
+
+            // Expired lifetime-license orders stay unchanged too: their heading must
+            // not call them anonymized.
+            $lifetimeOnly = [['order_number' => 'FB-3', 'order_date' => '01.02.2010']];
+            $lifetimeText = (string) $plugin->call('formatRetainedOrders', [], $lifetimeOnly);
+            $this->test('orders kept by the option: the lifetime heading says the orders stay unchanged',
+                str_contains($lifetimeText, Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT'))
+                && !str_contains($lifetimeText, Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER'))
+                && str_contains($lifetimeText, 'FB-3'), $lifetimeText);
+
+            FeedbackTestApp::$log = [];
+            $plugin->mailState    = 'sent';
+            $plugin->call('reportRetainedOrders', [], $lifetimeOnly, $email, 'de-DE');
+            $log = FeedbackTestApp::$log;
+            $this->test('orders kept by the option, lifetime orders only: the message uses the unchanged heading',
+                str_contains($log[1][2] ?? '', htmlspecialchars(Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_LIFETIME_HEADER_ORDERS_KEPT'), ENT_QUOTES, 'UTF-8'))
+                && !str_contains($log[1][2] ?? '', 'PLG_PRIVACY_J2COMMERCE_'), json_encode($log));
+
+            $keptFlag->setValue($plugin, true);
+            FeedbackTestApp::$log = [];
+            $plugin->call('reportRetainedOrders', [], [], $email, 'de-DE');
+            $this->test('orders and newsletter kept: the warning names both',
+                count(FeedbackTestApp::$log) === 1 && FeedbackTestApp::$log[0][1] === 'warning'
+                && str_contains(FeedbackTestApp::$log[0][2], Text::_('PLG_PRIVACY_J2COMMERCE_REMOVAL_DONE_NOTHING_RETAINED_NEWSLETTER_KEPT_ORDERS_KEPT')),
+                json_encode(FeedbackTestApp::$log));
+        } finally {
+            $keptFlag->setValue($plugin, false);
+            $plugin->params->set('anonymize_orders', 1);
+        }
+
+        $german =$plugin->call('formatRetainedOrders', $retained, [['order_number' => 'FB-2', 'order_date' => '01.02.2010']], $plugin->call('pluginLanguage', 'de-DE'));
         $this->test('customer text in German (customer language) incl. lifetime-license notes',
             str_contains($german, 'Aufbewahrungsfrist') && str_contains($german, 'Unbefristete Lizenz') && str_contains($german, 'FB-2')
             && !str_contains($german, 'PLG_PRIVACY_J2COMMERCE_'), $german);
