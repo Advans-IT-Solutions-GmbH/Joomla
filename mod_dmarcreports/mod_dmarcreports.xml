@@ -3,12 +3,12 @@
     <name>MOD_DMARCREPORTS</name>
     <element>mod_dmarcreports</element>
     <author>Advans IT Solutions GmbH</author>
-    <creationDate>2026-08</creationDate>
+    <creationDate>2026-10</creationDate>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
     <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <description>MOD_DMARCREPORTS_XML_DESCRIPTION</description>
 
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
