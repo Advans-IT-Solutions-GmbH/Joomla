@@ -84,7 +84,7 @@ final class ConferenceTest extends TestCase
         $provider = $this->jitsi();
         $first = $provider->createMeeting($this->request());
         self::assertSame($first->roomIdentifier, $provider->createMeeting($this->request())->roomIdentifier);
-        self::assertMatchesRegularExpression('/\Ameeting-event-[a-f0-9]{24}\z/', $first->roomIdentifier);
+        self::assertMatchesRegularExpression('/\Aappointment-event-[a-f0-9]{24}\z/', $first->roomIdentifier);
         self::assertSame('https://meet.example.com/' . $first->roomIdentifier, $first->joinUrl);
         self::assertNull($first->hostUrl);
         self::assertStringNotContainsString('booking-a', $first->joinUrl);
