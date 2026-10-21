@@ -168,14 +168,24 @@ The component has no SEF router. Its guest links are non-SEF on purpose:
   `/component/appointments/…` form.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
-otherwise guests cannot open the links of their e-mails or subscribe to a feed:
+otherwise guests cannot open the links of their e-mails or subscribe to a feed. Each line goes
+into the existing rule as one more negated condition next to its other exceptions:
 
 ```apache
-# In the rule that redirects or blocks ?option=com_<x> on the frontend:
-RewriteCond %{QUERY_STRING} !option=com_appointments
-# In the rule that redirects or blocks /component/<x>:
-RewriteCond %{REQUEST_URI} !^(/[a-z]{2})?/component/appointments
+# Rule that redirects or blocks ?option=com_<x> on the frontend (non-POST). Exempt only a query
+# whose one and only option parameter is com_appointments: a second option parameter (PHP uses
+# the last one), an embedded "option=com_appointments" in another value, or a parameter name
+# with an encoded character or a bracket (which PHP would also read as "option") keep the
+# request under the rule.
+RewriteCond %{QUERY_STRING} !^(?=.*(?:^|&)option=com_appointments(?:&|$))(?!.*(?:^|&)option=(?!com_appointments(?:&|$)))(?!.*(?:^|&)[^=&]*[%\[])
+
+# Rule that redirects or blocks /component/<x>. A query on such an address stays under the
+# ?option= rule above, so another component cannot be reached through this path.
+RewriteCond %{REQUEST_URI} !^(/[a-z]{2})?/component/appointments(/|$)
 ```
+
+A plain `RewriteCond %{QUERY_STRING} !option=com_appointments` is not enough: it is a substring
+match, so `?option=com_users&x=option=com_appointments` would also be exempted.
 
 No exception is needed for `tmpl=component` or `format=feed`: the component uses neither. The
 feed is served by the task `feed.download`.
