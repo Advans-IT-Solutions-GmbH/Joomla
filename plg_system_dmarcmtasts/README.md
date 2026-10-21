@@ -87,6 +87,29 @@ is fixed at the root of that host. On any other web server, route the same exact
 and request the exact URL (with a stale static file in place that must not be served), so the
 documented setup is the tested one.
 
+### Why does `/.well-known/mta-sts.txt` answer 404?
+
+The plugin answers only when every condition below holds. Otherwise the request falls through to
+the web server or to Joomla, which answer 404. Check them in this order:
+
+1. **Web-server rule.** The rule above stands directly after `RewriteEngine On`. Without it Apache
+   serves the `.txt` path itself. On a site with its own hardening rules (for example blocks for
+   `/component/` or `?option=`), the rule must stand before them: it has no query string and no
+   `/component/` path, so those rules do not catch it once it has run.
+2. **Host.** `mta-sts.<domain>` resolves to this server, the web server serves that host from the
+   Joomla root (an alias of the site or its own virtual host with the same document root) and has a
+   valid certificate for it. A request to the main host never receives the policy.
+3. **Plugin.** *System - DMARC MTA-STS Policy* is enabled.
+4. **Component options.** MTA-STS is enabled (`mtasts_enable`) and the MX list is valid.
+5. **Domain.** `<domain>` is listed under **Domains** and **published**. A domain that an import
+   created automatically is unpublished until an administrator publishes it, so no policy is
+   served for it before.
+
+To test without DNS, send the host header yourself, for example
+`curl -i -H "Host: mta-sts.example.org" https://www.example.org/.well-known/mta-sts.txt` (with
+`-k` while the certificate does not cover the main host name). A `200` with `version: STSv1` proves
+conditions 1 and 3 to 5. Condition 2 needs the real host name.
+
 ## Development
 
 ### Structure

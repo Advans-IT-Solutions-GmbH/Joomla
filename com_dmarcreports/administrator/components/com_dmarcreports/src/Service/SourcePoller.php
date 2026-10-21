@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Service;
 
 use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
+use Advans\Component\DmarcReports\Administrator\Helper\DomainRegistry;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
@@ -153,6 +154,10 @@ final class SourcePoller
     private function runPoll(object $source, int $sourceId, bool $allowAutoCreate): array
     {
         $domainId = (int) $source->domain_id;
+
+        // The component option is the outer switch for every import path: while
+        // it is off, a poll behaves exactly like one without the permission.
+        $allowAutoCreate = $allowAutoCreate && DomainRegistry::autoCreateEnabled();
 
         // Decide whether this poll forces the source's bound domain onto every
         // report, or lets each report be attributed to its own policy domain so
@@ -428,6 +433,13 @@ final class SourcePoller
 
         if ($dropped > 0) {
             $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_DROPPED', $dropped, ReportArchive::MAX_DOCUMENTS);
+        }
+        // The stored rows and the mail messages they stand for, named apart: a
+        // report with three rows can describe six messages.
+        $records = (int) ($summary['records'] ?? 0);
+
+        if ($records > 0) {
+            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_RECORDS', $records, (int) ($summary['messages'] ?? 0));
         }
 
         return $text;

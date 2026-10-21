@@ -404,15 +404,20 @@ final class Ingestor
             // commit succeeds. Adding inside the loop would leave the record
             // tally inflated if a later insert or the commit itself failed and
             // rolled the whole report back.
-            $records = 0;
+            // "records" counts the stored rows of the report, "messages" the mail
+            // messages those rows stand for (the sum of their counts).
+            $records  = 0;
+            $messages = 0;
 
             foreach ($report['records'] as $record) {
                 $this->insertRecord($record, $reportId, $domainId);
-                $records += (int) $record['count'];
+                $records++;
+                $messages += (int) $record['count'];
             }
 
             $this->db->transactionCommit();
-            $summary['records'] += $records;
+            $summary['records']  += $records;
+            $summary['messages'] = (int) ($summary['messages'] ?? 0) + $messages;
             $summary['imported']++;
         } catch (\Throwable) {
             $this->db->transactionRollback();
@@ -581,6 +586,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'dropped' => 0, 'reason' => ''];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'messages' => 0, 'dropped' => 0, 'reason' => ''];
     }
 }
