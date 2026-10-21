@@ -592,6 +592,124 @@ class ResetRequestTest
         return ajaxforms_decode_response($body);
     }
 
+    /**
+     * The reset state of an account: token hash, counter and start of the window.
+     *
+     * @return  array{0: string, 1: int, 2: string}
+     */
+    private function resetState(int $userId): array
+    {
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName(['activation', 'resetCount', 'lastResetTime']))
+            ->from($db->quoteName('#__users'))
+            ->where($db->quoteName('id') . ' = ' . $userId);
+
+        $db->setQuery($query);
+        $row = $db->loadObject();
+
+        return [(string) ($row->activation ?? ''), (int) ($row->resetCount ?? 0), (string) ($row->lastResetTime ?? '')];
+    }
+
+    private function writeResetState(int $userId, string $activation, int $count, ?string $lastResetTime): void
+    {
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->update($db->quoteName('#__users'))
+            ->set($db->quoteName('activation') . ' = ' . $db->quote($activation))
+            ->set($db->quoteName('resetCount') . ' = ' . $count)
+            ->set($db->quoteName('lastResetTime') . ' = ' . ($lastResetTime === null ? 'NULL' : $db->quote($lastResetTime)))
+            ->where($db->quoteName('id') . ' = ' . $userId);
+
+        $db->setQuery($query)->execute();
+    }
+
+    /**
+     * The reset requests of an account are limited like in com_users: at most
+     * "Maximum Reset Count" requests within "Time in Hours". A refused request
+     * gets the same answer as an accepted one, so the form still reveals
+     * nothing, and leaves the stored token alone.
+     */
+    private function testResetLimitOfTheUsersOptions(): void
+    {
+        echo "\n--- HTTP: reset requests follow the limit of the Users options ---\n";
+
+        $original = ajaxforms_set_component_params('com_users', ['reset_count' => 2, 'reset_time' => 1]);
+        $user     = ajaxforms_create_test_user('resetlimit');
+        $userId   = (int) $user->id;
+
+        try {
+            $first = $this->resetAnswer((string) $user->email);
+            [$tokenOne, $countOne] = $this->resetState($userId);
+            $this->test('First request is answered as accepted', ($first['success'] ?? null) === true);
+            $this->test('First request stores a reset token', $tokenOne !== '');
+            $this->test('First request starts the counter at 1', $countOne === 1, "resetCount $countOne");
+
+            $this->resetAnswer((string) $user->email);
+            [$tokenTwo, $countTwo] = $this->resetState($userId);
+            $this->test('Second request within the window is sent', $tokenTwo !== '' && $tokenTwo !== $tokenOne);
+            $this->test('Second request raises the counter to 2', $countTwo === 2, "resetCount $countTwo");
+
+            $third = $this->resetAnswer((string) $user->email);
+            [$tokenThree, $countThree] = $this->resetState($userId);
+            $this->test('Third request beyond the limit gets the same answer', $third === $first,
+                'first: ' . var_export($first, true) . ', third: ' . var_export($third, true));
+            $this->test('Third request beyond the limit sends nothing (token unchanged)', $tokenThree === $tokenTwo);
+            $this->test('Third request beyond the limit keeps the counter', $countThree === 2, "resetCount $countThree");
+
+            // Once the window has passed, a new one starts.
+            $twoHoursAgo = gmdate('Y-m-d H:i:s', time() - 7200);
+            $this->writeResetState($userId, $tokenThree, 2, $twoHoursAgo);
+            $this->resetAnswer((string) $user->email);
+            [$tokenFour, $countFour, $windowFour] = $this->resetState($userId);
+            $this->test('After the window a request is sent again', $tokenFour !== $tokenThree);
+            $this->test('After the window the counter starts at 1 again', $countFour === 1, "resetCount $countFour");
+            $this->test('After the window a new window starts', $windowFour !== $twoHoursAgo, "lastResetTime $windowFour");
+        } finally {
+            ajaxforms_restore_component_params('com_users', $original);
+            ajaxforms_delete_test_user('resetlimit');
+        }
+    }
+
+    /**
+     * com_users never resets the password of a Super User from the site. The
+     * AJAX request answers the same way as for any address and sends nothing.
+     */
+    private function testNoResetForSuperUsers(): void
+    {
+        echo "\n--- HTTP: no reset for a Super User ---\n";
+
+        $db    = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
+            ->select($db->quoteName(['u.id', 'u.email', 'u.activation', 'u.resetCount', 'u.lastResetTime']))
+            ->from($db->quoteName('#__users', 'u'))
+            ->join('INNER', $db->quoteName('#__user_usergroup_map', 'm'), $db->quoteName('m.user_id') . ' = ' . $db->quoteName('u.id'))
+            ->where($db->quoteName('m.group_id') . ' = 8')
+            ->where($db->quoteName('u.block') . ' = 0')
+            ->setLimit(1);
+
+        $db->setQuery($query);
+        $admin = $db->loadObject();
+
+        $this->test('A Super User exists', $admin !== null);
+
+        if ($admin === null) {
+            return;
+        }
+
+        try {
+            $answer = $this->resetAnswer((string) $admin->email);
+            [$activation] = $this->resetState((int) $admin->id);
+
+            $this->test('Super User request gets the neutral answer', ($answer['success'] ?? null) === true,
+                'answer: ' . var_export($answer, true));
+            $this->test('Super User request stores no reset token', $activation === (string) $admin->activation);
+        } finally {
+            $this->writeResetState((int) $admin->id, (string) $admin->activation, (int) $admin->resetCount,
+                $admin->lastResetTime === null ? null : (string) $admin->lastResetTime);
+        }
+    }
+
     public function run(): bool
     {
         echo "=== Password Reset Request Tests ===\n";
@@ -606,6 +724,8 @@ class ResetRequestTest
         $this->testFallbackMailLanguageIsIsolated();
         $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();
+        $this->testResetLimitOfTheUsersOptions();
+        $this->testNoResetForSuperUsers();
 
         echo "\n=== Reset Request Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

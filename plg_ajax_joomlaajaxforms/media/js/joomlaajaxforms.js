@@ -451,6 +451,64 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * Whether the form carries a captcha (a widget or the captcha field of com_users).
+     *
+     * @param {HTMLFormElement} form - The form element
+     * @returns {boolean}
+     */
+    hasCaptcha: function(form) {
+        return !!form.querySelector(
+            '[name="jform[captcha]"], [name="g-recaptcha-response"], [name="h-captcha-response"], ' +
+            '[name="cf-turnstile-response"], .g-recaptcha, .h-captcha, .cf-turnstile'
+        );
+    },
+
+    /**
+     * Renew the answer of the captcha widget of this form.
+     *
+     * Only the widget inside the form is reset, never the first widget of the
+     * page, which may belong to another form. When its widget cannot be
+     * identified, nothing is reset and false is returned, so the caller falls
+     * back to the normal submission.
+     *
+     * @param {HTMLFormElement} form - The form element
+     * @returns {boolean} true when the widget of this form was reset
+     */
+    resetCaptcha: function(form) {
+        try {
+            // reCAPTCHA v2: the answer field is g-recaptcha-response for widget 0
+            // and g-recaptcha-response-N for widget N.
+            var recaptcha = form.querySelector('textarea[name="g-recaptcha-response"]');
+            if (recaptcha && window.grecaptcha && typeof window.grecaptcha.reset === 'function') {
+                var match = /^g-recaptcha-response(?:-(\d+))?$/.exec(recaptcha.id || '');
+                if (!match) {
+                    return false;
+                }
+                window.grecaptcha.reset(match[1] ? parseInt(match[1], 10) : 0);
+                return true;
+            }
+
+            // hCaptcha: the iframe of the widget carries its ID.
+            var hcaptcha = form.querySelector('iframe[data-hcaptcha-widget-id]');
+            if (hcaptcha && window.hcaptcha && typeof window.hcaptcha.reset === 'function') {
+                window.hcaptcha.reset(hcaptcha.getAttribute('data-hcaptcha-widget-id'));
+                return true;
+            }
+
+            // Turnstile: reset() accepts the container of the widget.
+            var turnstile = form.querySelector('.cf-turnstile');
+            if (turnstile && window.turnstile && typeof window.turnstile.reset === 'function') {
+                window.turnstile.reset(turnstile);
+                return true;
+            }
+        } catch (error) {
+            // A widget that cannot be reset is treated like no reset.
+        }
+
+        return false;
+    },
+
+    /**
      * Convert registration form to AJAX
      *
      * @param {HTMLFormElement} form - The form element
@@ -459,6 +517,12 @@ const JoomlaAjaxForms = {
         const messageContainer = JoomlaAjaxForms.createMessageContainer(form);
 
         form.addEventListener('submit', function(e) {
+            // A captcha whose answer cannot be renewed on this page: after a failed
+            // attempt the form goes to com_users the normal way, which shows a new one.
+            if (form.dataset.joomlaajaxformsNative === '1') {
+                return;
+            }
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -480,6 +544,22 @@ const JoomlaAjaxForms = {
             body.append('password', password);
             body.append('password2', password2);
 
+            // Every further field goes along unchanged: the answer of a captcha
+            // and the fields a plugin adds to the registration form (for example
+            // the privacy consent). The server validates them with the
+            // registration form of com_users.
+            const handled = [
+                'option', 'plugin', 'format', 'task', tokenName,
+                'name', 'username', 'email', 'email2', 'password', 'password2',
+                'jform[name]', 'jform[username]', 'jform[email1]', 'jform[email2]',
+                'jform[password1]', 'jform[password2]'
+            ];
+            formData.forEach(function(value, key) {
+                if (handled.indexOf(key) === -1 && typeof value === 'string') {
+                    body.append(key, value);
+                }
+            });
+
             const submitBtn = JoomlaAjaxForms.disableSubmit(form);
             messageContainer.style.display = 'none';
 
@@ -500,6 +580,12 @@ const JoomlaAjaxForms = {
                     form.reset();
                 } else {
                     var errorMsg = serverErrorMsg || JoomlaAjaxForms.getErrorMessage(data);
+
+                    // A captcha answer is used up by the attempt. Renew it, or let the
+                    // next submission go to com_users when the captcha offers no reset.
+                    if (JoomlaAjaxForms.hasCaptcha(form) && !JoomlaAjaxForms.resetCaptcha(form)) {
+                        form.dataset.joomlaajaxformsNative = '1';
+                    }
                     JoomlaAjaxForms.showMessage(messageContainer, errorMsg, 'error');
                 }
             })
