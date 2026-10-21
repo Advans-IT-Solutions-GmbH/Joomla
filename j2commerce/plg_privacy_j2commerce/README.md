@@ -131,7 +131,7 @@ This plugin is a **privacy group plugin** that extends Joomla's built-in Privacy
 
 **What this plugin adds:**
 - J2Commerce order, address, and cart data in exports (`onPrivacyExportRequest`)
-- Retention period enforcement before deletion (`onPrivacyCanRemoveData`)
+- Removal requests are always carried out (`onPrivacyCanRemoveData` refuses only an account of a different address). Orders within the retention period are kept and reported.
 - Order anonymization with configurable retention (`onPrivacyRemoveData`)
 - Lifetime license detection to preserve email after retention expires
 - Checkout consent checkbox
@@ -470,7 +470,7 @@ Navigate to: `System → Manage → Plugins → Privacy - J2Commerce`
 #### Data Handling Configuration
 
 - **Include Joomla Core Data:** Enable to include Joomla user account data in privacy exports
-- **Anonymize Orders:** Enable to anonymize rather than delete order records (recommended for accounting compliance)
+- **Anonymize Orders:** Anonymize orders outside the retention period on a removal request. With No these orders stay unchanged. Orders are never deleted.
 - **Delete Addresses:** Enable to remove stored address data upon data removal requests
 
 #### Retention Settings
@@ -498,7 +498,7 @@ See [Legal Basis Examples](#legal-basis-examples) for more countries.
 privacy@example.com
 ```
 
-⚠️ **Important:** The field is empty by default. If left empty, retention messages show `support@example.com` — set a real address before going live. This address is shown to users in all retention messages.
+⚠️ **Important:** The field is empty by default. If left empty, the sender address of the Global Configuration (Mail → From Email) is shown. Set a dedicated privacy contact before going live. This address is shown to users in all retention messages.
 
 **Where to change:**
 - `System → Manage → Plugins → Privacy - J2Commerce`
@@ -975,7 +975,7 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Include Joomla Core Data | Yes | Include user account, profile, and activity logs in privacy exports |
-| Anonymize Orders | Yes | Anonymize order data instead of deleting on removal requests (recommended for accounting compliance) |
+| Anonymize Orders | Yes | Anonymize orders outside the retention period on a removal request. With No these orders stay unchanged. Orders are never deleted. |
 | Delete Addresses | Yes | Delete saved addresses on removal requests |
 
 #### Data Retention
@@ -983,15 +983,15 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Retention Period (Years) | 10 | Legal retention period. Switzerland: 10 (OR Art. 958f), Germany: 10 (AO §147), Austria: 7, UK/Spain: 6 |
-| Legal Basis | (pre-filled with CH/DE/EU examples) | Legal grounds shown in retention error messages to users |
-| Support Email | (empty) | Contact address shown to users for privacy inquiries. If left empty, retention messages show `support@example.com` — set a real address before going live. |
+| Legal Basis | (pre-filled with CH/DE/EU examples) | Internal documentation only. Not shown to users or used in any message. |
+| Support Email | (empty) | Contact address shown to users for privacy inquiries. If left empty, the sender address of the Global Configuration (Mail → From Email) is shown. Set a dedicated privacy contact before going live. |
 
 #### Checkout Consent
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Show Consent Checkbox | Yes | Display privacy consent checkbox in checkout step 4 |
-| Consent Required | Yes | Make consent mandatory: blocks the checkout step if unchecked on J2Commerce 4; on J2Commerce 6 the checkbox is displayed but does not block the step (see [Checkout Consent Checkbox](#checkout-consent-checkbox)) |
+| Consent Required | Yes | Make consent mandatory: the checkout cannot continue until the checkbox is ticked (J2Commerce 4: check in the browser, J2Commerce 6: server-side check by the system plugin, see [Checkout Consent Checkbox](#checkout-consent-checkbox)) |
 | Privacy Policy Article | (none) | Joomla article containing your privacy policy — linked in the consent text |
 | Consent Text | (default) | Checkbox label text. Use `{privacy_policy}` as placeholder for the policy link |
 
@@ -1011,7 +1011,7 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Admin Notifications | No | Send email to admin when users perform privacy actions (address deletion, export/deletion requests) |
+| Admin Notifications | No | Send an e-mail to the administration when someone deletes a saved address or a data removal is carried out. No notification is sent for data exports. |
 | Admin Email | (empty) | Recipient for admin notifications. Leave empty to use Global Configuration → Mail → From Email |
 | Activity Logging | No | Write all privacy actions to Joomla's action log (`#__action_logs`) for audit purposes |
 
