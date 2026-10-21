@@ -216,7 +216,7 @@ class IngestController extends BaseController
         $records = (int) ($summary['records'] ?? 0);
 
         if ($records > 0) {
-            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_RECORDS', $records, (int) ($summary['messages'] ?? 0));
+            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_RECORDS', $records, (string) ($summary['messages'] ?? '0'));
         }
 
         return $text;

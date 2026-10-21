@@ -417,7 +417,8 @@ final class Ingestor
 
             $this->db->transactionCommit();
             $summary['records']  += $records;
-            $summary['messages'] = (int) ($summary['messages'] ?? 0) + $messages;
+            // One report is bounded by PHP_INT_MAX, several are not: keep the sum exact.
+            $summary['messages'] = DecimalTotal::add((string) ($summary['messages'] ?? '0'), $messages);
             $summary['imported']++;
         } catch (\Throwable) {
             $this->db->transactionRollback();
@@ -586,6 +587,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'messages' => 0, 'dropped' => 0, 'reason' => ''];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'messages' => '0', 'dropped' => 0, 'reason' => ''];
     }
 }
