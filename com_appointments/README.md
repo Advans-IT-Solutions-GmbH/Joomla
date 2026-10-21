@@ -175,9 +175,11 @@ into the existing rule as one more negated condition next to its other exception
 # Rule that redirects or blocks ?option=com_<x> on the frontend (non-POST). Exempt only a query
 # whose one and only option parameter is com_appointments: a second option parameter (PHP uses
 # the last one), an embedded "option=com_appointments" in another value, or a parameter name
-# with an encoded character or a bracket (which PHP would also read as "option") keep the
-# request under the rule.
-RewriteCond %{QUERY_STRING} !^(?=.*(?:^|&)option=com_appointments(?:&|$))(?!.*(?:^|&)option=(?!com_appointments(?:&|$)))(?!.*(?:^|&)[^=&]*[%\[])
+# with any character other than letters, digits, "_" and "-" keep the request under the rule.
+# PHP rewrites such names: it decodes "%6F" and "+" (a space), strips leading spaces, turns
+# "." and " " into "_" and reads "[" as an array, so "+option" or "opti%6Fn" would also select
+# a component.
+RewriteCond %{QUERY_STRING} !^(?=.*(?:^|&)option=com_appointments(?:&|$))(?!.*(?:^|&)option=(?!com_appointments(?:&|$)))(?!.*(?:^|&)[^=&]*[^A-Za-z0-9_=&-])
 
 # Rule that redirects or blocks /component/<x>. A query on such an address stays under the
 # ?option= rule above, so another component cannot be reached through this path.
