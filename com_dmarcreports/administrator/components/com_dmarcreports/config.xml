@@ -101,6 +101,19 @@
         </field>
 
         <field
+            name="auto_create_unknown_domains"
+            type="radio"
+            layout="joomla.form.field.radio.switcher"
+            label="COM_DMARCREPORTS_CONFIG_AUTO_CREATE_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_AUTO_CREATE_DESC"
+            default="0"
+            validate="options"
+        >
+            <option value="0">JNO</option>
+            <option value="1">JYES</option>
+        </field>
+
+        <field
             name="task_auto_create"
             type="radio"
             layout="joomla.form.field.radio.switcher"

@@ -27,13 +27,18 @@ defined('_JEXEC') or die;
 final class DomainRegistry
 {
     /**
-     * Find the configured domain by name, creating a monitored entry on first
-     * sight so a shared reporting mailbox populates the domain list by itself.
-     * Returns 0 when the domain is empty, or unknown and the caller may not
-     * auto-create, so the caller skips the report rather than storing an orphan.
+     * Find the configured domain by name. An unknown domain is only created when
+     * the component option "auto_create_unknown_domains" is on and the caller may create
+     * domains, and then always unpublished: a report is untrusted input (anyone
+     * can send one), so a domain it names must never reach monitoring or the
+     * MTA-STS policy endpoint (which serves published domains only) without an
+     * administrator publishing it. Returns 0 when the domain is empty, or unknown
+     * and may not be created, so the caller skips the report rather than storing
+     * an orphan.
      *
-     * @param   bool  $allowAutoCreate  Whether an unknown domain may be
-     *                                   registered (requires core.create).
+     * @param   bool  $allowAutoCreate  Whether this caller may register an
+     *                                   unknown domain (requires core.create, for
+     *                                   the scheduler also task_auto_create).
      */
     public static function resolve(DatabaseInterface $db, string $domain, bool $allowAutoCreate): int
     {
@@ -54,7 +59,7 @@ final class DomainRegistry
             return $id;
         }
 
-        if (!$allowAutoCreate) {
+        if (!$allowAutoCreate || !self::autoCreateEnabled()) {
             return 0;
         }
 
@@ -62,7 +67,8 @@ final class DomainRegistry
             'domain'          => $domain,
             'title'           => $domain,
             'expected_policy' => self::defaultPolicyTarget(),
-            'published'       => 1,
+            // Never published automatically, see above.
+            'published'       => 0,
             'created'         => Factory::getDate()->toSql(),
         ];
 
@@ -83,6 +89,16 @@ final class DomainRegistry
 
             throw $e;
         }
+    }
+
+    /**
+     * Whether the component option allows creating unknown domains from incoming
+     * reports at all (default off). Every import path checks it, the manual
+     * upload, the on-demand mailbox fetch and the scheduled task.
+     */
+    public static function autoCreateEnabled(): bool
+    {
+        return (int) ComponentHelper::getParams('com_dmarcreports')->get('auto_create_unknown_domains', 0) === 1;
     }
 
     /**
