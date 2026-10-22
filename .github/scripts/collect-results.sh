@@ -12,7 +12,8 @@
 #      unconditional workflows such as Security Scan.
 #   2. Match those patterns against the files changed by the pull request.
 #   3. Wait for every matching workflow run on the pull request head commit and
-#      fail unless each of them concluded with `success`.
+#      fail unless each of them concluded with `success`. A run counts as present
+#      as soon as the run list or the commit's check runs show it, queued or not.
 #
 # Documentation-only pull requests still have to pass unconditional workflows.
 #
@@ -186,9 +187,30 @@ latest_run() {
         | if . == null then empty else [.status, (.conclusion // "pending"), .html_url, .id] | @tsv end'
 }
 
+fetch_runs() {
+    # The run list is eventually consistent. While the runners are congested it can
+    # omit a queued or even running run on HEAD_SHA for longer than the grace period,
+    # which used to fail this check with "no run exists". The check runs of the commit
+    # are current, so every run they reference and the list lacks is read directly by
+    # its id. A queued or in-progress run therefore counts as present and is awaited.
+    local listed run_ids run_id extra='[]'
+    listed="$(gh api --paginate --slurp "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100" \
+        | jq -c '[.[].workflow_runs[]]')"
+    run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+        | jq -r '[.[].check_runs[].details_url // empty | select(test("/actions/runs/[0-9]+"))
+            | capture("/actions/runs/(?<id>[0-9]+)").id] | unique | .[]')"
+    for run_id in $run_ids; do
+        if ! jq -e --argjson id "$run_id" 'any(.[]; .id == $id)' <<<"$listed" >/dev/null; then
+            extra="$(gh api "repos/${REPO}/actions/runs/${run_id}" \
+                | jq -c --argjson extra "$extra" --arg sha "$HEAD_SHA" \
+                    'if .event == "pull_request" and .head_sha == $sha then $extra + [.] else $extra end')"
+        fi
+    done
+    jq -n --argjson listed "$listed" --argjson extra "$extra" '{workflow_runs: ($listed + $extra)}'
+}
+
 while :; do
-    RUNS_JSON="$(gh api --paginate --slurp "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100" \
-        | jq '{workflow_runs: [.[].workflow_runs[]]}')"
+    RUNS_JSON="$(fetch_runs)"
     elapsed_min=$(( ( $(date +%s) - start_epoch ) / 60 ))
     pending=0
 
