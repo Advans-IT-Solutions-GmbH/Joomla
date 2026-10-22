@@ -78,14 +78,43 @@ and takes precedence over a static file at the same path:
 
 ```apache
 # MTA-STS (RFC 8461): let Joomla answer the policy request.
+RewriteCond %{QUERY_STRING} ^$
 RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]
 ```
+
+The condition is part of the rule. Senders request the path without a query. Without the
+condition, `/.well-known/mta-sts.txt?option=com_content` would be handed to Joomla too, and a site
+that exempts internal rewrites from its own rules (`RewriteCond %{ENV:REDIRECT_STATUS} !^$`) would
+then let that query pass its `?option=` restrictions on the second pass.
 
 The document root of the `mta-sts.<domain>` host must be the Joomla root, because the policy path
 is fixed at the root of that host. On any other web server, route the same exact path to
 `index.php`. The package's integration tests install this rule
 and request the exact URL (with a stale static file in place that must not be served), so the
-documented setup is the tested one.
+documented setup is the tested one. They also check that the rule does not route the path with a query string.
+
+### Why does `/.well-known/mta-sts.txt` answer 404?
+
+The plugin answers only when every condition below holds. Otherwise the request falls through to
+the web server or to Joomla, which answer 404. Check them in this order:
+
+1. **Web-server rule.** The rule above stands directly after `RewriteEngine On`. Without it Apache
+   serves the `.txt` path itself. On a site with its own hardening rules (for example blocks for
+   `/component/` or `?option=`), the rule must stand before them: it has no query string and no
+   `/component/` path, so those rules do not catch it once it has run.
+2. **Host.** `mta-sts.<domain>` resolves to this server, the web server serves that host from the
+   Joomla root (an alias of the site or its own virtual host with the same document root) and has a
+   valid certificate for it. A request to the main host never receives the policy.
+3. **Plugin.** *System - DMARC MTA-STS Policy* is enabled.
+4. **Component options.** MTA-STS is enabled (`mtasts_enable`) and the MX list is valid.
+5. **Domain.** `<domain>` is listed under **Domains** and **published**. A domain that an import
+   created automatically is unpublished until an administrator publishes it, so no policy is
+   served for it before.
+
+To test without DNS, send the host header yourself, for example
+`curl -i -H "Host: mta-sts.example.org" https://www.example.org/.well-known/mta-sts.txt` (with
+`-k` while the certificate does not cover the main host name). A `200` with `version: STSv1` proves
+conditions 1 and 3 to 5. Condition 2 needs the real host name.
 
 ## Development
 

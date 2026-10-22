@@ -45,11 +45,14 @@ extension/tag family, not the monorepo's global latest release.
 1. Create a scheduled task: System → Manage → Scheduled Tasks → New → **DMARC Reports - Automatic ingestion**.
 2. Set the execution rule (for example every 30 minutes).
 3. Optionally enable automatic domain creation. This is a privileged action, so it only takes
-   effect when **both** switches are on: the component option
-   *Components → DMARC Reports → Options → Auto-create monitored domains* (`task_auto_create`,
-   which requires administrator rights to change) **and** the task's own *Auto-create domains*
-   parameter. If only the task parameter is enabled, the run logs a warning and creates no
-   domains; it keeps ingesting into the domains that already exist.
+   effect when **all three** switches are on: the component options
+   *Create unknown domains automatically* (`auto_create_unknown_domains`) and
+   *Allow automatic domain creation from scheduler tasks* (`task_auto_create`), which require
+   administrator rights to change, **and** the task's own *Auto-create domains* parameter. If the
+   task parameter is enabled without `task_auto_create`, the run logs a warning and creates no
+   domains. It keeps ingesting into the domains that already exist. A created domain is always
+   **unpublished**, because anyone can send a report: it is neither monitored nor served an
+   MTA-STS policy until an administrator publishes it.
 
 ### Scheduler trigger — important
 

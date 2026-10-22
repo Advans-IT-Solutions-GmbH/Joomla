@@ -154,8 +154,52 @@ currently available.
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
 
-### Video conferencing
+### Links and web-server rules
 
+The component has no SEF router. Its guest links are non-SEF on purpose:
+
+- **Links in e-mails** (reschedule, cancel, erase) are built as
+  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
+  They are signed, are also sent by the reminder task from the command line, where no site router is
+  available, and must stay valid for as long as the booking exists.
+- **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
+- **Booking pages** are reached through a Joomla menu item of type *Event types* or *Event type*.
+  Redirects inside the booking flow use the menu item when one matches, otherwise Joomla's
+  `/component/appointments/…` form.
+
+A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
+otherwise guests cannot open the links of their e-mails or subscribe to a feed. Each line goes
+into the existing rule as one more negated condition next to its other exceptions:
+
+```apache
+# Rule that redirects or blocks ?option=com_<x> on the frontend (non-POST). Exempt only a query
+# whose one and only option parameter is com_appointments: a second option parameter with another
+# value or without a value (PHP uses the last one, an empty one lets Joomla fall back to the menu
+# item), an embedded "option=com_appointments" in another value, or a parameter name
+# with any character other than letters, digits, "_" and "-" keep the request under the rule.
+# PHP rewrites such names: it decodes "%6F" and "+" (a space), strips leading spaces, turns
+# "." and " " into "_" and reads "[" as an array, so "+option" or "opti%6Fn" would also select
+# a component. The option must be the first parameter, as in every link the component builds:
+# PHP reads at most max_input_vars parameters, so a later one could be dropped unread.
+RewriteCond %{QUERY_STRING} !^(?=option=com_appointments(?:&|$))(?!.*(?:^|&)option(?:&|$|=(?!com_appointments(?:&|$))))(?!.*(?:^|&)[^=&]*[^A-Za-z0-9_=&-])
+
+# Rule that redirects or blocks /component/<x>. A query on such an address stays under the
+# ?option= rule above, so another component cannot be reached through this path.
+RewriteCond %{REQUEST_URI} !^(/[a-z]{2})?/component/appointments(/|$)
+```
+
+A plain `RewriteCond %{QUERY_STRING} !option=com_appointments` is not enough: it is a substring
+match, so `?option=com_users&x=option=com_appointments` would also be exempted.
+
+No exception is needed for `tmpl=component` or `format=feed`: the component uses neither. The
+feed is served by the task `feed.download`.
+
+A router would not remove these exceptions. The signed mail links and feed URLs have to be
+stable and buildable without a site router, and without a menu item a routed address is still
+`/component/appointments/…`. A router can be added later for nicer addresses of the booking pages,
+in which case the existing non-SEF links must keep working.
+
+### Video conferencing
 Select a provider in **Options → Video conferencing**, then set the event's location to **Video
 conference**. An event can inherit the provider, disable it, choose another installed provider,
 override the fixed-room URL or override the room prefix. Saved event overrides are independent of

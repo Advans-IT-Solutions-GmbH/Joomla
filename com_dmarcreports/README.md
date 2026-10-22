@@ -77,6 +77,7 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Reject pass threshold | `99` | Aligned-pass rate (%) at which moving to `p=reject` is suggested |
 | IMAP timeout | `20` | Seconds to wait for the mailbox connection |
 | Max messages per run | `200` | Upper bound of messages fetched per ingestion run |
+| Create unknown domains automatically (`auto_create_unknown_domains`) | `Off` | Lets an import create a domain that a report names but that is not yet listed. Such a domain is always created **unpublished**: anyone can send a report, so it is neither monitored nor served an MTA-STS policy until an administrator reviews and publishes it. Applies to the manual upload, the mailbox fetch (both also need `core.create`) and the scheduled task (which also needs *Allow automatic domain creation from scheduler tasks* and its own task parameter). While off, reports for unknown domains are skipped. |
 | DNS diagnostics | `Off` | Enables live DNS checks in domain detail/System Check; separately enabled MTA-STS also checks MX coverage and fetches the hosted policy over HTTPS. Queried names and connection metadata are disclosed as described above; report contents are not sent |
 
 Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log.
@@ -90,8 +91,9 @@ Navigate to **Components → DMARC Reports** (`administrator/index.php?option=co
 ### Workflow
 
 1. **Add a domain** under **Domains** — the domain you want to monitor (for example `example.org`)
-2. **Add a report source** under **Sources** — the mailbox that receives the aggregate reports for that domain, with its IMAP settings. Unless automatic domain creation is enabled, a source only stores reports for its own domain or a subdomain of it (for example `mail.example.org`); a report for a parent, sibling or unrelated domain is skipped. Without a bundled Public Suffix List this is an exact-or-child rule, so bind the source to the registrable domain you own, never to a public suffix such as `co.uk`
+2. **Add a report source** under **Sources** — the mailbox that receives the aggregate reports for that domain, with its IMAP settings. Unless automatic domain creation is enabled (see `auto_create_unknown_domains` above), a source only stores reports for its own domain or a subdomain of it (for example `mail.example.org`); a report for a parent, sibling or unrelated domain is skipped. Without a bundled Public Suffix List this is an exact-or-child rule, so bind the source to the registrable domain you own, never to a public suffix such as `co.uk`
 3. **Ingest reports** — trigger an on-demand IMAP fetch, upload a report file, or configure the companion task plugin and a Scheduler trigger for automatic imports
+   The import summary names the stored records (rows) and the messages they describe apart: a report with three rows can stand for six messages.
 4. **Read the Dashboard** — per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 5. **Act on the Action Center** — follow the prioritised recommendations before tightening policy
 6. **Drill down** per domain for top sending IPs, pass/fail detail and the timeline
