@@ -1,6 +1,9 @@
 name: Publish - Joomla Ajax Forms
 
 on:
+  # A manual run only recovers a release whose push-triggered publication never ran,
+  # for example because Actions could not start jobs; see the guard step below.
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -15,7 +18,7 @@ jobs:
   publish:
     name: Publish Release
     runs-on: ubuntu-latest
-    if: "startsWith(github.event.head_commit.message, 'release: ajaxforms v')"
+    if: "github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: ajaxforms v'))"
     permissions:
       contents: write
       id-token: write
@@ -28,6 +31,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Allow a manual run only for an unpublished release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXTENSION_PATH: plg_ajax_joomlaajaxforms
+          RELEASE_PREFIX: 'release: ajaxforms v'
+        run: |
+          # The newest commit on the extension must be its release commit, so the
+          # checkout builds exactly the released content. publish-release.py then
+          # refuses a version whose tag already exists on another commit.
+          SUBJECT=$(git log -1 --format=%s -- "$EXTENSION_PATH/")
+          case "$SUBJECT" in
+            "$RELEASE_PREFIX"*) echo "Recovering the publication of: $SUBJECT" ;;
+            *) echo "::error::The newest commit on $EXTENSION_PATH is not a release commit: $SUBJECT"; exit 1 ;;
+          esac
 
       - name: Read version from manifest
         id: version

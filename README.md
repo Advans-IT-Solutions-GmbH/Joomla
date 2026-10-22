@@ -121,6 +121,8 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 Run release workflows one at a time. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
 
+If a merged `release:` commit was never published, for example because Actions could not start jobs at that moment, start the extension's **Publish - …** workflow manually with **Run workflow** on `main`. A manual run proceeds only while the newest commit on that extension is its release commit, so it builds exactly the released content; the publish helper refuses a version whose tag already exists on another commit.
+
 ### Release permissions and CI approval
 
 Release preparation uses the built-in `GITHUB_TOKEN`, with `contents: write` and `pull-requests: write`; no App or PAT is configured. A repository owner must enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**, subject to organisation policy. Without that permission the branch push can succeed but PR creation fails; the workflow reports an error and preserves the branch. Enable the permission and rerun preparation, or open the PR from that branch manually rather than deleting it.

@@ -187,6 +187,13 @@ class PublishTests(unittest.TestCase):
                 self.assertNotIn("gh release delete", text)
                 self.assertNotIn("--clobber", text)
                 self.assertLess(text.index("publish-release.py preflight"), text.index("      - name: Build"))
+                # A manual run recovers a publication that never ran, and only on main
+                # for an extension whose newest commit is its release commit.
+                self.assertIn("  workflow_dispatch:\n", text.replace("\r\n", "\n"))
+                self.assertIn("github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||", text)
+                guard = text.index("      - name: Allow a manual run only for an unpublished release")
+                self.assertLess(guard, text.index("publish-release.py preflight"))
+                self.assertIn("if: github.event_name == 'workflow_dispatch'", text[guard:guard + 200])
 
     def test_both_builders_require_package_verification(self):
         root = Path(__file__).resolve().parent.parent.parent
