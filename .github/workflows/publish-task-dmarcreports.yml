@@ -2,8 +2,14 @@ name: Publish - DMARC Reports Task Plugin
 
 on:
   # A manual run only recovers a release whose push-triggered publication never ran,
-  # for example because Actions could not start jobs; see the guard step below.
+  # for example because Actions could not start jobs. It builds the merged release
+  # commit of the given version, never the current main.
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released version to publish (x.y.z), as in the merged release PR'
+        required: true
+        type: string
   push:
     branches:
       - main
@@ -32,20 +38,19 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Allow a manual run only for an unpublished release
-        if: github.event_name == 'workflow_dispatch'
+      - name: Check out exactly the released source
+        id: source
         env:
-          EXTENSION_PATH: plg_task_dmarcreports
-          RELEASE_PREFIX: 'release: task-dmarcreports v'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          # The newest commit on the extension must be its release commit, so the
-          # checkout builds exactly the released content. publish-release.py then
-          # refuses a version whose tag already exists on another commit.
-          SUBJECT=$(git log -1 --format=%s -- "$EXTENSION_PATH/")
-          case "$SUBJECT" in
-            "$RELEASE_PREFIX"*) echo "Recovering the publication of: $SUBJECT" ;;
-            *) echo "::error::The newest commit on $EXTENSION_PATH is not a release commit: $SUBJECT"; exit 1 ;;
-          esac
+          # Builds only the merged release commit, also on a manual run, and compares the
+          # trees of every bundled path with it. Runs a copy: the checkout replaces the files.
+          cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"
+          python3 "$RUNNER_TEMP/release-source.py" --prefix "task-dmarcreports" \
+            --path plg_task_dmarcreports \
+            --path shared/build \
+            --path .github/scripts
 
       - name: Read version from manifest
         id: version

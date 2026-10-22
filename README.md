@@ -121,7 +121,7 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 Run release workflows one at a time. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
 
-If a merged `release:` commit was never published, for example because Actions could not start jobs at that moment, start the extension's **Publish - …** workflow manually with **Run workflow** on `main`. A manual run proceeds only while the newest commit on that extension is its release commit, so it builds exactly the released content; the publish helper refuses a version whose tag already exists on another commit.
+If a merged `release:` commit was never published, for example because Actions could not start jobs at that moment, start the extension's **Publish - …** workflow manually with **Run workflow** on `main` and enter the released version. The run takes the release commit from the merged `release: <prefix> v<version> (#N)` PR, which GitHub must confirm, checks out exactly that commit and builds from it, never from the current `main`. Before building, every publish run compares the trees of all bundled paths (the extension, a package's children and the build scripts) between the release commit and the checked-out source and aborts on any difference or extra file. The publish helper still refuses a version whose tag already exists on another commit.
 
 ### Release permissions and CI approval
 

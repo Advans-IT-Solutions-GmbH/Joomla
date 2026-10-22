@@ -187,13 +187,24 @@ class PublishTests(unittest.TestCase):
                 self.assertNotIn("gh release delete", text)
                 self.assertNotIn("--clobber", text)
                 self.assertLess(text.index("publish-release.py preflight"), text.index("      - name: Build"))
-                # A manual run recovers a publication that never ran, and only on main
-                # for an extension whose newest commit is its release commit.
+                # Every run, also a manual recovery on main, builds only the merged release
+                # commit and checks the trees of the bundled paths before anything else.
                 self.assertIn("  workflow_dispatch:\n", text.replace("\r\n", "\n"))
                 self.assertIn("github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||", text)
-                guard = text.index("      - name: Allow a manual run only for an unpublished release")
-                self.assertLess(guard, text.index("publish-release.py preflight"))
-                self.assertIn("if: github.event_name == 'workflow_dispatch'", text[guard:guard + 200])
+                source = text.index("      - name: Check out exactly the released source")
+                self.assertLess(source, text.index("      - name: Read version from manifest"))
+                self.assertLess(source, text.index("publish-release.py preflight"))
+                step = text[source:text.index("      - name: Read version from manifest")]
+                self.assertIn('cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"', step)
+                self.assertIn("RELEASE_VERSION: ${{ inputs.version }}", step)
+                self.assertIn("--path shared/build", step)
+                self.assertNotIn("${{ inputs.version }}", text.replace(step, ""))
+                if path.name == "publish-pkg-dmarcreports.yml":
+                    for child in ["com_dmarcreports", "mod_dmarcreports", "plg_task_dmarcreports", "plg_system_dmarcmtasts"]:
+                        self.assertIn(f"--path {child}", step)
+                # Nothing outside the release commit may reach the package.
+                for forbidden in ["actions/cache", "download-artifact", "curl ", "wget ", "composer ", "npm "]:
+                    self.assertNotIn(forbidden, text)
 
     def test_both_builders_require_package_verification(self):
         root = Path(__file__).resolve().parent.parent.parent
