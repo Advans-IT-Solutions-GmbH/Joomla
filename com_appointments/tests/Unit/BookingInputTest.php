@@ -56,9 +56,11 @@ final class BookingInputTest extends TestCase
     #[DataProvider('badFields')]
     public function testRejectsMalformedFields(string $type, $value, string $options): void
     {
-        $this->expectException(BookingValidationException::class);
-        (new BookingInput())->validate($this->input() + ['fields' => [5 => $value]],
-            [['id' => 5, 'type' => $type, 'required' => 1, 'options' => $options]], 'en-GB');
+        $error = $this->refusal($this->input() + ['fields' => [5 => $value]],
+            [['id' => 5, 'type' => $type, 'required' => 1, 'options' => $options]]);
+        self::assertSame(['field-5'], array_keys($error->fieldErrors));
+        self::assertContains($error->fieldErrors['field-5'],
+            ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID']);
     }
 
     public static function badFields(): iterable
@@ -91,7 +93,56 @@ final class BookingInputTest extends TestCase
     public function testRejectsElevenGuests(): void
     {
         $guests = array_map(static fn ($i) => "guest{$i}@example.test", range(1, 11));
-        $this->expectException(BookingValidationException::class);
-        (new BookingInput())->validate($this->input() + ['guests' => implode("\n", $guests)], [], 'en-GB');
+        $error = $this->refusal($this->input() + ['guests' => implode("\n", $guests)], []);
+        self::assertSame(['guests' => 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS'], $error->fieldErrors);
+    }
+
+    public function testEveryInvalidFieldGetsItsOwnMessageInOneRoundTrip(): void
+    {
+        $fields = [
+            ['id' => 5, 'type' => 'text', 'required' => 1, 'options' => '[]'],
+            ['id' => 6, 'type' => 'email', 'required' => 0, 'options' => '[]'],
+            ['id' => 7, 'type' => 'text', 'required' => 0, 'options' => '[]'],
+        ];
+        $error = $this->refusal(['name' => '  ', 'email' => 'not-an-address', 'timezone' => 'Europe/Zurich',
+            'guests' => 'guest@', 'fields' => [5 => '', 6 => 'broken', 7 => 'valid']], $fields);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS', $error->languageKey);
+        self::assertSame([
+            'name' => 'COM_APPOINTMENTS_BOOKING_ERROR_NAME',
+            'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL',
+            'guests' => 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS',
+            'field-5' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED',
+            'field-6' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID',
+        ], $error->fieldErrors);
+    }
+
+    public function testMalformedContactValuesAreReportedAtTheirFields(): void
+    {
+        $error = $this->refusal(['name' => ['array'], 'email' => str_repeat('a', 300) . '@example.test', 'timezone' => 'UTC'], []);
+        self::assertSame([
+            'name' => 'COM_APPOINTMENTS_BOOKING_ERROR_NAME',
+            'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL',
+        ], $error->fieldErrors);
+    }
+
+    public function testTamperedHiddenValuesAreAFormErrorWithoutFieldMessages(): void
+    {
+        $error = $this->refusal(array_replace($this->input(), ['timezone' => 'Mars/Base']), []);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_ZONE', $error->languageKey);
+        self::assertSame([], $error->fieldErrors);
+        $error = $this->refusal($this->input() + ['fields' => 'not-an-array'], []);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS', $error->languageKey);
+        self::assertSame([], $error->fieldErrors);
+    }
+
+    private function refusal(array $input, array $fields): BookingValidationException
+    {
+        try {
+            (new BookingInput())->validate($input, $fields, 'en-GB');
+        } catch (BookingValidationException $e) {
+            return $e;
+        }
+
+        self::fail('The input was accepted.');
     }
 }

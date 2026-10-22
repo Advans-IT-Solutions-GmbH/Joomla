@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Site\View\Manage;
 
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -17,6 +18,8 @@ defined('_JEXEC') or die;
 
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     protected $item;
     protected $action;
     protected $signature;
@@ -26,6 +29,7 @@ class HtmlView extends BaseHtmlView
     protected $month;
     protected $zone;
     protected $reason;
+    protected $errors = [];
 
     public function display($tpl = null)
     {
@@ -38,14 +42,25 @@ class HtmlView extends BaseHtmlView
         $assets->useStyle('com_appointments.site');
         $model = $this->getModel();
         $this->action = $model->action();
+        $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
+        $errorsKey = 'com_appointments.manage_errors.' . $app->getInput()->getInt('id');
+        $this->errors = array_filter((array) $app->getUserState($errorsKey, []), 'is_string');
+        $app->setUserState($errorsKey, null);
+
+        if (!$this->completed) {
+            // Times are shown in the invitee's zone, like on the booking page. On the
+            // reschedule page the zone the visitor selects applies to all times.
+            $invitee = (string) $this->item->invitee_timezone;
+            $this->zone = new \DateTimeZone(in_array($invitee, \DateTimeZone::listIdentifiers(), true) ? $invitee : 'UTC');
+        }
 
         if (!$this->completed && $this->action === 'reschedule') {
-            $zone = $app->getInput()->getString('timezone', $this->item->invitee_timezone);
+            $zone = $app->getInput()->getString('timezone', $this->zone->getName());
             if (!in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 400);
             }

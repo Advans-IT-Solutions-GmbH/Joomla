@@ -7,7 +7,9 @@ if (!interface_exists(DatabaseInterface::class)) {
     interface DatabaseInterface
     {
         public function quoteName($name);
+        public function quote($text, $escape = true);
         public function setQuery($query);
+        public function execute();
         public function loadResult();
         public function loadAssoc();
         public function updateObject($table, &$object, $key, $nulls = false);

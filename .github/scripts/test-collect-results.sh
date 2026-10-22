@@ -14,6 +14,8 @@ case "$*" in
     *"/files?"*) printf '%s' "$FILES" ;;
     *"/jobs?"*) printf '%s' "$JOBS" ;;
     *"/actions/runs?"*) printf '%s' "$RUNS" ;;
+    *"/check-runs?"*) [ "$CHECK_RUNS" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$CHECK_RUNS" ;;
+    *"/actions/runs/"*) [ "$SINGLE_RUN" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$SINGLE_RUN" ;;
     *) echo "Unexpected API call: $*" >&2; exit 2 ;;
 esac
 EOF
@@ -22,6 +24,7 @@ export PATH="$FIXTURE/bin:$PATH"
 export GH_TOKEN=fixture REPO=owner/repo PR_NUMBER=1 HEAD_SHA=built
 export WORKFLOW_DIR="$FIXTURE/workflows" MISSING_RUN_GRACE_MINUTES=0 MAX_WAIT_MINUTES=0
 export FILES='{"filename":"README.md","previous_filename":null}'
+export CHECK_RUNS='[{"check_runs":[]}]' SINGLE_RUN='{}'
 export JOBS='[{"jobs":[
   {"name":"Security / Gitleaks (secret scan)","status":"completed","conclusion":"success"},
   {"name":"Security / Semgrep (SAST)","status":"completed","conclusion":"success"},
@@ -85,3 +88,35 @@ export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_number=2 
 check 'newest failed run wins over older success' fail
 export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_attempt=2 | .conclusion="success"] | .[0].workflow_runs[0].conclusion="failure"' <<<"$(run_json success)")"
 check 'latest successful attempt supersedes previous failure' pass
+
+# The run list lags behind under congested runners; the commit's check runs do not.
+export RUNS='[{"workflow_runs":[]}]'
+export CHECK_RUNS='[{"check_runs":[{"details_url":"https://github.com/owner/repo/actions/runs/7/job/70"},
+  {"details_url":"https://example.invalid/other-app"},{"details_url":null}]}]'
+single_run() {
+    jq -cn --arg status "$1" --arg conclusion "$2" --arg event "${3:-pull_request}" --arg sha "${4:-built}" \
+        '{id:7,run_number:1,run_attempt:1,path:".github/workflows/security.yml",event:$event,head_sha:$sha,
+          status:$status,conclusion:(if $conclusion == "" then null else $conclusion end),html_url:"https://example.invalid/run/7"}'
+}
+export SINGLE_RUN="$(single_run completed success)"
+check 'run missing from the lagging list is found through the check runs' pass
+export SINGLE_RUN="$(single_run queued '')"
+check 'queued run found through the check runs is awaited, not reported missing' fail
+if grep -q 'no run exists' "$FIXTURE/output" || ! grep -q 'did not finish' "$FIXTURE/output"; then
+    echo 'FAIL: a queued run must count as present'
+    cat "$FIXTURE/output"
+    exit 1
+fi
+echo 'PASS: a queued run counts as present'
+export SINGLE_RUN=FAIL
+check 'a failed lookup of a run found through the check runs fails closed' fail
+export RUNS="$(run_json success)" CHECK_RUNS=FAIL
+check 'failed check-run discovery cannot pass on an older success in the lagging list' fail
+grep -q 'could not be read completely' "$FIXTURE/output" || { echo 'FAIL: discovery failure must be reported'; cat "$FIXTURE/output"; exit 1; }
+echo 'PASS: discovery failure is reported'
+export RUNS='[{"workflow_runs":[]}]'
+export CHECK_RUNS='[{"check_runs":[{"details_url":"https://github.com/owner/repo/actions/runs/7/job/70"}]}]'
+export SINGLE_RUN="$(single_run completed success push)"
+check 'a run of another event is not taken from the check runs' fail
+export SINGLE_RUN="$(single_run completed success pull_request other)"
+check 'a run of another commit is not taken from the check runs' fail

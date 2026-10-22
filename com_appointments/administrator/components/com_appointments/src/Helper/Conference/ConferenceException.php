@@ -17,6 +17,8 @@ final class ConferenceException extends \RuntimeException
 {
     private const MESSAGES = [
         'configuration' => 'Conference configuration is invalid.',
+        'not_configured' => 'No conference provider is selected for this event type.',
+        'storage_failed' => 'Conference status could not be saved. Please retry.',
         'unknown_provider' => 'Conference provider is unavailable.',
         'outbound_disabled' => 'Outbound conference access is disabled.',
         'outbound_unsupported' => 'Conference provider requires a bounded outbound adapter.',

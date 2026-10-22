@@ -16,11 +16,14 @@ use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 
 defined('_JEXEC') or die;
 
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     protected $item;
     protected $fields = [];
     protected $slots = [];
@@ -29,6 +32,7 @@ class HtmlView extends BaseHtmlView
     protected $day;
     protected $days = [];
     protected $inputData = [];
+    protected $errors = [];
     protected $renderedAt;
     protected $formSignature;
     protected $params;
@@ -41,6 +45,9 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Cache-Control', 'private, no-store', true);
         $this->params = ComponentHelper::getParams('com_appointments');
         $this->inputData = (array) $app->getUserState('com_appointments.booking.' . (int) $this->item->id, []);
+        // Field messages of the last refused submission, shown once at their fields.
+        $this->errors = array_filter((array) $app->getUserState('com_appointments.booking_errors.' . (int) $this->item->id, []), 'is_string');
+        $app->setUserState('com_appointments.booking_errors.' . (int) $this->item->id, null);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $zoneName = $app->getInput()->getString('timezone', (string) ($this->inputData['timezone'] ?? $this->item->timezone));
 
@@ -86,6 +93,7 @@ class HtmlView extends BaseHtmlView
         $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
         $assets->useStyle('com_appointments.site');
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
+        $this->applyPageTitle('eventtype', (string) $this->item->title, (int) $this->item->id);
 
         return parent::display($tpl);
     }

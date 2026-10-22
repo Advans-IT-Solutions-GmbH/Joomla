@@ -223,8 +223,15 @@ not the public calendar UID. Only the host's message/calendar receives the moder
 and subscription feeds receive guest links. Calendar attachments and a mandatory joining footer
 are retained even with customised email templates.
 
-Provisioning runs after the booking transaction commits. Failure leaves the appointment saved,
-marks the missing link and stores a short redacted diagnostic. **Bookings → Retry conference link**
+The provider of an event follows the event's saved settings, including an explicit choice to
+inherit the component option. Only an event type without any saved settings (for example one
+written directly to the database) uses its stored provider before the component option. An event whose location is **Video conference** but for which no
+provider resolves is not a silent success: the booking is saved and flagged with
+`No conference provider is selected for this event type.`
+
+Provisioning runs after the booking transaction commits. Every failure leaves the appointment saved,
+marks the missing link and stores a short redacted diagnostic, also when the conference status
+itself cannot be saved (then as a separate best-effort update). **Bookings → Retry conference link**
 retries selected authorised bookings; success raises the calendar sequence and sends updates.
 Rescheduling replaces time-bound tokens while preserving the booking UID. Cancellation and
 erasure remove conference metadata and ask the provider to release the previous room.
@@ -327,12 +334,55 @@ and expires after one hour; reload an expired form.
 Additional guests are optional, deduplicated and limited to ten valid email addresses.
 Telephone fields use an international calling-code selector and a national number.
 
+Invalid input is reported at the field it concerns, all fields in one round trip: the control gets
+`aria-invalid="true"` and `aria-describedby` pointing to its message, and the first invalid control
+receives the focus. A missing consent and a missing confirmation on the reschedule, cancel and
+erase pages each have their own message. Only problems the visitor cannot fix in a field (an
+expired or tampered form, too many attempts, a time just taken) appear as a message above the form.
+
+Dates and times follow the site language: the month and the day are written in words with the
+weekday and month names of the installed Joomla language, times read `09:00`, and the time zone is
+stated once per page. The patterns are the `COM_APPOINTMENTS_DATE_FORMAT_*` keys of the component
+language file and can be changed with a language override. The reschedule, cancel and erase pages
+show the appointment in the invitee's time zone, like the booking page.
+
 The displayed zone never changes the stored UTC appointment. Public times always come from the
 schedule, including its clock-change conventions. If someone else takes a time while the form is
 open, submission returns to the same day with a friendly message and refreshed slot choices.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
+
+### Page markup and styling
+
+Each public page sets its own browser title and main heading when the active menu item does not
+point at it, for example on `/component/appointments/` without a menu item: "Book an appointment"
+for the list, the event type's title for its booking page, the confirmation heading and the
+heading of the reschedule, cancel or erase page. When a menu item points at the page (for one
+event type: at that event type), its browser page title (or else its menu title) applies and its
+page heading replaces the default heading when the menu item shows the page heading. In both
+cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an
+appointment that crosses midnight in the displayed zone.
+
+The public pages are template-neutral. They use Joomla's standard form classes and add
+`com-appointments-*` hooks for a site template. The bundled stylesheet only provides the content
+column, the calendar grid, touch targets of at least 44 px and the error state; typography and
+colours stay with the template. The custom properties on `.com-appointments`
+(`--appointments-max-width`, `--appointments-target`, `--appointments-radius`,
+`--appointments-error`, `--appointments-gap`, `--appointments-border`) can be overridden.
+
+| Part | Structure and classes |
+|---|---|
+| Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`) |
+| Header | `.com-appointments-header` with `h1.com-appointments-heading`, `.com-appointments-description`, `p.com-appointments-duration`, `p.com-appointments-location` |
+| Time zone | `form.com-appointments-zone` with `label.form-label`, `.com-appointments-zone-row` (`select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`) and `p.form-text.com-appointments-zone-note` |
+| Calendar | `section.com-appointments-calendar` with `nav.com-appointments-calendar-nav` (`a.btn.btn-outline-secondary.com-appointments-calendar-prev` / `-next`, `h2.com-appointments-calendar-title`) and `table.com-appointments-calendar-grid`: a `thead` row of `th.com-appointments-weekday > abbr[title]` from Monday, `td.com-appointments-day-cell` (empty cells add `.com-appointments-day-empty`) holding `a.com-appointments-day.com-appointments-day-available` (selected day: `.com-appointments-day-selected`, `aria-current="date"`) or `span.com-appointments-day.com-appointments-day-unavailable` |
+| Times | `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input[type=radio]`, `label.form-check-label`) |
+| Form | `form.com-appointments-form` (booking page also `.com-appointments-booking`, manage pages `.com-appointments-manage-form`), one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields add `.com-appointments-tel` |
+| Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label`; consent `.com-appointments-consent`, confirmation `.com-appointments-confirm` |
+| Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` |
+| Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
+| Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-join > a.btn.btn-primary`, `p.com-appointments-status` |
 
 ### Email templates
 

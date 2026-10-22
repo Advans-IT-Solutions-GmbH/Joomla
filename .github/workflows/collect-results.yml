@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 345
     permissions:
       actions: read
+      # The commit's check runs reveal runs the eventually consistent run list still lacks.
+      checks: read
       contents: read
       pull-requests: read
     steps:

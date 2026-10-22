@@ -115,6 +115,19 @@ class SitePageTest
                 return $this->showsOwnString($response['body']);
             });
 
+            $this->test("{$label}: sets its own page title and heading without a menu item of its own", function () use ($response) {
+                // Without an Itemid the home menu item is active; its title must not leak.
+                $heading = trim((string) ($this->strings['COM_APPOINTMENTS_EVENTTYPES_HEADING'] ?? ''));
+                $title = preg_match('#<title>(.*?)</title>#s', $response['body'], $m) ? trim(html_entity_decode($m[1])) : '';
+
+                if ($title !== $heading) {
+                    echo "    title: {$title}\n";
+                }
+
+                return $heading !== '' && $title === $heading
+                    && preg_match('#<h1 class="com-appointments-heading">\s*' . preg_quote($heading, '#') . '\s*</h1>#', $response['body']) === 1;
+            });
+
             $this->test("{$label}: serves the component stylesheet from this installation", function () use ($response) {
                 // The asset has to come from this server. A remote URL would
                 // break the component's defining constraint, so the path is

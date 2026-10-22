@@ -21,11 +21,15 @@ final class FormGuard
         return hash_hmac('sha256', $eventId . ':' . $renderedAt . ':' . $sessionToken, $this->keys->key('booking-form'));
     }
 
-    public function verify(int $eventId, int $renderedAt, string $sessionToken, string $signature, string $honeypot, bool $consent, \DateTimeImmutable $now): bool
+    /**
+     * Signature, timing and honeypot only. The consent is a visible field and is
+     * checked by the controller, so a missing tick gets its own message at the field.
+     */
+    public function verify(int $eventId, int $renderedAt, string $sessionToken, string $signature, string $honeypot, \DateTimeImmutable $now): bool
     {
         $age = $now->getTimestamp() - $renderedAt;
 
         return hash_equals($this->sign($eventId, $renderedAt, $sessionToken), $signature)
-            && $age >= 2 && $age <= 3600 && $honeypot === '' && $consent;
+            && $age >= 2 && $age <= 3600 && $honeypot === '';
     }
 }
