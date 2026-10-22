@@ -14,8 +14,8 @@ case "$*" in
     *"/files?"*) printf '%s' "$FILES" ;;
     *"/jobs?"*) printf '%s' "$JOBS" ;;
     *"/actions/runs?"*) printf '%s' "$RUNS" ;;
-    *"/check-runs?"*) printf '%s' "$CHECK_RUNS" ;;
-    *"/actions/runs/"*) printf '%s' "$SINGLE_RUN" ;;
+    *"/check-runs?"*) [ "$CHECK_RUNS" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$CHECK_RUNS" ;;
+    *"/actions/runs/"*) [ "$SINGLE_RUN" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$SINGLE_RUN" ;;
     *) echo "Unexpected API call: $*" >&2; exit 2 ;;
 esac
 EOF
@@ -108,6 +108,14 @@ if grep -q 'no run exists' "$FIXTURE/output" || ! grep -q 'did not finish' "$FIX
     exit 1
 fi
 echo 'PASS: a queued run counts as present'
+export SINGLE_RUN=FAIL
+check 'a failed lookup of a run found through the check runs fails closed' fail
+export RUNS="$(run_json success)" CHECK_RUNS=FAIL
+check 'failed check-run discovery cannot pass on an older success in the lagging list' fail
+grep -q 'could not be read completely' "$FIXTURE/output" || { echo 'FAIL: discovery failure must be reported'; cat "$FIXTURE/output"; exit 1; }
+echo 'PASS: discovery failure is reported'
+export RUNS='[{"workflow_runs":[]}]'
+export CHECK_RUNS='[{"check_runs":[{"details_url":"https://github.com/owner/repo/actions/runs/7/job/70"}]}]'
 export SINGLE_RUN="$(single_run completed success push)"
 check 'a run of another event is not taken from the check runs' fail
 export SINGLE_RUN="$(single_run completed success pull_request other)"
