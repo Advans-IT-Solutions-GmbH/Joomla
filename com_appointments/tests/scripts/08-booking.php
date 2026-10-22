@@ -179,6 +179,9 @@ try {
     $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
         && $fieldError($xpath, 'booking-name', 'Please enter your name.'),
         'A missing consent and an empty name are reported together in one round trip');
+    $focused = $xpath->query('//*[@autofocus]');
+    $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-name',
+        'The first invalid control in page order receives the focus, not the consent checkbox');
 
     $request = $prepare($eventIds[0], $slot);
     $request[2]['website'] = 'filled by a robot';
@@ -206,6 +209,47 @@ try {
     $firstWeekday = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th//abbr')->item(0);
     $check($weekdays->length === 7 && $firstWeekday instanceof DOMElement && $firstWeekday->getAttribute('title') === 'Monday',
         'The calendar has a weekday row that starts on Monday');
+
+    // A UTC schedule seen from Zurich on the next day the clocks go back: the repeated
+    // local hour must not show two different slots with the same label.
+    $zurich = new DateTimeZone('Europe/Zurich');
+    $back = null;
+    $previous = null;
+    foreach ($zurich->getTransitions(time() + 86400, time() + 400 * 86400) as $index => $transition) {
+        if ($index > 0 && $transition['offset'] < $previous) {
+            $back = (int) $transition['ts'];
+            break;
+        }
+        $previous = $transition['offset'];
+    }
+    $check($back !== null, 'Fixture finds the next change back to standard time in Europe/Zurich');
+    $title = $tag . '-repeated';
+    $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$title}','UTC',{$host},1,'{$time}','{$time}')");
+    $schedule = (int) $db->insert_id;
+    $scheduleIds[] = $schedule;
+    $weekday = (int) gmdate('N', $back - 3600);
+    $from = gmdate('H:i:s', $back - 3600);
+    $until = gmdate('H:i:s', $back + 7200);
+    $db->query("INSERT INTO {$prefix}appointments_schedule_rules (schedule_id,weekday,start_time,end_time) VALUES ({$schedule},{$weekday},'{$from}','{$until}')");
+    $token = bin2hex(random_bytes(32));
+    $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,horizon_days,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},60,60,400,'{$token}','{$time}','{$time}')");
+    $eventIds[] = $repeatedEvent = (int) $db->insert_id;
+    $localDay = (new DateTimeImmutable('@' . ($back - 3600)))->setTimezone($zurich);
+    $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $repeatedEvent
+        . '&timezone=Europe%2FZurich&month=' . $localDay->format('Y-m') . '&day=' . $localDay->format('Y-m-d'));
+    $xpath = $dom($html);
+    $labels = [];
+    foreach ($xpath->query('//div[contains(@class, "com-appointments-slot")]/label') as $label) {
+        $labels[] = trim($label->textContent);
+    }
+    $first = (new DateTimeImmutable('@' . ($back - 3600)))->setTimezone($zurich);
+    $second = (new DateTimeImmutable('@' . $back))->setTimezone($zurich);
+    $third = (new DateTimeImmutable('@' . ($back + 3600)))->setTimezone($zurich);
+    $check($labels === [
+        $first->format('H:i') . ' (UTC' . $first->format('P') . ')',
+        $second->format('H:i') . ' (UTC' . $second->format('P') . ')',
+        $third->format('H:i'),
+    ] && count(array_unique($labels)) === 3, 'Slots in the repeated local hour carry their UTC offset, other slots stay compact');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failures++;

@@ -48,6 +48,25 @@ final class DateDisplayTest extends TestCase
         self::assertSame('Y', $dates->format($moment, '\Y'));
     }
 
+    public function testRepeatedHourGetsTheOffsetForSlotsOfAnotherZone(): void
+    {
+        // A UTC schedule seen from Zurich on 25 October 2026, when the clocks go back at 01:00 UTC.
+        $zurich = new \DateTimeZone('Europe/Zurich');
+        $dates = $this->german();
+        $label = static fn (string $utc): string => $dates->time(
+            (new \DateTimeImmutable($utc, new \DateTimeZone('UTC')))->setTimezone($zurich), 'H:i', '%1$s (UTC%2$s)'
+        );
+        self::assertSame('01:30', $label('2026-10-24 23:30:00'));
+        self::assertSame('02:00 (UTC+02:00)', $label('2026-10-25 00:00:00'));
+        self::assertSame('02:30 (UTC+02:00)', $label('2026-10-25 00:30:00'));
+        self::assertSame('02:00 (UTC+01:00)', $label('2026-10-25 01:00:00'));
+        self::assertSame('02:59 (UTC+01:00)', $label('2026-10-25 01:59:00'));
+        self::assertSame('03:00', $label('2026-10-25 02:00:00'));
+        // Spring forward skips an hour and repeats nothing; UTC never repeats.
+        self::assertSame('03:00', $label('2026-03-29 01:00:00'));
+        self::assertFalse($dates->isRepeated(new \DateTimeImmutable('2026-10-25 00:30:00', new \DateTimeZone('UTC'))));
+    }
+
     public function testWeekdayHeadingsStartOnMonday(): void
     {
         $days = $this->german()->weekdays();

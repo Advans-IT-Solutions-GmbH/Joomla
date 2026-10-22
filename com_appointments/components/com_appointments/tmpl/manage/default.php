@@ -18,8 +18,10 @@ $results = ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULED', 'cancel' => '
 $dates = new DateDisplay(static fn (string $key): string => Text::_($key));
 $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
 $timeFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
+$withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $errors = $this->errors;
-$firstError = array_key_first($errors);
+// Focus the first invalid control in page order, not in the order the checks ran.
+$firstError = current(array_intersect(['reason', 'start', 'confirm'], array_keys($errors))) ?: null;
 $invalid = static fn (string $key): string => isset($errors[$key]) ? ' is-invalid' : '';
 $aria = static function (string $key) use ($errors, $firstError): string {
     return isset($errors[$key])
@@ -45,7 +47,7 @@ $error = fn (string $key): string => isset($errors[$key])
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
                 <dd><?php echo $this->escape($dates->format($start, $dayFormat)); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_TIME'); ?></dt>
-                <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->format($start, $timeFormat), $dates->format($end, $timeFormat))); ?></dd>
+                <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->time($start, $timeFormat, $withOffset), $dates->time($end, $timeFormat, $withOffset))); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_ZONE'); ?></dt>
                 <dd><?php echo $this->escape($this->zone->getName()); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_EMAIL'); ?></dt>
@@ -100,7 +102,7 @@ $error = fn (string $key): string => isset($errors[$key])
                             <select class="form-select<?php echo $invalid('start'); ?>" id="new-start" name="start" required<?php echo $aria('start'); ?>>
                                 <?php foreach ($this->slots as $slot) : ?>
                                     <?php $local = $slot->setTimezone($this->zone); ?>
-                                    <option value="<?php echo $slot->format('Y-m-d H:i:s'); ?>"><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_DATE_TIME', $dates->format($local, $dayFormat), $dates->format($local, $timeFormat))); ?></option>
+                                    <option value="<?php echo $slot->format('Y-m-d H:i:s'); ?>"><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_DATE_TIME', $dates->format($local, $dayFormat), $dates->time($local, $timeFormat, $withOffset))); ?></option>
                                 <?php endforeach; ?>
                             </select>
                             <?php echo $error('start'); ?>

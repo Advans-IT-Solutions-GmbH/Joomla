@@ -62,6 +62,40 @@ final class DateDisplay
     }
 
     /**
+     * The local time of $moment in $format. A wall-clock time that occurs twice in the
+     * moment's zone (the repeated hour when the clocks go back) gets its UTC offset
+     * through $ambiguous ("%1$s" the time, "%2$s" the offset such as +01:00), so two
+     * different instants never read the same. All other times stay compact.
+     */
+    public function time(\DateTimeInterface $moment, string $format, string $ambiguous): string
+    {
+        $time = $this->format($moment, $format);
+
+        return $this->isRepeated($moment) ? sprintf($ambiguous, $time, $moment->format('P')) : $time;
+    }
+
+    /** Whether the local wall-clock time of $moment also occurs at another instant. */
+    public function isRepeated(\DateTimeInterface $moment): bool
+    {
+        $timestamp = $moment->getTimestamp();
+        $transitions = $moment->getTimezone()->getTransitions($timestamp - 86400, $timestamp + 86400) ?: [];
+
+        // The first entry is the state at the start of the range, not a transition.
+        foreach (array_slice($transitions, 1) as $index => $transition) {
+            $before = (int) $transitions[$index]['offset'];
+            $shift = $before - (int) $transition['offset'];
+
+            // Clocks going back by $shift seconds repeat the local times of the last
+            // $shift seconds before the transition during the first $shift seconds after it.
+            if ($shift > 0 && $timestamp >= $transition['ts'] - $shift && $timestamp < $transition['ts'] + $shift) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * The weekday headings of a calendar week that starts on Monday.
      *
      * @return list<array{short: string, full: string}>

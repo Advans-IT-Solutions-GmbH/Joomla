@@ -16,6 +16,7 @@ $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($zone);
 $end = UtcTimestamp::parse($this->item->end_utc)->setTimezone($zone);
 $dates = new DateDisplay(static fn (string $key): string => Text::_($key));
 $time = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
+$withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $location = trim((string) $this->item->location_text);
 ?>
 <div class="com-appointments com-appointments-confirmation">
@@ -31,7 +32,7 @@ $location = trim((string) $this->item->location_text);
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
             <dd><?php echo $this->escape($dates->format($start, Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY'))); ?></dd>
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_TIME'); ?></dt>
-            <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->format($start, $time), $dates->format($end, $time))); ?></dd>
+            <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->time($start, $time, $withOffset), $dates->time($end, $time, $withOffset))); ?></dd>
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_ZONE'); ?></dt>
             <dd><?php echo $this->escape($zone->getName()); ?></dd>
             <?php if ($location !== '') : ?>

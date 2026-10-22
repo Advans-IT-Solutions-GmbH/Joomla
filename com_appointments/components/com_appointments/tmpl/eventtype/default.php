@@ -30,7 +30,9 @@ $link = static fn (string $m, string $day = '') => Route::_('index.php?option=co
 $values = $this->inputData;
 $value = fn (string $key) => $this->escape(is_scalar($values[$key] ?? '') ? (string) ($values[$key] ?? '') : '');
 $errors = $this->errors;
-$firstError = array_key_first($errors);
+// Focus the first invalid control in page order, not in the order the checks ran.
+$order = array_merge(['start', 'name', 'email', 'guests'], array_map(static fn (array $field): string => 'field-' . (int) $field['id'], $this->fields), ['consent']);
+$firstError = current(array_intersect($order, array_keys($errors))) ?: null;
 // Error wiring per field: the control is marked invalid and described by its message.
 $invalid = static fn (string $key): string => isset($errors[$key]) ? ' is-invalid' : '';
 $aria = static function (string $key, string $describedBy = '') use ($errors, $firstError): string {
@@ -44,6 +46,7 @@ $error = fn (string $key): string => isset($errors[$key])
     : '';
 $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
 $timeFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
+$withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $selectedDay = new DateTimeImmutable($this->day . ' 00:00:00', $this->zone);
 $first = new DateTimeImmutable($this->days[0], new DateTimeZone('UTC'));
 $cells = array_merge(array_fill(0, (int) $first->format('N') - 1, null), $this->days);
@@ -127,7 +130,7 @@ $location = trim((string) $this->item->location_text);
                             <?php $slotValue = $slot->format('Y-m-d H:i:s'); ?>
                             <div class="form-check com-appointments-slot">
                                 <input class="form-check-input<?php echo $invalid('start'); ?>" type="radio" id="booking-slot-<?php echo (int) $i; ?>" name="booking[start]" value="<?php echo $slotValue; ?>" required<?php echo ($values['start'] ?? null) === $slotValue ? ' checked' : ''; ?><?php echo isset($errors['start']) ? ' aria-invalid="true"' : ''; ?><?php echo $i === 0 && $firstError === 'start' ? ' autofocus' : ''; ?>>
-                                <label class="form-check-label" for="booking-slot-<?php echo (int) $i; ?>"><?php echo $this->escape($dates->format($slot->setTimezone($this->zone), $timeFormat)); ?></label>
+                                <label class="form-check-label" for="booking-slot-<?php echo (int) $i; ?>"><?php echo $this->escape($dates->time($slot->setTimezone($this->zone), $timeFormat, $withOffset)); ?></label>
                             </div>
                         <?php endforeach; ?>
                     </div>
