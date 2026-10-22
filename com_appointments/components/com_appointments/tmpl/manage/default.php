@@ -32,7 +32,7 @@ $error = fn (string $key): string => isset($errors[$key])
 ?>
 <div class="com-appointments com-appointments-manage">
     <div class="com-appointments-container">
-        <h1 class="com-appointments-heading"><?php echo Text::_($headings[$this->action]); ?></h1>
+        <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php if ($this->completed) : ?>
             <p class="com-appointments-status"><?php echo Text::_($results[$this->action]); ?></p>
         <?php else : ?>

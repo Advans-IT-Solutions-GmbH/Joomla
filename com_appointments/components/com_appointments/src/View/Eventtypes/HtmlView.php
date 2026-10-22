@@ -9,7 +9,9 @@
 
 namespace Advans\Component\Appointments\Site\View\Eventtypes;
 
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 
 defined('_JEXEC') or die;
@@ -21,6 +23,8 @@ defined('_JEXEC') or die;
  */
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     /**
      * @var  array<int, \stdClass>
      */
@@ -36,6 +40,7 @@ class HtmlView extends BaseHtmlView
         $assets = Factory::getApplication()->getDocument()->getWebAssetManager();
         $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
         $assets->useStyle('com_appointments.site');
+        $this->applyPageTitle('eventtypes', Text::_('COM_APPOINTMENTS_EVENTTYPES_HEADING'));
 
         return parent::display($tpl);
     }

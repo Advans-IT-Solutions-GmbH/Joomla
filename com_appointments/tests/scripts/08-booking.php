@@ -52,6 +52,7 @@ $fieldError = static function (DOMXPath $xpath, string $control, string $message
         && in_array($control . '-error', preg_split('/\s+/', $input->getAttribute('aria-describedby')), true)
         && trim($error->textContent) === $message;
 };
+$pageTitle = static fn (string $html): string => preg_match('#<title>(.*?)</title>#s', $html, $m) ? trim(html_entity_decode($m[1])) : '';
 $bookings = static fn (int $event): int => (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}")->fetch_assoc()['n'];
 
 try {
@@ -130,6 +131,7 @@ try {
     $body = $request[0]->request($request[1], $request[2]);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
     $check($booking && (int) $booking['state'] === 0 && str_contains($body, 'held while'), 'Pending request holds its slot');
+    $check($pageTitle($body) === 'Appointment received', 'The confirmation page sets its own title without a menu item of its own');
     $bookingId = (int) ($booking['id'] ?? 0);
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
     $check($admin->status === 200 && str_contains($page, 'invitee@example.test'), 'Booking visible in administrator list');
@@ -192,6 +194,8 @@ try {
     $xpath = $dom($html);
     $date = new DateTimeImmutable($day, $utc);
     $text = static fn (string $query): string => trim((string) ($xpath->query($query)->item(0)?->textContent ?? ''));
+    $check($pageTitle($html) === $tag . '-1' && $text('//h1[contains(@class, "com-appointments-heading")]') === $tag . '-1',
+        'The booking page uses the event type title as page title and heading without a menu item of its own');
     $check($text('//*[@id="appointment-calendar-title"]') === $date->format('F Y'), 'The month heading is written in words');
     $check($text('//legend[contains(@class, "com-appointments-slots-legend")]') === 'Available times on ' . $date->format('l, j F Y'),
         'The slot legend names the weekday and the date in words');

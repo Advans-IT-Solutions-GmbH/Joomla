@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Site\View\Manage;
 
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -17,6 +18,8 @@ defined('_JEXEC') or die;
 
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     protected $item;
     protected $action;
     protected $signature;
@@ -39,6 +42,7 @@ class HtmlView extends BaseHtmlView
         $assets->useStyle('com_appointments.site');
         $model = $this->getModel();
         $this->action = $model->action();
+        $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
         $this->item = $model->getItem();

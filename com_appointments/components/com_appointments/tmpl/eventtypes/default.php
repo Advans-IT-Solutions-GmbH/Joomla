@@ -28,7 +28,7 @@ $durationKeys = [
 ?>
 <div class="com-appointments com-appointments-eventtypes">
     <div class="com-appointments-container">
-        <h1 class="com-appointments-heading"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_HEADING'); ?></h1>
+        <h1 class="com-appointments-heading"><?php echo htmlspecialchars($this->pageHeading, ENT_QUOTES, 'UTF-8'); ?></h1>
 
         <?php if ($this->items === []) : ?>
             <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_EMPTY'); ?></p>

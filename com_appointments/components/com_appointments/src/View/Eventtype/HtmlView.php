@@ -16,11 +16,14 @@ use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 
 defined('_JEXEC') or die;
 
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     protected $item;
     protected $fields = [];
     protected $slots = [];
@@ -90,6 +93,7 @@ class HtmlView extends BaseHtmlView
         $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
         $assets->useStyle('com_appointments.site');
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
+        $this->applyPageTitle('eventtype', (string) $this->item->title, (int) $this->item->id);
 
         return parent::display($tpl);
     }

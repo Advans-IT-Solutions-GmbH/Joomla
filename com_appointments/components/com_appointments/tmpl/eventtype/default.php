@@ -53,7 +53,7 @@ $location = trim((string) $this->item->location_text);
 <div class="com-appointments com-appointments-eventtype">
     <div class="com-appointments-container">
         <header class="com-appointments-header">
-            <h1 class="com-appointments-heading"><?php echo $this->escape($this->item->title); ?></h1>
+            <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
             <div class="com-appointments-description"><?php echo (new InputFilter([], [], 1, 1))->clean((string) $this->item->description, 'html'); ?></div>
             <p class="com-appointments-duration"><?php echo Text::sprintf((int) $this->item->duration_minutes === 1 ? 'COM_APPOINTMENTS_DURATION_MINUTES_1' : 'COM_APPOINTMENTS_DURATION_MINUTES_MORE', (int) $this->item->duration_minutes); ?></p>
             <?php if ($location !== '') : ?>

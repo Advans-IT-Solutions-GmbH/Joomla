@@ -20,7 +20,7 @@ $location = trim((string) $this->item->location_text);
 ?>
 <div class="com-appointments com-appointments-confirmation">
     <div class="com-appointments-container">
-        <h1 class="com-appointments-heading"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMED_HEADING'); ?></h1>
+        <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
         <p class="com-appointments-status"><?php echo Text::_(match ((int) $this->item->state) {
             0 => 'COM_APPOINTMENTS_BOOKING_PENDING',
             1 => 'COM_APPOINTMENTS_BOOKING_CONFIRMED',

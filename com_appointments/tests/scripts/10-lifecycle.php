@@ -55,6 +55,8 @@ try {
     $form = $client->request($fresh);
     $token = $client->token($form);
     $check(str_contains($form, $day . ' 12:00:00'), 'Reschedule form offers the slot before the competing booking');
+    $check(preg_match('#<title>\s*Reschedule your appointment\s*</title>#', $form) === 1,
+        'The manage page sets its own title without a menu item of its own');
     // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
     // language like the booking page, never as raw UTC timestamps.
     $zurich = new DateTimeZone('Europe/Zurich');

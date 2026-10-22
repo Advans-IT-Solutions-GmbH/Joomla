@@ -10,11 +10,15 @@ namespace Advans\Component\Appointments\Site\View\Booking;
 
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
+use Advans\Component\Appointments\Site\View\PageTitleTrait;
 
 defined('_JEXEC') or die;
 
 class HtmlView extends BaseHtmlView
 {
+    use PageTitleTrait;
+
     protected $item;
 
     public function display($tpl = null)
@@ -26,6 +30,7 @@ class HtmlView extends BaseHtmlView
         $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
         $assets->useStyle('com_appointments.site');
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
+        $this->applyPageTitle('booking', Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMED_HEADING'));
 
         return parent::display($tpl);
     }
