@@ -1,6 +1,15 @@
 name: Publish - DMARC Reports MTA-STS Plugin
 
 on:
+  # A manual run only recovers a release whose push-triggered publication never ran,
+  # for example because Actions could not start jobs. It builds the merged release
+  # commit of the given version, never the current main.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released version to publish (x.y.z), as in the merged release PR'
+        required: true
+        type: string
   push:
     branches:
       - main
@@ -15,7 +24,7 @@ jobs:
   publish:
     name: Publish Release
     runs-on: ubuntu-latest
-    if: "startsWith(github.event.head_commit.message, 'release: system-dmarcmtasts v')"
+    if: "github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: system-dmarcmtasts v'))"
     permissions:
       contents: write
       id-token: write
@@ -28,6 +37,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check out exactly the released source
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          # Builds only the merged release commit, also on a manual run, and compares the
+          # trees of every bundled path with it. Runs a copy: the checkout replaces the files.
+          cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"
+          python3 "$RUNNER_TEMP/release-source.py" --prefix "system-dmarcmtasts" \
+            --path plg_system_dmarcmtasts \
+            --path shared/build \
+            --path .github/scripts \
+            --provenance-out "$RUNNER_TEMP/provenance.json"
 
       - name: Read version from manifest
         id: version
@@ -44,6 +68,17 @@ jobs:
         run: |
           python3 .github/scripts/publish-release.py preflight \
             --prefix "system-dmarcmtasts-v" --version "${{ steps.version.outputs.new }}"
+
+      - name: Confirm that the build source is the verified release commit
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          BUILT_SHA: ${{ steps.preflight.outputs.sha }}
+        run: |
+          # The tag, the release notes and the attestation all name this one commit.
+          if [ -z "$SOURCE_SHA" ] || [ "$SOURCE_SHA" != "$BUILT_SHA" ] || [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+            echo "::error::The build source $BUILT_SHA is not the verified release commit $SOURCE_SHA."
+            exit 1
+          fi
 
       - name: Build extension
         run: |
@@ -92,6 +127,9 @@ jobs:
             ### Changes
             ${{ steps.changelog.outputs.changelog }}
 
+            ### Source
+            Built from the release commit ${{ steps.source.outputs.sha }}.
+
             ### Installation
             1. Download `${{ steps.package.outputs.file }}`
             2. Install via Joomla Extension Manager
@@ -114,6 +152,17 @@ jobs:
             --title "DMARC Reports MTA-STS Policy Plugin v${{ steps.version.outputs.new }}"
 
       - name: Attest build provenance
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: plg_system_dmarcmtasts/${{ steps.package.outputs.file }}
+
+      - name: Attest the provenance of the recovered release commit
+        # A manual run starts from the current main, so GitHub's derived provenance would
+        # name that commit. This predicate names the verified release commit instead.
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: plg_system_dmarcmtasts/${{ steps.package.outputs.file }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/provenance.json
