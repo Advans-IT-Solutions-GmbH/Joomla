@@ -187,6 +187,40 @@ class PublishTests(unittest.TestCase):
                 self.assertNotIn("gh release delete", text)
                 self.assertNotIn("--clobber", text)
                 self.assertLess(text.index("publish-release.py preflight"), text.index("      - name: Build"))
+                # Every run, also a manual recovery on main, builds only the merged release
+                # commit and checks the trees of the bundled paths before anything else.
+                self.assertIn("  workflow_dispatch:\n", text.replace("\r\n", "\n"))
+                self.assertIn("github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||", text)
+                source = text.index("      - name: Check out exactly the released source")
+                self.assertLess(source, text.index("      - name: Read version from manifest"))
+                self.assertLess(source, text.index("publish-release.py preflight"))
+                step = text[source:text.index("      - name: Read version from manifest")]
+                self.assertIn('cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"', step)
+                self.assertIn("RELEASE_VERSION: ${{ inputs.version }}", step)
+                self.assertIn("--path shared/build", step)
+                self.assertNotIn("${{ inputs.version }}", text.replace(step, ""))
+                if path.name == "publish-pkg-dmarcreports.yml":
+                    for child in ["com_dmarcreports", "mod_dmarcreports", "plg_task_dmarcreports", "plg_system_dmarcmtasts"]:
+                        self.assertIn(f"--path {child}", step)
+                # Tag, release notes and attestation name the verified release commit.
+                self.assertIn('--provenance-out "$RUNNER_TEMP/provenance.json"', step)
+                confirm = text.index("      - name: Confirm that the build source is the verified release commit")
+                self.assertLess(text.index("publish-release.py preflight"), confirm)
+                self.assertLess(confirm, text.index("      - name: Build"))
+                self.assertIn("SOURCE_SHA: ${{ steps.source.outputs.sha }}", text[confirm:confirm + 400])
+                self.assertIn("BUILT_SHA: ${{ steps.preflight.outputs.sha }}", text[confirm:confirm + 400])
+                self.assertIn("Built from the release commit ${{ steps.source.outputs.sha }}.", text)
+                pushed = text.index("      - name: Attest build provenance")
+                self.assertIn("if: github.event_name == 'push'", text[pushed:pushed + 120])
+                recovered = text.index("      - name: Attest the provenance of the recovered release commit")
+                block = text[recovered:recovered + 700]
+                self.assertIn("if: github.event_name == 'workflow_dispatch'", block)
+                self.assertIn("predicate-type: https://slsa.dev/provenance/v1", block)
+                self.assertIn("predicate-path: ${{ runner.temp }}/provenance.json", block)
+                self.assertEqual(2, text.count("uses: actions/attest-build-provenance@"))
+                # Nothing outside the release commit may reach the package.
+                for forbidden in ["actions/cache", "download-artifact", "curl ", "wget ", "composer ", "npm "]:
+                    self.assertNotIn(forbidden, text)
 
     def test_both_builders_require_package_verification(self):
         root = Path(__file__).resolve().parent.parent.parent

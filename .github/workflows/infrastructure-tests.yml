@@ -31,6 +31,8 @@ jobs:
           persist-credentials: false
       - name: Test publication ordering and failure recovery without API writes
         run: python3 .github/scripts/test-publish-release.py
+      - name: Test that publication builds only the released source
+        run: python3 .github/scripts/test-release-source.py
       - name: Test required workflow gate with fixture API responses
         run: bash .github/scripts/test-collect-results.sh
       - name: Test mandatory package verification
