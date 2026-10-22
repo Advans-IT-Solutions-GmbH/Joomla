@@ -2,6 +2,7 @@
 """Offline tests for release-source.py with real git fixture repositories."""
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -109,6 +110,48 @@ class ReleaseSourceTest(unittest.TestCase):
             for version in ["1.2.0", "", "1.1", "1.1.0 (#7)", "1.1.0$(id)"]:
                 with self.subTest(version=version), self.assertRaises(ValueError):
                     source.release_commit_for_dispatch("pkgx", version, "owner/repo")
+
+    def test_recovery_provenance_names_the_verified_release_commit(self):
+        # Provenance sha, build source and merged release commit must be one and the same,
+        # although the run itself (GITHUB_SHA) starts from the later main.
+        out = self.repo.parent / f"{self.repo.name}-provenance.json"
+        output = self.repo.parent / f"{self.repo.name}-output.txt"
+        environ = {
+            "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": self.later, "RELEASE_VERSION": "1.1.0",
+            "GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "42",
+            "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/publish-pkgx.yml@refs/heads/main",
+            "GITHUB_OUTPUT": str(output),
+        }
+        argv = ["release-source.py", "--prefix", "pkgx", "--provenance-out", str(out)]
+        for path in self.paths:
+            argv += ["--path", path]
+        try:
+            with patch.dict(os.environ, environ), patch("sys.argv", argv), \
+                    patch.object(source, "pull_request", return_value=self.pr()):
+                source.main()
+            predicate = json.loads(out.read_text(encoding="utf-8"))
+            built = git(self.repo, "rev-parse", "HEAD")
+            recorded = output.read_text(encoding="utf-8").strip()
+        finally:
+            out.unlink(missing_ok=True)
+            output.unlink(missing_ok=True)
+        resolved = predicate["buildDefinition"]["resolvedDependencies"]
+        self.assertEqual([{"uri": "git+https://github.com/owner/repo@refs/heads/main",
+                           "digest": {"gitCommit": self.release}}], resolved)
+        self.assertEqual(self.release, built)
+        self.assertEqual(f"sha={self.release}", recorded)
+        self.assertEqual(self.later, predicate["buildDefinition"]["internalParameters"]["github"]["workflow_sha"])
+        self.assertEqual(".github/workflows/publish-pkgx.yml",
+                         predicate["buildDefinition"]["externalParameters"]["workflow"]["path"])
+        self.assertEqual("1.1.0", predicate["buildDefinition"]["externalParameters"]["releaseVersion"])
+
+    def test_no_provenance_is_written_when_the_source_check_fails(self):
+        out = self.repo.parent / f"{self.repo.name}-provenance.json"
+        environ = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": self.later, "GITHUB_REPOSITORY": "owner/repo"}
+        argv = ["release-source.py", "--prefix", "pkgx", "--path", "com_x", "--provenance-out", str(out)]
+        with patch.dict(os.environ, environ), patch("sys.argv", argv), self.assertRaises(ValueError):
+            source.main()
+        self.assertFalse(out.exists())
 
     def test_push_requires_a_release_commit(self):
         self.assertEqual(self.release, source.release_commit_for_push("pkgx", self.release))

@@ -15,6 +15,9 @@ untracked and ignored file, and the tree of every bundled path (the extension, t
 children of a package, the build scripts) is compared between the release commit and
 the build source. Any difference, local modification or extra file aborts the run.
 
+With --provenance-out it also writes the SLSA provenance predicate that a recovery run
+attests, naming the verified release commit as the built source.
+
 Run a copy of this file from $RUNNER_TEMP: the checkout replaces the repository's files.
 """
 
@@ -98,10 +101,53 @@ def verify(sha: str, paths: list) -> None:
             raise ValueError(f"{path} contains files that are not part of the release commit.")
 
 
+def provenance(sha: str, environ: dict) -> dict:
+    """SLSA v1 provenance predicate for a recovery run.
+
+    A recovery run starts from the current main, so the provenance GitHub derives from
+    the run would name that commit as the source. This predicate names the verified
+    release commit as the resolved source instead and keeps the commit of the workflow
+    definition separately, so the signed statement says exactly what was built.
+    """
+    server = environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = environ["GITHUB_REPOSITORY"]
+    run = f"{server}/{repo}/actions/runs/{environ['GITHUB_RUN_ID']}/attempts/{environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+    return {
+        "buildDefinition": {
+            "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+            "externalParameters": {
+                "workflow": {
+                    "ref": environ["GITHUB_REF"],
+                    "repository": f"{server}/{repo}",
+                    "path": environ["GITHUB_WORKFLOW_REF"].split("@", 1)[0].split("/", 2)[2],
+                },
+                "releaseVersion": environ.get("RELEASE_VERSION", ""),
+            },
+            "internalParameters": {
+                "github": {
+                    "event_name": environ["GITHUB_EVENT_NAME"],
+                    "repository_id": environ.get("GITHUB_REPOSITORY_ID", ""),
+                    "repository_owner_id": environ.get("GITHUB_REPOSITORY_OWNER_ID", ""),
+                    "workflow_sha": environ["GITHUB_SHA"],
+                },
+            },
+            "resolvedDependencies": [{
+                "uri": f"git+{server}/{repo}@refs/heads/main",
+                "digest": {"gitCommit": sha},
+            }],
+        },
+        "runDetails": {
+            "builder": {"id": f"{server}/{environ['GITHUB_WORKFLOW_REF']}"},
+            "metadata": {"invocationId": run},
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--path", action="append", required=True, dest="paths")
+    parser.add_argument("--provenance-out", help="write the SLSA predicate of the verified release commit here")
     args = parser.parse_args()
     if not PREFIX.match(args.prefix):
         raise ValueError("Invalid release prefix.")
@@ -117,6 +163,10 @@ def main() -> None:
 
     check_out(sha)
     verify(sha, args.paths)
+    if args.provenance_out:
+        # Written only after the checkout and the tree comparison, from the same verified sha.
+        with open(args.provenance_out, "w", encoding="utf-8") as handle:
+            json.dump(provenance(git("rev-parse", "HEAD"), dict(os.environ)), handle, indent=2)
     print(f"Building the released source {sha}.")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
