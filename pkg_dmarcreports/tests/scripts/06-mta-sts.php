@@ -23,7 +23,9 @@ class MtaStsEndpointTest
      * "Web-server rule"), kept identical so the test proves the documented
      * production setup.
      */
-    private const REWRITE_COMMENT = '# MTA-STS (RFC 8461): let Joomla answer the policy request.';
+    private const REWRITE_COMMENT = '# MTA-STS (RFC 8461): let Joomla answer the policy request. Only without a query string: the' . "\n"
+        . '# internal rewrite skips the site\'s own rules on its second pass (header exemption REDIRECT_STATUS),' . "\n"
+        . '# so /.well-known/mta-sts.txt?option=com_content would otherwise reach Joomla unchecked.';
     private const REWRITE_COND    = 'RewriteCond %{QUERY_STRING} ^$';
     private const REWRITE_RULE    = 'RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]';
 
