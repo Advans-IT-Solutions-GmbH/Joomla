@@ -76,10 +76,10 @@ function joomla_component_database_problems(mysqli $db, string $prefix, string $
 
         // The informational lines only count checked and skipped changes; every other
         // message of the problems column (schema version, update version, missing or
-        // wrong table structure) is a problem.
+        // wrong table structure, also a column or index a DROP should have removed) is a problem.
         $text = trim(preg_replace('/\d+ database changes (were checked|did not alter table structure and were skipped)\./', '', $line));
 
-        if (preg_match('/does not|doesn\'t|wrong|mismatch|error|not up to date/i', $text)) {
+        if (preg_match('/does not|doesn\'t|should not|wrong|mismatch|error|not up to date/i', $text)) {
             $problems[] = 'Joomla reports: ' . preg_replace('/\s{2,}/', ' ', $text);
         }
     }
