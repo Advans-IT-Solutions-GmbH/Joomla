@@ -119,6 +119,7 @@ class ReleaseSourceTest(unittest.TestCase):
         environ = {
             "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": self.later, "RELEASE_VERSION": "1.1.0",
             "GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "42",
+            "GITHUB_REPOSITORY_ID": "7", "GITHUB_REPOSITORY_OWNER_ID": "8", "RUNNER_ENVIRONMENT": "github-hosted",
             "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/publish-pkgx.yml@refs/heads/main",
             "GITHUB_OUTPUT": str(output),
         }
@@ -140,16 +141,40 @@ class ReleaseSourceTest(unittest.TestCase):
                            "digest": {"gitCommit": self.release}}], resolved)
         self.assertEqual(self.release, built)
         self.assertEqual(f"sha={self.release}", recorded)
-        self.assertEqual(self.later, predicate["buildDefinition"]["internalParameters"]["github"]["workflow_sha"])
+        # Exactly the fields of GitHub's own workflow provenance, which the attestation API
+        # validates; a missing one is rejected only after the release is already public.
+        self.assertEqual({"buildType", "externalParameters", "internalParameters", "resolvedDependencies"},
+                         set(predicate["buildDefinition"]))
+        self.assertEqual({"workflow"}, set(predicate["buildDefinition"]["externalParameters"]))
+        self.assertEqual({"ref", "repository", "path"}, set(predicate["buildDefinition"]["externalParameters"]["workflow"]))
+        self.assertEqual({"event_name": "workflow_dispatch", "repository_id": "7", "repository_owner_id": "8",
+                          "runner_environment": "github-hosted"},
+                         predicate["buildDefinition"]["internalParameters"]["github"])
+        self.assertEqual({"builder": {"id": "https://github.com/owner/repo/.github/workflows/publish-pkgx.yml@refs/heads/main"},
+                          "metadata": {"invocationId": "https://github.com/owner/repo/actions/runs/42/attempts/1"}},
+                         predicate["runDetails"])
         self.assertEqual(".github/workflows/publish-pkgx.yml",
                          predicate["buildDefinition"]["externalParameters"]["workflow"]["path"])
-        self.assertEqual("1.1.0", predicate["buildDefinition"]["externalParameters"]["releaseVersion"])
 
     def test_no_provenance_is_written_when_the_source_check_fails(self):
         out = self.repo.parent / f"{self.repo.name}-provenance.json"
         environ = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": self.later, "GITHUB_REPOSITORY": "owner/repo"}
         argv = ["release-source.py", "--prefix", "pkgx", "--path", "com_x", "--provenance-out", str(out)]
         with patch.dict(os.environ, environ), patch("sys.argv", argv), self.assertRaises(ValueError):
+            source.main()
+        self.assertFalse(out.exists())
+
+    def test_a_missing_provenance_field_stops_the_run_before_the_build(self):
+        # A predicate the attestation API would reject must fail here, before anything is
+        # published, not in the attestation step after the release is already public.
+        out = self.repo.parent / f"{self.repo.name}-provenance.json"
+        environ = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": self.release, "GITHUB_REPOSITORY": "owner/repo",
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "42",
+                   "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/publish-pkgx.yml@refs/heads/main",
+                   "GITHUB_REPOSITORY_ID": "7", "GITHUB_REPOSITORY_OWNER_ID": "8"}
+        argv = ["release-source.py", "--prefix", "pkgx", "--path", "com_x", "--provenance-out", str(out)]
+        with patch.dict(os.environ, environ), patch("sys.argv", argv), self.assertRaises(KeyError):
+            os.environ.pop("RUNNER_ENVIRONMENT", None)
             source.main()
         self.assertFalse(out.exists())
 
