@@ -30,6 +30,10 @@ defined('_JEXEC') or die;
  * was successfully provisioned; _conference_error is a safe storage diagnostic.
  * _conference_missing means no persisted row is safely available (deleted, or
  * unreadable when _conference_error is present). Never notify from the old input.
+ * Every abort for an active conference booking leaves conference_state 'failed' with
+ * a safe conference_error: a missing provider, a provider or configuration error and,
+ * as a best effort after the rollback, a storage error. Only a stale snapshot stays
+ * inert: the newer revision belongs to the request that wrote it.
  */
 final class ConferenceService
 {
@@ -107,9 +111,16 @@ final class ConferenceService
                     throw new ConferenceException('configuration');
                 }
 
-                $name = ($event['location_type'] ?? '') === 'conference' ? $this->selected($event) : 'none';
+                // An event type with the location type "conference" promises a link. When no
+                // provider resolves, that is a failure the administrator must see and retry,
+                // not a booking without conference state.
+                if (($event['location_type'] ?? '') === 'conference') {
+                    $name = $this->selected($event);
 
-                if (($event['location_type'] ?? '') === 'conference' && $name !== 'none') {
+                    if ($name === 'none') {
+                        throw new ConferenceException('not_configured');
+                    }
+
                     $fields['conference_provider'] = $name;
                     $result = $this->providerManager($name, $event)->createMeeting($name, $this->request($current, $event));
                     $fields['conference_url'] = $result->joinUrl;
@@ -143,6 +154,7 @@ final class ConferenceService
         } catch (\Throwable $error) {
             $this->rollback($started);
             $this->log('Conference status could not be saved.');
+            $this->markStorageFailure($booking);
 
             return $this->refreshSafely((int) ($booking['id'] ?? 0)) + [
                 '_conference_changed' => false,
@@ -297,7 +309,13 @@ final class ConferenceService
 
     private function selected(array $event): string
     {
-        $name = $this->override($this->overrides($event), 'conference_provider', (string) $this->params->get('conference_provider', 'none'));
+        // An explicit choice in the event settings wins. Without one, the event type's
+        // own provider column applies, then the component option. The column is the
+        // event type's adapter in the data model, so a provider set there must not be
+        // silently replaced by a disabled global provider.
+        $column = $event['conference_provider'] ?? null;
+        $fallback = is_string($column) && $column !== '' ? $column : (string) $this->params->get('conference_provider', 'none');
+        $name = $this->override($this->overrides($event), 'conference_provider', $fallback);
 
         if (!in_array($name, ['none', 'jitsi', 'generic', 'fixed'], true) && !$this->registered($name)) {
             throw new ConferenceException('configuration');
@@ -477,6 +495,45 @@ final class ConferenceService
         }
 
         return true;
+    }
+
+    /**
+     * Best effort after a rolled-back provisioning transaction: flag the booking as
+     * failed so the administrator sees the missing link and the retry action. The
+     * conditions keep it to the unchanged snapshot of an active conference booking
+     * that has no conference state yet, so a newer revision or a link written by
+     * another request is never overwritten. A second database failure is only logged.
+     */
+    private function markStorageFailure(array $snapshot): void
+    {
+        $id = (int) ($snapshot['id'] ?? 0);
+        $uid = (string) ($snapshot['uid'] ?? '');
+        $modified = (string) ($snapshot['modified_utc'] ?? '');
+
+        if ($id < 1 || $uid === '' || $modified === '' || !isset($snapshot['sequence'])) {
+            return;
+        }
+
+        try {
+            $db = $this->db;
+            $db->setQuery(
+                'UPDATE ' . $db->quoteName('#__appointments_bookings')
+                . ' SET ' . $db->quoteName('conference_state') . ' = ' . $db->quote('failed')
+                . ', ' . $db->quoteName('conference_error') . ' = ' . $db->quote((new ConferenceException('storage_failed'))->getMessage())
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $id
+                . ' AND ' . $db->quoteName('uid') . ' = ' . $db->quote($uid)
+                . ' AND ' . $db->quoteName('sequence') . ' = ' . (int) $snapshot['sequence']
+                . ' AND ' . $db->quoteName('modified_utc') . ' = ' . $db->quote($modified)
+                . ' AND ' . $db->quoteName('state') . ' IN (0, 1)'
+                . ' AND ' . $db->quoteName('anonymised_utc') . ' IS NULL'
+                . ' AND ' . $db->quoteName('conference_state') . ' IS NULL'
+                . ' AND ' . $db->quoteName('eventtype_id') . ' IN (SELECT ' . $db->quoteName('id')
+                . ' FROM ' . $db->quoteName('#__appointments_eventtypes')
+                . ' WHERE ' . $db->quoteName('location_type') . ' = ' . $db->quote('conference') . ')'
+            )->execute();
+        } catch (\Throwable $error) {
+            $this->log('Conference failure flag could not be saved.');
+        }
     }
 
     private function creationError(\Throwable $error): string

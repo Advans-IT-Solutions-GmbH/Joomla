@@ -29,6 +29,7 @@ class HtmlView extends BaseHtmlView
     protected $day;
     protected $days = [];
     protected $inputData = [];
+    protected $errors = [];
     protected $renderedAt;
     protected $formSignature;
     protected $params;
@@ -41,6 +42,9 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Cache-Control', 'private, no-store', true);
         $this->params = ComponentHelper::getParams('com_appointments');
         $this->inputData = (array) $app->getUserState('com_appointments.booking.' . (int) $this->item->id, []);
+        // Field messages of the last refused submission, shown once at their fields.
+        $this->errors = array_filter((array) $app->getUserState('com_appointments.booking_errors.' . (int) $this->item->id, []), 'is_string');
+        $app->setUserState('com_appointments.booking_errors.' . (int) $this->item->id, null);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $zoneName = $app->getInput()->getString('timezone', (string) ($this->inputData['timezone'] ?? $this->item->timezone));
 

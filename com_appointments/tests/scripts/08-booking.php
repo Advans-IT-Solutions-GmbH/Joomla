@@ -36,6 +36,23 @@ $prepare = static function (int $event, string $start) use ($check): array {
     ];
     return [$client, '/index.php?option=com_appointments&task=booking.submit&id=' . $event, $data];
 };
+$dom = static function (string $html): DOMXPath {
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+
+    return new DOMXPath($document);
+};
+// A field error is wired to its control: aria-invalid, aria-describedby and the message next to it.
+$fieldError = static function (DOMXPath $xpath, string $control, string $message): bool {
+    $input = $xpath->query('//*[@id="' . $control . '"]')->item(0);
+    $error = $xpath->query('//*[@id="' . $control . '-error"]')->item(0);
+
+    return $input instanceof DOMElement && $error !== null
+        && $input->getAttribute('aria-invalid') === 'true'
+        && in_array($control . '-error', preg_split('/\s+/', $input->getAttribute('aria-describedby')), true)
+        && trim($error->textContent) === $message;
+};
+$bookings = static fn (int $event): int => (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}")->fetch_assoc()['n'];
 
 try {
     $admin->login();
@@ -128,11 +145,63 @@ try {
     $request[2]['consent'] = 0;
     sleep(2);
     $body = $request[0]->request($request[1], $request[2]);
-    $check(str_contains($body, 'Confirm your consent') && (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc()['n'] === 1, 'Missing consent never creates a booking');
+    $check($fieldError($dom($body), 'booking-consent', 'Please confirm your consent.')
+        && !str_contains($body, 'The form has expired') && $bookings($eventIds[0]) === 1,
+        'Missing consent gets its own message at the checkbox and never creates a booking');
     $request[2]['consent'] = 1;
     unset($request[2][$request[0]->token($body)]);
     $request[0]->request($request[1], $request[2]);
     $check($request[0]->status === 403, 'Missing CSRF token is rejected before mutation');
+
+    // Release test 22.10.: every invalid field gets its own message at the field.
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['name'] = '';
+    $request[2]['booking']['email'] = 'not-an-address';
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $xpath = $dom($body);
+    $check($fieldError($xpath, 'booking-name', 'Please enter your name.')
+        && $fieldError($xpath, 'booking-email', 'Please enter a valid email address.'),
+        'Empty name and invalid email each get their own message at the field with aria-invalid and aria-describedby');
+    $check(substr_count($body, 'Please enter your name.') === 1 && !str_contains($body, 'Please complete all required fields'),
+        'Field messages are not repeated as a collective message above the form');
+    $email = $xpath->query('//input[@id="booking-email"]')->item(0);
+    $check($email instanceof DOMElement && $email->getAttribute('value') === 'not-an-address' && $bookings($eventIds[0]) === 1,
+        'A refused submission keeps the entered values and creates no booking');
+
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['consent'] = 0;
+    $request[2]['booking']['name'] = '';
+    sleep(2);
+    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
+        && $fieldError($xpath, 'booking-name', 'Please enter your name.'),
+        'A missing consent and an empty name are reported together in one round trip');
+
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['website'] = 'filled by a robot';
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $check(str_contains($body, 'The form has expired or could not be verified.') && !str_contains($body, 'Please confirm your consent.')
+        && $bookings($eventIds[0]) === 1, 'A filled honeypot gets the form message, never the consent message');
+
+    // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
+    $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
+    $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[1]
+        . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day);
+    $xpath = $dom($html);
+    $date = new DateTimeImmutable($day, $utc);
+    $text = static fn (string $query): string => trim((string) ($xpath->query($query)->item(0)?->textContent ?? ''));
+    $check($text('//*[@id="appointment-calendar-title"]') === $date->format('F Y'), 'The month heading is written in words');
+    $check($text('//legend[contains(@class, "com-appointments-slots-legend")]') === 'Available times on ' . $date->format('l, j F Y'),
+        'The slot legend names the weekday and the date in words');
+    $check($text('//label[@for="booking-slot-0"]') === '09:00' && preg_match('/\b\d{2}:\d{2} (?:UTC|CES?T)\b/', $html) === 0,
+        'Slot times read 09:00 without a zone abbreviation at every time');
+    $check(substr_count($html, 'All times are shown in the UTC time zone.') === 1, 'The time zone is stated once');
+    $weekdays = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th');
+    $firstWeekday = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th//abbr')->item(0);
+    $check($weekdays->length === 7 && $firstWeekday instanceof DOMElement && $firstWeekday->getAttribute('title') === 'Monday',
+        'The calendar has a weekday row that starts on Monday');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failures++;

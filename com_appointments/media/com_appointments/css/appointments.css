@@ -8,16 +8,44 @@
 
 /*
  * Mobile first: the narrow layout is the default and the wider layout is added
- * by a min-width query. Only the component's own elements are styled, so the
- * site template keeps control of typography and colour. No font, image or style
- * is loaded from another server.
+ * by a min-width query. The markup uses Joomla's standard form classes, and this
+ * file only adds what a site template cannot be expected to provide: the content
+ * column, the calendar grid, touch targets of at least 44 px and the visible error
+ * state. Typography and colours stay with the site template, which can override
+ * every value below through the custom properties on .com-appointments. No font,
+ * image or style is loaded from another server.
  */
 
 .com-appointments {
     --appointments-gap: 0.75rem;
     --appointments-border: 1px solid rgba(0, 0, 0, 0.15);
+    --appointments-max-width: 48rem;
+    --appointments-target: 44px;
+    --appointments-radius: 0.25rem;
+    --appointments-error: #b3261e;
 }
 
+.com-appointments-container {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: var(--appointments-max-width);
+    margin-inline: auto;
+    padding-inline: 1rem;
+}
+
+.com-appointments .visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Event type list */
 .com-appointments-list {
     display: flex;
     flex-direction: column;
@@ -33,7 +61,7 @@
     gap: 0.25rem;
     padding: var(--appointments-gap);
     border: var(--appointments-border);
-    border-radius: 0.25rem;
+    border-radius: var(--appointments-radius);
 }
 
 .com-appointments-list-title {
@@ -45,22 +73,246 @@
     opacity: 0.75;
 }
 
+/* Buttons and navigation links are touch targets. */
+.com-appointments .btn,
+.com-appointments-calendar-nav a {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--appointments-target);
+    min-height: var(--appointments-target);
+    padding: 0.5rem 1rem;
+    text-align: center;
+}
+
+/* Time zone */
+.com-appointments-zone {
+    margin-block: 1rem;
+}
+
+.com-appointments-zone-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.com-appointments-zone-row .form-select {
+    flex: 1 1 14rem;
+    width: auto;
+}
+
+/* Calendar */
+.com-appointments-calendar {
+    margin-block: 1rem;
+}
+
+.com-appointments-calendar-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.com-appointments-calendar-title {
+    order: -1;
+    flex: 1 0 100%;
+    margin: 0;
+    text-align: center;
+}
+
+.com-appointments-calendar-grid {
+    width: 100%;
+    margin-block: 0.75rem;
+    border-collapse: separate;
+    border-spacing: 0.25rem;
+    table-layout: fixed;
+}
+
+.com-appointments-weekday {
+    padding: 0.25rem 0;
+    font-weight: 600;
+    text-align: center;
+}
+
+.com-appointments-weekday abbr[title] {
+    text-decoration: none;
+    cursor: default;
+}
+
+.com-appointments-day-cell {
+    padding: 0;
+    text-align: center;
+}
+
+.com-appointments-day {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: var(--appointments-target);
+    border-radius: var(--appointments-radius);
+}
+
+.com-appointments-day-available {
+    border: 1px solid currentColor;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.com-appointments-day-unavailable {
+    opacity: 0.5;
+}
+
+.com-appointments-day-selected {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+}
+
+/* Forms */
+.com-appointments-form {
+    display: grid;
+    gap: 1rem;
+}
+
+.com-appointments-field {
+    display: grid;
+    gap: 0.375rem;
+    margin: 0;
+}
+
+.com-appointments fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.com-appointments .form-control,
+.com-appointments .form-select {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-height: var(--appointments-target);
+    padding: 0.5rem 0.75rem;
+    font: inherit;
+}
+
+.com-appointments textarea.form-control {
+    min-height: 6rem;
+}
+
+.com-appointments .form-check {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 0.5rem;
+    min-height: var(--appointments-target);
+    margin: 0;
+    padding-left: 0;
+}
+
+.com-appointments .form-check .form-check-input {
+    flex: 0 0 auto;
+    float: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+}
+
+.com-appointments .form-check-label {
+    flex: 1 1 0;
+    padding-block: 0.5rem;
+    cursor: pointer;
+}
+
+.com-appointments .form-check > .form-text,
+.com-appointments .form-check > .com-appointments-field-error {
+    flex: 1 0 100%;
+}
+
+.com-appointments-slots-legend {
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.com-appointments-slot-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+    gap: 0.5rem;
+}
+
+.com-appointments .com-appointments-slot {
+    padding-inline: 0.75rem;
+    border: 1px solid currentColor;
+    border-radius: var(--appointments-radius);
+}
+
+.com-appointments-tel {
+    display: grid;
+    grid-template-columns: minmax(6rem, 8rem) 1fr;
+    gap: 0.5rem;
+}
+
+.com-appointments .com-appointments-field-error {
+    display: block;
+    color: var(--appointments-error);
+    font-size: 0.875rem;
+}
+
+.com-appointments .is-invalid {
+    border-color: var(--appointments-error);
+}
+
+.com-appointments .form-check-input.is-invalid {
+    outline: 2px solid var(--appointments-error);
+    outline-offset: 1px;
+}
+
+.com-appointments-honeypot {
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+/* Summary of an appointment */
+.com-appointments-summary {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+    margin-block: 1rem;
+}
+
+.com-appointments-summary dt {
+    font-weight: 600;
+}
+
+.com-appointments-summary dd {
+    margin: 0 0 0.5rem;
+}
+
 @media (min-width: 48rem) {
     .com-appointments-list-item {
         flex-direction: row;
         align-items: baseline;
         justify-content: space-between;
     }
+
+    .com-appointments-calendar-title {
+        order: 0;
+        flex: 1 1 auto;
+    }
+
+    .com-appointments-summary {
+        grid-template-columns: max-content 1fr;
+        gap: 0.5rem 1.5rem;
+    }
+
+    .com-appointments-summary dd {
+        margin: 0;
+    }
 }
-/* Booking is server rendered; this is a local, mobile-first enhancement. */
-.com-appointments-month-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.com-appointments-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .25rem; margin-block: 1rem; }
-.com-appointments-month > * { padding: .6rem .2rem; text-align: center; }
-.com-appointments-month a { border: 1px solid currentColor; border-radius: .25rem; }
-.com-appointments-month [aria-current] { outline: 2px solid currentColor; font-weight: bold; }
-.com-appointments-booking { display: grid; gap: .75rem; max-width: 42rem; }
-.com-appointments-booking input:not([type="radio"]):not([type="checkbox"]), .com-appointments-booking textarea,
-.com-appointments-booking select { max-width: 100%; width: 100%; padding: .5rem; }
-.com-appointments-custom-field { display: grid; gap: .4rem; }
-.com-appointments-slot { display: inline-flex; align-items: center; gap: .3rem; margin: .4rem; padding: .5rem; border: 1px solid currentColor; border-radius: .25rem; }
-.com-appointments-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }

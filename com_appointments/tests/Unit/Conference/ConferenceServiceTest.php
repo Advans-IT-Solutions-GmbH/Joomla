@@ -23,6 +23,7 @@ final class ConferenceServiceTest extends TestCase
     private string $query = '';
     private array $operations = [];
     private array $writes = [];
+    private array $executed = [];
     private ?array $snapshot;
     private bool $failWrite = false;
     private bool $failRead = false;
@@ -42,7 +43,7 @@ final class ConferenceServiceTest extends TestCase
             'id' => 3, 'title' => 'Consultation', 'alias' => 'consultation',
             'location_type' => 'conference', 'conference_params' => null,
         ];
-        $this->operations = $this->writes = [];
+        $this->operations = $this->writes = $this->executed = [];
         $this->failWrite = $this->failRead = false;
     }
 
@@ -50,11 +51,17 @@ final class ConferenceServiceTest extends TestCase
     {
         $db = $this->createMock(DatabaseInterface::class);
         $db->method('quoteName')->willReturnCallback(static fn ($name) => '`' . $name . '`');
+        $db->method('quote')->willReturnCallback(static fn ($text) => "'" . addslashes((string) $text) . "'");
         $db->method('setQuery')->willReturnCallback(function ($query) use ($db) {
             $this->query = (string) $query;
             $this->operations[] = $this->query;
 
             return $db;
+        });
+        $db->method('execute')->willReturnCallback(function () {
+            $this->executed[] = $this->query;
+
+            return true;
         });
         $db->method('loadResult')->willReturn(8);
         $db->method('loadAssoc')->willReturnCallback(function () {
@@ -271,16 +278,62 @@ final class ConferenceServiceTest extends TestCase
         self::assertSame(0, $plugin->createCalls);
     }
 
-    public function testDisabledAndNonConferenceEventsIgnoreUnrelatedSettings(): void
+    public function testNonConferenceEventsIgnoreUnrelatedSettings(): void
     {
-        $result = $this->service(['conference_provider' => 'none', 'conference_jitsi_base_url' => 'invalid'])
-            ->provision($this->row, $this->now());
-        self::assertNull($result['conference_state']);
-        self::assertFalse($result['_conference_changed']);
         $this->event['location_type'] = 'physical';
         $this->event['conference_params'] = 'invalid json';
+        $this->event['conference_provider'] = 'jitsi';
         $result = $this->service(['conference_provider' => 'invalid'])->provision($this->row, $this->now());
         self::assertNull($result['conference_state']);
+        self::assertNull($result['conference_provider']);
+        self::assertFalse($result['_conference_changed']);
+    }
+
+    public function testConferenceEventWithoutAnyProviderIsPersistedAsFailed(): void
+    {
+        foreach ([null, json_encode(['conference_provider' => 'none']), json_encode(['conference_provider' => 'inherit'])] as $settings) {
+            $this->setUp();
+            $this->event['conference_params'] = $settings;
+            $result = $this->service(['conference_provider' => 'none', 'conference_jitsi_base_url' => 'https://meet.example.com'])
+                ->provision($this->row, $this->now());
+            self::assertSame(1, $result['state']);
+            self::assertSame('failed', $result['conference_state']);
+            self::assertSame('No conference provider is selected for this event type.', $result['conference_error']);
+            self::assertNull($result['conference_provider']);
+            self::assertNull($result['conference_url']);
+            self::assertFalse($result['_conference_changed']);
+            self::assertCount(1, $this->writes);
+            self::assertSame('commit', end($this->operations));
+        }
+    }
+
+    public function testEventTypeProviderColumnSelectsJitsiWhenTheGlobalProviderIsDisabled(): void
+    {
+        // The dev-test configuration: only the event type's provider column names Jitsi.
+        $this->event['conference_provider'] = 'jitsi';
+        $result = $this->service(['conference_provider' => 'none', 'conference_jitsi_base_url' => 'https://meet.example.com'])
+            ->provision($this->row, $this->now());
+        self::assertSame('ok', $result['conference_state']);
+        self::assertSame('jitsi', $result['conference_provider']);
+        self::assertNull($result['conference_error']);
+        self::assertStringStartsWith('https://meet.example.com/appointment-consultation-', $result['conference_url']);
+        self::assertTrue($result['_conference_changed']);
+    }
+
+    public function testExplicitEventSettingWinsOverTheProviderColumn(): void
+    {
+        $this->event['conference_provider'] = 'jitsi';
+        $this->event['conference_params'] = json_encode([
+            'conference_provider' => 'fixed', 'conference_fixed_url' => 'https://meet.example.com/event-room',
+        ]);
+        $result = $this->service(['conference_provider' => 'none'])->provision($this->row, $this->now());
+        self::assertSame('fixed', $result['conference_provider']);
+        self::assertSame('https://meet.example.com/event-room', $result['conference_url']);
+        $this->event['conference_params'] = json_encode(['conference_provider' => 'none']);
+        $result = $this->service(['conference_provider' => 'fixed', 'conference_fixed_url' => 'https://meet.example.com/global'])
+            ->provision($this->row, $this->now());
+        self::assertSame('failed', $result['conference_state']);
+        self::assertSame('No conference provider is selected for this event type.', $result['conference_error']);
     }
 
     public function testFixedAndPrefixEventOverridesAndInheritance(): void
@@ -364,6 +417,22 @@ final class ConferenceServiceTest extends TestCase
         self::assertSame($this->row['end_utc'], $result['end_utc']);
         self::assertSame(0, $provider->createCalls);
         self::assertSame([], $this->writes);
+        self::assertSame([], $this->executed);
+    }
+
+    public function testFailedRetryStorageNeverReflagsOrTouchesANewerRevision(): void
+    {
+        $this->row['conference_state'] = 'failed';
+        $this->failWrite = true;
+        $provider = new RecordingConferenceProvider();
+        $result = $this->service(['conference_provider' => 'jitsi'], new ConferenceManager([$provider]))
+            ->provision($this->row, $this->now(), true);
+        self::assertSame('Conference status could not be saved. Please retry.', $result['_conference_error']);
+        // The guarded UPDATE only matches a row without conference state, so a failed
+        // booking keeps its first diagnostic and a newer revision is never matched.
+        self::assertCount(1, $this->executed);
+        self::assertStringContainsString('`conference_state` IS NULL', $this->executed[0]);
+        self::assertStringContainsString('`sequence` = 2', $this->executed[0]);
     }
 
     public function testCancelledAndAnonymisedBookingsNeverRetry(): void
@@ -602,7 +671,19 @@ final class ConferenceServiceTest extends TestCase
         $result = $service->provision($saved, $this->now());
         self::assertSame('Conference status could not be saved. Please retry.', $result['_conference_error']);
         self::assertSame(1, $result['state']);
-        self::assertSame('rollback', $this->operations[count($this->operations) - 2]);
+        $rollback = array_search('rollback', $this->operations, true);
+        self::assertIsInt($rollback);
+        // After the rollback, one guarded UPDATE flags the unchanged snapshot as failed.
+        self::assertCount(1, $this->executed);
+        $mark = $this->executed[0];
+        self::assertSame($mark, $this->operations[$rollback + 1]);
+        self::assertStringContainsString("`conference_state` = 'failed'", $mark);
+        self::assertStringContainsString("`conference_error` = 'Conference status could not be saved. Please retry.'", $mark);
+        self::assertStringContainsString('`id` = 7 AND `uid` = \'' . $saved['uid'] . '\' AND `sequence` = 2', $mark);
+        self::assertStringContainsString("`modified_utc` = '2026-11-01 10:00:00'", $mark);
+        self::assertStringContainsString('`state` IN (0, 1) AND `anonymised_utc` IS NULL AND `conference_state` IS NULL', $mark);
+        self::assertStringContainsString("`location_type` = 'conference'", $mark);
+        self::assertStringNotContainsString('credential', $mark);
         $this->failRead = true;
         $result = $service->destroy($saved);
         self::assertArrayNotHasKey('invitee_email', $result);

@@ -136,6 +136,45 @@ try {
     $check(str_contains($created['html'], $booking['conference_url']), 'Confirmation page displays the generated guest join link');
     $calendarMail($before, $booking, 3, $booking['conference_url']);
 
+    // Release test 22.10.: only the event type's provider column names Jitsi, the event
+    // settings are empty and the global provider is disabled. The booking must still get
+    // its link on the confirmation page, in every mail and in the calendar entry.
+    $settings([
+        'conference_provider' => 'none', 'conference_jitsi_base_url' => 'https://meet.example.com',
+        'conference_jitsi_auth' => 'none', 'conference_jitsi_room_prefix' => 'fixture',
+        'conference_jitsi_room_pattern' => '{prefix}-{alias}-{random}', 'conference_jitsi_entropy' => 24,
+    ]);
+    $db->query("UPDATE {$prefix}appointments_eventtypes SET conference_params=NULL,conference_provider='jitsi' WHERE id={$event}");
+    $before = AppointmentsMail::snapshot();
+    $columnCreated = $fixture->booking($event, $day . ' 09:00:00', ['guests' => 'guest@example.test']);
+    $columnBooking = $columnCreated['booking'];
+    $check((int) $columnBooking['state'] === 1 && $columnBooking['conference_state'] === 'ok'
+        && $columnBooking['conference_provider'] === 'jitsi' && $columnBooking['conference_error'] === null
+        && str_starts_with((string) $columnBooking['conference_url'], 'https://meet.example.com/fixture-'),
+        'The event type provider column provisions a Jitsi link while the global provider is disabled');
+    $check(str_contains($columnCreated['html'], (string) $columnBooking['conference_url']),
+        'Confirmation page shows the Jitsi link selected by the event type provider column');
+    foreach ($calendarMail($before, $columnBooking, 3, (string) $columnBooking['conference_url']) as $mime) {
+        $decoded = preg_replace("/\r\n[ \t]/", '', AppointmentsMail::decoded($mime));
+        $check(str_contains($decoded, 'LOCATION:' . $columnBooking['conference_url']),
+            'The calendar entry of every mail carries the Jitsi link as its location');
+    }
+
+    // Without any provider, a conference event type records the failure instead of
+    // leaving every conference column empty, and the mail still goes out.
+    $db->query("UPDATE {$prefix}appointments_eventtypes SET conference_provider=NULL WHERE id={$event}");
+    $before = AppointmentsMail::snapshot();
+    $unconfigured = $fixture->booking($event, $day . ' 09:30:00', ['guests' => 'guest@example.test']);
+    $check((int) $unconfigured['booking']['state'] === 1 && $unconfigured['booking']['conference_state'] === 'failed'
+        && $unconfigured['booking']['conference_error'] === 'No conference provider is selected for this event type.'
+        && $unconfigured['booking']['conference_url'] === null,
+        'A conference event type without a provider is flagged as failed with a readable reason');
+    $check(str_contains($unconfigured['html'], 'a conference link is not available'),
+        'The confirmation page tells the invitee that the conference link is missing');
+    $calendarMail($before, $unconfigured['booking'], 3);
+    $db->query("UPDATE {$prefix}appointments_eventtypes SET conference_params=" . ($originalConferenceParams === null ? 'NULL'
+        : "'" . $db->real_escape_string($originalConferenceParams) . "'") . " WHERE id={$event}");
+
     // Persist the override through the real administrator form, not only a SQL fixture.
     $form = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
     $form['conference_params'] = [

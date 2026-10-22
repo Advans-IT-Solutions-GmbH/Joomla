@@ -27,26 +27,28 @@ $durationKeys = [
 ];
 ?>
 <div class="com-appointments com-appointments-eventtypes">
-    <h1 class="com-appointments-heading"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_HEADING'); ?></h1>
+    <div class="com-appointments-container">
+        <h1 class="com-appointments-heading"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_HEADING'); ?></h1>
 
-    <?php if ($this->items === []) : ?>
-        <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_EMPTY'); ?></p>
-    <?php else : ?>
-        <ul class="com-appointments-list">
-            <?php foreach ($this->items as $item) : ?>
-                <?php
-                $minutes     = (int) $item->duration_minutes;
-                $durationKey = $minutes === 1 ? $durationKeys['one'] : $durationKeys['many'];
-                ?>
-                <li class="com-appointments-list-item">
-                    <a class="com-appointments-list-title" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $item->id); ?>">
-                        <?php echo htmlspecialchars($item->title, ENT_QUOTES, 'UTF-8'); ?>
-                    </a>
-                    <span class="com-appointments-duration">
-                        <?php echo Text::sprintf($durationKey, $minutes); ?>
-                    </span>
-                </li>
-            <?php endforeach; ?>
-        </ul>
-    <?php endif; ?>
+        <?php if ($this->items === []) : ?>
+            <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_EMPTY'); ?></p>
+        <?php else : ?>
+            <ul class="com-appointments-list">
+                <?php foreach ($this->items as $item) : ?>
+                    <?php
+                    $minutes     = (int) $item->duration_minutes;
+                    $durationKey = $minutes === 1 ? $durationKeys['one'] : $durationKeys['many'];
+                    ?>
+                    <li class="com-appointments-list-item">
+                        <a class="com-appointments-list-title" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $item->id); ?>">
+                            <?php echo htmlspecialchars($item->title, ENT_QUOTES, 'UTF-8'); ?>
+                        </a>
+                        <span class="com-appointments-duration">
+                            <?php echo Text::sprintf($durationKey, $minutes); ?>
+                        </span>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
 </div>

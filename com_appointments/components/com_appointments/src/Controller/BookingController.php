@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\Controller;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Advans\Component\Appointments\Administrator\Helper\BookingValidationException;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
@@ -48,27 +49,48 @@ class BookingController extends BaseController
 
         if (!(new FormGuard($keys))->verify(
             $eventId, $this->input->post->getInt('rendered_at', 0), $sessionToken,
-            $this->input->post->getString('form_signature', ''), $this->input->post->getString('website', ''),
-            $this->input->post->getInt('consent') === 1, $now
+            $this->input->post->getString('form_signature', ''), $this->input->post->getString('website', ''), $now
         )) {
             return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_FORM');
         }
 
-        $start = UtcTimestamp::parse((string) ($data['start'] ?? ''));
+        $start = is_string($data['start'] ?? null) ? UtcTimestamp::parse($data['start']) : null;
+        $fieldErrors = [];
 
         if ($start === null) {
-            return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_SLOT');
+            $fieldErrors['start'] = 'COM_APPOINTMENTS_BOOKING_ERROR_SLOT';
+        }
+
+        if ($this->input->post->getInt('consent') !== 1) {
+            $fieldErrors['consent'] = 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
+        }
+
+        if ($fieldErrors !== []) {
+            // Report the other fields in the same round trip, so the visitor corrects
+            // everything at once. Nothing is saved on this path.
+            try {
+                (new BookingInput())->validate($data, $events->getFields($eventId), $this->app->getLanguage()->getTag());
+            } catch (BookingValidationException $e) {
+                if ($e->fieldErrors === []) {
+                    return $this->refuse($eventId, $e->languageKey);
+                }
+
+                $fieldErrors += $e->fieldErrors;
+            }
+
+            return $this->refuse($eventId, '', $fieldErrors);
         }
 
         try {
             $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now);
         } catch (BookingValidationException $e) {
-            return $this->refuse($eventId, $e->languageKey);
+            return $this->refuse($eventId, $e->fieldErrors === [] ? $e->languageKey : '', $e->fieldErrors);
         } catch (SlotTakenException $e) {
             return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN');
         }
 
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
+        $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false));
 
@@ -99,23 +121,30 @@ class BookingController extends BaseController
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 'error');
             return false;
         }
-        if ($this->input->post->getInt('confirm') !== 1) {
-            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_CONFIRM'), 'error');
-            return false;
-        }
+        // Visible fields get their message at the field (manage layout), hidden values
+        // a message for the whole form. A valid reason is kept for the next attempt.
+        $errorsKey = 'com_appointments.manage_errors.' . $this->input->getInt('id');
+        $this->app->setUserState($errorsKey, null);
+        $fieldErrors = [];
         $reason = $this->input->post->get('reason', '', 'raw');
         if (!is_string($reason) || preg_match('//u', $reason) !== 1 || mb_strlen($reason) > 2000 || str_contains($reason, "\0")) {
-            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_REASON'), 'error');
-            return false;
+            $fieldErrors['reason'] = 'COM_APPOINTMENTS_MANAGE_ERROR_REASON';
+        } else {
+            $this->app->setUserState('com_appointments.cancel_reason', $reason);
         }
-        $this->app->setUserState('com_appointments.cancel_reason', $reason);
-        $start = UtcTimestamp::parse($this->input->post->getString('start', ''));
         if ($model->action() === 'reschedule' && !in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 'error');
             return false;
         }
+        $start = UtcTimestamp::parse($this->input->post->getString('start', ''));
         if ($model->action() === 'reschedule' && $start === null) {
-            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_SLOT'), 'error');
+            $fieldErrors['start'] = 'COM_APPOINTMENTS_BOOKING_ERROR_SLOT';
+        }
+        if ($this->input->post->getInt('confirm') !== 1) {
+            $fieldErrors['confirm'] = 'COM_APPOINTMENTS_MANAGE_ERROR_CONFIRM';
+        }
+        if ($fieldErrors !== []) {
+            $this->app->setUserState($errorsKey, $fieldErrors);
             return false;
         }
 
@@ -133,9 +162,17 @@ class BookingController extends BaseController
         return true;
     }
 
-    private function refuse(int $eventId, string $key): bool
+    /**
+     * $key is a message for the whole form, shown in the system message area.
+     * $fieldErrors are shown at their fields by the booking layout.
+     */
+    private function refuse(int $eventId, string $key, array $fieldErrors = []): bool
     {
-        $this->app->enqueueMessage(Text::_($key), 'error');
+        if ($key !== '') {
+            $this->app->enqueueMessage(Text::_($key), 'error');
+        }
+
+        $this->app->setUserState('com_appointments.booking_errors.' . $eventId, $fieldErrors);
         $data = (array) $this->app->getUserState('com_appointments.booking.' . $eventId, []);
         $start = is_string($data['start'] ?? null) ? UtcTimestamp::parse($data['start']) : null;
         $zone = is_string($data['timezone'] ?? null) ? $data['timezone'] : '';

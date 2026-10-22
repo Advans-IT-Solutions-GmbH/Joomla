@@ -19,8 +19,12 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
-        Factory::getApplication()->setHeader('Cache-Control', 'private, no-store', true);
+        $app = Factory::getApplication();
+        $app->setHeader('Cache-Control', 'private, no-store', true);
         $this->item = $this->getModel()->getItem();
+        $assets = $app->getDocument()->getWebAssetManager();
+        $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
+        $assets->useStyle('com_appointments.site');
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
 
         return parent::display($tpl);

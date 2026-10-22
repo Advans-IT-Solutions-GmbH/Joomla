@@ -114,6 +114,14 @@ A provider that cannot produce a link must never lose the booking.
   `conference_error` of `#__appointments_bookings`, so the diagnostic survives the request that
   produced it. `conference_error` carries a short message only, never a credential, a token or a
   URL, because it is shown in a list view.
+- Every abort for an active conference booking writes `failed`: no provider resolves for an event
+  type with the location type `conference` (`No conference provider is selected for this event
+  type.`), a provider or configuration error, and, as a guarded best-effort update after the
+  rollback, a storage error. Only a stale snapshot stays inert, because the newer revision belongs
+  to the request that wrote it.
+- The provider is resolved in this order: an explicit choice in `conference_params`, then the event
+  type's `conference_provider` column, then the component option. A provider set only in the
+  column must never be replaced by a disabled global provider (release test 2026-10-22).
 - A retry action exists in the administrator interface, and it sends an updated calendar entry with
   a raised `SEQUENCE` when it succeeds.
 - A provider that contacts a remote host gets a hard timeout of five seconds and exactly one retry.

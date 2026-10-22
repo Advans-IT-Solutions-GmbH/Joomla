@@ -31,14 +31,32 @@ final class BookingInput
         '995', '996', '998',
     ];
 
+    /**
+     * Every field is checked, so the visitor sees all problems at once. A refusal of
+     * a visible field is reported for that field (BookingValidationException::$fieldErrors),
+     * a tampered hidden value (time zone, field structure) for the form as a whole.
+     */
     public function validate(array $input, array $fields, string $language): array
     {
-        $name = $this->text($input['name'] ?? '', 255);
-        $email = $this->text($input['email'] ?? '', 255);
+        $errors = [];
+        $name = $this->collect($errors, 'name', 'COM_APPOINTMENTS_BOOKING_ERROR_NAME', function () use ($input): string {
+            $name = $this->text($input['name'] ?? '', 255);
 
-        if ($name === '' || preg_match('/[\x00-\x1f\x7f]/', $name) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_CONTACT');
-        }
+            if ($name === '' || preg_match('/[\x00-\x1f\x7f]/', $name)) {
+                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_NAME');
+            }
+
+            return $name;
+        });
+        $email = $this->collect($errors, 'email', 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL', function () use ($input): string {
+            $email = $this->text($input['email'] ?? '', 255);
+
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_EMAIL');
+            }
+
+            return $email;
+        });
 
         $zone = $this->text($input['timezone'] ?? '', 64);
 
@@ -50,22 +68,26 @@ final class BookingInput
             $language = 'en-GB';
         }
 
-        $guests = [];
-        $rawGuests = $this->text($input['guests'] ?? '', 3000);
+        $guests = $this->collect($errors, 'guests', 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS', function () use ($input, $email): array {
+            $guests = [];
+            $rawGuests = $this->text($input['guests'] ?? '', 3000);
 
-        foreach (preg_split('/[\s,;]+/', $rawGuests, -1, PREG_SPLIT_NO_EMPTY) as $guest) {
-            if (strlen($guest) > 255 || !filter_var($guest, FILTER_VALIDATE_EMAIL)) {
+            foreach (preg_split('/[\s,;]+/', $rawGuests, -1, PREG_SPLIT_NO_EMPTY) as $guest) {
+                if (strlen($guest) > 255 || !filter_var($guest, FILTER_VALIDATE_EMAIL)) {
+                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_GUESTS');
+                }
+
+                if (strcasecmp($guest, (string) $email) !== 0) {
+                    $guests[strtolower($guest)] = $guest;
+                }
+            }
+
+            if (count($guests) > 10) {
                 throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_GUESTS');
             }
 
-            if (strcasecmp($guest, $email) !== 0) {
-                $guests[strtolower($guest)] = $guest;
-            }
-        }
-
-        if (count($guests) > 10) {
-            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_GUESTS');
-        }
+            return $guests;
+        }) ?? [];
 
         $answers = [];
         $phone = null;
@@ -77,78 +99,21 @@ final class BookingInput
 
         foreach ($fields as $field) {
             $id = (string) $field['id'];
-            $type = (string) $field['type'];
-            $raw = $submitted[$id] ?? '';
+            // Invalid stored options are a configuration error, not a visitor error.
             $options = json_decode((string) (($field['options'] ?? '') ?: '[]'), true, 512, JSON_THROW_ON_ERROR) ?? [];
+            $answer = $this->collect($errors, 'field-' . $id, 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID',
+                fn (): array => $this->answer($field, $submitted[$id] ?? '', $options));
 
-            if ($type === 'checkboxes') {
-                if ($raw === '') {
-                    $raw = [];
-                }
-
-                if (!is_array($raw) || count($raw) > 1000) {
-                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                }
-
-                $value = array_values(array_unique(array_map(fn ($item) => $this->text($item, 255), $raw)));
-
-                foreach ($value as $choice) {
-                    if (!in_array($choice, $options, true)) {
-                        throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                    }
-                }
-            } elseif ($type === 'tel') {
-                if ($raw === '') {
-                    $raw = [];
-                }
-
-                if (!is_array($raw)) {
-                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                }
-
-                $number = $this->text($raw['number'] ?? '', 40);
-                $code = $this->text($raw['country'] ?? '', 3);
-                $value = '';
-
-                if ($number !== '') {
-                    $digits = preg_replace('/[\s().-]/', '', $number);
-
-                    if (!in_array($code, self::DIAL_CODES, true) || !preg_match('/^[0-9]{3,14}$/D', $digits)
-                        || strlen($code . $digits) > 15) {
-                        throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                    }
-
-                    $value = '+' . $code . $digits;
-                    $phone ??= $value;
-                }
-            } else {
-                $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
-
-                if ($value !== '') {
-                    $valid = match ($type) {
-                        'text' => preg_match('/[\x00-\x1f\x7f]/', $value) === 0,
-                        'textarea' => true,
-                        'number' => is_numeric($value) && is_finite((float) $value),
-                        'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
-                        'url' => filter_var($value, FILTER_VALIDATE_URL) !== false
-                            && in_array(strtolower((string) parse_url($value, PHP_URL_SCHEME)), ['http', 'https'], true),
-                        'radio' => in_array($value, $options, true),
-                        'checkbox' => $value === '1',
-                        'date' => UtcTimestamp::isDate($value),
-                        default => false,
-                    };
-
-                    if (!$valid) {
-                        throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                    }
-                }
+            if ($answer === null) {
+                continue;
             }
 
-            if (!empty($field['required']) && ($value === '' || $value === [])) {
-                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-            }
+            $phone ??= $answer['phone'];
+            $answers[$id] = $answer['value'];
+        }
 
-            $answers[$id] = $value;
+        if ($errors !== []) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS', $errors);
         }
 
         return [
@@ -157,6 +122,97 @@ final class BookingInput
             'guest_emails' => implode("\n", array_values($guests)),
             'custom_fields' => json_encode($answers, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
         ];
+    }
+
+    /**
+     * Runs the check of one field. A refusal becomes the message of that field: the
+     * required-field message when the field is empty, otherwise the field's own message.
+     */
+    private function collect(array &$errors, string $field, string $message, callable $check): mixed
+    {
+        try {
+            return $check();
+        } catch (BookingValidationException $e) {
+            $errors[$field] = $e->languageKey === 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED' ? $e->languageKey : $message;
+
+            return null;
+        }
+    }
+
+    /** @return array{value: string|array, phone: ?string} */
+    private function answer(array $field, mixed $raw, array $options): array
+    {
+        $type = (string) $field['type'];
+        $phone = null;
+
+        if ($type === 'checkboxes') {
+            if ($raw === '') {
+                $raw = [];
+            }
+
+            if (!is_array($raw) || count($raw) > 1000) {
+                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+            }
+
+            $value = array_values(array_unique(array_map(fn ($item) => $this->text($item, 255), $raw)));
+
+            foreach ($value as $choice) {
+                if (!in_array($choice, $options, true)) {
+                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+                }
+            }
+        } elseif ($type === 'tel') {
+            if ($raw === '') {
+                $raw = [];
+            }
+
+            if (!is_array($raw)) {
+                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+            }
+
+            $number = $this->text($raw['number'] ?? '', 40);
+            $code = $this->text($raw['country'] ?? '', 3);
+            $value = '';
+
+            if ($number !== '') {
+                $digits = preg_replace('/[\s().-]/', '', $number);
+
+                if (!in_array($code, self::DIAL_CODES, true) || !preg_match('/^[0-9]{3,14}$/D', $digits)
+                    || strlen($code . $digits) > 15) {
+                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+                }
+
+                $value = '+' . $code . $digits;
+                $phone = $value;
+            }
+        } else {
+            $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
+
+            if ($value !== '') {
+                $valid = match ($type) {
+                    'text' => preg_match('/[\x00-\x1f\x7f]/', $value) === 0,
+                    'textarea' => true,
+                    'number' => is_numeric($value) && is_finite((float) $value),
+                    'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
+                    'url' => filter_var($value, FILTER_VALIDATE_URL) !== false
+                        && in_array(strtolower((string) parse_url($value, PHP_URL_SCHEME)), ['http', 'https'], true),
+                    'radio' => in_array($value, $options, true),
+                    'checkbox' => $value === '1',
+                    'date' => UtcTimestamp::isDate($value),
+                    default => false,
+                };
+
+                if (!$valid) {
+                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+                }
+            }
+        }
+
+        if (!empty($field['required']) && ($value === '' || $value === [])) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED');
+        }
+
+        return ['value' => $value, 'phone' => $phone];
     }
 
     private function text($value, int $max): string

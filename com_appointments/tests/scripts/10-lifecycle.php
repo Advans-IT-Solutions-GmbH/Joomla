@@ -55,6 +55,19 @@ try {
     $form = $client->request($fresh);
     $token = $client->token($form);
     $check(str_contains($form, $day . ' 12:00:00'), 'Reschedule form offers the slot before the competing booking');
+    // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
+    // language like the booking page, never as raw UTC timestamps.
+    $zurich = new DateTimeZone('Europe/Zurich');
+    $localStart = (new DateTimeImmutable($moved['start_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
+    $localEnd = (new DateTimeImmutable($moved['end_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
+    $check(str_contains($form, $localStart->format('l, j F Y'))
+        && str_contains($form, $localStart->format('H:i') . ' – ' . $localEnd->format('H:i'))
+        && str_contains($form, 'All times are shown in the Europe/Zurich time zone.')
+        && !str_contains($form, $moved['start_utc'] . ' UTC'),
+        'Manage page shows the appointment date and times in the invitee time zone, not in UTC');
+    $slotOption = (new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
+    $check(str_contains($form, '>' . $slotOption->format('l, j F Y') . ', ' . $slotOption->format('H:i') . '<'),
+        'Reschedule options name the weekday, date and time in the selected zone');
     $otherEvent = $fixture->event();
     $fixture->booking($otherEvent, $day . ' 12:00:00');
     parse_str(parse_url($fresh, PHP_URL_QUERY), $query);
@@ -64,6 +77,25 @@ try {
     $check(str_contains($html, 'This time was just taken')
         && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00', 'Overlapping cross-event reschedule is refused without changing the appointment');
     $freshCancel = $fixture->link($moved, 'cancel');
+    // Release test 22.10.: without the confirmation checkbox there is a real error message
+    // at the checkbox, and nothing changes.
+    $page = $client->request($freshCancel);
+    parse_str(parse_url($freshCancel, PHP_URL_QUERY), $cancelQuery);
+    $html = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($cancelQuery, [
+        $client->token($page) => 1, 'reason' => 'Kept reason',
+    ]));
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $xpath = new DOMXPath($document);
+    $confirm = $xpath->query('//input[@id="manage-confirm"]')->item(0);
+    $message = $xpath->query('//*[@id="manage-confirm-error"]')->item(0);
+    $check($confirm instanceof DOMElement && $confirm->getAttribute('aria-invalid') === 'true'
+        && $confirm->getAttribute('aria-describedby') === 'manage-confirm-error'
+        && $message !== null && trim($message->textContent) === 'Please confirm the change with the checkbox.'
+        && (int) $fixture->row((int) $booking['id'])['state'] === 1,
+        'A change without the confirmation checkbox gets a real error message at the checkbox and changes nothing');
+    $reason = $xpath->query('//textarea[@id="cancel-reason"]')->item(0);
+    $check($reason !== null && trim($reason->textContent) === 'Kept reason', 'The entered cancellation reason is kept');
     $html = $fixture->apply($client, $freshCancel, ['reason' => 'Fixture reason']);
     $cancelled = $fixture->row((int) $booking['id']);
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
