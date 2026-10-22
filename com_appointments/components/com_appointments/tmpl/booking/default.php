@@ -32,7 +32,7 @@ $location = trim((string) $this->item->location_text);
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
             <dd><?php echo $this->escape($dates->format($start, Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY'))); ?></dd>
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_TIME'); ?></dt>
-            <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->time($start, $time, $withOffset), $dates->time($end, $time, $withOffset))); ?></dd>
+            <dd><?php echo $this->escape($dates->range($start, $end, $time, Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY'), $withOffset, Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))); ?></dd>
             <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_ZONE'); ?></dt>
             <dd><?php echo $this->escape($zone->getName()); ?></dd>
             <?php if ($location !== '') : ?>

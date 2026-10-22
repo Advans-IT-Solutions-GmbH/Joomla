@@ -67,6 +67,22 @@ final class DateDisplayTest extends TestCase
         self::assertFalse($dates->isRepeated(new \DateTimeImmutable('2026-10-25 00:30:00', new \DateTimeZone('UTC'))));
     }
 
+    public function testSummaryRangeNamesTheEndDateOnlyAcrossMidnight(): void
+    {
+        $zurich = new \DateTimeZone('Europe/Zurich');
+        $dates = $this->german();
+        $range = static fn (string $start, string $end): string => $dates->range(
+            (new \DateTimeImmutable($start, new \DateTimeZone('UTC')))->setTimezone($zurich),
+            (new \DateTimeImmutable($end, new \DateTimeZone('UTC')))->setTimezone($zurich),
+            'H:i', 'l, j. F Y', '%1$s (UTC%2$s)', '%1$s – %2$s', '%1$s, %2$s'
+        );
+        // Confirmation and manage summaries share this helper.
+        self::assertSame('09:00 – 09:30', $range('2026-10-22 07:00:00', '2026-10-22 07:30:00'));
+        self::assertSame('23:30 – Freitag, 23. Oktober 2026, 00:30', $range('2026-10-22 21:30:00', '2026-10-22 22:30:00'));
+        // Across midnight in Zurich although the UTC date stays the same, and into the repeated hour.
+        self::assertSame('23:30 – Sonntag, 25. Oktober 2026, 02:30 (UTC+02:00)', $range('2026-10-24 21:30:00', '2026-10-25 00:30:00'));
+    }
+
     public function testWeekdayHeadingsStartOnMonday(): void
     {
         $days = $this->german()->weekdays();

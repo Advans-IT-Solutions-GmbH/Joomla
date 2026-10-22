@@ -47,7 +47,7 @@ $error = fn (string $key): string => isset($errors[$key])
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
                 <dd><?php echo $this->escape($dates->format($start, $dayFormat)); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_TIME'); ?></dt>
-                <dd><?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_SUMMARY_TIME_RANGE', $dates->time($start, $timeFormat, $withOffset), $dates->time($end, $timeFormat, $withOffset))); ?></dd>
+                <dd><?php echo $this->escape($dates->range($start, $end, $timeFormat, $dayFormat, $withOffset, Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_ZONE'); ?></dt>
                 <dd><?php echo $this->escape($this->zone->getName()); ?></dd>
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_EMAIL'); ?></dt>

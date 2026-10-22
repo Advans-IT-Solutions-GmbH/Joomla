@@ -195,7 +195,7 @@ $location = trim((string) $this->item->location_text);
                             <?php elseif ($field['type'] === 'tel') : ?>
                                 <div class="com-appointments-tel">
                                     <label class="visually-hidden" for="booking-country-<?php echo $fieldId; ?>"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_COUNTRY'); ?></label>
-                                    <select class="form-select com-appointments-tel-country<?php echo $invalid($key); ?>" id="booking-country-<?php echo $fieldId; ?>" name="<?php echo $name; ?>[country]"<?php echo $required; ?><?php echo isset($errors[$key]) ? ' aria-invalid="true"' : ''; ?>>
+                                    <select class="form-select com-appointments-tel-country<?php echo $invalid($key); ?>" id="booking-country-<?php echo $fieldId; ?>" name="<?php echo $name; ?>[country]"<?php echo $required; ?><?php echo isset($errors[$key]) ? ' aria-invalid="true" aria-describedby="booking-' . $key . '-error"' : ''; ?>>
                                         <option value=""><?php echo Text::_('COM_APPOINTMENTS_BOOKING_COUNTRY'); ?></option>
                                         <?php foreach (BookingInput::DIAL_CODES as $code) : ?>
                                             <option value="<?php echo $code; ?>"<?php echo is_array($raw) && ($raw['country'] ?? '') === $code ? ' selected' : ''; ?>>+<?php echo $code; ?></option>

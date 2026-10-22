@@ -358,10 +358,11 @@ headers. Only its keyed hash is stored; no raw address is added to a booking.
 Each public page sets its own browser title and main heading when the active menu item does not
 point at it, for example on `/component/appointments/` without a menu item: "Book an appointment"
 for the list, the event type's title for its booking page, the confirmation heading and the
-heading of the reschedule, cancel or erase page. Joomla's **Site Name in Page Titles** setting
-applies. When a menu item points at the page (for one event type: at that event type), its
-browser page title applies and its page heading replaces the default heading when the menu item
-shows the page heading.
+heading of the reschedule, cancel or erase page. When a menu item points at the page (for one
+event type: at that event type), its browser page title (or else its menu title) applies and its
+page heading replaces the default heading when the menu item shows the page heading. In both
+cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an
+appointment that crosses midnight in the displayed zone.
 
 The public pages are template-neutral. They use Joomla's standard form classes and add
 `com-appointments-*` hooks for a site template. The bundled stylesheet only provides the content

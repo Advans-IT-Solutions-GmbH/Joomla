@@ -74,6 +74,24 @@ final class DateDisplay
         return $this->isRepeated($moment) ? sprintf($ambiguous, $time, $moment->format('P')) : $time;
     }
 
+    /**
+     * The time range of an appointment for a summary that already shows the start
+     * date. When the end falls on another local date (across midnight), the end also
+     * names its date through $dateTime ("%1$s" date, "%2$s" time). Same-day ranges stay
+     * compact. $range joins start and end ("%1$s" start, "%2$s" end).
+     */
+    public function range(\DateTimeInterface $start, \DateTimeInterface $end, string $timeFormat, string $dayFormat,
+        string $ambiguous, string $range, string $dateTime): string
+    {
+        $endText = $this->time($end, $timeFormat, $ambiguous);
+
+        if ($start->format('Y-m-d') !== $end->format('Y-m-d')) {
+            $endText = sprintf($dateTime, $this->format($end, $dayFormat), $endText);
+        }
+
+        return sprintf($range, $this->time($start, $timeFormat, $ambiguous), $endText);
+    }
+
     /** Whether the local wall-clock time of $moment also occurs at another instant. */
     public function isRepeated(\DateTimeInterface $moment): bool
     {
