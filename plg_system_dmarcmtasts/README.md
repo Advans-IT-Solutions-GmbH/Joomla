@@ -72,20 +72,26 @@ generic fallback rule in `htaccess.txt` only applies once the file is active as 
 to paths that are not an existing file or directory, so a site without it, with a customised or
 older rule set, or with a leftover static `mta-sts.txt` does not serve the generated policy.
 
-On Apache, add this rule to the site's `.htaccess` directly after `RewriteEngine On`, before
-Joomla's own rewrite rules. It routes the exact path to Joomla independently of the rules below it
-and takes precedence over a static file at the same path:
+On Apache and LiteSpeed, add this rule together with its condition to the site's `.htaccess`
+directly after `RewriteEngine On`, before Joomla's own rewrite rules and before any hardening rules
+of the site. It routes the exact path to Joomla independently of the rules below it and takes
+precedence over a static file at the same path. It is not part of a site's own rule block and stays
+in place when that block is replaced:
 
 ```apache
-# MTA-STS (RFC 8461): let Joomla answer the policy request.
+# MTA-STS (RFC 8461): let Joomla answer the policy request. Only without a query string: the
+# internal rewrite skips the site's own rules on its second pass (header exemption REDIRECT_STATUS),
+# so /.well-known/mta-sts.txt?option=com_content would otherwise reach Joomla unchecked.
 RewriteCond %{QUERY_STRING} ^$
 RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]
 ```
 
-The condition is part of the rule. Senders request the path without a query. Without the
-condition, `/.well-known/mta-sts.txt?option=com_content` would be handed to Joomla too, and a site
-that exempts internal rewrites from its own rules (`RewriteCond %{ENV:REDIRECT_STATUS} !^$`) would
-then let that query pass its `?option=` restrictions on the second pass.
+**Only without a query.** The rule rewrites internally to `index.php`. On the second pass, a site
+that exempts internal rewrites from its own rules (`RewriteCond %{ENV:REDIRECT_STATUS} !^$`) stops
+every further rule. Without the condition `^$`, `/.well-known/mta-sts.txt?option=com_content&view=featured`
+would reach Joomla unchecked, past the site's `?option=` restrictions. Senders request the policy
+without a query. With a query the rule does not apply, and the site's rules treat the request like
+any other.
 
 The document root of the `mta-sts.<domain>` host must be the Joomla root, because the policy path
 is fixed at the root of that host. On any other web server, route the same exact path to
