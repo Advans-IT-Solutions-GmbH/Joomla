@@ -318,6 +318,16 @@ final class ConferenceServiceTest extends TestCase
         self::assertNull($result['conference_error']);
         self::assertStringStartsWith('https://meet.example.com/appointment-consultation-', $result['conference_url']);
         self::assertTrue($result['_conference_changed']);
+        // Saved settings decide, also when they inherit or are empty: the column is only the
+        // fallback for an event type without any saved settings.
+        foreach ([json_encode(['conference_provider' => 'inherit', 'conference_fixed_url' => '']),
+            json_encode(['conference_provider' => '']), '[]'] as $settings) {
+            $this->event['conference_params'] = $settings;
+            $result = $this->service(['conference_provider' => 'fixed', 'conference_fixed_url' => 'https://meet.example.com/global'])
+                ->provision($this->row, $this->now());
+            self::assertSame('fixed', $result['conference_provider']);
+            self::assertSame('https://meet.example.com/global', $result['conference_url']);
+        }
     }
 
     public function testExplicitEventSettingWinsOverTheProviderColumn(): void

@@ -119,9 +119,10 @@ A provider that cannot produce a link must never lose the booking.
   type.`), a provider or configuration error, and, as a guarded best-effort update after the
   rollback, a storage error. Only a stale snapshot stays inert, because the newer revision belongs
   to the request that wrote it.
-- The provider is resolved in this order: an explicit choice in `conference_params`, then the event
-  type's `conference_provider` column, then the component option. A provider set only in the
-  column must never be replaced by a disabled global provider (release test 2026-10-22).
+- The provider follows saved `conference_params`, including `''`/`inherit` (the event form always
+  saves them together with the column). Only when `conference_params` is NULL does the event
+  type's `conference_provider` column apply before the component option, so a provider set only
+  in the column is not replaced by a disabled global provider (release test 2026-10-22).
 - A retry action exists in the administrator interface, and it sends an updated calendar entry with
   a raised `SEQUENCE` when it succeeds.
 - A provider that contacts a remote host gets a hard timeout of five seconds and exactly one retry.

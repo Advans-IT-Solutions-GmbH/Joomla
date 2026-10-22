@@ -309,12 +309,15 @@ final class ConferenceService
 
     private function selected(array $event): string
     {
-        // An explicit choice in the event settings wins. Without one, the event type's
-        // own provider column applies, then the component option. The column is the
-        // event type's adapter in the data model, so a provider set there must not be
-        // silently replaced by a disabled global provider.
+        // Saved event settings decide, including an explicit inherit: the event form
+        // always saves them together with the column. Only an event type without any
+        // saved settings (for example one written directly to the database) falls back
+        // to its provider column, the event type's adapter in the data model, so a
+        // provider set there is not replaced by a disabled global provider.
+        $settings = $event['conference_params'] ?? null;
         $column = $event['conference_provider'] ?? null;
-        $fallback = is_string($column) && $column !== '' ? $column : (string) $this->params->get('conference_provider', 'none');
+        $fallback = ($settings === null || $settings === '') && is_string($column) && $column !== ''
+            ? $column : (string) $this->params->get('conference_provider', 'none');
         $name = $this->override($this->overrides($event), 'conference_provider', $fallback);
 
         if (!in_array($name, ['none', 'jitsi', 'generic', 'fixed'], true) && !$this->registered($name)) {

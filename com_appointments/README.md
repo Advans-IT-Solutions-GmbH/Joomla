@@ -223,9 +223,9 @@ not the public calendar UID. Only the host's message/calendar receives the moder
 and subscription feeds receive guest links. Calendar attachments and a mandatory joining footer
 are retained even with customised email templates.
 
-The provider of an event is resolved in this order: an explicit provider in the event's settings,
-then the event type's stored provider (written when a bundled provider is selected for the event),
-then the component option. An event whose location is **Video conference** but for which no
+The provider of an event follows the event's saved settings, including an explicit choice to
+inherit the component option. Only an event type without any saved settings (for example one
+written directly to the database) uses its stored provider before the component option. An event whose location is **Video conference** but for which no
 provider resolves is not a silent success: the booking is saved and flagged with
 `No conference provider is selected for this event type.`
 
