@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <updates>
     <update>
-        <name>DMARC MTA-STS Policy</name>
-        <description>Serves the MTA-STS policy for the DMARC Reports component</description>
+        <name>DMARC Reports MTA-STS Policy</name>
+        <description>System plugin that serves the MTA-STS policy for DMARC Reports</description>
         <element>dmarcmtasts</element>
         <type>plugin</type>
         <folder>system</folder>
         <client>site</client>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_system_dmarcmtasts</infourl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-dmarcmtasts-v1.0.0/plg_system_dmarcmtasts_1.0.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-dmarcmtasts-v1.1.0/plg_system_dmarcmtasts_1.1.0.zip</downloadurl>
         </downloads>
         <tags>
             <tag>stable</tag>
