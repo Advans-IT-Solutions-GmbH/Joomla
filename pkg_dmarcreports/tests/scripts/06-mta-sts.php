@@ -24,6 +24,7 @@ class MtaStsEndpointTest
      * production setup.
      */
     private const REWRITE_COMMENT = '# MTA-STS (RFC 8461): let Joomla answer the policy request.';
+    private const REWRITE_COND    = 'RewriteCond %{QUERY_STRING} ^$';
     private const REWRITE_RULE    = 'RewriteRule ^\.well-known/mta-sts\.txt$ index.php [L]';
 
     /**
@@ -65,6 +66,13 @@ class MtaStsEndpointTest
         $this->configureParams('enforce', 'mail.example.com', 604800, 1);
         $served  = $this->fetch('mta-sts.example.com');
         $this->test('mode change is reflected dynamically', str_contains($served, 'mode: enforce'));
+
+        // The rule only routes the bare path. With a query the request must not be
+        // handed to Joomla by this rule: on a second pass the internal rewrite is
+        // exempt from a site's own ?option= rules, so a query here would pass them.
+        // The stale static file proves the rule did not apply.
+        $withQuery = $this->fetch('mta-sts.example.com', 'option=com_content');
+        $this->test('rule does not route the path with a query string', str_contains($withQuery, self::STATIC_MARKER) && !str_contains($withQuery, 'version: STSv1'), $withQuery);
 
         $wrongHost = $this->fetch('www.example.com');
         $this->test('policy not served on a non mta-sts host', !str_contains($wrongHost, 'version: STSv1'));
@@ -199,7 +207,7 @@ class MtaStsEndpointTest
         $content = is_file($htaccess) ? (string) file_get_contents($htaccess) : '';
 
         if (strpos($content, self::REWRITE_RULE) === false) {
-            $block   = "\n" . self::REWRITE_COMMENT . "\n" . self::REWRITE_RULE . "\n";
+            $block   = "\n" . self::REWRITE_COMMENT . "\n" . self::REWRITE_COND . "\n" . self::REWRITE_RULE . "\n";
             $patched = preg_replace_callback(
                 '/^[ \t]*RewriteEngine[ \t]+On[ \t]*$/mi',
                 static fn (array $m): string => $m[0] . $block,
@@ -216,8 +224,8 @@ class MtaStsEndpointTest
         }
 
         $this->test(
-            'Apache rule routes /.well-known/mta-sts.txt to Joomla',
-            strpos((string) file_get_contents($htaccess), self::REWRITE_RULE) !== false
+            'Apache rule routes /.well-known/mta-sts.txt to Joomla, only with an empty query',
+            strpos((string) file_get_contents($htaccess), self::REWRITE_COND . "\n" . self::REWRITE_RULE) !== false
         );
     }
 
@@ -228,12 +236,12 @@ class MtaStsEndpointTest
      * well-known path, never an index.php route, so the test only passes when
      * the web server really hands that path to Joomla.
      */
-    private function fetch(string $host): string
+    private function fetch(string $host, string $query = ''): string
     {
         $output = [];
         exec(
             'curl -s -H ' . escapeshellarg('Host: ' . $host)
-            . ' ' . escapeshellarg('http://localhost' . self::WELL_KNOWN_PATH),
+            . ' ' . escapeshellarg('http://localhost' . self::WELL_KNOWN_PATH . ($query !== '' ? '?' . $query : '')),
             $output
         );
 

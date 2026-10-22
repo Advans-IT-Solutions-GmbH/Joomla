@@ -287,9 +287,112 @@ class ConfigFormsTest
             });
         }
 
+        $this->testUnknownDomainsFromReports();
+
         $this->cleanup();
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    /**
+     * A report is untrusted input: anyone can send one naming any domain. An
+     * unknown domain must therefore not be created while the option
+     * auto_create_unknown_domains is off (the default), and when it is on only
+     * unpublished, so it reaches neither monitoring nor the MTA-STS endpoint
+     * (which serves published domains only) without an administrator. The
+     * summary must name stored records and the messages they describe apart.
+     */
+    private function testUnknownDomainsFromReports(): void
+    {
+        $original = $this->readExtensionParams();
+        $off      = $this->tag . '-off.example';
+        $on       = $this->tag . '-on.example';
+
+        try {
+            $this->writeExtensionParamValue('auto_create_unknown_domains', '0');
+            $res = $this->uploadReport($this->threeRowReport($off), 'report.xml');
+
+            $this->test('Auto-create off: a report for an unknown domain creates no domain', function () use ($res, $off) {
+                return $res['code'] === 200
+                    && !$this->hasSqlError($res['body'])
+                    && $this->domainCount($off) === 0;
+            });
+
+            $this->test('Auto-create off: the report is counted as skipped', function () use ($res) {
+                $skipped = $this->expectedSummary(0, 0, 0, 1);
+
+                return $skipped !== '' && $this->pageShows($res['body'], $skipped);
+            });
+
+            $this->writeExtensionParamValue('auto_create_unknown_domains', '1');
+            $res = $this->uploadReport($this->threeRowReport($on), 'report.xml');
+
+            $this->test('Auto-create on: the unknown domain is created', function () use ($on) {
+                return $this->domainCount($on) === 1;
+            });
+
+            $this->test('Auto-create on: the created domain is unpublished', function () use ($on) {
+                return $this->domainPublished($on) === 0;
+            });
+
+            $this->test('Summary names 3 stored records for 6 messages', function () use ($res) {
+                $template = $this->strings['COM_DMARCREPORTS_INGEST_RECORDS'] ?? '';
+
+                return $template !== '' && $this->pageShows($res['body'], sprintf($template, 3, 6));
+            });
+        } finally {
+            $this->restoreExtensionParams($original);
+            $this->purgeDomainData([$off, $on]);
+        }
+    }
+
+    /** An aggregate report for $domain with three rows describing 1 + 2 + 3 = 6 messages. */
+    private function threeRowReport(string $domain): string
+    {
+        $rows = '';
+
+        foreach ([['192.0.2.10', 1], ['192.0.2.11', 2], ['192.0.2.12', 3]] as [$ip, $count]) {
+            $rows .= '<record><row><source_ip>' . $ip . '</source_ip><count>' . $count . '</count>'
+                . '<policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated></row>'
+                . '<identifiers><header_from>' . $domain . '</header_from></identifiers></record>';
+        }
+
+        return '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<feedback><report_metadata><org_name>example.net</org_name>'
+            . '<email>dmarc@example.net</email><report_id>' . $domain . '-1</report_id>'
+            . '<date_range><begin>1700000000</begin><end>1700086400</end></date_range>'
+            . '</report_metadata><policy_published><domain>' . $domain . '</domain>'
+            . '<p>none</p><pct>100</pct></policy_published>'
+            . $rows
+            . '</feedback>';
+    }
+
+    private function domainPublished(string $domain): int
+    {
+        $escaped = $this->db->real_escape_string($domain);
+        $result  = $this->db->query("SELECT published FROM {$this->dbPrefix}dmarc_domains WHERE domain = '{$escaped}' LIMIT 1");
+        $row     = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['published'] : -1;
+    }
+
+    /**
+     * Remove the reports, records and domains this suite created for the given domains.
+     *
+     * @param  string[]  $domains
+     */
+    private function purgeDomainData(array $domains): void
+    {
+        foreach ($domains as $domain) {
+            $id = $this->domainId($domain);
+
+            if ($id > 0) {
+                $this->db->query("DELETE FROM {$this->dbPrefix}dmarc_records WHERE domain_id = {$id}");
+                $this->db->query("DELETE FROM {$this->dbPrefix}dmarc_reports WHERE domain_id = {$id}");
+                $this->db->query("DELETE FROM {$this->dbPrefix}dmarc_actions WHERE domain_id = {$id}");
+                $this->db->query("DELETE FROM {$this->dbPrefix}dmarc_domains WHERE id = {$id}");
+            }
+        }
     }
 
     /**
