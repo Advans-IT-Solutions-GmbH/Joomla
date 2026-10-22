@@ -70,6 +70,27 @@ try {
     $slotOption = (new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
     $check(str_contains($form, '>' . $slotOption->format('l, j F Y') . ', ' . $slotOption->format('H:i') . '<'),
         'Reschedule options name the weekday, date and time in the selected zone');
+    // Night test 23.10.: rescheduling without the confirmation checkbox shows the message
+    // at the checkbox, also after the visitor reloads the page, and changes nothing.
+    parse_str(parse_url($fresh, PHP_URL_QUERY), $rescheduleQuery);
+    $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
+        $token => 1, 'start' => $day . ' 12:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'Europe/Zurich',
+    ]));
+    $confirmError = static function (string $html): bool {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+        $xpath = new DOMXPath($document);
+        $confirm = $xpath->query('//input[@id="manage-confirm"]')->item(0);
+        $message = $xpath->query('//*[@id="manage-confirm-error"]')->item(0);
+
+        return $confirm instanceof DOMElement && $confirm->getAttribute('aria-invalid') === 'true'
+            && $confirm->getAttribute('aria-describedby') === 'manage-confirm-error'
+            && $message !== null && trim($message->textContent) === 'Please confirm the change with the checkbox.';
+    };
+    $check($confirmError($refused) && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
+        'Rescheduling without the confirmation checkbox shows the message at the checkbox and changes nothing');
+    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&timezone=Europe%2FZurich');
+    $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
     $otherEvent = $fixture->event();
     $fixture->booking($otherEvent, $day . ' 12:00:00');
     parse_str(parse_url($fresh, PHP_URL_QUERY), $query);
