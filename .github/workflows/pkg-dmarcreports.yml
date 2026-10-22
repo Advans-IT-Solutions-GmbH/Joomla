@@ -17,6 +17,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-database-check-lib.php'
       - '.github/workflows/pkg-dmarcreports.yml'
   pull_request:
     branches: [main]
@@ -33,6 +34,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-database-check-lib.php'
       - '.github/workflows/pkg-dmarcreports.yml'
 
 permissions: {}

@@ -130,7 +130,7 @@ com_dmarcreports/
 ├── README.md
 ├── VERSION                                   # Managed by release workflow
 ├── LICENSE.txt
-├── com_dmarcreports.xml                       # Joomla manifest
+├── dmarcreports.xml                           # Joomla manifest
 ├── script.php                                 # Install/update/uninstall script
 ├── composer.json                              # Dev-only (PHPUnit)
 ├── phpunit.xml

@@ -11,7 +11,7 @@ final class ConfigurationTest extends TestCase
     public function testInstalledConfigurationHasUnnestedFieldsAndSafeDefaults(): void
     {
         $root = dirname(__DIR__, 2);
-        $manifest = simplexml_load_file($root . '/com_appointments.xml');
+        $manifest = simplexml_load_file($root . '/appointments.xml');
         self::assertContains('config.xml', array_map('strval', iterator_to_array($manifest->administration->files->filename, false)));
         self::assertFalse(isset($manifest->config));
         $config = simplexml_load_file($root . '/administrator/components/com_appointments/config.xml');

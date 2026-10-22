@@ -95,6 +95,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
+        $this->removeLegacyManifest();
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -193,6 +194,31 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
                     ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
             }
+        }
+    }
+
+    /**
+     * Earlier versions named the manifest com_appointments.xml. Joomla's database check
+     * (System > Maintenance > Database) only reads appointments.xml and otherwise reports
+     * the component as not up to date. An update leaves the old file behind, and Joomla
+     * could still pick that older manifest when the component is uninstalled, so it is
+     * removed once the current manifest is in place.
+     */
+    private function removeLegacyManifest(): void
+    {
+        $folder = JPATH_ADMINISTRATOR . '/components/com_appointments';
+
+        if (!is_file($folder . '/appointments.xml') || !is_file($folder . '/com_appointments.xml')) {
+            return;
+        }
+
+        try {
+            File::delete($folder . '/com_appointments.xml');
+        } catch (\Throwable $e) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('COM_APPOINTMENTS_INSTALL_LEGACY_MANIFEST', 'com_appointments.xml'),
+                'warning'
+            );
         }
     }
 

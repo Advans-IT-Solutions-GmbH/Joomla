@@ -14,6 +14,7 @@ use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Joomla\Filesystem\File;
 
 class Com_dmarcreportsInstallerScript extends InstallerScript
 {
@@ -87,6 +88,7 @@ class Com_dmarcreportsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_dmarcreports', JPATH_ADMINISTRATOR);
+        $this->removeLegacyManifest();
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -115,6 +117,31 @@ class Com_dmarcreportsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    /**
+     * Earlier versions named the manifest com_dmarcreports.xml. Joomla's database check
+     * (System > Maintenance > Database) only reads dmarcreports.xml and otherwise reports
+     * the component as not up to date. An update leaves the old file behind, and Joomla
+     * could still pick that older manifest when the component is uninstalled, so it is
+     * removed once the current manifest is in place.
+     */
+    private function removeLegacyManifest(): void
+    {
+        $folder = JPATH_ADMINISTRATOR . '/components/com_dmarcreports';
+
+        if (!is_file($folder . '/dmarcreports.xml') || !is_file($folder . '/com_dmarcreports.xml')) {
+            return;
+        }
+
+        try {
+            File::delete($folder . '/com_dmarcreports.xml');
+        } catch (\Throwable $e) {
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('COM_DMARCREPORTS_INSTALL_LEGACY_MANIFEST', 'com_dmarcreports.xml'),
+                'warning'
+            );
+        }
     }
 
     private function ensureUpdateSite(): void
