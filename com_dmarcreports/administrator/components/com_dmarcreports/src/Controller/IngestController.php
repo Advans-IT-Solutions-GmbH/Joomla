@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Controller;
 
 use Advans\Component\DmarcReports\Administrator\Helper\DecoderUnavailableException;
+use Advans\Component\DmarcReports\Administrator\Helper\DomainRegistry;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
 use Advans\Component\DmarcReports\Administrator\Helper\ReportArchive;
 use Advans\Component\DmarcReports\Administrator\Service\SourcePoller;
@@ -149,7 +150,8 @@ class IngestController extends BaseController
      */
     private function canAutoCreateDomains(): bool
     {
-        return (bool) Factory::getApplication()->getIdentity()->authorise('core.create', 'com_dmarcreports');
+        return DomainRegistry::autoCreateEnabled()
+            && (bool) Factory::getApplication()->getIdentity()->authorise('core.create', 'com_dmarcreports');
     }
 
     private function loadSource(int $sourceId): ?object
@@ -208,6 +210,13 @@ class IngestController extends BaseController
 
         if ($dropped > 0) {
             $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_DROPPED', $dropped, ReportArchive::MAX_DOCUMENTS);
+        }
+        // The stored rows and the mail messages they stand for, named apart: a
+        // report with three rows can describe six messages.
+        $records = (int) ($summary['records'] ?? 0);
+
+        if ($records > 0) {
+            $text .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_RECORDS', $records, (string) ($summary['messages'] ?? '0'));
         }
 
         return $text;

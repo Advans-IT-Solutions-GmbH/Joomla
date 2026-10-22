@@ -168,6 +168,7 @@ explicit denials.
 **Task parameter (`System → Scheduled Tasks → DMARC Reports: Ingest`):**
 
 - Automatic domain creation on run (`auto_create_domains`): `Off`.
+- Component option *Create unknown domains automatically* (`auto_create_unknown_domains`): `Off` (default).
 
 **Monitored domains:**
 
@@ -279,6 +280,8 @@ idempotently (dedupe by `report_hash`).
 | UP-10 | NEG | Upload without a valid CSRF token, or as a user lacking `dmarc.ingest`. | Refused; no report stored. `IngestController::authorise()` requires only `dmarc.ingest`; `core.create` governs unknown-domain creation (UP-11), not upload permission. |
 | UP-11 | GRZ | As `INGEST` (no `core.create`), upload a report whose policy domain is not yet monitored. | The report is counted skipped; no domain is auto-created; nothing is stored under `domain_id = 0`. |
 | UP-12 | POS | Re-upload a previously stored report. | Idempotent no-op; no duplicate report or records. |
+| UP-13 | NEG | As a Super User with `auto_create_unknown_domains` off, upload a valid report for an unknown domain. | The report is counted skipped; no domain is created. |
+| UP-14 | POS/NEG | Switch `auto_create_unknown_domains` on and upload a valid report for an unknown domain with three rows. | The domain is created **unpublished**; the summary names 3 stored records for the total of their message counts; the MTA-STS endpoint does not serve a policy for it (MS-07) until an administrator publishes it. |
 
 ### 5.2 IMAP fetch
 
@@ -316,6 +319,7 @@ unattended. It must not re-implement IMAP or parsing.
 | AI-08 | POS | Run the task with no active sources. | A clean `Status::OK`; nothing stored. |
 | AI-09 | POS/NEG | Across all four combinations of the task parameter `auto_create_domains` and the component option `task_auto_create`, run the task with a published source bound to a published domain plus a fresh unknown-domain report each run. | A new monitored domain is created only when both switches are on (`$allowAutoCreate`); in the other three combinations the unknown-domain report is skipped, never stored under `domain_id = 0`. The scheduled path consults no triggering-user ACL. |
 | AI-10 | POS | Disable the task. | Ingestion stops; the dashboard shows no new data; nothing claims continuous ingestion is still guaranteed. |
+| AI-11 | NEG | With both task switches on but `auto_create_unknown_domains` off, run the task with an unknown-domain report. | No domain is created; the report is skipped. With the option on, the domain is created unpublished. |
 
 ## 7. Parser and aggregate evaluation
 
