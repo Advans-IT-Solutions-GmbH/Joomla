@@ -123,7 +123,9 @@ class BookingController extends BaseController
         }
         // Visible fields get their message at the field (manage layout), hidden values
         // a message for the whole form. A valid reason is kept for the next attempt.
-        $errorsKey = 'com_appointments.manage_errors.' . $this->input->getInt('id');
+        // Kept until the next submission of this action, so the messages are still at their
+        // fields when the visitor reloads the page.
+        $errorsKey = 'com_appointments.manage_errors.' . $this->input->getInt('id') . '.' . $model->action();
         $this->app->setUserState($errorsKey, null);
         $fieldErrors = [];
         $reason = $this->input->post->get('reason', '', 'raw');

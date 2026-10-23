@@ -169,8 +169,11 @@ try {
         && $unconfigured['booking']['conference_error'] === 'No conference provider is selected for this event type.'
         && $unconfigured['booking']['conference_url'] === null,
         'A conference event type without a provider is flagged as failed with a readable reason');
-    $check(str_contains($unconfigured['html'], 'a conference link is not available'),
-        'The confirmation page tells the invitee that the conference link is missing');
+    $check(substr_count($unconfigured['html'], 'a conference link is not available') === 1,
+        'The confirmation page tells the invitee once that the conference link is missing');
+    $reloaded = $unconfigured['browser']->request('/index.php?option=com_appointments&view=booking');
+    $check(substr_count($reloaded, 'a conference link is not available') === 1,
+        'The missing conference link is still stated once after reloading the confirmation');
     $calendarMail($before, $unconfigured['booking'], 3);
     $db->query("UPDATE {$prefix}appointments_eventtypes SET conference_params=" . ($originalConferenceParams === null ? 'NULL'
         : "'" . $db->real_escape_string($originalConferenceParams) . "'") . " WHERE id={$event}");

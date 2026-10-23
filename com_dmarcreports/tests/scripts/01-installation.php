@@ -3,6 +3,8 @@
  * Installation tests for the DMARC Reports component.
  */
 
+require_once __DIR__ . '/shared-database-check-lib.php';
+
 class InstallationTest
 {
     private $db;
@@ -65,6 +67,14 @@ class InstallationTest
                 || file_exists('/var/www/html/administrator/components/com_dmarcreports/language/en-GB/com_dmarcreports.ini');
         });
 
+        $this->test('Joomla database check reports com_dmarcreports as up to date after a fresh install', function () {
+            $problems = joomla_component_database_problems($this->db, $this->dbPrefix, 'com_dmarcreports');
+            foreach ($problems as $problem) {
+                echo "    {$problem}\n";
+            }
+
+            return $problems === [];
+        });
         echo "\n=== Installation Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

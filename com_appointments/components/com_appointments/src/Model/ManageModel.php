@@ -143,7 +143,8 @@ class ManageModel extends BaseDatabaseModel
             try {
                 $notification->send($messageBooking, $purpose, $now, $action === 'erase');
             } catch (NotificationException $e) {
-                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'error');
+                // The change is saved: a warning like the other partial outcomes on this page.
+                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'warning');
             }
         } elseif (!empty($messageBooking['_conference_error'])) {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');

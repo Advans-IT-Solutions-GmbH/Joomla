@@ -44,7 +44,7 @@ com_appointments/
 ├── build.env                      # EXTENSION_NAME, VERSION, EXTENSION_TYPE
 ├── build.sh                       # thin wrapper delegating to shared/build/build.sh
 ├── script.php                     # install / update / uninstall
-├── com_appointments.xml           # manifest
+├── appointments.xml               # manifest
 ├── composer.json
 ├── phpunit.xml
 ├── administrator/
