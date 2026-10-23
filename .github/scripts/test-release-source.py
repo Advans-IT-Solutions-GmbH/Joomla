@@ -118,7 +118,7 @@ class ReleaseSourceTest(unittest.TestCase):
         output = self.repo.parent / f"{self.repo.name}-output.txt"
         environ = {
             "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": self.later, "RELEASE_VERSION": "1.1.0",
-            "GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "42",
+            "GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "42", "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_REPOSITORY_ID": "7", "GITHUB_REPOSITORY_OWNER_ID": "8", "RUNNER_ENVIRONMENT": "github-hosted",
             "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/publish-pkgx.yml@refs/heads/main",
             "GITHUB_OUTPUT": str(output),
