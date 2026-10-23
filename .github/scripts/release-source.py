@@ -105,9 +105,11 @@ def provenance(sha: str, environ: dict) -> dict:
     """SLSA v1 provenance predicate for a recovery run.
 
     A recovery run starts from the current main, so the provenance GitHub derives from
-    the run would name that commit as the source. This predicate names the verified
-    release commit as the resolved source instead and keeps the commit of the workflow
-    definition separately, so the signed statement says exactly what was built.
+    the run would name that commit as the source. This predicate has exactly the fields
+    of GitHub's own workflow provenance (actions/toolkit buildSLSAProvenancePredicate),
+    which the attestation API validates, and differs only in the resolved source: the
+    verified release commit. The commit of the workflow definition stays identifiable
+    through the signing certificate of the run.
     """
     server = environ.get("GITHUB_SERVER_URL", "https://github.com")
     repo = environ["GITHUB_REPOSITORY"]
@@ -121,18 +123,17 @@ def provenance(sha: str, environ: dict) -> dict:
                     "repository": f"{server}/{repo}",
                     "path": environ["GITHUB_WORKFLOW_REF"].split("@", 1)[0].split("/", 2)[2],
                 },
-                "releaseVersion": environ.get("RELEASE_VERSION", ""),
             },
             "internalParameters": {
                 "github": {
                     "event_name": environ["GITHUB_EVENT_NAME"],
-                    "repository_id": environ.get("GITHUB_REPOSITORY_ID", ""),
-                    "repository_owner_id": environ.get("GITHUB_REPOSITORY_OWNER_ID", ""),
-                    "workflow_sha": environ["GITHUB_SHA"],
+                    "repository_id": environ["GITHUB_REPOSITORY_ID"],
+                    "repository_owner_id": environ["GITHUB_REPOSITORY_OWNER_ID"],
+                    "runner_environment": environ["RUNNER_ENVIRONMENT"],
                 },
             },
             "resolvedDependencies": [{
-                "uri": f"git+{server}/{repo}@refs/heads/main",
+                "uri": f"git+{server}/{repo}@{environ['GITHUB_REF']}",
                 "digest": {"gitCommit": sha},
             }],
         },
@@ -165,8 +166,10 @@ def main() -> None:
     verify(sha, args.paths)
     if args.provenance_out:
         # Written only after the checkout and the tree comparison, from the same verified sha.
+        # Built completely before the file is opened, so a missing field leaves no file behind.
+        predicate = provenance(git("rev-parse", "HEAD"), dict(os.environ))
         with open(args.provenance_out, "w", encoding="utf-8") as handle:
-            json.dump(provenance(git("rev-parse", "HEAD"), dict(os.environ)), handle, indent=2)
+            json.dump(predicate, handle, indent=2)
     print(f"Building the released source {sha}.")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
