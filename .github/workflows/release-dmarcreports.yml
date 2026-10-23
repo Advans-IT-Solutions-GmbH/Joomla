@@ -36,7 +36,7 @@ jobs:
           VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="dmarcreports-v"
-          XML_FILE="com_dmarcreports/com_dmarcreports.xml"
+          XML_FILE="com_dmarcreports/dmarcreports.xml"
           EXT_PATH="com_dmarcreports/"
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
@@ -98,7 +98,7 @@ jobs:
           sed -i \
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            com_dmarcreports.xml
+            dmarcreports.xml
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'

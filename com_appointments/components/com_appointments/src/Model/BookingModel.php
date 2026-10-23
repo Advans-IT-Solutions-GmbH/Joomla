@@ -32,14 +32,17 @@ class BookingModel extends BaseDatabaseModel
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()
         );
         $booking = ConferenceService::forComponent($this->getDatabase())->provision($booking, $now);
-        if (!empty($booking['_conference_missing']) || !empty($booking['_conference_error'])) {
+        if (!isset($booking['id']) && (!empty($booking['_conference_missing']) || !empty($booking['_conference_error']))) {
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
-            if (!isset($booking['id'])) {
-                throw new \RuntimeException(Text::_(!empty($booking['_conference_error'])
-                    ? 'COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR' : 'JERROR_PAGE_NOT_FOUND'), !empty($booking['_conference_error']) ? 503 : 404);
-            }
+            throw new \RuntimeException(Text::_(!empty($booking['_conference_error'])
+                ? 'COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR' : 'JERROR_PAGE_NOT_FOUND'), !empty($booking['_conference_error']) ? 503 : 404);
         }
-        if (($booking['conference_state'] ?? '') === 'failed') {
+
+        // The confirmation page states a missing conference link itself, from the stored
+        // conference state, so the visitor sees it once and still after a reload. A message
+        // is only added when that state could not be stored.
+        if (($booking['conference_state'] ?? '') !== 'failed'
+            && (!empty($booking['_conference_missing']) || !empty($booking['_conference_error']))) {
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
 
@@ -52,7 +55,9 @@ class BookingModel extends BaseDatabaseModel
                 (new NotificationService($this->getDatabase()))->send($booking, $purpose, $now);
             }
         } catch (NotificationException $e) {
-            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_MAIL_FAILED'), 'error');
+            // The booking is saved, so this is a warning like the missing conference link,
+            // not an error: both messages of the same kind look the same in every template.
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_MAIL_FAILED'), 'warning');
         }
 
         return $booking;

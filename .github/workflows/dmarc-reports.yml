@@ -13,6 +13,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-database-check-lib.php'
       - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/dmarc-reports.yml'
   pull_request:
@@ -26,6 +27,7 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
       - 'shared/tests/scripts/shared-install-messages.php'
+      - 'shared/tests/scripts/shared-database-check-lib.php'
       - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/dmarc-reports.yml'
 

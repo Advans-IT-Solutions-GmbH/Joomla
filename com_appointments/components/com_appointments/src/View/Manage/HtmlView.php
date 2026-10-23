@@ -48,9 +48,9 @@ class HtmlView extends BaseHtmlView
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
-        $errorsKey = 'com_appointments.manage_errors.' . $app->getInput()->getInt('id');
-        $this->errors = array_filter((array) $app->getUserState($errorsKey, []), 'is_string');
-        $app->setUserState($errorsKey, null);
+        // Field messages of the last refused submission of this action. They stay until the
+        // next submission, so a reload keeps them at their fields.
+        $this->errors = array_filter((array) $app->getUserState('com_appointments.manage_errors.' . $app->getInput()->getInt('id') . '.' . $this->action, []), 'is_string');
 
         if (!$this->completed) {
             // Times are shown in the invitee's zone, like on the booking page. On the

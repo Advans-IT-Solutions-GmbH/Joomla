@@ -50,6 +50,8 @@ plg_*/
 
 ## Components
 
+**Name the component manifest after the element without `com_`**: `dmarcreports.xml` for `com_dmarcreports`, as Joomla's own components do. Joomla's database check (System > Maintenance > Database, `cli/joomla.php maintenance:database`) reads only `administrator/components/com_x/x.xml`; under any other name it cannot find the manifest version and reports a component with `sql/updates` as not up to date after every installation. `shared/tests/scripts/shared-database-check-lib.php` checks this after a fresh install and after an update.
+
 Components deviate from the plugin layout above: their code lives under
 `administrator/components/<com>/` and, where the extension has a public face, additionally under
 `components/<com>/`. `com_dmarcreports` is administrator-only. `com_appointments` ships both parts,

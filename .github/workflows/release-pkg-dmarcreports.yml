@@ -111,10 +111,15 @@ jobs:
           # release is NOT waved through wholesale, each child is still checked
           # against its standalone lineage.
           declare -A CHILD_MANIFESTS=(
-            ["com_dmarcreports"]="com_dmarcreports/com_dmarcreports.xml"
+            ["com_dmarcreports"]="com_dmarcreports/dmarcreports.xml"
             ["mod_dmarcreports"]="mod_dmarcreports/mod_dmarcreports.xml"
             ["plg_task_dmarcreports"]="plg_task_dmarcreports/dmarcreports.xml"
             ["plg_system_dmarcmtasts"]="plg_system_dmarcmtasts/dmarcmtasts.xml"
+          )
+          # Manifests renamed since an earlier release: read the old name at a baseline
+          # where the current one does not exist yet, so the check is never skipped.
+          declare -A CHILD_LEGACY_MANIFESTS=(
+            ["com_dmarcreports"]="com_dmarcreports/com_dmarcreports.xml"
           )
           declare -A CHILD_TAG_PREFIXES=(
             ["com_dmarcreports"]="dmarcreports-v"
@@ -175,6 +180,9 @@ jobs:
               fi
 
               OLD_VER=$(manifest_version "$baseline" "$manifest")
+              if [ -z "$OLD_VER" ] && [ -n "${CHILD_LEGACY_MANIFESTS[$child]:-}" ]; then
+                OLD_VER=$(manifest_version "$baseline" "${CHILD_LEGACY_MANIFESTS[$child]}")
+              fi
 
               # The child did not exist at this baseline (no manifest there), so
               # there is nothing from that channel to migrate.

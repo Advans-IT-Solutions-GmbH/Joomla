@@ -118,6 +118,13 @@ try {
     $check((int) $saved === 1 && $before === $spool()
         && str_contains($html, 'Appointment received') && str_contains($html, 'Your appointment was saved, but'),
         'Mail failure explicitly preserves the saved booking and warns against duplicate booking');
+    // The booking is saved, so the message is a warning, like the missing conference link:
+    // messages of one kind look the same in every template.
+    $at = strpos($html, 'Your appointment was saved, but');
+    $check($at !== false && str_contains(substr($html, max(0, $at - 400), 400), 'warning')
+        && !preg_match('/"(?:error|danger)":\[[^\]]*Your appointment was saved, but/', $html)
+        && !preg_match('/(?:type="(?:error|danger)"|alert-(?:error|danger))[^>]*>(?:(?!<\/).)*Your appointment was saved, but/s', $html),
+        'The mail failure after a saved booking is shown as a warning, not as an error');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

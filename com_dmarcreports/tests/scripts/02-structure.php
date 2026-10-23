@@ -179,7 +179,7 @@ class StructureTest
         // E1-B: the manifest must register a schema path and ship a baseline
         // schema file so #__schemas gets a row for future sql/updates.
         $this->test('manifest registers an update schema path', function () {
-            $manifest = file_get_contents($this->base . '/com_dmarcreports.xml');
+            $manifest = file_get_contents($this->base . '/dmarcreports.xml');
 
             return $manifest !== false
                 && strpos($manifest, '<schemas>') !== false

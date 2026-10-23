@@ -54,7 +54,7 @@ class StructureTest
         // had its own block stripped by build.sh so the children cannot
         // advertise an independent, drifting update stream.
         $childManifests = [
-            '/var/www/html/administrator/components/com_dmarcreports/com_dmarcreports.xml',
+            '/var/www/html/administrator/components/com_dmarcreports/dmarcreports.xml',
             '/var/www/html/administrator/modules/mod_dmarcreports/mod_dmarcreports.xml',
             '/var/www/html/plugins/task/dmarcreports/dmarcreports.xml',
             '/var/www/html/plugins/system/dmarcmtasts/dmarcmtasts.xml',
