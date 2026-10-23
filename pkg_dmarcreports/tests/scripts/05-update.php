@@ -10,6 +10,8 @@
  * leave only the package's update site.
  */
 
+require_once __DIR__ . '/shared-database-check-lib.php';
+
 class UpdateTest
 {
     private $db;
@@ -85,6 +87,12 @@ class UpdateTest
             });
         }
 
+        // A site installed before the manifest rename still has com_dmarcreports.xml,
+        // and the maintenance:database --fix workaround emptied the registered version.
+        $admin = '/var/www/html/administrator/components/com_dmarcreports';
+        copy($admin . '/dmarcreports.xml', $admin . '/com_dmarcreports.xml');
+        $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
+            . " WHERE type = 'component' AND element = 'com_dmarcreports'");
         // Reinstall the same package archive (update path).
         $output = [];
         $exitCode = 0;
@@ -158,6 +166,14 @@ class UpdateTest
                 && str_ends_with(trim($rows[0]['location']), '/pkg_dmarcreports/updates/update.xml');
         });
 
+        $this->test('Joomla database check reports DMARC Reports as up to date after the update', function () {
+            $problems = joomla_component_database_problems($this->db, $this->dbPrefix, 'com_dmarcreports');
+            foreach ($problems as $problem) {
+                echo "    {$problem}\n";
+            }
+
+            return $problems === [];
+        });
         echo "\n=== Package Update Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

@@ -3,6 +3,8 @@
  * Installation tests for the Appointments component.
  */
 
+require_once __DIR__ . '/shared-database-check-lib.php';
+
 class InstallationTest
 {
     private $db;
@@ -181,6 +183,38 @@ class InstallationTest
             return true;
         });
 
+        $this->test('Joomla database check reports com_appointments as up to date after a fresh install', function () {
+            $problems = joomla_component_database_problems($this->db, $this->dbPrefix, 'com_appointments');
+            foreach ($problems as $problem) {
+                echo "    {$problem}\n";
+            }
+
+            return $problems === [];
+        });
+        $this->test('An update over an installation with the old manifest name leaves no database problem', function () {
+            // A site installed before the manifest rename still has com_appointments.xml, and
+            // the maintenance:database --fix workaround emptied the registered version.
+            $admin = '/var/www/html/administrator/components/com_appointments';
+            copy($admin . '/appointments.xml', $admin . '/com_appointments.xml');
+            $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
+                . " WHERE type = 'component' AND element = 'com_appointments'");
+            $output = [];
+            $exitCode = 0;
+            exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg('/tmp/extension.zip') . ' 2>&1', $output, $exitCode);
+
+            if ($exitCode !== 0) {
+                echo '    ' . implode("\n    ", $output) . "\n";
+
+                return false;
+            }
+
+            $problems = joomla_component_database_problems($this->db, $this->dbPrefix, 'com_appointments');
+            foreach ($problems as $problem) {
+                echo "    {$problem}\n";
+            }
+
+            return $problems === [];
+        });
         echo "\n=== Installation Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

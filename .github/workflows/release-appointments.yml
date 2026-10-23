@@ -36,7 +36,7 @@ jobs:
           VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="appointments-v"
-          XML_FILE="com_appointments/com_appointments.xml"
+          XML_FILE="com_appointments/appointments.xml"
           EXT_PATH="com_appointments/"
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
@@ -98,7 +98,7 @@ jobs:
           sed -i \
             -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
             -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            com_appointments.xml
+            appointments.xml
           # The asset version is the cache buster of the component's own CSS and
           # JavaScript. Without this, a browser keeps serving the stylesheet of
           # the previous release after an update.

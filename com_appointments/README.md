@@ -558,7 +558,7 @@ The directory layout follows `com_dmarcreports`, with an additional site part:
 
 ```text
 com_appointments/
-├── com_appointments.xml                 # Manifest; version managed by release workflow
+├── appointments.xml                     # Manifest; version managed by release workflow
 ├── script.php                          # Install/update/uninstall
 ├── build.env, build.sh                  # Wrapper for the shared packager
 ├── composer.json, phpunit.xml           # Development-only PHPUnit

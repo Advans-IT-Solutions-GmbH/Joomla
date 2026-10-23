@@ -56,7 +56,7 @@ jobs:
       - name: Read version from manifest
         id: version
         run: |
-          XML_FILE="com_dmarcreports/com_dmarcreports.xml"
+          XML_FILE="com_dmarcreports/dmarcreports.xml"
           VERSION=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
           echo "new=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
