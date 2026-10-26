@@ -37,6 +37,9 @@ final class MailHtml
      * @param   object  $mailer    Mailer of the message. With a logo file set in com_mails the logo is
      *                             attached inline as «site-logo» and handed to the layout, like core.
      * @param   string[]  $known   URLs the mail carries (conference and management links), linked exactly.
+     * @param   string    $base    Public site URL (com_appointments public_site_url or live_site). Relative
+     *                             URLs of the layout resolve against it, also in a CLI reminder run.
+     *                             Null keeps Joomla's own conversion against the request URI.
      *
      * @return  string|null  HTML body, or null when the site sends plain-text mails.
      */
@@ -46,7 +49,8 @@ final class MailHtml
         string $siteName,
         ?array $config = null,
         ?object $mailer = null,
-        array $known = []
+        array $known = [],
+        ?string $base = null
     ): ?string {
         $config ??= ComponentHelper::getParams('com_mails')->toArray();
 
@@ -101,7 +105,9 @@ final class MailHtml
             }
         }
 
-        return MailHelper::convertRelativeToAbsoluteUrls($html);
+        return $base !== null && preg_match('#\Ahttps?://[^/]+#i', $base) === 1
+            ? self::absolutize($html, $base)
+            : MailHelper::convertRelativeToAbsoluteUrls($html);
     }
 
     /**
@@ -120,7 +126,10 @@ final class MailHtml
         )));
         usort($known, static fn (string $a, string $b): int => \strlen($b) <=> \strlen($a));
         $pattern = $known === [] ? null
-            : '#(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')#u';
+            // A known URL only counts as a whole: followed by the end, white space, a bracket or quote,
+            // or prose punctuation that ends there. A longer URL sharing the prefix is not cut.
+            : '#(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
+                . '(?=\z|[\s<>"\']|[.,;:!?)\]}]+(?:\z|[\s<>"\']))#u';
 
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
         $out    = '';
@@ -168,6 +177,31 @@ final class MailHtml
         }
 
         return $linked;
+    }
+
+    /**
+     * Relative href and src values against the public site URL: «/x» against its origin, «x» against
+     * the URL itself (which may hold a subdirectory). Absolute, protocol-relative, anchor, mailto:,
+     * tel:, data: and cid: values stay.
+     */
+    public static function absolutize(string $html, string $base): string
+    {
+        $base = rtrim($base, '/') . '/';
+        preg_match('#\Ahttps?://[^/]+#i', $base, $origin);
+
+        return preg_replace_callback(
+            '/\b(href|src)(\s*=\s*)(["\'])(.*?)\3/is',
+            static function (array $m) use ($base, $origin): string {
+                $url = trim($m[4]);
+
+                if ($url === '' || preg_match('#^(?:[a-z][a-z0-9+.\-]*:|//|\#)#i', $url) === 1) {
+                    return $m[0];
+                }
+
+                return $m[1] . $m[2] . $m[3] . ($url[0] === '/' ? $origin[0] . $url : $base . $url) . $m[3];
+            },
+            $html
+        ) ?? $html;
     }
 
     /**

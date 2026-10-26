@@ -56,6 +56,24 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsString("<script", MailHtml::textToHtml('<script>', [$room]));
     }
 
+    public function testKnownUrlDoesNotCutALongerUrlWithTheSamePrefix(): void
+    {
+        $html = MailHtml::textToHtml('Help: https://example.test/room/help and join https://example.test/room.', ['https://example.test/room']);
+
+        $this->assertStringContainsString('<a href="https://example.test/room/help">https://example.test/room/help</a>', $html);
+        $this->assertStringContainsString('<a href="https://example.test/room">https://example.test/room</a>.', $html);
+    }
+
+    public function testRelativeLayoutUrlsResolveAgainstThePublicSiteUrl(): void
+    {
+        $html = MailHtml::absolutize('<img src="images/logo.png"><a href="/de/">x</a><a href="https://a.test/">y</a><a href="mailto:a@b.test">z</a>', 'https://shop.example.test/sub/');
+
+        $this->assertStringContainsString('src="https://shop.example.test/sub/images/logo.png"', $html);
+        $this->assertStringContainsString('href="https://shop.example.test/de/"', $html);
+        $this->assertStringContainsString('href="https://a.test/"', $html);
+        $this->assertStringContainsString('href="mailto:a@b.test"', $html);
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');

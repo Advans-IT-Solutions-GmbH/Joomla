@@ -103,7 +103,7 @@ final class NotificationService
                 $mailer->setSubject($message['subject']);
                 // HTML in the site's mail layout when com_mails sends HTML, the text stays as
                 // alternative part. A site with plain-text mails keeps the text mail.
-                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, [$recipientBooking['conference_url'] ?? '', ...array_values($links)]);
+                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, [$recipientBooking['conference_url'] ?? '', ...array_values($links)], $this->publicBase());
 
                 if ($html !== null) {
                     $mailer->isHtml(true);
@@ -173,6 +173,26 @@ final class NotificationService
         }
 
         throw new NotificationException('No published template is available for this notification.');
+    }
+
+    /**
+     * Public site URL for HTML mail layouts: the component's public_site_url, then live_site, then the
+     * request root outside the CLI. Null when none is known (CLI without configuration).
+     */
+    private function publicBase(): ?string
+    {
+        $app  = Factory::getApplication();
+        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
+
+        if ($base === '') {
+            $base = (string) $app->get('live_site', '');
+        }
+
+        if ($base === '' && !($app instanceof ConsoleApplication)) {
+            $base = Uri::root();
+        }
+
+        return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
     }
 
     public function links(array $booking): array
