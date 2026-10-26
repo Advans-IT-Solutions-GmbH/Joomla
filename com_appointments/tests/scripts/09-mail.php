@@ -125,7 +125,8 @@ try {
         $mime = file_get_contents($file);
         $multipart = (bool) preg_match('/Content-Type:\s*text\/html/i', $mime) && (bool) preg_match('/Content-Type:\s*text\/plain/i', $mime);
         $decoded = AppointmentsMail::decoded($mime);
-        if ($multipart && str_contains($decoded, '<a href=') && str_contains($decoded, '</html>')) {
+        // Guest and host notices carry no links, so only the layout and the two parts are required here.
+        if ($multipart && stripos($decoded, '<html') !== false && stripos($decoded, '</html>') !== false) {
             $htmlMails++;
         }
         if (preg_match('/^To:.*invitee@example\.test/mi', preg_replace('/\r?\n[ \t]+/', ' ', $mime))) {
