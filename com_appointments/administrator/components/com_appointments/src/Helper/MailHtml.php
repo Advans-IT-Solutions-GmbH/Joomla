@@ -99,19 +99,40 @@ final class MailHtml
                 }
             }
 
-            $rendered = $file->render(['mail' => $html, 'extra' => $extra]);
+            // The layout is rendered around a marker, rebased, and only then gets the composed body:
+            // a layout builds its own links from Uri::root(), which in a CLI reminder run is the
+            // CLI-derived address, while the body carries the exact links of the mail (conference,
+            // management) that must reach the recipient unchanged. Joomla's URI state stays untouched.
+            $marker   = '<!--appointments-mail-body-' . bin2hex(random_bytes(6)) . '-->';
+            $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
 
-            if (\is_string($rendered) && trim($rendered) !== '') {
-                // A layout builds its own absolute links from Uri::root(), which in a CLI reminder run
-                // is the CLI-derived address. Point them at the public site URL instead, without
-                // touching Joomla's shared URI state.
-                $html = $base !== null ? self::rebase($rendered, self::requestRoot(), $base) : $rendered;
+            if (\is_string($rendered) && trim($rendered) !== '' && substr_count($rendered, $marker) === 1) {
+                return self::assemble($rendered, $marker, $html, $base, self::requestRoot());
             }
         }
 
-        return $base !== null && preg_match('#\Ahttps?://[^/]+#i', $base) === 1
-            ? self::absolutize($html, $base)
-            : MailHelper::convertRelativeToAbsoluteUrls($html);
+        return $html;
+    }
+
+    /**
+     * Put the composed body into the rendered layout. Only the layout's URLs are rebased from the
+     * request root to the public site URL and made absolute, the body stays exactly as composed.
+     *
+     * @param   string       $layout  Layout output with the marker in place of the body.
+     * @param   string       $marker  Marker the layout was rendered with.
+     * @param   string       $body    Composed HTML body.
+     * @param   string|null  $base    Public site URL, null for Joomla's own conversion.
+     * @param   string       $root    Request root the layout was built with.
+     */
+    public static function assemble(string $layout, string $marker, string $body, ?string $base, string $root): string
+    {
+        if ($base !== null && preg_match('#\Ahttps?://[^/]+#i', $base) === 1) {
+            $layout = self::absolutize(self::rebase($layout, $root, $base), $base);
+        } else {
+            $layout = MailHelper::convertRelativeToAbsoluteUrls($layout);
+        }
+
+        return str_replace($marker, $body, $layout);
     }
 
     /**
@@ -132,8 +153,9 @@ final class MailHtml
         $pattern = $known === [] ? null
             // A known URL only counts as a whole: followed by the end, white space, a bracket or quote,
             // or prose punctuation that ends there. A longer URL sharing the prefix is not cut.
-            // ... and only at the start of a URL token, not inside another URL (?redirect=...).
-            : '#(?<![^\s<>"\'(\[{])(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
+            // ... and not inside another URL (?redirect=...): no URL character right before it. A label
+            // such as «Join:» is fine.
+            : '#(?<![\w=/?&%\#.~+-])(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
                 . '(?=\z|[\s<>"\']|[.,;:!?)\]}]+(?:\z|[\s<>"\']))#u';
 
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
@@ -199,17 +221,14 @@ final class MailHtml
 
         $html = preg_replace_callback(
             '/\b(href|src)(\s*=\s*)(["\'])' . preg_quote($from, '/') . '(\/[^"\']*|)\3/i',
-            // A URL already on the public base (overlapping roots, base in a subdirectory) stays.
-            static fn (array $m): string => str_starts_with($from . $m[4] . '/', $to . '/') && $to !== $from
-                ? $m[0]
-                : $m[1] . $m[2] . $m[3] . $to . ($m[4] === '' ? '/' : $m[4]) . $m[3],
+            static fn (array $m): string => $m[1] . $m[2] . $m[3] . $to . ($m[4] === '' ? '/' : $m[4]) . $m[3],
             $html
         ) ?? $html;
 
         // The visible address of the layout footer, as link text
         return preg_replace_callback(
             '/>\s*' . preg_quote($from, '/') . '(\/[^<\s]*|)\s*</i',
-            static fn (array $m): string => str_starts_with($from . $m[1] . '/', $to . '/') ? $m[0] : '>' . $to . $m[1] . '<',
+            static fn (array $m): string => '>' . $to . $m[1] . '<',
             $html
         ) ?? $html;
     }

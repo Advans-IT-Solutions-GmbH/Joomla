@@ -86,14 +86,32 @@ final class MailHtmlTest extends TestCase
         $this->assertSame($layout, MailHtml::rebase($layout, 'https://www.example.test/', 'https://www.example.test'));
     }
 
-    public function testOverlappingRootsAreNotRebasedTwice(): void
+    public function testOnlyTheLayoutIsRebasedTheBodyStaysExact(): void
     {
-        $html = MailHtml::rebase('<a href="https://example.test/sub/index.php?x=1">https://example.test/sub/index.php?x=1</a><a href="https://example.test/">s</a>', 'https://example.test/', 'https://example.test/sub/');
+        $marker = '<!--m-->';
+        $layout = '<img src="https://example.test/images/logo.png"><a href="https://example.test/">https://example.test/</a>' . $marker;
+        $body   = '<a href="https://example.test/room?token=secret">room</a>';
+        $html   = MailHtml::assemble($layout, $marker, $body, 'https://example.test/sub/', 'https://example.test/');
 
-        $this->assertStringContainsString('href="https://example.test/sub/index.php?x=1">https://example.test/sub/index.php?x=1</a>', $html);
-        $this->assertStringContainsString('href="https://example.test/sub/">s</a>', $html);
+        $this->assertStringContainsString('src="https://example.test/sub/images/logo.png"', $html);
+        $this->assertStringContainsString('<a href="https://example.test/sub/">https://example.test/sub/</a>', $html);
+        $this->assertStringContainsString($body, $html);
     }
 
+    public function testPublicBaseAboveTheRequestRoot(): void
+    {
+        $html = MailHtml::rebase('<img src="https://example.test/internal/images/x.png">', 'https://example.test/internal/', 'https://example.test/');
+
+        $this->assertSame('<img src="https://example.test/images/x.png">', $html);
+    }
+
+    public function testKnownUrlAfterALabelWithoutSpace(): void
+    {
+        $room = "https://example.test/room/O'Brien?token=secret!";
+        $html = MailHtml::textToHtml("Join:$room", [$room]);
+
+        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!">', $html);
+    }
     public function testKnownUrlInsideAnotherUrlIsNotSplitOut(): void
     {
         $html = MailHtml::textToHtml('Login: https://example.test/login?redirect=https://example.test/room', ['https://example.test/room']);
