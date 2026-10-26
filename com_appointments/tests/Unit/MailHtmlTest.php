@@ -74,6 +74,18 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('href="mailto:a@b.test"', $html);
     }
 
+    public function testLayoutLinksOnTheCliRootMoveToThePublicSiteUrl(): void
+    {
+        $layout = '<a href="http://localhost/">site</a><img src="http://localhost/images/logo.png"><a href="http://localhost.example/x">other</a>';
+        $html   = MailHtml::rebase($layout, 'http://localhost/', 'https://www.example.test/');
+
+        $this->assertStringContainsString('href="https://www.example.test/"', $html);
+        $this->assertStringContainsString('src="https://www.example.test/images/logo.png"', $html);
+        $this->assertStringContainsString('href="http://localhost.example/x"', $html);
+        $this->assertSame('<a href="https://www.example.test/">https://www.example.test/</a>', MailHtml::rebase('<a href="http://localhost/">http://localhost/</a>', 'http://localhost/', 'https://www.example.test/'));
+        $this->assertSame($layout, MailHtml::rebase($layout, 'https://www.example.test/', 'https://www.example.test'));
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');

@@ -12,6 +12,7 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Layout\FileLayout;
 use Joomla\CMS\Mail\MailHelper;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Filesystem\Path;
 
 defined('_JEXEC') or die;
@@ -101,7 +102,10 @@ final class MailHtml
             $rendered = $file->render(['mail' => $html, 'extra' => $extra]);
 
             if (\is_string($rendered) && trim($rendered) !== '') {
-                $html = $rendered;
+                // A layout builds its own absolute links from Uri::root(), which in a CLI reminder run
+                // is the CLI-derived address. Point them at the public site URL instead, without
+                // touching Joomla's shared URI state.
+                $html = $base !== null ? self::rebase($rendered, self::requestRoot(), $base) : $rendered;
             }
         }
 
@@ -177,6 +181,39 @@ final class MailHtml
         }
 
         return $linked;
+    }
+
+    /**
+     * Replace absolute URLs on the request root by the same paths on the public site URL. An equal
+     * root, an empty root or an invalid public URL leaves the HTML unchanged.
+     */
+    public static function rebase(string $html, string $from, string $to): string
+    {
+        $from = rtrim($from, '/');
+        $to   = rtrim($to, '/');
+
+        if ($from === '' || $from === $to || preg_match('#\Ahttps?://[^/]+#i', $from) !== 1 || preg_match('#\Ahttps?://[^/]+#i', $to) !== 1) {
+            return $html;
+        }
+
+        $html = preg_replace_callback(
+            '/\b(href|src)(\s*=\s*)(["\'])' . preg_quote($from, '/') . '(\/[^"\']*|)\3/i',
+            static fn (array $m): string => $m[1] . $m[2] . $m[3] . $to . ($m[4] === '' ? '/' : $m[4]) . $m[3],
+            $html
+        ) ?? $html;
+
+        // The visible address of the layout footer, as link text
+        return preg_replace('/>\s*' . preg_quote($from, '/') . '(\/[^<\s]*|)\s*</i', '>' . $to . '$1<', $html) ?? $html;
+    }
+
+    /** Root of the current request as the layouts see it, '' when no URI is available. */
+    private static function requestRoot(): string
+    {
+        try {
+            return Uri::root();
+        } catch (\Throwable $e) {
+            return '';
+        }
     }
 
     /**
