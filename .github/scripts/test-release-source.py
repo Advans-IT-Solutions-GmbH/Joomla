@@ -112,8 +112,8 @@ class ReleaseSourceTest(unittest.TestCase):
                     source.release_commit_for_dispatch("pkgx", version, "owner/repo")
 
     def test_recovery_provenance_names_the_verified_release_commit(self):
-        # Provenance sha, build source and merged release commit must be one and the same,
-        # although the run itself (GITHUB_SHA) starts from the later main.
+        # The provenance's release commit, the build source and the merged release commit must be
+        # one and the same, although the run itself (GITHUB_SHA) starts from the later main.
         out = self.repo.parent / f"{self.repo.name}-provenance.json"
         output = self.repo.parent / f"{self.repo.name}-output.txt"
         environ = {
@@ -137,8 +137,11 @@ class ReleaseSourceTest(unittest.TestCase):
             out.unlink(missing_ok=True)
             output.unlink(missing_ok=True)
         resolved = predicate["buildDefinition"]["resolvedDependencies"]
+        # The attestation API requires the run's own commit first; the built release commit follows.
         self.assertEqual([{"uri": "git+https://github.com/owner/repo@refs/heads/main",
-                           "digest": {"gitCommit": self.release}}], resolved)
+                           "digest": {"gitCommit": self.later}},
+                          {"uri": "git+https://github.com/owner/repo",
+                           "digest": {"gitCommit": self.release}, "name": "release-commit"}], resolved)
         self.assertEqual(self.release, built)
         self.assertEqual(f"sha={self.release}", recorded)
         # Exactly the fields of GitHub's own workflow provenance, which the attestation API
