@@ -47,6 +47,15 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('<a href="https://example.test/x?y=1">https://example.test/x?y=1</a>!', $html);
     }
 
+    public function testKnownUrlsAreLinkedExactly(): void
+    {
+        $room = "https://example.test/room/O'Brien?token=secret!";
+        $html = MailHtml::textToHtml("Join: $room", [$room]);
+
+        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!">', $html);
+        $this->assertStringNotContainsString("<script", MailHtml::textToHtml('<script>', [$room]));
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');

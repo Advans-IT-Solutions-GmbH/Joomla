@@ -36,18 +36,25 @@ final class MailHtml
      * @param   array   $config    com_mails options, null reads them from the component.
      * @param   object  $mailer    Mailer of the message. With a logo file set in com_mails the logo is
      *                             attached inline as «site-logo» and handed to the layout, like core.
+     * @param   string[]  $known   URLs the mail carries (conference and management links), linked exactly.
      *
      * @return  string|null  HTML body, or null when the site sends plain-text mails.
      */
-    public static function render(string $plain, string $language, string $siteName, ?array $config = null, ?object $mailer = null): ?string
-    {
+    public static function render(
+        string $plain,
+        string $language,
+        string $siteName,
+        ?array $config = null,
+        ?object $mailer = null,
+        array $known = []
+    ): ?string {
         $config ??= ComponentHelper::getParams('com_mails')->toArray();
 
         if (!\in_array((string) ($config['mail_style'] ?? 'plaintext'), ['html', 'both'], true)) {
             return null;
         }
 
-        $html = self::textToHtml($plain);
+        $html = self::textToHtml($plain, $known);
 
         if ((string) ($config['disable_htmllayout'] ?? '1') === '1') {
             $layout = (string) ($config['mail_htmllayout'] ?? 'mailtemplate');
@@ -99,34 +106,68 @@ final class MailHtml
 
     /**
      * Escaped plain text as HTML paragraphs, with links clickable.
+     *
+     * @param   string    $plain  Plain text.
+     * @param   string[]  $known  URLs the mail is known to carry (conference, reschedule, cancel,
+     *                            erase). They are linked exactly as given, an apostrophe or a final
+     *                            «!» included. Other URLs go through the prose heuristic.
      */
-    public static function textToHtml(string $plain): string
+    public static function textToHtml(string $plain, array $known = []): string
     {
+        $known = array_values(array_unique(array_filter(
+            array_map('strval', $known),
+            static fn (string $url): bool => preg_match('#\Ahttps?://\S+\z#i', $url) === 1
+        )));
+        usort($known, static fn (string $a, string $b): int => \strlen($b) <=> \strlen($a));
+        $pattern = $known === [] ? null
+            : '#(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')#u';
+
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
         $out    = '';
 
         foreach ($blocks as $block) {
-            // Find the URLs in the original text, then escape each piece: escaping first would let
-            // the match run into an entity («&gt;») and change a signed link.
-            $pieces = preg_split('#(\bhttps?://[^\s<>"\']+)#u', $block, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$block];
+            $parts  = $pattern === null ? [$block] : (preg_split($pattern, $block, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$block]);
             $linked = '';
 
-            foreach ($pieces as $i => $piece) {
-                if ($i % 2 === 0) {
-                    $linked .= htmlspecialchars($piece, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            foreach ($parts as $i => $part) {
+                if ($pattern !== null && $i % 2 === 1) {
+                    $escaped = htmlspecialchars($part, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $linked .= '<a href="' . $escaped . '">' . $escaped . '</a>';
                     continue;
                 }
 
-                [$url, $tail] = self::splitTrailing($piece);
-                $escaped        = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                $linked        .= '<a href="' . $escaped . '">' . $escaped . '</a>'
-                    . htmlspecialchars($tail, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $linked .= self::linkify($part);
             }
 
             $out .= '<p>' . nl2br($linked, false) . "</p>\n";
         }
 
         return $out;
+    }
+
+    /**
+     * Escape text and link the URLs found in it.
+     */
+    private static function linkify(string $text): string
+    {
+        // Find the URLs in the original text, then escape each piece: escaping first would let
+        // the match run into an entity («&gt;») and change a signed link.
+        $pieces = preg_split('#(\bhttps?://[^\s<>"\']+)#u', $text, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$text];
+        $linked = '';
+
+        foreach ($pieces as $i => $piece) {
+            if ($i % 2 === 0) {
+                $linked .= htmlspecialchars($piece, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                continue;
+            }
+
+            [$url, $tail] = self::splitTrailing($piece);
+            $escaped        = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $linked        .= '<a href="' . $escaped . '">' . $escaped . '</a>'
+                . htmlspecialchars($tail, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        }
+
+        return $linked;
     }
 
     /**

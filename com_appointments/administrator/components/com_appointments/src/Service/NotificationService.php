@@ -103,7 +103,7 @@ final class NotificationService
                 $mailer->setSubject($message['subject']);
                 // HTML in the site's mail layout when com_mails sends HTML, the text stays as
                 // alternative part. A site with plain-text mails keeps the text mail.
-                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer);
+                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, [$recipientBooking['conference_url'] ?? '', ...array_values($links)]);
 
                 if ($html !== null) {
                     $mailer->isHtml(true);
