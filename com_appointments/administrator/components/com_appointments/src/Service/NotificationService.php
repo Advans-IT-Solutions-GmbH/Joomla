@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
+use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
@@ -100,8 +101,18 @@ final class NotificationService
                 $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
                 $mailer->addRecipient($address);
                 $mailer->setSubject($message['subject']);
-                $mailer->setBody($message['body']);
-                $mailer->isHtml(false);
+                // HTML in the site's mail layout when com_mails sends HTML, the text stays as
+                // alternative part. A site with plain-text mails keeps the text mail.
+                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'));
+
+                if ($html !== null) {
+                    $mailer->isHtml(true);
+                    $mailer->setBody($html);
+                    $mailer->AltBody = $message['body'];
+                } else {
+                    $mailer->setBody($message['body']);
+                    $mailer->isHtml(false);
+                }
 
                 foreach ($message['attachments'] as $attachment) {
                     $mailer->addStringAttachment($attachment['content'], $attachment['filename'], 'base64', $attachment['content_type']);
