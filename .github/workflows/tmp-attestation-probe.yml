@@ -1,0 +1,40 @@
+name: Temporary attestation probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tmp-attestation-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Write the recovery predicate with a different built commit
+        run: |
+          echo "attestation probe for PR 250" > probe.txt
+          python3 - <<'PY'
+          import importlib.util, json, os, subprocess
+          spec = importlib.util.spec_from_file_location("rs", ".github/scripts/release-source.py")
+          rs = importlib.util.module_from_spec(spec); spec.loader.exec_module(rs)
+          other = subprocess.check_output(["git", "rev-parse", "HEAD^1"], text=True).strip()
+          predicate = rs.provenance(other, dict(os.environ))
+          print(json.dumps(predicate["buildDefinition"]["resolvedDependencies"], indent=2))
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "provenance.json"), "w") as f:
+              json.dump(predicate, f)
+          PY
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: probe.txt
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/provenance.json
