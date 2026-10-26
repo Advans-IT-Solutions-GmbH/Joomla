@@ -16,7 +16,8 @@ children of a package, the build scripts) is compared between the release commit
 the build source. Any difference, local modification or extra file aborts the run.
 
 With --provenance-out it also writes the SLSA provenance predicate that a recovery run
-attests, naming the verified release commit as the built source.
+attests: the run's own commit first, as the attestation API requires, and the verified
+release commit as the built source.
 
 Run a copy of this file from $RUNNER_TEMP: the checkout replaces the repository's files.
 """
@@ -104,12 +105,11 @@ def verify(sha: str, paths: list) -> None:
 def provenance(sha: str, environ: dict) -> dict:
     """SLSA v1 provenance predicate for a recovery run.
 
-    A recovery run starts from the current main, so the provenance GitHub derives from
-    the run would name that commit as the source. This predicate has exactly the fields
-    of GitHub's own workflow provenance (actions/toolkit buildSLSAProvenancePredicate),
-    which the attestation API validates, and differs only in the resolved source: the
-    verified release commit. The commit of the workflow definition stays identifiable
-    through the signing certificate of the run.
+    The predicate has exactly the fields of GitHub's own workflow provenance (actions/toolkit
+    buildSLSAProvenancePredicate). The attestation API requires the first resolved
+    dependency to be the commit of the run, which is the later main a recovery run starts
+    from. The verified release commit, the source that was actually built, follows as a
+    second resolved dependency.
     """
     server = environ.get("GITHUB_SERVER_URL", "https://github.com")
     repo = environ["GITHUB_REPOSITORY"]
@@ -134,7 +134,11 @@ def provenance(sha: str, environ: dict) -> dict:
             },
             "resolvedDependencies": [{
                 "uri": f"git+{server}/{repo}@{environ['GITHUB_REF']}",
+                "digest": {"gitCommit": environ["GITHUB_SHA"]},
+            }, {
+                "uri": f"git+{server}/{repo}",
                 "digest": {"gitCommit": sha},
+                "name": "release-commit",
             }],
         },
         "runDetails": {
