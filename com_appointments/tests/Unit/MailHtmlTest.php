@@ -86,6 +86,21 @@ final class MailHtmlTest extends TestCase
         $this->assertSame($layout, MailHtml::rebase($layout, 'https://www.example.test/', 'https://www.example.test'));
     }
 
+    public function testOverlappingRootsAreNotRebasedTwice(): void
+    {
+        $html = MailHtml::rebase('<a href="https://example.test/sub/index.php?x=1">https://example.test/sub/index.php?x=1</a><a href="https://example.test/">s</a>', 'https://example.test/', 'https://example.test/sub/');
+
+        $this->assertStringContainsString('href="https://example.test/sub/index.php?x=1">https://example.test/sub/index.php?x=1</a>', $html);
+        $this->assertStringContainsString('href="https://example.test/sub/">s</a>', $html);
+    }
+
+    public function testKnownUrlInsideAnotherUrlIsNotSplitOut(): void
+    {
+        $html = MailHtml::textToHtml('Login: https://example.test/login?redirect=https://example.test/room', ['https://example.test/room']);
+
+        $this->assertStringContainsString('<a href="https://example.test/login?redirect=https://example.test/room">', $html);
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');

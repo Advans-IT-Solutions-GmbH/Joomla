@@ -132,7 +132,8 @@ final class MailHtml
         $pattern = $known === [] ? null
             // A known URL only counts as a whole: followed by the end, white space, a bracket or quote,
             // or prose punctuation that ends there. A longer URL sharing the prefix is not cut.
-            : '#(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
+            // ... and only at the start of a URL token, not inside another URL (?redirect=...).
+            : '#(?<![^\s<>"\'(\[{])(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
                 . '(?=\z|[\s<>"\']|[.,;:!?)\]}]+(?:\z|[\s<>"\']))#u';
 
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
@@ -198,12 +199,19 @@ final class MailHtml
 
         $html = preg_replace_callback(
             '/\b(href|src)(\s*=\s*)(["\'])' . preg_quote($from, '/') . '(\/[^"\']*|)\3/i',
-            static fn (array $m): string => $m[1] . $m[2] . $m[3] . $to . ($m[4] === '' ? '/' : $m[4]) . $m[3],
+            // A URL already on the public base (overlapping roots, base in a subdirectory) stays.
+            static fn (array $m): string => str_starts_with($from . $m[4] . '/', $to . '/') && $to !== $from
+                ? $m[0]
+                : $m[1] . $m[2] . $m[3] . $to . ($m[4] === '' ? '/' : $m[4]) . $m[3],
             $html
         ) ?? $html;
 
         // The visible address of the layout footer, as link text
-        return preg_replace('/>\s*' . preg_quote($from, '/') . '(\/[^<\s]*|)\s*</i', '>' . $to . '$1<', $html) ?? $html;
+        return preg_replace_callback(
+            '/>\s*' . preg_quote($from, '/') . '(\/[^<\s]*|)\s*</i',
+            static fn (array $m): string => str_starts_with($from . $m[1] . '/', $to . '/') ? $m[0] : '>' . $to . $m[1] . '<',
+            $html
+        ) ?? $html;
     }
 
     /** Root of the current request as the layouts see it, '' when no URI is available. */
