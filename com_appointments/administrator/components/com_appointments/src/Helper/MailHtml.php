@@ -88,9 +88,11 @@ final class MailHtml
 
             if ($logo !== '' && $mailer !== null && method_exists($mailer, 'addAttachment')) {
                 try {
-                    $path = Path::check(JPATH_ROOT . '/' . HTMLHelper::_('cleanImageURL', $logo)->url);
+                    // Decode once, then check and attach the same filesystem path (core checks the decoded
+                    // name but attaches the encoded one, so «site%20logo.png» would be lost).
+                    $path = Path::check(JPATH_ROOT . '/' . rawurldecode(HTMLHelper::_('cleanImageURL', $logo)->url));
 
-                    if (is_file(urldecode($path))) {
+                    if (is_file($path)) {
                         $mailer->addAttachment($path, 'site-logo', 'base64', mime_content_type($path), 'inline');
                         $extra['logo'] = 'site-logo';
                     }
