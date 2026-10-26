@@ -152,7 +152,7 @@ jobs:
 
       - name: Attest the provenance of the recovered release commit
         # A manual run starts from the current main, so GitHub's derived provenance would
-        # name that commit. This predicate names the verified release commit instead.
+        # name only that commit. This predicate adds the verified release commit as the built source.
         if: github.event_name == 'workflow_dispatch'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
