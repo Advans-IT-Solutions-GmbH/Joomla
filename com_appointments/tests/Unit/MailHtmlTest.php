@@ -28,6 +28,15 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsString('<Erika>', $html);
     }
 
+    public function testSignedLinkInAngleBracketsKeepsItsExactTarget(): void
+    {
+        $html = MailHtml::textToHtml('Termin absagen: <https://example.test/manage?id=1&signature=abc>');
+
+        $this->assertStringContainsString('<a href="https://example.test/manage?id=1&amp;signature=abc">', $html);
+        $this->assertStringContainsString('&lt;<a href=', $html);
+        $this->assertStringContainsString('</a>&gt;', $html);
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');
