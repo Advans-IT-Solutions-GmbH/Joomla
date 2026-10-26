@@ -37,6 +37,16 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('</a>&gt;', $html);
     }
 
+    public function testTrailingProsePunctuationStaysOutsideTheLink(): void
+    {
+        $html = MailHtml::textToHtml('Join (https://example.test/room?token=abc).');
+        $this->assertStringContainsString('(<a href="https://example.test/room?token=abc">https://example.test/room?token=abc</a>).', $html);
+
+        $html = MailHtml::textToHtml('See https://example.test/wiki/A_(b), then https://example.test/x?y=1!');
+        $this->assertStringContainsString('<a href="https://example.test/wiki/A_(b)">', $html);
+        $this->assertStringContainsString('<a href="https://example.test/x?y=1">https://example.test/x?y=1</a>!', $html);
+    }
+
     public function testNoScriptOrAttributeInjectionThroughLinks(): void
     {
         $html = MailHtml::textToHtml('https://example.test/"onmouseover="x <script>');

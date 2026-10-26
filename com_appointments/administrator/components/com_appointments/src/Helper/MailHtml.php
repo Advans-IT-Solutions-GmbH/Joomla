@@ -112,13 +112,48 @@ final class MailHtml
             $linked = '';
 
             foreach ($pieces as $i => $piece) {
-                $escaped = htmlspecialchars($piece, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                $linked .= $i % 2 === 1 ? '<a href="' . $escaped . '">' . $escaped . '</a>' : $escaped;
+                if ($i % 2 === 0) {
+                    $linked .= htmlspecialchars($piece, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    continue;
+                }
+
+                [$url, $tail] = self::splitTrailing($piece);
+                $escaped        = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $linked        .= '<a href="' . $escaped . '">' . $escaped . '</a>'
+                    . htmlspecialchars($tail, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             }
 
             $out .= '<p>' . nl2br($linked, false) . "</p>\n";
         }
 
         return $out;
+    }
+
+    /**
+     * Split prose punctuation and unmatched closing brackets off the end of a URL found in text:
+     * «(https://x.test/a?t=1).» links «https://x.test/a?t=1» and keeps «).» as text.
+     *
+     * @return  array{0: string, 1: string}  URL and trailing text.
+     */
+    public static function splitTrailing(string $url): array
+    {
+        $tail  = '';
+        $pairs = [')' => '(', ']' => '[', '}' => '{'];
+
+        while ($url !== '') {
+            $last = substr($url, -1);
+
+            if (strpbrk($last, '.,;:!?') !== false
+                || (isset($pairs[$last]) && substr_count($url, $pairs[$last]) < substr_count($url, $last))
+            ) {
+                $tail = $last . $tail;
+                $url  = substr($url, 0, -1);
+                continue;
+            }
+
+            break;
+        }
+
+        return [$url, $tail];
     }
 }
