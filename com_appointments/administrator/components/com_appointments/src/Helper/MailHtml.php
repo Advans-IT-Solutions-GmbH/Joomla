@@ -33,6 +33,9 @@ final class MailHtml
     /** A URL shown as link text may break anywhere, so a long one cannot widen the mail. */
     private const BREAK_STYLE = ' style="word-break:break-all;overflow-wrap:anywhere"';
 
+    /** Where a known URL ends: the end, white space, a bracket or quote, or prose punctuation that ends there. */
+    private const URL_END = '\z|[\s<>"\']|[.,;:!?)\]}]+(?:\z|[\s<>"\'])';
+
     /**
      * @param   string  $plain     Plain-text body as composed.
      * @param   string  $language  Language tag of the recipient.
@@ -181,7 +184,7 @@ final class MailHtml
             // ... and not inside another URL (?redirect=...): no URL character right before it. A label
             // such as «Join:» is fine.
             : '#(?<![\w=/?&%\#.~+-])(' . implode('|', array_map(static fn (string $url): string => preg_quote($url, '#'), $known)) . ')'
-                . '(?=\z|[\s<>"\']|[.,;:!?)\]}]+(?:\z|[\s<>"\']))#u';
+                . '(?=' . self::URL_END . ')#u';
 
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
         $out    = '';
@@ -190,7 +193,7 @@ final class MailHtml
             // «Reschedule:» followed by its URL on the same or the next line becomes one link «Reschedule».
             foreach ($labels as $url => $label) {
                 $block = preg_replace(
-                    '#(?<![^\n])\h*' . preg_quote($label, '#') . '\h*:\h*\n?\h*(?=' . preg_quote($url, '#') . '(?:\z|\s))#u',
+                    '#(?<![\p{L}\p{N}_])' . preg_quote($label, '#') . '\h*:\h*\n?\h*(?=' . preg_quote($url, '#') . '(?:' . self::URL_END . '))#u',
                     '',
                     $block
                 ) ?? $block;

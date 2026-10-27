@@ -35,6 +35,13 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('Join here: <a href="https://example.test/room?jwt=abc">Join meeting</a>', MailHtml::textToHtml("Join here: $room", [$room => 'Join meeting']));
     }
 
+    public function testLabelBeforeAUrlFollowedByPunctuationIsTakenIntoTheLink(): void
+    {
+        $room = 'https://example.test/room?jwt=abc';
+        $this->assertSame('<p><a href="https://example.test/room?jwt=abc">Join meeting</a>.</p>' . "\n", MailHtml::textToHtml("Join meeting: $room.", [$room => 'Join meeting']));
+        $this->assertSame('<p>(<a href="https://example.test/room?jwt=abc">Join meeting</a>)</p>' . "\n", MailHtml::textToHtml("(Join meeting: $room)", [$room => 'Join meeting']));
+    }
+
     public function testLabelIsEscaped(): void
     {
         $room = 'https://example.test/room';
