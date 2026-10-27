@@ -87,8 +87,13 @@
 - Neue Dateien, die im Installationspaket ausgeliefert werden, tragen den Lizenzkopf mit `@copyright`, `@license` und `SPDX-License-Identifier: GPL-3.0-or-later` (Vorlage: `.claude/skills/joomla-extensions/references/conventions.md`). Testskripte, Docker- und CI-Hilfsdateien sind nicht Teil des Pakets und brauchen keinen Kopf.
 - Fremdcode nur mit GPL-3.0-kompatibler Lizenz übernehmen (nie GPL-2.0-only); fremde Copyright-Hinweise nie entfernen, Quelle in `THIRD-PARTY-NOTICES.txt` der Extension festhalten.
 
-## Skills
-Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
+## Label swiss made software
+- Die Joomla- und J2Commerce-Extensions dieses Repos tragen das Label swiss made software (Logo und Satz im `README.md`). Das Label betrifft die Herstellung der Software, nicht den Ort, an dem Updates liegen.
+- **Regel des Hauses, getrennt von den Label-Kriterien:** Kein ausländischer Dienst fest im Laufzeitcode und keiner als Vorgabewert. Alles Externe ist konfigurierbar und hat keine ausländische Vorgabe.
+- **Bekannter Punkt:** Die Manifeste nennen GitHub (`raw.githubusercontent.com`) als Update-Server, die `updates/update.xml` verweisen auf Pakete in GitHub Releases, und Release-Workflows erzeugen diese Download-Adressen. Darüber laufen nur Versionsdaten und Pakete, keine Kunden- oder Rechnungsdaten.
+- **Prüfpunkte bei jeder Änderung:** keine neue externe Adresse im Laufzeitcode und kein neuer externer Vorgabewert ohne Entscheid des Maintainers. Das Labellogo bleibt die unveränderte offizielle Vorlage (einzig Schwarzweiss erlaubt) und verlinkt auf die Landingpage des Labels.
+
+## SkillsDetailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 
 ## Repo-spezifisch (Joomla)
 Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz dieses Repos verifizierte
