@@ -1,5 +1,14 @@
 # Joomla Extensions Repository
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src=".github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+The Joomla and J2Commerce extensions in this repository carry the swiss made software label.
+
 Extensions for [Joomla](https://github.com/joomla/joomla-cms) and [J2Commerce](https://github.com/j2commerce/j2commerce) developed and maintained by Advans IT Solutions GmbH.
 
 ## Repository Structure
