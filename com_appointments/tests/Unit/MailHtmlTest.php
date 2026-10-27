@@ -9,6 +9,38 @@ require_once dirname(__DIR__, 2) . '/administrator/components/com_appointments/s
 
 final class MailHtmlTest extends TestCase
 {
+    private const BREAK = ' style="word-break:break-all;overflow-wrap:anywhere"';
+
+    public function testLabelledLinksShowTheLabelAndTakeTheLabelLineIntoTheLink(): void
+    {
+        $signed = 'https://example.test/index.php?option=com_appointments&view=manage&id=9&action=cancel&signature=' . str_repeat('a', 64);
+        $erase  = str_replace('action=cancel', 'action=erase', $signed);
+        $html   = MailHtml::textToHtml("Termin absagen:\n$signed\nIhre Daten löschen:\n$erase", [$signed => 'Termin absagen', $erase => 'Ihre Daten löschen']);
+
+        $this->assertSame(
+            '<p><a href="' . htmlspecialchars($signed) . '">Termin absagen</a><br>' . "\n"
+            . '<a href="' . htmlspecialchars($erase) . '">Ihre Daten löschen</a></p>' . "\n",
+            $html
+        );
+        $this->assertStringNotContainsString('>https://', $html, 'A signed URL is never the visible link text');
+    }
+
+    public function testLabelOnTheSameLineAndUrlInsideTextAreTakenIntoTheLink(): void
+    {
+        $room = 'https://example.test/room?jwt=abc';
+        $this->assertSame('<p><a href="https://example.test/room?jwt=abc">Join meeting</a></p>' . "\n", MailHtml::textToHtml("Join meeting: $room", [$room => 'Join meeting']));
+        $this->assertSame('<p>Location: Basel<br>' . "\n" . '<a href="https://example.test/room?jwt=abc">Join meeting</a></p>' . "\n",
+            MailHtml::textToHtml("Location: Basel\n$room", [$room => 'Join meeting']));
+        // Another text before the URL stays, only the label is taken.
+        $this->assertStringContainsString('Join here: <a href="https://example.test/room?jwt=abc">Join meeting</a>', MailHtml::textToHtml("Join here: $room", [$room => 'Join meeting']));
+    }
+
+    public function testLabelIsEscaped(): void
+    {
+        $room = 'https://example.test/room';
+        $this->assertStringContainsString('>&lt;b&gt;Join&lt;/b&gt;</a>', MailHtml::textToHtml($room, [$room => '<b>Join</b>']));
+    }
+
     public function testPlainTextSiteKeepsTheTextMail(): void
     {
         $this->assertNull(MailHtml::render("Hello\n\nWorld", 'de-DE', 'Site', ['mail_style' => 'plaintext']));
@@ -22,7 +54,7 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('<p>Guten Tag &lt;Erika&gt;,</p>', $html);
         $this->assertStringContainsString("<p>Ihr Termin ist bestätigt.<br>\nVon: 15.10.2026 10:00</p>", $html);
         $this->assertStringContainsString(
-            '<a href="https://example.test/index.php?option=com_appointments&amp;view=manage&amp;id=1">https://example.test/index.php?option=com_appointments&amp;view=manage&amp;id=1</a>',
+            '<a href="https://example.test/index.php?option=com_appointments&amp;view=manage&amp;id=1"' . self::BREAK . '>https://example.test/index.php?option=com_appointments&amp;view=manage&amp;id=1</a>',
             $html
         );
         $this->assertStringNotContainsString('<Erika>', $html);
@@ -32,7 +64,7 @@ final class MailHtmlTest extends TestCase
     {
         $html = MailHtml::textToHtml('Termin absagen: <https://example.test/manage?id=1&signature=abc>');
 
-        $this->assertStringContainsString('<a href="https://example.test/manage?id=1&amp;signature=abc">', $html);
+        $this->assertStringContainsString('<a href="https://example.test/manage?id=1&amp;signature=abc"' . self::BREAK . '>', $html);
         $this->assertStringContainsString('&lt;<a href=', $html);
         $this->assertStringContainsString('</a>&gt;', $html);
     }
@@ -40,11 +72,11 @@ final class MailHtmlTest extends TestCase
     public function testTrailingProsePunctuationStaysOutsideTheLink(): void
     {
         $html = MailHtml::textToHtml('Join (https://example.test/room?token=abc).');
-        $this->assertStringContainsString('(<a href="https://example.test/room?token=abc">https://example.test/room?token=abc</a>).', $html);
+        $this->assertStringContainsString('(<a href="https://example.test/room?token=abc"' . self::BREAK . '>https://example.test/room?token=abc</a>).', $html);
 
         $html = MailHtml::textToHtml('See https://example.test/wiki/A_(b), then https://example.test/x?y=1!');
-        $this->assertStringContainsString('<a href="https://example.test/wiki/A_(b)">', $html);
-        $this->assertStringContainsString('<a href="https://example.test/x?y=1">https://example.test/x?y=1</a>!', $html);
+        $this->assertStringContainsString('<a href="https://example.test/wiki/A_(b)"' . self::BREAK . '>', $html);
+        $this->assertStringContainsString('<a href="https://example.test/x?y=1"' . self::BREAK . '>https://example.test/x?y=1</a>!', $html);
     }
 
     public function testKnownUrlsAreLinkedExactly(): void
@@ -52,7 +84,7 @@ final class MailHtmlTest extends TestCase
         $room = "https://example.test/room/O'Brien?token=secret!";
         $html = MailHtml::textToHtml("Join: $room", [$room]);
 
-        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!">', $html);
+        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!"' . self::BREAK . '>', $html);
         $this->assertStringNotContainsString("<script", MailHtml::textToHtml('<script>', [$room]));
     }
 
@@ -60,8 +92,8 @@ final class MailHtmlTest extends TestCase
     {
         $html = MailHtml::textToHtml('Help: https://example.test/room/help and join https://example.test/room.', ['https://example.test/room']);
 
-        $this->assertStringContainsString('<a href="https://example.test/room/help">https://example.test/room/help</a>', $html);
-        $this->assertStringContainsString('<a href="https://example.test/room">https://example.test/room</a>.', $html);
+        $this->assertStringContainsString('<a href="https://example.test/room/help"' . self::BREAK . '>https://example.test/room/help</a>', $html);
+        $this->assertStringContainsString('<a href="https://example.test/room"' . self::BREAK . '>https://example.test/room</a>.', $html);
     }
 
     public function testRelativeLayoutUrlsResolveAgainstThePublicSiteUrl(): void
@@ -110,13 +142,13 @@ final class MailHtmlTest extends TestCase
         $room = "https://example.test/room/O'Brien?token=secret!";
         $html = MailHtml::textToHtml("Join:$room", [$room]);
 
-        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!">', $html);
+        $this->assertStringContainsString('<a href="https://example.test/room/O&#039;Brien?token=secret!"' . self::BREAK . '>', $html);
     }
     public function testKnownUrlInsideAnotherUrlIsNotSplitOut(): void
     {
         $html = MailHtml::textToHtml('Login: https://example.test/login?redirect=https://example.test/room', ['https://example.test/room']);
 
-        $this->assertStringContainsString('<a href="https://example.test/login?redirect=https://example.test/room">', $html);
+        $this->assertStringContainsString('<a href="https://example.test/login?redirect=https://example.test/room"' . self::BREAK . '>', $html);
     }
 
     public function testNoScriptOrAttributeInjectionThroughLinks(): void

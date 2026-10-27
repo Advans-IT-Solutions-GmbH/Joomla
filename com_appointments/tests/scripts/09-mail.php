@@ -131,6 +131,11 @@ try {
         }
         if (preg_match('/^To:.*invitee@example\.test/mi', preg_replace('/\r?\n[ \t]+/', ' ', $mime))) {
             $check((bool) preg_match('/<a href="[^"]*action=cancel[^"]*">/', $decoded), 'HTML mail links the signed cancel URL as a whole');
+            // A signed URL has no break opportunity: as link text it widened the mail beyond the screen.
+            $check(!preg_match('/<a [^>]*>[^<]*signature=/', $decoded) && (bool) preg_match('/<a href="[^"]*action=cancel[^"]*">Cancel<\/a>/', $decoded),
+                'HTML mail shows the label as link text, never the signed URL');
+            $check((bool) preg_match('/^https?:\/\/\S*action=cancel\S*\r?$/m', $decoded),
+                'Text part keeps the full signed URL on a line of its own');
         }
     }
     $check($htmlMails === 3, 'With com_mails HTML every notification is HTML in the mail layout with a plain-text alternative');

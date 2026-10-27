@@ -120,6 +120,9 @@ currently available.
   The mails follow the site's mail templates setting (com_mails): with «Mail Format» set to HTML or
   «HTML and plain text», the text is sent as HTML in the site's mail layout, including a template
   override such as `mytemplate:mailtemplate`, with links clickable and the text as alternative part.
+  The reschedule, cancel, erase and meeting links show their label as link text in the HTML part, so a
+  long signed URL cannot widen the mail. In the plain-text part the links the component adds itself stand
+  as full URLs, each on a line of its own.
   A site with plain-text mails keeps plain-text appointment mails.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login

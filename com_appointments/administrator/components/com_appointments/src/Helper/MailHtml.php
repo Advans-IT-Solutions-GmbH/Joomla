@@ -30,6 +30,9 @@ defined('_JEXEC') or die;
  */
 final class MailHtml
 {
+    /** A URL shown as link text may break anywhere, so a long one cannot widen the mail. */
+    private const BREAK_STYLE = ' style="word-break:break-all;overflow-wrap:anywhere"';
+
     /**
      * @param   string  $plain     Plain-text body as composed.
      * @param   string  $language  Language tag of the recipient.
@@ -37,7 +40,8 @@ final class MailHtml
      * @param   array   $config    com_mails options, null reads them from the component.
      * @param   object  $mailer    Mailer of the message. With a logo file set in com_mails the logo is
      *                             attached inline as «site-logo» and handed to the layout, like core.
-     * @param   string[]  $known   URLs the mail carries (conference and management links), linked exactly.
+     * @param   array     $known   URLs the mail carries (conference and management links), linked exactly.
+     *                             As a map URL => label the link shows the label instead of the URL.
      * @param   string    $base    Public site URL (com_appointments public_site_url or live_site). Relative
      *                             URLs of the layout resolve against it, also in a CLI reminder run.
      *                             Null keeps Joomla's own conversion against the request URI.
@@ -140,17 +144,36 @@ final class MailHtml
     /**
      * Escaped plain text as HTML paragraphs, with links clickable.
      *
-     * @param   string    $plain  Plain text.
-     * @param   string[]  $known  URLs the mail is known to carry (conference, reschedule, cancel,
-     *                            erase). They are linked exactly as given, an apostrophe or a final
-     *                            «!» included. Other URLs go through the prose heuristic.
+     * @param   string  $plain  Plain text.
+     * @param   array   $known  URLs the mail is known to carry (conference, reschedule, cancel, erase),
+     *                          as a list or as a map URL => label. They are linked exactly as given, an
+     *                          apostrophe or a final «!» included. A URL with a label shows the label as
+     *                          link text: a signed URL has no break opportunity and would widen the mail
+     *                          beyond the screen. A «label:» right before the URL, on the same or the
+     *                          previous line, is taken into the link. Other URLs go through the prose
+     *                          heuristic and may break anywhere.
      */
     public static function textToHtml(string $plain, array $known = []): string
     {
-        $known = array_values(array_unique(array_filter(
-            array_map('strval', $known),
-            static fn (string $url): bool => preg_match('#\Ahttps?://\S+\z#i', $url) === 1
-        )));
+        $labels = [];
+        $urls   = [];
+
+        foreach ($known as $key => $value) {
+            $url   = \is_string($key) ? $key : (string) $value;
+            $label = \is_string($key) ? trim((string) $value) : '';
+
+            if (preg_match('#\Ahttps?://\S+\z#i', $url) !== 1) {
+                continue;
+            }
+
+            $urls[] = $url;
+
+            if ($label !== '') {
+                $labels[$url] = $label;
+            }
+        }
+
+        $known = array_values(array_unique($urls));
         usort($known, static fn (string $a, string $b): int => \strlen($b) <=> \strlen($a));
         $pattern = $known === [] ? null
             // A known URL only counts as a whole: followed by the end, white space, a bracket or quote,
@@ -164,13 +187,24 @@ final class MailHtml
         $out    = '';
 
         foreach ($blocks as $block) {
+            // «Reschedule:» followed by its URL on the same or the next line becomes one link «Reschedule».
+            foreach ($labels as $url => $label) {
+                $block = preg_replace(
+                    '#(?<![^\n])\h*' . preg_quote($label, '#') . '\h*:\h*\n?\h*(?=' . preg_quote($url, '#') . '(?:\z|\s))#u',
+                    '',
+                    $block
+                ) ?? $block;
+            }
+
             $parts  = $pattern === null ? [$block] : (preg_split($pattern, $block, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$block]);
             $linked = '';
 
             foreach ($parts as $i => $part) {
                 if ($pattern !== null && $i % 2 === 1) {
                     $escaped = htmlspecialchars($part, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    $linked .= '<a href="' . $escaped . '">' . $escaped . '</a>';
+                    $linked .= isset($labels[$part])
+                        ? '<a href="' . $escaped . '">' . htmlspecialchars($labels[$part], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a>'
+                        : '<a href="' . $escaped . '"' . self::BREAK_STYLE . '>' . $escaped . '</a>';
                     continue;
                 }
 
@@ -201,7 +235,7 @@ final class MailHtml
 
             [$url, $tail] = self::splitTrailing($piece);
             $escaped        = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-            $linked        .= '<a href="' . $escaped . '">' . $escaped . '</a>'
+            $linked        .= '<a href="' . $escaped . '"' . self::BREAK_STYLE . '>' . $escaped . '</a>'
                 . htmlspecialchars($tail, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         }
 
