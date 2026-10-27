@@ -187,3 +187,9 @@ for the test suites and validation gates, `references/module.md` for the compani
 dashboard module `mod_dmarcreports`, `references/auto-ingestion.md` for the scheduler task plugin
 and trigger model, and `references/mta-sts-tls-rpt.md` for MTA-STS policy hosting/validation and
 TLS-RPT ingestion.
+
+## swiss made software label
+
+This extension carries the swiss made software label. Logo, link and origin claims follow the
+section "swiss made software label" in the skill `joomla-extensions` and `/AGENTS.md`, section
+"Label swiss made software". No new foreign service in run-time code without a maintainer decision.
