@@ -105,6 +105,9 @@ section "Label swiss made software".
 - **Origin claims** ("Swiss Made", the label name) only as the label allows, for the extensions of
   this repository.
 - **House rule, separate from the label criteria:** no foreign service hard-coded in run-time code
-  and none as a default value. Known point: the manifests use GitHub (`raw.githubusercontent.com`)
-  as update server and `updates/update.xml` points to packages in GitHub Releases; only version data
-  and packages go through it. A new external address in run-time code needs a maintainer decision.
+  and none as a default value; external services stay configurable. Known point: the manifests use
+  GitHub (`raw.githubusercontent.com`) as update server, several `script.php` hard-code the same URL
+  and register it again on install and update when it is missing, and `updates/update.xml` points to
+  packages in GitHub Releases. Only version data and packages are transferred; GitHub sees the public
+  IP address and HTTP metadata of the requesting Joomla server, as with any download. A new external
+  address in run-time code and a new external default value need a maintainer decision.
