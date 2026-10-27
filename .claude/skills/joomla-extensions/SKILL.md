@@ -89,3 +89,25 @@ See `references/testing.md` for running tests locally.
   lane, and a pull request runs the same full matrix as `main`.
 
 - **Fork-PR workflow approval (public repo):** `Joomla` is public, so GitHub gates a first-time contributor's first workflow run behind manual approval (the run sits in `action_required`, shown as "N workflows awaiting approval"). The **Copilot cloud coding agent** (actor `Copilot`) counts as first-time, so this repo's `actions/permissions/fork-pr-contributor-approval` `approval_policy` is set to `first_time_contributors_new_to_github` (least strict) so agent runs start automatically. Check/set: `gh api repos/Advans-IT-Solutions-GmbH/Joomla/actions/permissions/fork-pr-contributor-approval` (GET to check), and to set: `gh api --method PUT repos/Advans-IT-Solutions-GmbH/Joomla/actions/permissions/fork-pr-contributor-approval -f approval_policy=first_time_contributors_new_to_github`. Full rationale, values, the accepted security trade-off and the org-wide policy (private repos have no such setting; `.github` deliberately stays strict) live in the org handbook README, Section 7 "Fork-PR Contributor Approval".
+
+## swiss made software label
+
+The Joomla and J2Commerce extensions of this repository carry the swiss made software label. The
+label is about where the software is made, not where updates are hosted. Binding is the internally
+maintained handbook (section "Swiss Label Conformity"); the German short version is in `/AGENTS.md`,
+section "Label swiss made software".
+
+- **Logo:** only the unchanged official template, in colour or black and white. On GitHub also the
+  copy on a white margin for the dark theme (logo pixels 1:1, not scaled), because the label owner
+  offers no negative version.
+- **Link:** the logo links to the landing page of swiss made software. On GitHub the link opens in
+  the same window, because GitHub removes `target`.
+- **Origin claims** ("Swiss Made", the label name) only as the label allows, for the extensions of
+  this repository.
+- **House rule, separate from the label criteria:** no foreign service hard-coded in run-time code
+  and none as a default value; external services stay configurable. Known point: the manifests use
+  GitHub (`raw.githubusercontent.com`) as update server, several `script.php` hard-code the same URL
+  and register it again on install and update when it is missing, and `updates/update.xml` points to
+  packages in GitHub Releases. Only version data and packages are transferred; GitHub sees the public
+  IP address and HTTP metadata of the requesting Joomla server, as with any download. A new external
+  address in run-time code and a new external default value need a maintainer decision.

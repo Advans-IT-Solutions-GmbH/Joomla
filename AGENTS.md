@@ -87,6 +87,15 @@
 - Neue Dateien, die im Installationspaket ausgeliefert werden, tragen den Lizenzkopf mit `@copyright`, `@license` und `SPDX-License-Identifier: GPL-3.0-or-later` (Vorlage: `.claude/skills/joomla-extensions/references/conventions.md`). Testskripte, Docker- und CI-Hilfsdateien sind nicht Teil des Pakets und brauchen keinen Kopf.
 - Fremdcode nur mit GPL-3.0-kompatibler Lizenz übernehmen (nie GPL-2.0-only); fremde Copyright-Hinweise nie entfernen, Quelle in `THIRD-PARTY-NOTICES.txt` der Extension festhalten.
 
+## Label swiss made software
+- Die Joomla- und J2Commerce-Extensions dieses Repos tragen das Label swiss made software (Logo und Satz im `README.md`). Das Label betrifft die Herstellung der Software, nicht den Ort, an dem Updates liegen.
+- **Logo:** nur die unveränderte offizielle Vorlage, farbig oder schwarzweiss. Auf GitHub zusätzlich die Fassung mit weissem Rand für das dunkle Theme (Logopixel 1:1, nicht skaliert), weil der Verein keine Negativfassung anbietet. Das Logo verlinkt auf die Landingpage von swiss made software. Auf GitHub öffnet der Link im selben Fenster, weil GitHub `target` entfernt.
+- **Herkunftsangaben** («Swiss Made», Labelname) nur, wie das Label es erlaubt, also für die Extensions dieses Repos.
+- **Regel des Hauses, getrennt von den Label-Kriterien:** Kein ausländischer Dienst fest im Laufzeitcode und keiner als Vorgabewert. Alles Externe ist konfigurierbar und hat keine ausländische Vorgabe.
+- **Bekannter Punkt:** Die Manifeste nennen GitHub (`raw.githubusercontent.com`) als Update-Server, die `script.php` mehrerer Extensions tragen dieselbe Adresse fest ein und registrieren sie bei Installation und Update neu, wenn sie fehlt (z.B. `com_appointments/script.php`, `j2commerce/com_j2commerce_importexport/script.php`). Die `updates/update.xml` verweisen auf Pakete in GitHub Releases, und Release-Workflows erzeugen diese Download-Adressen. Inhaltlich laufen darüber nur Versionsdaten und Pakete, keine Kunden- oder Rechnungsdaten. GitHub sieht dabei wie bei jedem Abruf die öffentliche IP-Adresse und die HTTP-Metadaten des abrufenden Joomla-Servers.
+- **Prüfpunkte bei jeder Änderung:** keine neue externe Adresse im Laufzeitcode und kein neuer externer Vorgabewert ohne Entscheid des Maintainers. Logo und Link wie oben.
+- Massgeblich ist die intern gepflegte SSOT (Handbuch, Abschnitt «Swiss Label Conformity»). Kurzfassung für die Skills: `.claude/skills/joomla-extensions/SKILL.md`, Abschnitt «swiss made software label».
+
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 

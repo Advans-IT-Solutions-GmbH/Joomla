@@ -93,3 +93,9 @@ not repeated here. The points most easily missed on a new component:
 everything that is not booking-specific: directory layout, `build.sh`, `build.env`, `script.php`,
 `services/provider.php`, the three CI workflows, the test harness and the skill layout. Copy its
 shape, do not reinvent it.
+
+## swiss made software label
+
+This extension carries the swiss made software label. Logo, link and origin claims follow the
+section "swiss made software label" in the skill `joomla-extensions` and `/AGENTS.md`, section
+"Label swiss made software". The rules on external services (house rule) are in the same sections.
