@@ -93,7 +93,8 @@
 - **Bekannter Punkt:** Die Manifeste nennen GitHub (`raw.githubusercontent.com`) als Update-Server, die `updates/update.xml` verweisen auf Pakete in GitHub Releases, und Release-Workflows erzeugen diese Download-Adressen. Darüber laufen nur Versionsdaten und Pakete, keine Kunden- oder Rechnungsdaten.
 - **Prüfpunkte bei jeder Änderung:** keine neue externe Adresse im Laufzeitcode und kein neuer externer Vorgabewert ohne Entscheid des Maintainers. Das Labellogo bleibt die unveränderte offizielle Vorlage (einzig Schwarzweiss erlaubt) und verlinkt auf die Landingpage des Labels.
 
-## SkillsDetailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
+## Skills
+Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 
 ## Repo-spezifisch (Joomla)
 Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz dieses Repos verifizierte
