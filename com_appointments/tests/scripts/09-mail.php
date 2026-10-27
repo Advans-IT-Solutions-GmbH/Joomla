@@ -9,6 +9,7 @@ $prefix = $config->dbprefix;
 $tag = 'suite-mail-' . bin2hex(random_bytes(6));
 $event = 0;
 $schedule = 0;
+$mailsParams = null;
 $failed = 0;
 $check = static function (bool $ok, string $message) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $message . "\n";
@@ -106,6 +107,35 @@ try {
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE id=" . (int) $booking['id'])->fetch_assoc();
     $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3, 'Validé :');
 
+    // HTML mail style with Joomla's own mail layout (com_mails): HTML in the layout, text as
+    // alternative part, both calendar parts unchanged, management links clickable.
+    $mailsParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_mails' AND type='component'")->fetch_row()[0];
+    $html = json_encode(array_merge(json_decode((string) $mailsParams, true) ?: [], ['mail_style' => 'both', 'disable_htmllayout' => '1', 'mail_htmllayout' => 'mailtemplate']));
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($html) . "' WHERE element='com_mails' AND type='component'");
+    $db->query("UPDATE {$prefix}appointments_eventtypes SET requires_approval=0 WHERE id={$event}");
+    $client = new AppointmentsHttp('http://localhost', 'mail-html');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 13:00:00', ['guests' => 'guest@example.test']);
+    sleep(2);
+    $before = $spool();
+    $browser->request($path, $form);
+    $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 13:00:00'")->fetch_assoc();
+    $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3);
+    $htmlMails = 0;
+    foreach (array_values(array_diff($spool(), $before)) as $file) {
+        $mime = file_get_contents($file);
+        $multipart = (bool) preg_match('/Content-Type:\s*text\/html/i', $mime) && (bool) preg_match('/Content-Type:\s*text\/plain/i', $mime);
+        $decoded = AppointmentsMail::decoded($mime);
+        // Guest and host notices carry no links, so only the layout and the two parts are required here.
+        if ($multipart && stripos($decoded, '<html') !== false && stripos($decoded, '</html>') !== false) {
+            $htmlMails++;
+        }
+        if (preg_match('/^To:.*invitee@example\.test/mi', preg_replace('/\r?\n[ \t]+/', ' ', $mime))) {
+            $check((bool) preg_match('/<a href="[^"]*action=cancel[^"]*">/', $decoded), 'HTML mail links the signed cancel URL as a whole');
+        }
+    }
+    $check($htmlMails === 3, 'With com_mails HTML every notification is HTML in the mail layout with a plain-text alternative');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $mailsParams) . "' WHERE element='com_mails' AND type='component'");
+    $mailsParams = null;
     $client = new AppointmentsHttp('http://localhost', 'mail-failure');
     [$browser, $path, $form] = $client->bookingForm($event, $day . ' 12:00:00');
     sleep(2);
@@ -129,6 +159,9 @@ try {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
 } finally {
+    if ($mailsParams !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $mailsParams) . "' WHERE element='com_mails' AND type='component'");
+    }
     if (is_file($rejectDelivery) && !unlink($rejectDelivery)) {
         throw new RuntimeException('Cannot restore the test mail transport.');
     }

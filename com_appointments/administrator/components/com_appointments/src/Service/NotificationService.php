@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
+use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
@@ -100,8 +101,18 @@ final class NotificationService
                 $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
                 $mailer->addRecipient($address);
                 $mailer->setSubject($message['subject']);
-                $mailer->setBody($message['body']);
-                $mailer->isHtml(false);
+                // HTML in the site's mail layout when com_mails sends HTML, the text stays as
+                // alternative part. A site with plain-text mails keeps the text mail.
+                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, [$recipientBooking['conference_url'] ?? '', ...array_values($links)], $this->publicBase());
+
+                if ($html !== null) {
+                    $mailer->isHtml(true);
+                    $mailer->setBody($html);
+                    $mailer->AltBody = $message['body'];
+                } else {
+                    $mailer->setBody($message['body']);
+                    $mailer->isHtml(false);
+                }
 
                 foreach ($message['attachments'] as $attachment) {
                     $mailer->addStringAttachment($attachment['content'], $attachment['filename'], 'base64', $attachment['content_type']);
@@ -162,6 +173,26 @@ final class NotificationService
         }
 
         throw new NotificationException('No published template is available for this notification.');
+    }
+
+    /**
+     * Public site URL for HTML mail layouts: the component's public_site_url, then live_site, then the
+     * request root outside the CLI. Null when none is known (CLI without configuration).
+     */
+    private function publicBase(): ?string
+    {
+        $app  = Factory::getApplication();
+        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
+
+        if ($base === '') {
+            $base = (string) $app->get('live_site', '');
+        }
+
+        if ($base === '' && !($app instanceof ConsoleApplication)) {
+            $base = Uri::root();
+        }
+
+        return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
     }
 
     public function links(array $booking): array

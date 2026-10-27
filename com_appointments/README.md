@@ -117,6 +117,10 @@ currently available.
   configured mail transport. Every message carries both the `text/calendar` and `application/ics`
   attachments. UTC calendar entries retain their UID and increase their sequence on changes.
   Notification failure never discards a saved booking: the page explicitly reports the mail problem.
+  The mails follow the site's mail templates setting (com_mails): with «Mail Format» set to HTML or
+  «HTML and plain text», the text is sent as HTML in the site's mail layout, including a template
+  override such as `mytemplate:mailtemplate`, with links clickable and the text as alternative part.
+  A site with plain-text mails keeps plain-text appointment mails.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
   reschedule, cancellation and erasure capabilities, including in reminders. Guests and the host
