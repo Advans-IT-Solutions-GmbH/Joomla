@@ -88,4 +88,4 @@ See `references/architecture.md` for full details.
 
 This extension carries the swiss made software label. Logo, link and origin claims follow the
 section "swiss made software label" in the skill `joomla-extensions` and `/AGENTS.md`, section
-"Label swiss made software". No new foreign service in run-time code without a maintainer decision.
+"Label swiss made software". The rules on external services (house rule) are in the same sections.

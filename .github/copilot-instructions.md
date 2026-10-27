@@ -16,7 +16,7 @@ Signing-Regeln:
 - Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz verifizierte Signaturen.
 - Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch signierst du, wenn ein Schlüssel vorhanden ist, der auf GitHub hinterlegt ist und zur Commit-E-Mail passt; ohne Schlüssel dürfen sie unsigniert sein. Details in `/AGENTS.md`.
 
-Label: Die Extensions tragen swiss made software. Logo unverändert (farbig, schwarzweiss, auf GitHub auch mit weissem Rand), Link auf die Landingpage des Labels (auf GitHub im selben Fenster, weil GitHub `target` entfernt), Herkunftsangaben nur gemäss Label. Kein ausländischer Dienst fest im Laufzeitcode und keine ausländische Vorgabe, externe Dienste bleiben einstellbar; eine neue externe Adresse oder Vorgabe braucht einen Entscheid des Maintainers. Details in `/AGENTS.md`, Abschnitt „Label swiss made software“.
+Label: Die Extensions tragen swiss made software. Logo unverändert (farbig, schwarzweiss, auf GitHub auch mit weissem Rand), Link auf die Landingpage des Labels (auf GitHub im selben Fenster, weil GitHub `target` entfernt), Herkunftsangaben nur gemäss Label. Kein ausländischer Dienst fest im Laufzeitcode und keine ausländische Vorgabe, externe Dienste bleiben einstellbar; eine neue externe Adresse im Laufzeitcode und eine neue externe Vorgabe brauchen einen Entscheid des Maintainers. Details in `/AGENTS.md`, Abschnitt „Label swiss made software“.
 
 Lizenz: Alle Extensions stehen unter GPL-3.0-or-later; Kopfvorlage und Regeln für Fremdcode in `/AGENTS.md` (Abschnitt „Lizenz“).
 
