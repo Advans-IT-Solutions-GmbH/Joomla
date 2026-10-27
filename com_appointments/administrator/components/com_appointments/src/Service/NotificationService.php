@@ -87,14 +87,16 @@ final class NotificationService
                     $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
                 }
                 $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, $links, $now);
+                // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
+                // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
                 if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
-                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ': ' . $recipientBooking['conference_url'];
+                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ":\n" . $recipientBooking['conference_url'];
                 }
 
                 if ($canManage) {
-                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ': ' . $links['reschedule_url']
-                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_CANCEL') . ': ' . $links['cancel_url']
-                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ': ' . $links['erase_url'];
+                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ":\n" . $links['reschedule_url']
+                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_CANCEL') . ":\n" . $links['cancel_url']
+                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ":\n" . $links['erase_url'];
                 }
 
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
@@ -103,7 +105,17 @@ final class NotificationService
                 $mailer->setSubject($message['subject']);
                 // HTML in the site's mail layout when com_mails sends HTML, the text stays as
                 // alternative part. A site with plain-text mails keeps the text mail.
-                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, [$recipientBooking['conference_url'] ?? '', ...array_values($links)], $this->publicBase());
+                // Known URLs with the label they are shown with in the HTML part.
+                $known = [];
+                if (!empty($recipientBooking['conference_url'])) {
+                    $known[(string) $recipientBooking['conference_url']] = $language->_('COM_APPOINTMENTS_MAIL_JOIN');
+                }
+                foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL', 'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE'] as $field => $key) {
+                    if (!empty($links[$field])) {
+                        $known[(string) $links[$field]] = $language->_($key);
+                    }
+                }
+                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, $known, $this->publicBase());
 
                 if ($html !== null) {
                     $mailer->isHtml(true);
