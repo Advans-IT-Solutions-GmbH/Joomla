@@ -10,7 +10,8 @@
  *   - no unescaped double quote inside a value (Joomla drops the text after it)
  *   - the same keys exist as in the en-GB counterpart
  *   - the same printf placeholders are used as in the en-GB counterpart
- *   - de-DE: no "ß" (Swiss High German) and no ae/oe/ue spellings of common words
+ *   - de-DE: no "ß" (Swiss High German), no ae/oe/ue spellings of common words
+ *     and "z.B." without a space (house style)
  *   - fr-FR: no unaccented spellings of common French words
  *
  * And the usage of the keys by the extension's own code (PHP, JavaScript, XML
@@ -544,6 +545,10 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                 if ($tag === 'de-DE') {
                     if (str_contains($value, 'ß')) {
                         $addError($path, $entry['line'], "$key contains 'ß' (use 'ss' for Swiss High German)");
+                    }
+
+                    if (str_contains($value, 'z. B.')) {
+                        $addError($path, $entry['line'], "$key writes 'z. B.' (house style is 'z.B.' without a space)");
                     }
 
                     foreach (GERMAN_REPLACEMENT_WORDS as $word) {

@@ -50,7 +50,7 @@ bodies.
 ## Language Files
 
 - Three locales required: `de-DE`, `en-GB`, `fr-FR`
-- `de-DE` uses Swiss High German (no `ß`, use `ss` instead). The lint enforces this in the language
+- `de-DE` uses Swiss High German (no `ß`, use `ss` instead, and `z.B.` without a space). The lint enforces the `ß` rule in the language
   files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
   `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries
   the marker `lang-lint-allow-eszett`
