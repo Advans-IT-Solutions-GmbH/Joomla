@@ -414,6 +414,8 @@ Because this is a native Joomla privacy plugin and not a J2Commerce plugin, Joom
 
 Labels the shipped MyProfile overrides print come from the language file, so a wording change (for example the delete button `PLG_PRIVACY_J2COMMERCE_DELETE_ADDRESS_BTN`) reaches overrides that were deployed earlier without redeploying them.
 
+The language file also carries keys that only a site template's own `myprofile/default_privacy.php` override prints (the list of the visitor's privacy requests with type and status, the stored-data, retention, payment-data and process notes). They are listed in `tests/language-keys-for-template-overrides.txt`; the language lint accepts them there and requires them in every language.
+
 ### Updating overrides after plugin updates
 
 When the plugin is updated, the override files in `JPATH_PLUGINS/privacy/j2commerce/overrides/` are updated but the deployed copies in `templates/` are **not** touched. After a plugin update:
