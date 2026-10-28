@@ -45,6 +45,15 @@ $_privacyTabId   = 'j2commerce-privacy-tab';
 
 The tab is rendered while the plugin is enabled and `show_privacy_section` is on; then `PrivacyOptions::loadLanguage()` loads the plugin language (tab title `PLG_PRIVACY_J2COMMERCE_MYPROFILE_TAB_TITLE`). `default_addresses.php` gates the delete button with `PrivacyOptions::showDeleteAddress()`, `default_privacy.php` returns early when `show_privacy_section` is off and passes `showExport`/`showDelete` (`show_export_data`/`show_delete_all`) to the layout. The system plugin's `onAfterRoute` also loads the language for `view=myprofile`.
 
+**Keys printed by a site template.** A site template may print its own `PLG_PRIVACY_J2COMMERCE_*` keys
+in its `myprofile/default_privacy.php` override (request list, data overview, process steps,
+retention notice). Each of them must exist in `de-DE`, `en-GB` and `fr-FR` of the plugin and is listed
+in `tests/language-keys-for-template-overrides.txt`, otherwise the tab shows raw keys and the lint
+would drop the key as unused. Sites run in `de-DE`. The plugin also ships `de-CH`, identical to `de-DE`,
+because a `de-CH` folder installed by an older version is never deleted and lacks every key added
+since. Shipping it lets the update replace that copy. A site language override (`language/overrides/*.override.ini`) that defines these keys
+wins over the plugin file; define them there only to change the wording on purpose.
+
 ## Checkout Consent
 
 **J2Commerce 6 (verified against J2Commerce 6.6.1, `7edb6e11`):** steps are loaded via AJAX and `J2CommerceDom.adopt()` strips `<script>` tags; the privacy group is not imported during the checkout. The bundled **system** plugin `plg_system_j2commerceprivacy` handles consent.

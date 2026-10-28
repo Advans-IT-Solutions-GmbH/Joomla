@@ -86,7 +86,10 @@ not repeated here. The points most easily missed on a new component:
 - Never edit `VERSION`, the manifest `<version>` or `updates/update.xml` by hand. The release
   workflow owns them.
 - Conventional Commits with the scope `appointments`.
-- Language files for `de-DE`, `en-GB` and `fr-FR`. German is Swiss High German, so `ss` and never `ß`.
+- Language files for `de-DE`, `en-GB` and `fr-FR`. German is Swiss High German, so `ss` and never `ß`,
+  and `z.B.` without a space (the language lint reports `z. B.` in `de-DE`).
+- If a mail ever goes through `MailTemplate`, construct it with mailer, language factory and database
+  (Joomla 6.2 deprecation, `joomla-extensions/references/conventions.md`, section PHP).
 - README in English.
 
 `com_dmarcreports` is the most recent component in this repository and the structural reference for
