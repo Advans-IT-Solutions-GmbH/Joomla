@@ -39,6 +39,11 @@ bodies.
 - Plugin service providers: `new Plugin((array) PluginHelper::getPlugin(...))`, then
   `setApplication()`/`setDatabase()` as needed. Never pass the dispatcher to the constructor and never
   call `setDispatcher()` (both deprecated since Joomla 5.2; `PluginHelper` sets the dispatcher).
+- Mail templates: Joomla 6.2 deprecates `new MailTemplate($id, $lang)` without the mailer, the
+  language factory and the database. Pass all three: `MailerFactoryInterface::createMailer()` and
+  `LanguageFactoryInterface` from the DI container, plus the plugin's database. Joomla 5.4 takes only
+  the mailer and ignores the further arguments. The production-like Joomla 6 lanes fail on the deprecation otherwise
+  (`plg_ajax_joomlaajaxforms`).
 - Deprecated APIs are rejected by `php shared/tests/deprecated-api-scan.php <extension dir>` (tokenizer
   based; allowlist with reasons at the top of the script). Fix the code instead of extending the
   allowlist.

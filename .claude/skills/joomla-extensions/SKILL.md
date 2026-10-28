@@ -64,6 +64,11 @@ Advans-IT-Solutions-GmbH/Joomla
   (`shared-deprecations.php`). Both must stay green.
 - **Plugin service providers** create the plugin with the config array only and never pass or set
   the dispatcher (`PluginHelper` sets it when booting the plugin).
+- **Languages:** sites run in `de-DE`, so `de-DE` carries the Swiss High German text in every
+  extension (`ss`, `z.B.`). The language lint fails on a key used but not defined, on `ß` and
+  `z. B.` in `de-DE`, and on a shipped `de-CH` that differs from `de-DE`. Keys only a site template
+  prints are listed per extension in `tests/language-keys-for-template-overrides.txt`. Details:
+  `references/conventions.md`, section "Language Files".
 - **Releases:** only the latest release per extension exists; the publish workflow deletes older
   releases and tags on purpose. Details: `references/release-workflow.md`.
 - **OSMap mixed installation** (J2Store and J2Commerce both enabled): `com_j2store` takes

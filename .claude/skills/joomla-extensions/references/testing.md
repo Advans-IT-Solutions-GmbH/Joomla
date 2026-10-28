@@ -332,7 +332,11 @@ Notable test details:
   on the PR head and requires `success`; missing, cancelled and skipped runs fail closed.
   Security Scan must also have successfully executed its expected scanner jobs.
   **After re-running a failed workflow,
-  re-run `Collect Results` as well.**
+  re-run `Collect Results` as well.** `.github/scripts/collect-results.sh` hands run lists to `jq`
+  through stdin, never as one argument: a pull request that runs every workflow lists more than
+  128 KiB of runs, and Linux rejects an argument of that size (`Argument list too long`), which failed
+  the gate closed. `test-collect-results.sh` covers a list above that limit. Keep new list handling on
+  stdin as well.
 - **Security Scan** (`security.yml`) runs on push and pull request to `main` and manually: Gitleaks is
   blocking; Semgrep and zizmor are report-only.
 - **Infrastructure Tests:** `.github/scripts/test-publish-release.py` and
