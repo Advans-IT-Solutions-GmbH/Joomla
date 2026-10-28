@@ -1429,7 +1429,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             $this->loadMailTemplateStrings($templateId, $languageTag);
 
-            $mailer = new MailTemplate($templateId, $languageTag);
+            // Joomla 6.2 deprecates a MailTemplate without mailer, language factory and database.
+            // Joomla 5.4 takes only the mailer and ignores the further arguments.
+            $container = Factory::getContainer();
+            $mailer    = new MailTemplate(
+                $templateId,
+                $languageTag,
+                $container->get(MailerFactoryInterface::class)->createMailer(),
+                $container->get(LanguageFactoryInterface::class),
+                $this->getDatabase()
+            );
             $mailer->addTemplateData($data);
             $mailer->addRecipient($recipientEmail, $recipientName !== '' ? $recipientName : null);
 

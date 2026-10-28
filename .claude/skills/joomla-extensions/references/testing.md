@@ -286,7 +286,7 @@ Notable test details:
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
   extension on the declared minimum PHP 8.1; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
-  keys and printf placeholders equal to en-GB, de-DE without `ß` and without ae/oe/ue spellings,
+  keys and printf placeholders equal to en-GB, de-DE without `ß`, without ae/oe/ue spellings and with `z.B.`, a shipped de-CH equal to de-DE,
   fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
   every defined key is used by the code, derived from a `langConstPrefix` or listed in
   `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, and no `ß` in

@@ -10,7 +10,9 @@
  *   - no unescaped double quote inside a value (Joomla drops the text after it)
  *   - the same keys exist as in the en-GB counterpart
  *   - the same printf placeholders are used as in the en-GB counterpart
- *   - de-DE: no "ß" (Swiss High German) and no ae/oe/ue spellings of common words
+ *   - de-DE: no "ß" (Swiss High German), no ae/oe/ue spellings of common words
+ *     and "z.B." without a space (house style)
+ *   - de-CH, where an extension still ships it: the same keys and values as de-DE
  *   - fr-FR: no unaccented spellings of common French words
  *
  * And the usage of the keys by the extension's own code (PHP, JavaScript, XML
@@ -519,6 +521,22 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
         $reference = $parsed[REFERENCE_TAG];
 
+        // Sites run in de-DE, which carries the Swiss High German text. A de-CH file
+        // kept next to it for sites that still have one must say exactly the same.
+        if (isset($parsed['de-CH'], $parsed['de-DE'])) {
+            foreach ($parsed['de-CH'] as $key => $entry) {
+                if (isset($parsed['de-DE'][$key]) && $parsed['de-DE'][$key]['value'] !== $entry['value']) {
+                    $addError($files['de-CH'], $entry['line'], "$key differs from de-DE (de-CH must equal de-DE)");
+                }
+            }
+
+            foreach (array_diff_key($parsed['de-DE'], $parsed['de-CH']) as $key => $entry) {
+                $addError($files['de-CH'], 0, "missing key $key (present in de-DE)");
+            }
+        } elseif (isset($parsed['de-CH'])) {
+            $addError($files['de-CH'], 0, 'de-CH without a de-DE counterpart (de-DE carries the Swiss text)');
+        }
+
         foreach ($parsed as $tag => $entries) {
             $path = $files[$tag];
 
@@ -544,6 +562,10 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                 if ($tag === 'de-DE') {
                     if (str_contains($value, 'ß')) {
                         $addError($path, $entry['line'], "$key contains 'ß' (use 'ss' for Swiss High German)");
+                    }
+
+                    if (str_contains($value, 'z. B.')) {
+                        $addError($path, $entry['line'], "$key writes 'z. B.' (house style is 'z.B.' without a space)");
                     }
 
                     foreach (GERMAN_REPLACEMENT_WORDS as $word) {
