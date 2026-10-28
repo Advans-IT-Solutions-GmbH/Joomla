@@ -196,8 +196,8 @@ class InstallationTest
                 !in_array(self::UPDATE_URL, $this->linkedUpdateSites((int) $taskPlugin->extension_id), true));
         }
 
-        // Test 4: Language files exist
-        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+        // Test 4: Language files exist (de-CH equals de-DE, it replaces the copy older versions left)
+        foreach (['de-DE', 'de-CH', 'en-GB', 'fr-FR'] as $tag) {
             $this->test("$tag language file exists",
                 file_exists(JPATH_BASE . "/plugins/privacy/j2commerce/language/$tag/plg_privacy_j2commerce.ini"));
         }

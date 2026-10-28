@@ -559,7 +559,7 @@ A removal request is not refused by this plugin for retention reasons (see [Data
 - **Flexible Retention Frameworks:** Configurable retention periods (1-30 years) supporting multiple jurisdictions
 - **Multi-Jurisdictional Support:** Configurable legal basis documentation for international operations
 - **Automated Compliance Processing:** Scheduled task execution for expired data handling
-- **Internationalization:** Multi-language interface support (German de-DE, English en-GB, French fr-FR)
+- **Internationalization:** Multi-language interface support (German de-DE, English en-GB, French fr-FR; de-CH is shipped identical to de-DE)
 - **Platform Integration:** Optional Joomla core user data inclusion in privacy exports
 
 ### Limitations

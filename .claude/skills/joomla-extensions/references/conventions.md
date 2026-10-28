@@ -49,7 +49,10 @@ bodies.
 
 ## Language Files
 
-- Three locales required: `de-DE`, `en-GB`, `fr-FR`
+- Three locales required: `de-DE`, `en-GB`, `fr-FR`. Sites run in `de-DE`, so `de-DE` carries the Swiss text.
+  `plg_privacy_j2commerce` additionally ships `de-CH` (all of its language folders), because sites still
+  have the `de-CH` folder an older version installed; it must equal `de-DE` key for key and value for
+  value, which the lint checks
 - `de-DE` uses Swiss High German (no `ß`, use `ss` instead, and `z.B.` without a space). The lint enforces the `ß` rule in the language
   files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
   `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries
