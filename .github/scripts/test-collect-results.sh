@@ -13,7 +13,7 @@ set -euo pipefail
 case "$*" in
     *"/files?"*) printf '%s' "$FILES" ;;
     *"/jobs?"*) printf '%s' "$JOBS" ;;
-    *"/actions/runs?"*) printf '%s' "$RUNS" ;;
+    *"/actions/runs?"*) if [ -n "${RUNS_FILE:-}" ]; then cat "$RUNS_FILE"; else printf '%s' "$RUNS"; fi ;;
     *"/check-runs?"*) [ "$CHECK_RUNS" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$CHECK_RUNS" ;;
     *"/actions/runs/"*) [ "$SINGLE_RUN" = FAIL ] && { echo 'HTTP 502' >&2; exit 1; }; printf '%s' "$SINGLE_RUN" ;;
     *) echo "Unexpected API call: $*" >&2; exit 2 ;;
@@ -88,6 +88,13 @@ export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_number=2 
 check 'newest failed run wins over older success' fail
 export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_attempt=2 | .conclusion="success"] | .[0].workflow_runs[0].conclusion="failure"' <<<"$(run_json success)")"
 check 'latest successful attempt supersedes previous failure' pass
+
+# A pull request that runs every workflow lists more than the 128 KiB Linux allows for one
+# argument. The list comes from a file here, because an environment variable has that limit too.
+jq -c '.[0].workflow_runs[0].padding = ("x" * 200000)' <<<"$(run_json success)" >"$FIXTURE/runs.json"
+export RUNS_FILE="$FIXTURE/runs.json"
+check 'a run list above the 128 KiB argument limit is read' pass
+unset RUNS_FILE
 
 # The run list lags behind under congested runners; the commit's check runs do not.
 export RUNS='[{"workflow_runs":[]}]'

@@ -202,14 +202,19 @@ fetch_runs() {
     run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
         | jq -r '[.[].check_runs[].details_url // empty | select(test("/actions/runs/[0-9]+"))
             | capture("/actions/runs/(?<id>[0-9]+)").id] | unique | .[]')" || return 1
+    # The run lists travel through stdin, never as a jq argument: a pull request that runs
+    # every workflow lists more than 128 KiB of runs, and Linux refuses a single argument
+    # of that size ("Argument list too long"), which failed this check closed.
+    local run
     for run_id in $run_ids; do
         if ! jq -e --argjson id "$run_id" 'any(.[]; .id == $id)' <<<"$listed" >/dev/null; then
-            extra="$(gh api "repos/${REPO}/actions/runs/${run_id}" \
-                | jq -c --argjson extra "$extra" --arg sha "$HEAD_SHA" \
-                    'if .event == "pull_request" and .head_sha == $sha then $extra + [.] else $extra end')" || return 1
+            run="$(gh api "repos/${REPO}/actions/runs/${run_id}")" || return 1
+            extra="$(printf '%s\n%s\n' "$extra" "$run" \
+                | jq -c -s --arg sha "$HEAD_SHA" \
+                    '.[0] as $extra | .[1] | if .event == "pull_request" and .head_sha == $sha then $extra + [.] else $extra end')" || return 1
         fi
     done
-    jq -n --argjson listed "$listed" --argjson extra "$extra" '{workflow_runs: ($listed + $extra)}' || return 1
+    printf '%s\n%s\n' "$listed" "$extra" | jq -c -s '{workflow_runs: (.[0] + .[1])}' || return 1
 }
 
 while :; do
