@@ -33,6 +33,10 @@ rests on code review. See `ingestion.md`.
 ## Unit suite (`tests/Unit/`, PHPUnit)
 
 Separate CI job, no Docker. Covers the parser, `DnsDiagnostics` and `ActionCenter` (pure logic).
+`DashboardLayoutTest` renders `tmpl/dashboard/default.php` in a child PHP process
+(`tests/Unit/Fixtures/render-dashboard.php`, with minimal Joomla stand-ins) and asserts that the
+Action Center status buttons sit in one `com-dmarcreports-action-controls` row below the text,
+never as wrapping flex items beside it, so their position does not depend on the text length.
 The database-backed `Metrics` aggregation is exercised by the `metrics` integration suite instead,
 because it needs a real database. `composer install` then `composer test`. Local run (Windows, no
 Docker/composer): run `phpunit.phar` from the `com_dmarcreports` dir (so it finds `phpunit.xml`)
