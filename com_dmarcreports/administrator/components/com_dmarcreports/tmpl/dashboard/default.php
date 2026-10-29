@@ -45,8 +45,14 @@ $statusLabels = [
                 <ol class="list-group list-group-numbered">
                     <?php foreach ($this->actions as $item) : ?>
                         <?php $class = ActionPresenter::severityClass((int) $item['severity']); ?>
-                        <li class="list-group-item d-flex justify-content-between align-items-start flex-wrap">
-                            <div class="ms-2 me-auto">
+                        <?php
+                        // One body column per item: the text, then one fixed row of
+                        // controls below it. The forms used to be separate flex items
+                        // of a wrapping, space-between row, so where each button landed
+                        // depended on the length of the text and the viewport width.
+                        ?>
+                        <li class="list-group-item d-flex align-items-start">
+                            <div class="com-dmarcreports-action ms-2 flex-grow-1">
                                 <div class="fw-bold">
                                     <span class="badge bg-<?php echo $class; ?> me-2">
                                         <?php echo ActionPresenter::severityLabel((int) $item['severity']); ?>
@@ -55,38 +61,40 @@ $statusLabels = [
                                     <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
                                 </div>
                                 <?php echo htmlspecialchars(ActionPresenter::text($item)); ?>
+                                <?php if ($canEditState) : ?>
+                                <div class="com-dmarcreports-action-controls d-flex flex-wrap gap-1 mt-2">
+                                    <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
+                                        <input type="hidden" name="task" value="actions.done">
+                                        <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
+                                        <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
+                                        <input type="hidden" name="category" value="<?php echo htmlspecialchars((string) $item['category']); ?>">
+                                        <input type="hidden" name="<?php echo $token; ?>" value="1">
+                                        <button type="submit" class="btn btn-sm btn-outline-success" title="<?php echo Text::_('COM_DMARCREPORTS_ACTION_MARK_DONE'); ?>">
+                                            <?php echo Text::_('COM_DMARCREPORTS_ACTION_MARK_DONE'); ?>
+                                        </button>
+                                    </form>
+                                    <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
+                                        <input type="hidden" name="task" value="actions.snooze">
+                                        <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
+                                        <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
+                                        <input type="hidden" name="days" value="7">
+                                        <input type="hidden" name="<?php echo $token; ?>" value="1">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                            <?php echo Text::_('COM_DMARCREPORTS_ACTION_SNOOZE'); ?>
+                                        </button>
+                                    </form>
+                                    <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
+                                        <input type="hidden" name="task" value="actions.ignore">
+                                        <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
+                                        <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
+                                        <input type="hidden" name="<?php echo $token; ?>" value="1">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                            <?php echo Text::_('COM_DMARCREPORTS_ACTION_IGNORE'); ?>
+                                        </button>
+                                    </form>
+                                </div>
+                                <?php endif; ?>
                             </div>
-                            <?php if ($canEditState) : ?>
-                            <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2">
-                                <input type="hidden" name="task" value="actions.done">
-                                <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
-                                <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
-                                <input type="hidden" name="category" value="<?php echo htmlspecialchars((string) $item['category']); ?>">
-                                <input type="hidden" name="<?php echo $token; ?>" value="1">
-                                <button type="submit" class="btn btn-sm btn-outline-success" title="<?php echo Text::_('COM_DMARCREPORTS_ACTION_MARK_DONE'); ?>">
-                                    <?php echo Text::_('COM_DMARCREPORTS_ACTION_MARK_DONE'); ?>
-                                </button>
-                            </form>
-                            <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2 ms-1">
-                                <input type="hidden" name="task" value="actions.snooze">
-                                <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
-                                <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
-                                <input type="hidden" name="days" value="7">
-                                <input type="hidden" name="<?php echo $token; ?>" value="1">
-                                <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                    <?php echo Text::_('COM_DMARCREPORTS_ACTION_SNOOZE'); ?>
-                                </button>
-                            </form>
-                            <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2 ms-1">
-                                <input type="hidden" name="task" value="actions.ignore">
-                                <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
-                                <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
-                                <input type="hidden" name="<?php echo $token; ?>" value="1">
-                                <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                    <?php echo Text::_('COM_DMARCREPORTS_ACTION_IGNORE'); ?>
-                                </button>
-                            </form>
-                            <?php endif; ?>
                         </li>
                     <?php endforeach; ?>
                 </ol>
@@ -103,25 +111,27 @@ $statusLabels = [
             <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_ACTION_HANDLED_INTRO'); ?></p>
             <ul class="list-group">
                 <?php foreach ($this->suppressed as $item) : ?>
-                    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap">
-                        <div class="ms-2 me-auto">
+                    <li class="list-group-item">
+                        <div class="com-dmarcreports-action ms-2">
                             <span class="badge bg-light text-dark me-2">
                                 <?php echo Text::_($statusLabels[(string) $item['status']] ?? 'COM_DMARCREPORTS_ACTION_STATUS_DONE'); ?>
                             </span>
                             <?php echo htmlspecialchars((string) $item['domain']); ?> &middot;
                             <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
+                            <?php if ($canEditState) : ?>
+                            <div class="com-dmarcreports-action-controls d-flex flex-wrap gap-1 mt-2">
+                                <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
+                                    <input type="hidden" name="task" value="actions.reopen">
+                                    <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
+                                    <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
+                                    <input type="hidden" name="<?php echo $token; ?>" value="1">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                                        <?php echo Text::_('COM_DMARCREPORTS_ACTION_REOPEN'); ?>
+                                    </button>
+                                </form>
+                            </div>
+                            <?php endif; ?>
                         </div>
-                        <?php if ($canEditState) : ?>
-                        <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="d-flex gap-1 mt-2">
-                            <input type="hidden" name="task" value="actions.reopen">
-                            <input type="hidden" name="domain_id" value="<?php echo (int) $item['domain_id']; ?>">
-                            <input type="hidden" name="action_key" value="<?php echo htmlspecialchars((string) $item['action_key']); ?>">
-                            <input type="hidden" name="<?php echo $token; ?>" value="1">
-                            <button type="submit" class="btn btn-sm btn-outline-primary">
-                                <?php echo Text::_('COM_DMARCREPORTS_ACTION_REOPEN'); ?>
-                            </button>
-                        </form>
-                        <?php endif; ?>
                     </li>
                 <?php endforeach; ?>
             </ul>
