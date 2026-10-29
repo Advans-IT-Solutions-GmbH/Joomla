@@ -5,10 +5,10 @@
         <description>DMARC aggregate report analysis for Joomla</description>
         <element>com_dmarcreports</element>
         <type>component</type>
-        <version>1.1.1</version>
+        <version>1.1.2</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_dmarcreports</infourl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.1.1/com_dmarcreports_1.1.1.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.1.2/com_dmarcreports_1.1.2.zip</downloadurl>
         </downloads>
         <tags>
             <tag>stable</tag>
