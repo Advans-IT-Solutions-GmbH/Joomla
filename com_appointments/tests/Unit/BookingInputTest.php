@@ -90,6 +90,69 @@ final class BookingInputTest extends TestCase
         self::assertNull($row['invitee_phone']);
     }
 
+    public function testBothTelephoneLocationTypesRequireThePhone(): void
+    {
+        self::assertTrue(BookingInput::requiresPhone('phone_host_calls'));
+        self::assertTrue(BookingInput::requiresPhone('phone_invitee_calls'));
+
+        foreach (['in_person', 'custom_text', 'conference', ''] as $type) {
+            self::assertFalse(BookingInput::requiresPhone($type));
+        }
+    }
+
+    public function testRequiredFixedPhoneIsReportedAtItsField(): void
+    {
+        foreach ([[], '', ['country' => '41', 'number' => '']] as $phone) {
+            $error = $this->refusal($this->input() + ['phone' => $phone], [], true);
+            self::assertSame(['phone' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED'], $error->fieldErrors);
+        }
+
+        foreach ([['country' => '41', 'number' => '12'], ['country' => '999', 'number' => '791234567'],
+            ['country' => '41', 'number' => 'call me'], ['country' => '', 'number' => '791234567'],
+            ['country' => '41', 'number' => '+999 1234567'], 'not-an-array'] as $phone) {
+            $error = $this->refusal($this->input() + ['phone' => $phone], [], true);
+            self::assertSame(['phone'], array_keys($error->fieldErrors));
+        }
+
+        $error = $this->refusal($this->input() + ['phone' => ['country' => '41', 'number' => '12']], [], true);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_PHONE', $error->fieldErrors['phone']);
+    }
+
+    #[DataProvider('phoneNumbers')]
+    public function testFixedPhoneIsStoredInInternationalForm(array $phone, string $expected): void
+    {
+        $row = (new BookingInput())->validate($this->input() + ['phone' => $phone], [], 'de-DE', true);
+        self::assertSame($expected, $row['invitee_phone']);
+        self::assertSame('[]', $row['custom_fields']);
+    }
+
+    public static function phoneNumbers(): iterable
+    {
+        yield 'national with trunk zero' => [['country' => '41', 'number' => '079 123 45 67'], '+41791234567'];
+        yield 'national without trunk zero' => [['country' => '41', 'number' => '79 123 45 67'], '+41791234567'];
+        yield 'international plus wins over the selector' => [['country' => '49', 'number' => '+41 (0)79 123-45-67'], '+41791234567'];
+        yield 'international 00 prefix' => [['country' => '', 'number' => '0044 20 7946 0958'], '+442079460958'];
+        yield 'three-digit code' => [['country' => '423', 'number' => '234 56 78'], '+4232345678'];
+        yield 'Italy keeps its leading zero' => [['country' => '39', 'number' => '06 1234 5678'], '+390612345678'];
+        yield 'North America' => [['country' => '1', 'number' => '(212) 555-0100'], '+12125550100'];
+    }
+
+    public function testFixedPhoneTakesPrecedenceOverACustomTelephoneField(): void
+    {
+        $fields = [['id' => 3, 'type' => 'tel', 'required' => 0, 'options' => null]];
+        $input = $this->input() + ['phone' => ['country' => '41', 'number' => '791234567'],
+            'fields' => [3 => ['country' => '49', 'number' => '30 1234567']]];
+        $row = (new BookingInput())->validate($input, $fields, 'en-GB', true);
+        self::assertSame('+41791234567', $row['invitee_phone']);
+        self::assertSame('+49301234567', json_decode($row['custom_fields'], true)['3']);
+
+        // Without a telephone location the fixed field is not part of the form and is ignored.
+        $row = (new BookingInput())->validate($input, $fields, 'en-GB');
+        self::assertSame('+49301234567', $row['invitee_phone']);
+        $row = (new BookingInput())->validate($this->input() + ['phone' => 'tampered'], [], 'en-GB');
+        self::assertNull($row['invitee_phone']);
+    }
+
     public function testRejectsElevenGuests(): void
     {
         $guests = array_map(static fn ($i) => "guest{$i}@example.test", range(1, 11));
@@ -135,10 +198,10 @@ final class BookingInputTest extends TestCase
         self::assertSame([], $error->fieldErrors);
     }
 
-    private function refusal(array $input, array $fields): BookingValidationException
+    private function refusal(array $input, array $fields, bool $phoneRequired = false): BookingValidationException
     {
         try {
-            (new BookingInput())->validate($input, $fields, 'en-GB');
+            (new BookingInput())->validate($input, $fields, 'en-GB', $phoneRequired);
         } catch (BookingValidationException $e) {
             return $e;
         }

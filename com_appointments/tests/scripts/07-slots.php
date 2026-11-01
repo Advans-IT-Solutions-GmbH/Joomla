@@ -36,6 +36,27 @@ $compare = static function (int $eventId, string $day, string $name) use ($fixtu
     return $actual;
 };
 
+// The background update of the booking script: the same address plus format=raw returns only
+// the date-and-time part, rendered by the same layout from the same engine result.
+$fragment = static function (int $eventId, string $day, string $name, array $expected) use ($client, $check): void {
+    $html = $client->request('/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'eventtype',
+        'id' => $eventId, 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => $name, 'format' => 'raw']));
+    $document = new DOMDocument();
+    @$document->loadHTML('<?xml encoding="utf-8"?>' . $html);
+    $xpath = new DOMXPath($document);
+    $actual = [];
+    foreach ($xpath->query('//input[@name="booking[start]"]') as $input) {
+        $actual[] = $input->getAttribute('value');
+    }
+    $picker = $xpath->query('//*[@id="appointment-picker"][@data-appointments-picker]')->item(0);
+    $zone = $xpath->query('//input[@type="hidden"][@name="booking[timezone]"]')->item(0);
+    $check($client->status === 200 && $actual === $expected && $picker instanceof DOMElement
+        && $picker->getAttribute('data-zone') === $name && $picker->getAttribute('data-has-slots') === ($expected === [] ? '0' : '1')
+        && $zone instanceof DOMElement && $zone->getAttribute('value') === $name,
+        'Slot endpoint (format=raw) returns the same times as the page in ' . $name);
+    $check(stripos($html, '<html') === false && stripos($html, '<form') === false && preg_match('/name="[a-f0-9]{32}"/', $html) === 0
+        && stripos($html, '<script') === false, 'Slot endpoint returns only the date-and-time part, without page, form, token or script in ' . $name);
+};
 try {
     $event = $fixture->event();
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
@@ -46,7 +67,7 @@ try {
     $fixture->db->query("INSERT INTO {$fixture->prefix}appointments_blocked (user_id,start_utc,end_utc,created_utc) VALUES ({$fixture->host},'{$day} 11:00:00','{$day} 11:30:00',UTC_TIMESTAMP())");
     $blocked = (int) $fixture->db->insert_id;
     foreach (['UTC', 'Europe/Zurich', 'Pacific/Apia'] as $zone) {
-        $compare($event, $day, $zone);
+        $fragment($event, $day, $zone, $compare($event, $day, $zone));
     }
     $slots = $compare($event, $day, 'UTC');
     $check($slots === [$day . ' 10:10:00', $day . ' 10:40:00', $day . ' 11:40:00'], 'Override owns its anchored grid and blocked occupancy removes only conflicting slots');
@@ -56,10 +77,14 @@ try {
     $closed = (new DateTimeImmutable($day, new DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
     $fixture->db->query("INSERT INTO {$fixture->prefix}appointments_schedule_rules (schedule_id,specific_date,is_unavailable,start_time,end_time) VALUES ({$schedule},'{$closed}',1,'00:00:00','00:00:00')");
     $check($compare($event, $closed, 'UTC') === [], 'An unavailable override produces no bookable form slot');
+    $fragment($event, $closed, 'UTC', []);
     foreach ([['month' => '2026-99'], ['timezone' => 'not-a-zone']] as $invalid) {
         $client->request('/index.php?' . http_build_query(array_replace(['option' => 'com_appointments', 'view' => 'eventtype',
             'id' => $event, 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC'], $invalid)));
         $check($client->status === 400, 'Invalid public slot input gets an explicit error');
+        $client->request('/index.php?' . http_build_query(array_replace(['option' => 'com_appointments', 'view' => 'eventtype',
+            'id' => $event, 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC', 'format' => 'raw'], $invalid)));
+        $check($client->status === 400, 'Invalid slot endpoint input gets an explicit error');
     }
     $fixture->db->query("UPDATE {$fixture->prefix}appointments_eventtypes SET published=0 WHERE id={$event}");
     $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);

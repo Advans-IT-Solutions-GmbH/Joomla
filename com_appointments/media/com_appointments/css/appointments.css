@@ -10,10 +10,10 @@
  * Mobile first: the narrow layout is the default and the wider layout is added
  * by a min-width query. The markup uses Joomla's standard form classes, and this
  * file only adds what a site template cannot be expected to provide: the content
- * column, the calendar grid, touch targets of at least 44 px and the visible error
- * state. Typography and colours stay with the site template, which can override
- * every value below through the custom properties on .com-appointments. No font,
- * image or style is loaded from another server.
+ * column, the calendar grid, the two steps of the booking page, touch targets of at
+ * least 44 px and the visible error state. Typography and colours stay with the site
+ * template, which can override every value below through the custom properties on
+ * .com-appointments. No font, image or style is loaded from another server.
  */
 
 .com-appointments {
@@ -45,6 +45,17 @@
     border: 0 !important;
 }
 
+.com-appointments [hidden] {
+    display: none !important;
+}
+
+.com-appointments-icon {
+    flex: 0 0 auto;
+    width: 1.25em;
+    height: 1.25em;
+    vertical-align: -0.25em;
+}
+
 /* Event type list */
 .com-appointments-list {
     display: flex;
@@ -68,9 +79,45 @@
     font-weight: 600;
 }
 
-.com-appointments-duration {
+.com-appointments-list .com-appointments-duration {
     font-size: 0.875rem;
     opacity: 0.75;
+}
+
+/* Header of the booking page: title, one meta line, then the description. */
+.com-appointments-header {
+    margin-bottom: 1.5rem;
+}
+
+.com-appointments-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    margin: 0 0 0.75rem;
+    padding: 0;
+    list-style: none;
+    font-weight: 600;
+}
+
+.com-appointments-meta li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+}
+
+.com-appointments-description {
+    max-width: 65ch;
+}
+
+.com-appointments-description > :last-child,
+.com-appointments-location:last-child {
+    margin-bottom: 0;
+}
+
+.com-appointments-location {
+    max-width: 65ch;
+    font-size: 0.875rem;
 }
 
 /* Buttons and navigation links are touch targets. */
@@ -86,45 +133,87 @@
     text-align: center;
 }
 
-/* Time zone */
-.com-appointments-zone {
-    margin-block: 1rem;
+/* Steps of the booking page */
+.com-appointments-step {
+    display: grid;
+    gap: 1rem;
+    min-width: 0;
 }
 
-.com-appointments-zone-row {
+.com-appointments-step + .com-appointments-step {
+    padding-top: 1.5rem;
+    border-top: var(--appointments-border);
+}
+
+.com-appointments-step-title {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: 0.5rem;
+    margin: 0;
 }
 
-.com-appointments-zone-row .form-select {
-    flex: 1 1 14rem;
-    width: auto;
+.com-appointments-step-number {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 1.75em;
+    height: 1.75em;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-size: 0.75em;
+    line-height: 1;
 }
 
-/* Calendar */
-.com-appointments-calendar {
-    margin-block: 1rem;
+/* Date and time: calendar and times side by side from 48rem, stacked below. */
+.com-appointments-picker {
+    display: grid;
+    gap: 0.75rem;
+    transition: opacity 0.15s ease-in-out;
+}
+
+.com-appointments-picker[aria-busy="true"] {
+    opacity: 0.6;
+}
+
+.com-appointments-picker-grid {
+    display: grid;
+    gap: 1rem;
+    align-items: start;
+}
+
+.com-appointments-calendar,
+.com-appointments-times {
+    min-width: 0;
 }
 
 .com-appointments-calendar-nav {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
 }
 
+.com-appointments .com-appointments-calendar-nav .btn {
+    flex: 0 0 auto;
+    width: var(--appointments-target);
+    padding: 0;
+}
+
+.com-appointments .com-appointments-calendar-nav .disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
 .com-appointments-calendar-title {
-    order: -1;
-    flex: 1 0 100%;
+    flex: 1 1 auto;
     margin: 0;
     text-align: center;
 }
 
 .com-appointments-calendar-grid {
     width: 100%;
-    margin-block: 0.75rem;
+    margin-block: 0.5rem 0;
     border-collapse: separate;
     border-spacing: 0.25rem;
     table-layout: fixed;
@@ -171,15 +260,64 @@
     outline-offset: 1px;
 }
 
+.com-appointments-empty {
+    margin: 0;
+}
+
+.com-appointments-zone-note {
+    margin: 0;
+}
+
+/* Another time zone: a closed disclosure below the times. */
+.com-appointments-zone {
+    margin: 0;
+}
+
+.com-appointments-zone > summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--appointments-target);
+    cursor: pointer;
+}
+
+.com-appointments-zone-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.com-appointments-zone-row > .form-label {
+    flex: 1 0 100%;
+    margin: 0;
+}
+
+.com-appointments-zone-row .form-select {
+    flex: 1 1 14rem;
+    width: auto;
+}
+
+/* With the booking script a new zone applies on selection, without it the button does. */
+.com-appointments-js .com-appointments-zone-submit {
+    display: none;
+}
+
 /* Forms */
 .com-appointments-form {
     display: grid;
+    gap: 1.5rem;
+}
+
+.com-appointments-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
 }
 
 .com-appointments-field {
     display: grid;
     gap: 0.375rem;
+    min-width: 0;
     margin: 0;
 }
 
@@ -222,8 +360,11 @@
     margin: 0;
 }
 
+/* No margin of its own: a template rule such as `label { margin-bottom: 8px }` would
+   otherwise push the text above the middle of the checkbox. */
 .com-appointments .form-check-label {
     flex: 1 1 0;
+    margin: 0;
     padding-block: 0.5rem;
     cursor: pointer;
 }
@@ -250,10 +391,48 @@
     border-radius: var(--appointments-radius);
 }
 
-.com-appointments-tel {
-    display: grid;
-    grid-template-columns: minmax(6rem, 8rem) 1fr;
+/* Telephone: calling code and number share one row and never leave the field's width. */
+.com-appointments .com-appointments-tel {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
     gap: 0.5rem;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.com-appointments .com-appointments-tel .com-appointments-tel-country {
+    flex: 0 0 auto;
+    width: 6.5rem;
+    min-width: 0;
+}
+
+.com-appointments .com-appointments-tel .com-appointments-tel-number {
+    flex: 1 1 auto;
+    width: 1%;
+    min-width: 0;
+    max-width: none;
+}
+
+/* Further guests: a closed disclosure, opened when it holds a value or an error. */
+.com-appointments-guests > summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--appointments-target);
+    cursor: pointer;
+}
+
+.com-appointments-guests[open] > summary {
+    margin-bottom: 0.5rem;
+}
+
+.com-appointments-privacy {
+    gap: 0.25rem;
+}
+
+.com-appointments-consent-text {
+    margin: 0;
 }
 
 .com-appointments .com-appointments-field-error {
@@ -295,6 +474,20 @@
     margin: 0 0 0.5rem;
 }
 
+@media (min-width: 36rem) {
+    .com-appointments-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .com-appointments-fields > .com-appointments-field {
+        grid-column: 1 / -1;
+    }
+
+    .com-appointments-fields > .com-appointments-field-half {
+        grid-column: auto;
+    }
+}
+
 @media (min-width: 48rem) {
     .com-appointments-list-item {
         flex-direction: row;
@@ -302,9 +495,9 @@
         justify-content: space-between;
     }
 
-    .com-appointments-calendar-title {
-        order: 0;
-        flex: 1 1 auto;
+    .com-appointments-picker-grid {
+        grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+        gap: 1.5rem;
     }
 
     .com-appointments-summary {

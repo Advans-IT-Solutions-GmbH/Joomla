@@ -103,10 +103,13 @@ currently available.
   host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
   manager. Direct links enforce publication, access and content language too.
-- **Public booking.** A server-rendered month grid, available days, slot choices and an explicit
-  time-zone selector work with or without JavaScript. The form collects contact details, optional
-  guests and configured custom fields. Consent, a honeypot, a session-bound signed render time
-  and a short-lived keyed rate limit protect submission without an external CAPTCHA.
+- **Public booking.** One page in two steps: date and time (server-rendered month grid, available
+  days, the times of the chosen day), then the visitor's details. Everything works without
+  JavaScript; the bundled booking script only updates the date-and-time part in the background,
+  so choosing a day or month neither reloads nor scrolls the page, and applies the browser's time
+  zone. The form collects contact details, the telephone number for telephone appointments,
+  optional guests and configured custom fields. Consent, a honeypot, a session-bound signed render
+  time and a short-lived keyed rate limit protect submission without an external CAPTCHA.
 - **Booking integrity and approval.** Pending and confirmed appointments both hold their slot.
   Submission serialises on the host row, rechecks the exact slot against current availability,
   and retains the database's unique active-slot constraint. The administrator can approve a
@@ -334,12 +337,36 @@ permission on that booking's event type; credentials for subscription feeds are 
 
 ### Booking information
 
-In **Options**, configure the booking data information text and the URL of your site's privacy
-notice. The information text explains what you collect and why; it is not a legal privacy notice.
-The consent checkbox is mandatory. The timing check requires at least two seconds after rendering
-and expires after one hour; reload an expired form.
-Additional guests are optional, deduplicated and limited to ten valid email addresses.
-Telephone fields use an international calling-code selector and a national number.
+In **Options**, configure the booking data information text and your site's privacy notice: a
+**menu item** (optionally with a section anchor such as `privacy`; on a multilingual site the menu
+item's language association is followed) or, without a menu item, a **URL** such as
+`/privacy#booking`. The consent checkbox label then reads "I have read the privacy notice and
+agree …" with the notice as a link that opens in a new window; without either setting the label
+is plain text. The information text explains what you collect and why; it is not a legal privacy
+notice. The consent checkbox is mandatory. The timing check requires at least two seconds after
+rendering and expires after one hour; reload an expired form.
+Additional guests are optional, deduplicated and limited to ten valid email addresses; the field
+is a closed disclosure ("Invite further guests") that opens when it holds a value or an error.
+
+**Telephone.** An event type whose location is *Telephone: host calls invitee* or *Telephone:
+invitee calls host* always asks for the invitee's telephone number. It is a fixed, required field
+next to name and email address, stored in the booking's `invitee_phone` column and therefore shown
+in `{invitee_phone}` of the mails, the administrator's booking detail and CSV export, and erased
+with the other contact data. Custom telephone fields of other event types keep filling
+`invitee_phone` with their first answer as before; on a telephone event type the fixed field takes
+precedence and custom telephone answers are only kept with the other custom answers.
+Every telephone field has a calling-code selector and a number field. **Options → Preselected
+calling code** (digits only, for example `41`) preselects a code. The visitor may also type the
+whole international number starting with `+` or `00`; the code is then read from the number.
+Spaces, brackets, dots, slashes and hyphens are ignored, and a single national trunk zero is
+dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
+keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Republic of the Congo). Numbers are
+stored in E.164 form, at most 15 digits.
+
+A telephone event type that collected the number through a custom telephone field (before the
+fixed field existed) asks twice after the update. Unpublish that custom field; do not delete it, so
+the answers already stored with earlier bookings keep their label in the booking detail. Those
+bookings already have `invitee_phone` filled from the custom field, so no data has to be moved.
 
 Invalid input is reported at the field it concerns, all fields in one round trip: the control gets
 `aria-invalid="true"` and `aria-describedby` pointing to its message, and the first invalid control
@@ -352,6 +379,11 @@ weekday and month names of the installed Joomla language, times read `09:00`, an
 stated once per page. The patterns are the `COM_APPOINTMENTS_DATE_FORMAT_*` keys of the component
 language file and can be changed with a language override. The reschedule, cancel and erase pages
 show the appointment in the invitee's time zone, like the booking page.
+
+The booking page shows the times in the schedule's zone and says so in one line. The booking script
+switches to the browser's zone on arrival (unless the address names a zone already), and a closed
+"Choose another time zone" disclosure below the times offers every zone; without JavaScript its
+button applies the choice, with JavaScript the selection applies directly.
 
 The displayed zone never changes the stored UTC appointment. Public times always come from the
 schedule, including its clock-change conventions. If someone else takes a time while the form is
@@ -381,15 +413,29 @@ colours stay with the template. The custom properties on `.com-appointments`
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`) |
-| Header | `.com-appointments-header` with `h1.com-appointments-heading`, `.com-appointments-description`, `p.com-appointments-duration`, `p.com-appointments-location` |
-| Time zone | `form.com-appointments-zone` with `label.form-label`, `.com-appointments-zone-row` (`select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`) and `p.form-text.com-appointments-zone-note` |
-| Calendar | `section.com-appointments-calendar` with `nav.com-appointments-calendar-nav` (`a.btn.btn-outline-secondary.com-appointments-calendar-prev` / `-next`, `h2.com-appointments-calendar-title`) and `table.com-appointments-calendar-grid`: a `thead` row of `th.com-appointments-weekday > abbr[title]` from Monday, `td.com-appointments-day-cell` (empty cells add `.com-appointments-day-empty`) holding `a.com-appointments-day.com-appointments-day-available` (selected day: `.com-appointments-day-selected`, `aria-current="date"`) or `span.com-appointments-day.com-appointments-day-unavailable` |
-| Times | `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input[type=radio]`, `label.form-check-label`) |
-| Form | `form.com-appointments-form` (booking page also `.com-appointments-booking`, manage pages `.com-appointments-manage-form`), one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields add `.com-appointments-tel` |
-| Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label`; consent `.com-appointments-consent`, confirmation `.com-appointments-confirm` |
+| Header | `.com-appointments-header` with `h1.com-appointments-heading`, the meta line `ul.com-appointments-meta` (`li.com-appointments-duration` and, for telephone, in-person and conference locations, `li.com-appointments-location-type`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` (the event type's location text) |
+| Steps | `form#appointment-booking.com-appointments-form.com-appointments-booking` holds two `section.com-appointments-step`: `.com-appointments-step-time` and `#appointment-details.com-appointments-step-details` (carries `hidden` while the chosen day has no time), each with `h2.com-appointments-step-title` and `span.com-appointments-step-number` |
+| Date and time | `#appointment-picker.com-appointments-picker` (layout `default_picker.php`, also the whole response of the slot endpoint) with `.com-appointments-picker-grid` (calendar and `.com-appointments-times`, side by side from 48rem), `p.form-text.com-appointments-zone-note#appointment-zone-note` and the hidden zone of the booking; `aria-busy="true"` while the script loads |
+| Time zone | `details.com-appointments-zone` with `summary`, `.com-appointments-zone-row` (`label.form-label`, `select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`, hidden while the script runs); the select and the button belong to `form#appointment-zone-form` after the booking form. The manage page keeps `form.com-appointments-zone` |
+| Calendar | `section.com-appointments-calendar` with `nav.com-appointments-calendar-nav` (arrow buttons `a.btn.btn-outline-secondary.com-appointments-calendar-prev` / `-next` with `aria-label`, an inline chevron `svg.com-appointments-icon`; the way back from the current month is `span.disabled`; `h3.com-appointments-calendar-title`) and `table.com-appointments-calendar-grid` of always six weeks: a `thead` row of `th.com-appointments-weekday > abbr[title]` from Monday, `td.com-appointments-day-cell` (empty cells add `.com-appointments-day-empty`) holding `a.com-appointments-day.com-appointments-day-available` (selected day: `.com-appointments-day-selected`, `aria-current="date"`) or `span.com-appointments-day.com-appointments-day-unavailable` |
+| Times | `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input[type=radio]`, `label.form-check-label`), or `p.com-appointments-empty` |
+| Form | `form.com-appointments-form` (manage pages `.com-appointments-manage-form`); on the booking page the fields stand in `.com-appointments-fields` (two columns from 36rem: `.com-appointments-field-half` takes one column, every other field the full row), one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields are `div.input-group.com-appointments-tel` with `select.com-appointments-tel-country` and `input.com-appointments-tel-number`, the fixed one in `.com-appointments-field-phone`; guests in `details.com-appointments-guests` |
+| Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
 | Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` |
 | Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
 | Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-join > a.btn.btn-primary`, `p.com-appointments-status` |
+
+**Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
+web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page. It
+adds `.com-appointments-js` to `.com-appointments`, intercepts the day and month links
+(`a[data-appointments-load]`) and the zone selection, requests the same address plus `format=raw`
+and replaces `#appointment-picker` with the response. That response is the layout
+`default_picker.php` alone, so a template override of it applies to the page and to the update,
+and the script never formats a date or time itself. Without JavaScript every link loads the full
+page and lands at `#appointment-picker`; a refused submission lands there too when its messages
+stand at the fields. The script writes no text of its own, contains no inline code and makes no
+third-party request, so the page works under a Content Security Policy without `unsafe-inline`.
+When a background request fails, it falls back to the normal page request.
 
 ### Email templates
 

@@ -36,7 +36,7 @@ class BookingController extends BaseController
 
         $eventId = $this->input->getInt('id', 0);
         $events = $this->getModel('Eventtype');
-        $events->getItem($eventId);
+        $event = $events->getItem($eventId);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $keys = new KeyProvider((string) $this->app->get('secret'));
         $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -69,7 +69,8 @@ class BookingController extends BaseController
             // Report the other fields in the same round trip, so the visitor corrects
             // everything at once. Nothing is saved on this path.
             try {
-                (new BookingInput())->validate($data, $events->getFields($eventId), $this->app->getLanguage()->getTag());
+                (new BookingInput())->validate($data, $events->getFields($eventId), $this->app->getLanguage()->getTag(),
+                    BookingInput::requiresPhone((string) $event->location_type));
             } catch (BookingValidationException $e) {
                 if ($e->fieldErrors === []) {
                     return $this->refuse($eventId, $e->languageKey);
@@ -185,7 +186,10 @@ class BookingController extends BaseController
             $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d');
         }
 
-        $this->setRedirect(Route::_($url, false));
+        // Field messages stand at their fields, so the page lands at the form instead of its
+        // top. A message for the whole form is shown in the template's message area at the
+        // top of the page, which the anchor would scroll out of view.
+        $this->setRedirect(Route::_($url, false) . ($key === '' ? '#appointment-picker' : ''));
 
         return false;
     }

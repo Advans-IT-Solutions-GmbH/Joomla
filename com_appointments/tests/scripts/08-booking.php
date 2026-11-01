@@ -1,6 +1,7 @@
 <?php
 
 require __DIR__ . '/appointments-http.php';
+require __DIR__ . '/appointments-mail.php';
 require '/var/www/html/configuration.php';
 $config = new JConfig();
 $db = new mysqli($config->host, $config->user, $config->password, $config->db);
@@ -8,6 +9,7 @@ $prefix = $config->dbprefix;
 $tag = 'suite-booking-' . bin2hex(random_bytes(6));
 $scheduleIds = [];
 $eventIds = [];
+$componentParams = null;
 $failures = 0;
 $check = static function (bool $condition, string $label) use (&$failures): void {
     echo ($condition ? 'PASS ' : 'FAIL ') . $label . "\n";
@@ -250,10 +252,100 @@ try {
         $second->format('H:i') . ' (UTC' . $second->format('P') . ')',
         $third->format('H:i'),
     ] && count(array_unique($labels)) === 3, 'Slots in the repeated local hour carry their UTC offset, other slots stay compact');
+
+    // Booking form rework: the submissions above used most of the hourly booking budget of
+    // this one client address, so the following checks start with a fresh rate-limit window.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $page = new AppointmentsHttp('http://localhost', 'booking-page');
+    $show = static fn (int $event): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
+        . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day));
+
+    // Without JavaScript every step is a link or a form; the script is an external, deferred
+    // file of the component and the markup carries no inline code (CSP without unsafe-inline).
+    $xpath = $show($eventIds[1]);
+    $root = '//div[contains(@class, "com-appointments-eventtype")]';
+    $script = $xpath->query('//script[contains(@src, "media/com_appointments/js/booking.js")]')->item(0);
+    $check($script instanceof DOMElement && $script->hasAttribute('defer'), 'The booking script is loaded as a deferred file through the asset manager');
+    $check($xpath->query($root . '//script')->length === 0 && $xpath->query($root . '//@*[starts-with(name(), "on")]')->length === 0,
+        'The booking markup has no inline script and no inline event handler');
+    $dayLink = $xpath->query($root . '//a[contains(@class, "com-appointments-day-available")]')->item(0);
+    $check($dayLink instanceof DOMElement && str_ends_with($dayLink->getAttribute('href'), '#appointment-picker')
+        && $xpath->query('//*[@id="appointment-picker"]')->length === 1,
+        'Without JavaScript a day link reloads the page and lands at the date and time part');
+    $check($xpath->query('//a[contains(@class, "com-appointments-calendar-next")][@aria-label="Next month"]')->length === 1
+        && trim($xpath->query('//a[contains(@class, "com-appointments-calendar-next")]')->item(0)->textContent) === ''
+        && $xpath->query('//*[contains(@class, "com-appointments-calendar-prev")][contains(@class, "disabled")]')->length === (substr($day, 0, 7) === gmdate('Y-m') ? 1 : 0),
+        'Month navigation uses arrow buttons with accessible names, and the current month has no way back into the past');
+    $check($xpath->query('//input[@id="booking-phone"]')->length === 0, 'Without a telephone location the form has no fixed telephone field');
+    $check($xpath->query('//label[@for="booking-consent"]//a')->length === 0
+        && trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent) === 'I agree to the processing of my data for this appointment.',
+        'Without a configured privacy notice the consent label is plain text');
+
+    // The privacy notice option: the consent label links to it, and the calling-code option preselects a code.
+    $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking', 'phone_default_country' => '41']));
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
+    $xpath = $show($eventIds[1]);
+    $privacy = $xpath->query('//label[@for="booking-consent"]//a')->item(0);
+    $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking'
+        && $privacy->getAttribute('target') === '_blank' && str_contains($privacy->getAttribute('rel'), 'noopener')
+        && str_starts_with(trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent), 'I have read the privacy notice'),
+        'The configured privacy notice is a link in the consent label that opens in a new window');
+
+    // One host serves both events, so each books its own hour.
+    foreach (['phone_host_calls' => $day . ' 11:00:00', 'phone_invitee_calls' => $day . ' 13:00:00'] as $location => $phoneSlot) {
+        $title = $tag . '-' . $location;
+        $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$title}','UTC',{$host},1,'{$time}','{$time}')");
+        $schedule = (int) $db->insert_id;
+        $scheduleIds[] = $schedule;
+        for ($weekday = 1; $weekday <= 7; $weekday++) {
+            $db->query("INSERT INTO {$prefix}appointments_schedule_rules (schedule_id,weekday,start_time,end_time) VALUES ({$schedule},{$weekday},'09:00:00','17:00:00')");
+        }
+        $token = bin2hex(random_bytes(32));
+        $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,location_type,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},30,30,'{$location}','{$token}','{$time}','{$time}')");
+        $eventIds[] = $phoneEvent = (int) $db->insert_id;
+
+        $xpath = $show($phoneEvent);
+        $number = $xpath->query('//input[@id="booking-phone"]')->item(0);
+        $selected = $xpath->query('//select[@id="booking-phone-country"][@name="booking[phone][country]"]/option[@selected]')->item(0);
+        $check($number instanceof DOMElement && $number->getAttribute('name') === 'booking[phone][number]'
+            && $number->getAttribute('type') === 'tel' && $number->hasAttribute('required')
+            && $selected instanceof DOMElement && $selected->getAttribute('value') === '41',
+            $location . ': the telephone number is a fixed required field with the configured calling code preselected');
+
+        $request = $prepare($phoneEvent, $phoneSlot);
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-phone', 'Please fill in this field.') && $bookings($phoneEvent) === 0,
+            $location . ': a booking without a telephone number is refused at the telephone field');
+
+        $request = $prepare($phoneEvent, $phoneSlot);
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '12'];
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-phone', 'Please enter a valid telephone number with its country calling code.')
+            && $bookings($phoneEvent) === 0, $location . ': an invalid telephone number is refused at the telephone field');
+
+        $request = $prepare($phoneEvent, $phoneSlot);
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '079 123 45 67'];
+        $before = AppointmentsMail::snapshot();
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $stored = $db->query("SELECT id,invitee_phone,custom_fields FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc();
+        $check(str_contains($body, 'Appointment received') && $stored && $stored['invitee_phone'] === '+41791234567'
+            && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
+        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
+        $check($mailed !== [], $location . ': the notification mail states the telephone number');
+        $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
+        $check($admin->status === 200 && str_contains($detail, '+41791234567'), $location . ': the administrator detail shows the telephone number');
+    }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failures++;
 } finally {
+    if ($componentParams !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
     if ($eventIds) {
         $db->query("DELETE FROM {$prefix}appointments_bookings WHERE eventtype_id IN(" . implode(',', $eventIds) . ')');
         $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id IN(" . implode(',', $eventIds) . ')');
