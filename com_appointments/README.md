@@ -342,7 +342,8 @@ In **Options**, configure the booking data information text and your site's priv
 item's language association is followed) or, without a menu item, a **URL** such as
 `/privacy#booking`. The consent checkbox label then reads "I have read the privacy notice and
 agree …" with the notice as a link that opens in a new window; without either setting the label
-is plain text. The information text explains what you collect and why; it is not a legal privacy
+is plain text. The component has no default for either setting, because only the site knows the
+address of its privacy notice: set one before you publish a booking page. The information text explains what you collect and why; it is not a legal privacy
 notice. The consent checkbox is mandatory. The timing check requires at least two seconds after
 rendering and expires after one hour; reload an expired form.
 Additional guests are optional, deduplicated and limited to ten valid email addresses; the field
