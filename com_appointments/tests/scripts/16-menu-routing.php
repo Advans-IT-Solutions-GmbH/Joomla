@@ -215,8 +215,11 @@ try {
 
     // A missing, empty or unpublished choice is refused, naming the field by its translated
     // label. With filter="integer" alone an empty choice became 0 and passed "required".
+    // "forged" posts the unpublished id in both the link and the request, as a crafted form
+    // could: Joomla binds a new item's request from the posted link, the picker must not.
     foreach ([
         'missing' => null, 'empty' => '', 'unpublished' => (string) $events['hidden']['id'],
+        'forged' => (string) $events['hidden']['id'],
     ] as $case => $value) {
         $html = $openTypedForm();
         [$action, $fields] = $formData($html, '//form[@id="item-form"]');
@@ -226,6 +229,9 @@ try {
         unset($fields['jform[request][id]']);
         if ($value !== null) {
             $fields['jform[request][id]'] = $value;
+        }
+        if ($case === 'forged') {
+            $fields['jform[link]'] = 'index.php?option=com_appointments&view=eventtype&id=' . $value;
         }
         $refused = $admin->request($action, $fields);
         $check(!$scalar("SELECT id FROM {$prefix}menu WHERE alias='" . $escape($tag . '-refused-' . $case) . "'"),

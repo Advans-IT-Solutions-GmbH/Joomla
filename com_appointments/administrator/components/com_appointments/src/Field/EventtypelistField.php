@@ -32,8 +32,8 @@ class EventtypelistField extends ListField
     protected function getOptions()
     {
         $options = parent::getOptions();
-        $current = (int) $this->value;
         $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $current = $this->storedEventtype($db);
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(['id', 'title', 'language', 'published']))
             ->from($db->quoteName('#__appointments_eventtypes'))
@@ -57,5 +57,37 @@ class EventtypelistField extends ListField
         }
 
         return $options;
+    }
+
+    /**
+     * The event type the saved menu item points at, read from its stored row, 0 for a new item.
+     *
+     * The submitted value cannot be trusted for this: Joomla binds the request values of a new
+     * item from the posted link, so a forged link plus request id would otherwise add an
+     * unpublished event type to the options and pass validation. The menu item id itself is held
+     * by the menu manager's edit context (only an item opened for editing can be saved).
+     */
+    private function storedEventtype(DatabaseInterface $db): int
+    {
+        $itemId = $this->form ? (int) $this->form->getValue('id') : 0;
+
+        if ($itemId <= 0) {
+            return 0;
+        }
+
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('link'))
+            ->from($db->quoteName('#__menu'))
+            ->where($db->quoteName('id') . ' = :item')
+            ->where($db->quoteName('client_id') . ' = 0')
+            ->bind(':item', $itemId, ParameterType::INTEGER);
+        $link = (string) $db->setQuery($query)->loadResult();
+        parse_str((string) parse_url($link, PHP_URL_QUERY), $vars);
+
+        if (($vars['option'] ?? '') !== 'com_appointments' || ($vars['view'] ?? '') !== 'eventtype') {
+            return 0;
+        }
+
+        return max(0, (int) ($vars['id'] ?? 0));
     }
 }
