@@ -26,7 +26,8 @@ class BookingModel extends BaseDatabaseModel
     {
         $app = Factory::getApplication();
         $event = $events->getItem($eventId);
-        $invitee = (new BookingInput())->validate($input, $events->getFields($eventId), $app->getLanguage()->getTag());
+        $invitee = (new BookingInput())->validate($input, $events->getFields($eventId), $app->getLanguage()->getTag(),
+            BookingInput::requiresPhone((string) $event->location_type));
 
         $booking = (new BookingStore($this->getDatabase()))->create(
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()
