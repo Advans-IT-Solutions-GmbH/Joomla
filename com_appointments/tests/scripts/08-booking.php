@@ -10,6 +10,7 @@ $tag = 'suite-booking-' . bin2hex(random_bytes(6));
 $scheduleIds = [];
 $eventIds = [];
 $componentParams = null;
+$privacyMenu = null;
 $failures = 0;
 $check = static function (bool $condition, string $label) use (&$failures): void {
     echo ($condition ? 'PASS ' : 'FAIL ') . $label . "\n";
@@ -292,6 +293,24 @@ try {
         && str_starts_with(trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent), 'I have read the privacy notice'),
         'The configured privacy notice is a link in the consent label that opens in a new window');
 
+    // A privacy menu item takes precedence over the URL and carries its anchor; a menu item a guest
+    // cannot open is never linked and the URL applies again.
+    $component = (int) $db->query("SELECT extension_id FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $menuAlias = $tag . '-privacy';
+    $db->query("INSERT INTO {$prefix}menu (menutype,title,alias,note,path,link,type,published,parent_id,level,component_id,browserNav,access,img,template_style_id,params,lft,rgt,home,language,client_id)"
+        . " VALUES ('mainmenu','{$menuAlias}','{$menuAlias}','','{$menuAlias}','index.php?option=com_appointments&view=eventtypes','component',1,1,1,{$component},0,1,'',0,'{}',0,0,0,'*',0)");
+    $privacyMenu = (int) $db->insert_id;
+    $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking',
+        'phone_default_country' => '41', 'privacy_menuitem' => (string) $privacyMenu, 'privacy_anchor' => 'privacy-section']));
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
+    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $check($privacy instanceof DOMElement && (str_contains($privacy->getAttribute('href'), $menuAlias) || str_contains($privacy->getAttribute('href'), 'Itemid=' . $privacyMenu))
+        && str_ends_with($privacy->getAttribute('href'), '#privacy-section') && !str_contains($privacy->getAttribute('href'), '&amp;'),
+        'The privacy menu item takes precedence over the URL and keeps its section anchor');
+    $db->query("UPDATE {$prefix}menu SET access=3 WHERE id={$privacyMenu}");
+    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking',
+        'A privacy menu item the visitor cannot open is not linked, the URL applies instead');
     // One host serves both events, so each books its own hour.
     foreach (['phone_host_calls' => $day . ' 11:00:00', 'phone_invitee_calls' => $day . ' 13:00:00'] as $location => $phoneSlot) {
         $title = $tag . '-' . $location;
@@ -343,6 +362,9 @@ try {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failures++;
 } finally {
+    if ($privacyMenu !== null) {
+        $db->query("DELETE FROM {$prefix}menu WHERE id={$privacyMenu}");
+    }
     if ($componentParams !== null) {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
     }
