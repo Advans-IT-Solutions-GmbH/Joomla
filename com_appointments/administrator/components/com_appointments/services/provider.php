@@ -12,10 +12,12 @@ defined('_JEXEC') or die;
 use Advans\Component\Appointments\Administrator\Extension\AppointmentsComponent;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceManager;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Component\Router\RouterFactoryInterface;
 use Joomla\CMS\Dispatcher\ComponentDispatcherFactoryInterface;
 use Joomla\CMS\Extension\ComponentInterface;
 use Joomla\CMS\Extension\Service\Provider\ComponentDispatcherFactory;
 use Joomla\CMS\Extension\Service\Provider\MVCFactory;
+use Joomla\CMS\Extension\Service\Provider\RouterFactory;
 use Joomla\CMS\HTML\Registry;
 use Joomla\CMS\MVC\Factory\MVCFactoryInterface;
 use Joomla\DI\Container;
@@ -40,6 +42,7 @@ return new class implements ServiceProviderInterface {
     {
         $container->registerServiceProvider(new ComponentDispatcherFactory('\\Advans\\Component\\Appointments'));
         $container->registerServiceProvider(new MVCFactory('\\Advans\\Component\\Appointments'));
+        $container->registerServiceProvider(new RouterFactory('\\Advans\\Component\\Appointments'));
         $container->share(ConferenceManager::class, static fn () => new ConferenceManager(
             [], (bool) ComponentHelper::getParams('com_appointments')->get('conference_allow_outbound', false)
         ));
@@ -51,6 +54,7 @@ return new class implements ServiceProviderInterface {
 
                 $component->setMVCFactory($container->get(MVCFactoryInterface::class));
                 $component->setRegistry($container->get(Registry::class));
+                $component->setRouterFactory($container->get(RouterFactoryInterface::class));
 
                 return $component;
             }

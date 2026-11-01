@@ -213,16 +213,27 @@ try {
     $check(!isset($options[(string) $events['hidden']['id']]), 'The picker does not offer an unpublished event type');
     $check(!str_contains($html, 'COM_APPOINTMENTS_MENU_FIELD'), 'The picker label is translated on the menu item form');
 
-    // An empty choice is refused with the translated field label.
-    [$action, $fields] = $formData($html, '//form[@id="item-form"]');
-    $fields['task'] = 'item.save';
-    $fields['jform[title]'] = $tag . ' empty';
-    $fields['jform[alias]'] = $tag . '-empty';
-    $fields['jform[request][id]'] = '';
-    $refused = $admin->request($action, $fields);
-    $check(!$scalar("SELECT id FROM {$prefix}menu WHERE alias='" . $escape($tag . '-empty') . "'"), 'A menu item without an event type is not saved');
-    $check(!str_contains($refused, 'COM_APPOINTMENTS_MENU'), 'The refusal names the field with its translated label, not a language key');
-    $admin->request('/administrator/index.php?option=com_menus&view=items&menutype=' . urlencode($menutype));
+    // A missing, empty or unpublished choice is refused, naming the field by its translated
+    // label. With filter="integer" alone an empty choice became 0 and passed "required".
+    foreach ([
+        'missing' => null, 'empty' => '', 'unpublished' => (string) $events['hidden']['id'],
+    ] as $case => $value) {
+        $html = $openTypedForm();
+        [$action, $fields] = $formData($html, '//form[@id="item-form"]');
+        $fields['task'] = 'item.save';
+        $fields['jform[title]'] = $tag . ' ' . $case;
+        $fields['jform[alias]'] = $tag . '-refused-' . $case;
+        unset($fields['jform[request][id]']);
+        if ($value !== null) {
+            $fields['jform[request][id]'] = $value;
+        }
+        $refused = $admin->request($action, $fields);
+        $check(!$scalar("SELECT id FROM {$prefix}menu WHERE alias='" . $escape($tag . '-refused-' . $case) . "'"),
+            "A menu item with a {$case} event type is not saved");
+        $check(!str_contains($refused, 'COM_APPOINTMENTS_MENU') && preg_match('/(Field required|Invalid field):\s*Event type/', $refused) === 1,
+            "The {$case} refusal names the field by its translated label");
+        $admin->request('/administrator/index.php?option=com_menus&view=items&menutype=' . urlencode($menutype));
+    }
 
     /** Creates a menu item through the menu manager and returns its row. */
     $createItem = static function (string $view, ?int $event, string $alias, string $language) use (
@@ -410,8 +421,10 @@ try {
         $fields['confirm'] = 1;
         $guest->request(preg_replace('#^https?://[^/]+#', '', $action), $fields);
         $check((int) $fixture->row((int) $booking['id'])['state'] === 2, 'The signed cancel link cancels the booking after confirmation');
-        $guest->request($path);
-        $check($guest->status === 404, 'The used cancel link is rejected afterwards');
+        // Another browser: the acting session is shown its completion notice instead.
+        $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
+        $outsider->request($path);
+        $check($outsider->status === 404, 'The used cancel link is rejected afterwards');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . get_class($e) . ': ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

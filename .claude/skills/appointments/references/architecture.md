@@ -57,7 +57,7 @@ com_appointments/
 │   │   ├── src/
 │   │   │   ├── Controller/
 │   │   │   ├── Extension/AppointmentsComponent.php
-│   │   │   ├── Field/             # custom form fields (weekly schedule editor, timezone)
+│   │   │   ├── Field/             # custom form fields (weekly schedule editor, timezone, event type and schedule pickers)
 │   │   │   ├── Helper/            # the domain logic, see below
 │   │   │   ├── Model/
 │   │   │   ├── Table/
@@ -69,8 +69,8 @@ com_appointments/
 │   ├── services/provider.php
 │   ├── src/
 │   │   ├── Controller/            # BookingController, FeedController, IcsController
-│   │   ├── Helper/                # RouteHelper
 │   │   ├── Model/                 # EventtypeModel, EventtypesModel, BookingModel, SlotsModel
+│   │   ├── Service/Router.php     # SEF router, see "Routing" below
 │   │   └── View/
 │   └── tmpl/
 ├── language/{de-DE,en-GB,fr-FR}/  # site language files
@@ -81,6 +81,17 @@ com_appointments/
 
 Namespace: `Advans\Component\Appointments` with the `Administrator` and `Site` sub-namespaces, as
 Joomla expects.
+
+## Routing
+
+The site router (`Site\Service\Router`, a `RouterView` with Joomla's `MenuRules`, `StandardRules`
+and `NomenuRules`, registered through `RouterFactory` in the service provider) registers only the
+two menu views, `eventtypes` and `eventtype` (key `id`, segment = alias). Menu items in a content
+language and in "All" are both found by `MenuRules`. The confirmation page, the signed manage
+pages, the tasks and the feed keep their query string. The signed links in e-mails are built
+non-SEF from the public site URL, without the router, because the reminder task runs on the CLI;
+they must keep resolving unchanged. The "Book an appointment" menu item picks its event type with
+the component's `Eventtypelist` field, never with a raw-query `sql` field.
 
 ## Domain logic lives in helpers, not in models
 

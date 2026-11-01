@@ -4,7 +4,7 @@
     <layout title="COM_APPOINTMENTS_MENU_EVENTTYPE" option="COM_APPOINTMENTS_MENU_EVENTTYPE">
         <message><![CDATA[COM_APPOINTMENTS_MENU_EVENTTYPE_DESC]]></message>
     </layout>
-    <fields name="request"><fieldset name="request">
-        <field name="id" type="sql" label="COM_APPOINTMENTS_MENU_EVENTTYPE" required="true" filter="integer" query="SELECT id, title FROM #__appointments_eventtypes ORDER BY title" key_field="id" value_field="title"><option value="">JOPTION_SELECT</option></field>
+    <fields name="request"><fieldset name="request" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+        <field name="id" type="eventtypelist" label="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_DESC" required="true" filter="integer" validate="options"><option value="">JOPTION_SELECT</option></field>
     </fieldset></fields>
 </metadata>
