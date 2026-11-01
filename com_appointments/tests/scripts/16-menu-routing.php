@@ -229,7 +229,7 @@ try {
         }
         $refused = $admin->request($action, $fields);
         $check(!$scalar("SELECT id FROM {$prefix}menu WHERE alias='" . $escape($tag . '-refused-' . $case) . "'"),
-            "A menu item with a {$case} event type is not saved");
+            "Saving is refused with the event type {$case}");
         $check(!str_contains($refused, 'COM_APPOINTMENTS_MENU') && preg_match('/(Field required|Invalid field):\s*Event type/', $refused) === 1,
             "The {$case} refusal names the field by its translated label");
         $admin->request('/administrator/index.php?option=com_menus&view=items&menutype=' . urlencode($menutype));
