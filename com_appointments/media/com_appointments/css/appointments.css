@@ -180,6 +180,38 @@
     pointer-events: none;
 }
 
+/* A visible loading mark under the month name, also without a mouse pointer. */
+.com-appointments-picker[aria-busy="true"] .com-appointments-calendar-nav {
+    position: relative;
+}
+
+.com-appointments-picker[aria-busy="true"] .com-appointments-calendar-nav::after {
+    position: absolute;
+    right: 25%;
+    bottom: -0.25rem;
+    left: 25%;
+    height: 3px;
+    background: currentColor;
+    content: "";
+    animation: com-appointments-loading 1s ease-in-out infinite alternate;
+}
+
+@keyframes com-appointments-loading {
+    from {
+        transform: scaleX(0.2);
+    }
+
+    to {
+        transform: scaleX(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .com-appointments-picker[aria-busy="true"] .com-appointments-calendar-nav::after {
+        animation: none;
+    }
+}
+
 .com-appointments-picker-grid {
     display: grid;
     gap: 1rem;

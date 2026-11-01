@@ -55,9 +55,13 @@ $location = trim((string) $this->item->location_text);
 $description = trim((new InputFilter([], [], 1, 1))->clean((string) $this->item->description, 'html'));
 $hasSlots = !empty($this->slots[$this->day]);
 $dialCode = function (mixed $raw): string {
-    $code = is_array($raw) && is_string($raw['country'] ?? null) ? $raw['country'] : '';
+    // A refused submission shows the visitor's own choice again, an explicitly empty one included;
+    // the preselected code only applies to a field the visitor has not sent yet.
+    if (is_array($raw) && array_key_exists('country', $raw)) {
+        return is_string($raw['country']) ? $raw['country'] : '';
+    }
 
-    return $code !== '' ? $code : $this->defaultDialCode;
+    return $this->defaultDialCode;
 };
 $dialOptions = function (string $selected): string {
     $html = '<option value="">' . Text::_('COM_APPOINTMENTS_BOOKING_COUNTRY') . '</option>';
