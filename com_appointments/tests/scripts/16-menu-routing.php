@@ -294,10 +294,32 @@ try {
         $label = $options[(string) $events['star']['id']] ?? '';
         $check(str_contains($label, $events['star']['title']) && str_contains($label, '{selected}') && str_contains($label, 'Unpublished'),
             'An existing menu item keeps its unpublished event type selected and marked');
+        // Saving it unchanged keeps working, so its other settings stay editable.
+        [$action, $fields] = $formData($html, '//form[@id="item-form"]');
+        $fields['task'] = 'item.save';
+        $fields['jform[note]'] = $tag . ' resaved';
+        $admin->request($action, $fields);
+        $row = $db->query("SELECT link, note, checked_out FROM {$prefix}menu WHERE id=" . (int) $items['star']['id'])->fetch_assoc();
+        $check($row && $row['note'] === $tag . ' resaved' && (int) $row['checked_out'] === 0
+            && $row['link'] === 'index.php?option=com_appointments&view=eventtype&id=' . $events['star']['id'],
+            'An existing menu item with an unpublished event type can be saved again unchanged');
+        $db->query("UPDATE {$prefix}appointments_eventtypes SET published=1 WHERE id={$events['star']['id']}");
+    }
+
+    // An existing item cannot be switched to an unpublished event type.
+    if ($items['en'] !== null) {
+        $html = $admin->request('/administrator/index.php?option=com_menus&task=item.edit&id=' . (int) $items['en']['id']);
+        [$action, $fields] = $formData($html, '//form[@id="item-form"]');
+        $fields['task'] = 'item.save';
+        $fields['jform[request][id]'] = (string) $events['hidden']['id'];
+        $admin->request($action, $fields);
+        $check($scalar("SELECT link FROM {$prefix}menu WHERE id=" . (int) $items['en']['id'])
+            === 'index.php?option=com_appointments&view=eventtype&id=' . $events['en']['id'],
+            'An existing menu item cannot be switched to an unpublished event type');
+        $html = $admin->request('/administrator/index.php?option=com_menus&task=item.edit&id=' . (int) $items['en']['id']);
         [$action, $fields] = $formData($html, '//form[@id="item-form"]');
         $fields['task'] = 'item.cancel';
         $admin->request($action, $fields);
-        $db->query("UPDATE {$prefix}appointments_eventtypes SET published=1 WHERE id={$events['star']['id']}");
     }
 
     // ------------------------------------------------------ 2. routing on the site

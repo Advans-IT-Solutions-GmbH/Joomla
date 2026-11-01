@@ -19,7 +19,6 @@ use Joomla\CMS\Component\Router\Rules\StandardRules;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Menu\AbstractMenu;
 use Joomla\Database\DatabaseInterface;
-use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -42,8 +41,13 @@ class Router extends RouterView
 
     private DatabaseInterface $db;
 
-    /** @var array<int, string|null> */
-    private array $aliases = [];
+    /**
+     * Alias of every event type by id, loaded once per request in one query, so a list of
+     * event types does not cost one lookup per routed link.
+     *
+     * @var array<int, string>|null
+     */
+    private ?array $aliases = null;
 
     public function __construct(
         SiteApplication $app,
@@ -78,9 +82,9 @@ class Router extends RouterView
     public function getEventtypeSegment($id, $query)
     {
         $id = (int) $id;
-        $alias = $this->alias($id);
+        $alias = $this->aliases()[$id] ?? '';
 
-        return [$id => $alias === null || $alias === '' ? (string) $id : $alias];
+        return [$id => $alias === '' ? (string) $id : $alias];
     }
 
     /**
@@ -94,52 +98,39 @@ class Router extends RouterView
      */
     public function getEventtypeId($segment, $query)
     {
-        $segment = (string) $segment;
+        $segment = mb_strtolower((string) $segment);
 
         if ($segment === '') {
             return false;
         }
 
-        $dbQuery = $this->createQuery();
-        $dbQuery->select($this->db->quoteName('id'))
-            ->from($this->db->quoteName('#__appointments_eventtypes'))
-            ->where($this->db->quoteName('alias') . ' = :alias')
-            ->bind(':alias', $segment);
-        $id = (int) $this->db->setQuery($dbQuery)->loadResult();
-
-        if ($id > 0) {
-            return $id;
+        foreach ($this->aliases() as $id => $alias) {
+            if ($alias !== '' && mb_strtolower($alias) === $segment) {
+                return $id;
+            }
         }
 
-        if (preg_match('/^[1-9][0-9]{0,9}$/D', $segment) === 1 && $this->alias((int) $segment) !== null) {
+        if (preg_match('/^[1-9][0-9]{0,9}$/D', $segment) === 1 && isset($this->aliases()[(int) $segment])) {
             return (int) $segment;
         }
 
         return false;
     }
 
-    /** Alias of an existing event type, '' for one without alias, null when it does not exist. */
-    private function alias(int $id): ?string
+    /** @return array<int, string> */
+    private function aliases(): array
     {
-        if ($id < 1) {
-            return null;
+        if ($this->aliases === null) {
+            $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+            $query->select($this->db->quoteName(['id', 'alias']))
+                ->from($this->db->quoteName('#__appointments_eventtypes'));
+            $this->aliases = [];
+
+            foreach ($this->db->setQuery($query)->loadObjectList() as $row) {
+                $this->aliases[(int) $row->id] = (string) $row->alias;
+            }
         }
 
-        if (!array_key_exists($id, $this->aliases)) {
-            $query = $this->createQuery();
-            $query->select($this->db->quoteName('alias'))
-                ->from($this->db->quoteName('#__appointments_eventtypes'))
-                ->where($this->db->quoteName('id') . ' = :id')
-                ->bind(':id', $id, ParameterType::INTEGER);
-            $alias = $this->db->setQuery($query)->loadResult();
-            $this->aliases[$id] = $alias === null ? null : (string) $alias;
-        }
-
-        return $this->aliases[$id];
-    }
-
-    private function createQuery()
-    {
-        return method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+        return $this->aliases;
     }
 }
