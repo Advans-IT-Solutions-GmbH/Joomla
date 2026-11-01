@@ -9,7 +9,12 @@
     <fieldset name="basic">
         <field name="autoload_language" type="hidden" default="1" />
         <field name="consent_text" type="textarea" label="COM_APPOINTMENTS_CONFIG_CONSENT" description="COM_APPOINTMENTS_CONFIG_CONSENT_DESC" filter="string" />
-        <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" filter="url" relative="true" />
+        <field name="privacy_menuitem" type="menuitem" label="COM_APPOINTMENTS_CONFIG_PRIVACY_MENUITEM" description="COM_APPOINTMENTS_CONFIG_PRIVACY_MENUITEM_DESC" filter="integer" client="site">
+            <option value="">JNONE</option>
+        </field>
+        <field name="privacy_anchor" type="text" label="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR" description="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR_DESC" filter="cmd" maxlength="64" showon="privacy_menuitem!:" />
+        <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" description="COM_APPOINTMENTS_CONFIG_PRIVACY_URL_DESC" filter="url" relative="true" />
+        <field name="phone_default_country" type="text" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_DESC" filter="cmd" maxlength="3" pattern="[0-9]{0,3}" />
         <field name="erase_mode" type="list" label="COM_APPOINTMENTS_CONFIG_ERASE_MODE" description="COM_APPOINTMENTS_CONFIG_ERASE_MODE_DESC" default="anonymise" filter="cmd" validate="options">
             <option value="anonymise">COM_APPOINTMENTS_CONFIG_ERASE_ANONYMISE</option>
             <option value="delete">COM_APPOINTMENTS_CONFIG_ERASE_DELETE</option>

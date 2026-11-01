@@ -1,0 +1,218 @@
+/**
+ * @package     Appointments Component
+ *
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * Progressive enhancement of the booking page. Without this script every day, month and
+ * time-zone change is a normal page request that lands at #appointment-picker again.
+ * With it, only the date-and-time part (#appointment-picker) is loaded in the background
+ * from the same address plus format=raw and replaced in place, so the page neither
+ * reloads nor scrolls and the details already typed stay untouched. The browser's time
+ * zone is applied once on arrival. The script writes no text of its own: everything it
+ * shows comes from the server-rendered part. When a request fails, it falls back to the
+ * normal page request. No inline code, no third-party request.
+ */
+(() => {
+    'use strict';
+
+    const enhance = (root) => {
+        let picker = root.querySelector('[data-appointments-picker]');
+
+        if (!picker || !window.fetch || !window.DOMParser || !window.URL || !window.AbortController) {
+            return;
+        }
+
+        const details = root.querySelector('#appointment-details');
+        const zoneSelect = root.querySelector('#appointment-zone');
+        const zoneForm = root.querySelector('#appointment-zone-form');
+        const form = root.querySelector('#appointment-booking');
+        const status = document.createElement('p');
+        let pending = null;
+
+        root.classList.add('com-appointments-js');
+        status.className = 'visually-hidden com-appointments-status';
+        status.setAttribute('aria-live', 'polite');
+        root.appendChild(status);
+
+        // Keep the other controls in step with the part that was just loaded.
+        const sync = () => {
+            if (details) {
+                details.hidden = picker.dataset.hasSlots !== '1';
+            }
+
+            if (zoneSelect && picker.dataset.zone) {
+                zoneSelect.value = picker.dataset.zone;
+            }
+
+            if (zoneForm && zoneForm.elements.month && picker.dataset.month) {
+                zoneForm.elements.month.value = picker.dataset.month;
+            }
+
+            if (zoneForm && zoneForm.elements.day && picker.dataset.day) {
+                zoneForm.elements.day.value = picker.dataset.day;
+            }
+        };
+
+        // focus: selector of the control that gets the focus back after the update, or ''.
+        // history: the address written into the current history entry after the update, so a reload
+        // or a bookmark shows the same day and zone, or '' to leave the entry alone.
+        const load = (href, focus, history) => {
+            const page = new URL(href, window.location.href);
+            const part = new URL(page.href);
+            const request = new AbortController();
+
+            part.hash = '';
+            part.searchParams.set('format', 'raw');
+
+            if (pending) {
+                pending.abort();
+            }
+
+            pending = request;
+            picker.setAttribute('aria-busy', 'true');
+            // The times shown belong to the previous choice: they cannot be chosen or sent meanwhile.
+            picker.querySelectorAll('input[name="booking[start]"]').forEach((input) => {
+                input.disabled = true;
+            });
+            // Hold the current height while loading, so nothing below moves twice.
+            picker.style.minHeight = picker.offsetHeight + 'px';
+
+            return fetch(part.href, {
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: request.signal,
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status);
+                    }
+
+                    return response.text();
+                })
+                .then((html) => {
+                    const fresh = new DOMParser().parseFromString(html, 'text/html').querySelector('[data-appointments-picker]');
+
+                    if (!fresh) {
+                        throw new Error('Unexpected response');
+                    }
+
+                    const adopted = document.importNode(fresh, true);
+
+                    picker.replaceWith(adopted);
+                    picker = adopted;
+                    sync();
+
+                    if (history && window.history && window.history.replaceState) {
+                        window.history.replaceState(window.history.state, '', history);
+                    }
+
+                    const target = (focus && picker.querySelector(focus + ':not(.disabled)'))
+                        || picker.querySelector('.com-appointments-calendar-next');
+
+                    if (target && focus) {
+                        target.focus({ preventScroll: true });
+                    }
+
+                    const summary = picker.querySelector('.com-appointments-slots-legend, .com-appointments-empty');
+
+                    status.textContent = summary ? summary.textContent.trim() : '';
+                })
+                .catch((error) => {
+                    if (error.name !== 'AbortError') {
+                        window.location.assign(page.href);
+                    }
+                })
+                .finally(() => {
+                    if (pending === request) {
+                        pending = null;
+                        picker.removeAttribute('aria-busy');
+                        picker.style.minHeight = '';
+                    }
+                });
+        };
+
+        // No booking while the times are being replaced; the visitor sends again once they are shown.
+        if (form) {
+            form.addEventListener('submit', (event) => {
+                if (pending) {
+                    event.preventDefault();
+                }
+            });
+        }
+
+        root.addEventListener('click', (event) => {
+            const link = event.target.closest('a[data-appointments-load]');
+
+            if (!link || !root.contains(link) || event.defaultPrevented || event.button !== 0
+                || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                return;
+            }
+
+            event.preventDefault();
+
+            let focus = '.com-appointments-day-selected';
+
+            if (link.classList.contains('com-appointments-calendar-prev')) {
+                focus = '.com-appointments-calendar-prev';
+            } else if (link.classList.contains('com-appointments-calendar-next')) {
+                focus = '.com-appointments-calendar-next';
+            }
+
+            load(link.href, focus, link.href);
+        });
+
+        const zoneAddress = (zone) => {
+            const address = new URL(zoneForm.action, window.location.href);
+
+            Array.prototype.forEach.call(zoneForm.elements, (element) => {
+                if (element.name && element.type === 'hidden') {
+                    address.searchParams.set(element.name, element.value);
+                }
+            });
+            address.searchParams.set('timezone', zone);
+
+            return address.href;
+        };
+
+        if (zoneSelect && zoneForm) {
+            // A zone the visitor chose is kept in the address of the page, with the day shown.
+            zoneSelect.addEventListener('change', () => {
+                const kept = new URL(window.location.href);
+
+                kept.searchParams.set('timezone', zoneSelect.value);
+                kept.searchParams.set('month', picker.dataset.month || '');
+                kept.searchParams.set('day', picker.dataset.day || '');
+                kept.hash = 'appointment-picker';
+                load(zoneAddress(zoneSelect.value), '', kept.href);
+            });
+
+            // The visitor's own zone, unless the address already names one (a chosen zone,
+            // a day link or a refused submission keep theirs).
+            let browserZone = '';
+
+            try {
+                browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+            } catch (error) {
+                browserZone = '';
+            }
+
+            const known = Array.prototype.some.call(zoneSelect.options, (option) => option.value === browserZone);
+
+            if (known && browserZone !== picker.dataset.zone && !new URL(window.location.href).searchParams.has('timezone')) {
+                load(zoneAddress(browserZone), '', '');
+            }
+        }
+    };
+
+    const start = () => document.querySelectorAll('[data-appointments-booking]').forEach(enhance);
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+})();

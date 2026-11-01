@@ -10,6 +10,15 @@
             "type": "style",
             "uri": "com_appointments/appointments.css",
             "version": "1.1.2"
+        },
+        {
+            "name": "com_appointments.booking",
+            "type": "script",
+            "uri": "com_appointments/booking.js",
+            "attributes": {
+                "defer": true
+            },
+            "version": "1.1.2"
         }
     ]
 }

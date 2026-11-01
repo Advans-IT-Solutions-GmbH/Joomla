@@ -56,7 +56,8 @@ have to exist, not a configuration anyone has to use:
 - One time zone per schedule. The public page converts to the visitor's zone and lets them change it.
 
 ### Booking form
-- Fixed fields: name, e-mail, optional additional guest e-mail addresses.
+- Fixed fields: name, e-mail, optional additional guest e-mail addresses, and for both telephone
+  location types a required telephone number (stored in `invitee_phone`).
 - Configurable custom fields per event type: single line, multi line, number, phone (with country
   selector), e-mail, URL, single choice, multiple choice, checkbox, date. Each with label,
   description, required flag and ordering.

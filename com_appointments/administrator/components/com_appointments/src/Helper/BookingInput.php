@@ -31,12 +31,33 @@ final class BookingInput
         '995', '996', '998',
     ];
 
+    /** Location types at which the host and the invitee talk on the telephone. */
+    public const PHONE_LOCATIONS = ['phone_host_calls', 'phone_invitee_calls'];
+
+    /**
+     * Calling codes whose national numbers keep their leading zero after the code
+     * (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Everywhere
+     * else a single leading zero is the national trunk prefix and is not dialled after
+     * the country code, so "+41 079 …" is stored as "+4179…".
+     */
+    private const KEEP_LEADING_ZERO = ['39', '378', '379', '225', '229', '242'];
+
+    /** Whether an event type with this location type asks for the invitee's telephone number. */
+    public static function requiresPhone(string $locationType): bool
+    {
+        return in_array($locationType, self::PHONE_LOCATIONS, true);
+    }
+
     /**
      * Every field is checked, so the visitor sees all problems at once. A refusal of
      * a visible field is reported for that field (BookingValidationException::$fieldErrors),
      * a tampered hidden value (time zone, field structure) for the form as a whole.
+     *
+     * With $phoneRequired (both telephone location types) the fixed telephone field
+     * `phone` is mandatory and is what `invitee_phone` stores. Otherwise the first answered
+     * custom telephone field fills `invitee_phone`, as before.
      */
-    public function validate(array $input, array $fields, string $language): array
+    public function validate(array $input, array $fields, string $language, bool $phoneRequired = false): array
     {
         $errors = [];
         $name = $this->collect($errors, 'name', 'COM_APPOINTMENTS_BOOKING_ERROR_NAME', function () use ($input): string {
@@ -89,8 +110,22 @@ final class BookingInput
             return $guests;
         }) ?? [];
 
-        $answers = [];
         $phone = null;
+
+        if ($phoneRequired) {
+            $phone = $this->collect($errors, 'phone', 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE', function () use ($input): string {
+                $raw = $input['phone'] ?? [];
+                $number = $this->phone($raw === '' ? [] : $raw);
+
+                if ($number === null) {
+                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED');
+                }
+
+                return $number;
+            });
+        }
+
+        $answers = [];
         $submitted = $input['fields'] ?? [];
 
         if (!is_array($submitted)) {
@@ -108,7 +143,10 @@ final class BookingInput
                 continue;
             }
 
-            $phone ??= $answer['phone'];
+            if (!$phoneRequired) {
+                $phone ??= $answer['phone'];
+            }
+
             $answers[$id] = $answer['value'];
         }
 
@@ -162,29 +200,8 @@ final class BookingInput
                 }
             }
         } elseif ($type === 'tel') {
-            if ($raw === '') {
-                $raw = [];
-            }
-
-            if (!is_array($raw)) {
-                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-            }
-
-            $number = $this->text($raw['number'] ?? '', 40);
-            $code = $this->text($raw['country'] ?? '', 3);
-            $value = '';
-
-            if ($number !== '') {
-                $digits = preg_replace('/[\s().-]/', '', $number);
-
-                if (!in_array($code, self::DIAL_CODES, true) || !preg_match('/^[0-9]{3,14}$/D', $digits)
-                    || strlen($code . $digits) > 15) {
-                    throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
-                }
-
-                $value = '+' . $code . $digits;
-                $phone = $value;
-            }
+            $phone = $this->phone($raw === '' ? [] : $raw);
+            $value = $phone ?? '';
         } else {
             $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
 
@@ -213,6 +230,57 @@ final class BookingInput
         }
 
         return ['value' => $value, 'phone' => $phone];
+    }
+
+    /**
+     * One telephone number in E.164 form ("+41791234567"), or null when the number is
+     * empty. The visitor chooses a calling code and types the national number, or types
+     * the whole international number starting with "+" or "00", in which case the
+     * calling code is read from the number and the selector is ignored. Spaces,
+     * brackets, dots and hyphens are ignored; a national trunk zero is dropped.
+     */
+    private function phone(mixed $raw): ?string
+    {
+        if (!is_array($raw)) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+        }
+
+        $number = $this->text($raw['number'] ?? '', 40);
+        $code = $this->text($raw['country'] ?? '', 3);
+
+        if ($number === '') {
+            return null;
+        }
+
+        $digits = preg_replace('/[\s().\/-]/', '', $number);
+
+        if (preg_match('/^(?:\+|00)([0-9]+)$/D', $digits, $match)) {
+            // E.164 calling codes are prefix-free: at most one of 1, 2 or 3 leading digits is a code.
+            $code = '';
+
+            foreach ([1, 2, 3] as $length) {
+                if (in_array(substr($match[1], 0, $length), self::DIAL_CODES, true)) {
+                    $code = substr($match[1], 0, $length);
+                    break;
+                }
+            }
+
+            $digits = substr($match[1], strlen($code));
+        }
+
+        if (!in_array($code, self::DIAL_CODES, true)) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+        }
+
+        if (!in_array($code, self::KEEP_LEADING_ZERO, true) && str_starts_with($digits, '0') && !str_starts_with($digits, '00')) {
+            $digits = substr($digits, 1);
+        }
+
+        if (!preg_match('/^[0-9]{3,14}$/D', $digits) || strlen($code . $digits) > 15) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+        }
+
+        return '+' . $code . $digits;
     }
 
     private function text($value, int $max): string
