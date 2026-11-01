@@ -153,7 +153,8 @@ class HtmlView extends BaseHtmlView
             if ($menuItem !== null && in_array((int) $menuItem->access, array_map('intval', $app->getIdentity()->getAuthorisedViewLevels()), true)) {
                 $anchor = trim((string) $this->params->get('privacy_anchor', ''), " #\t");
 
-                return Route::_('index.php?Itemid=' . $itemId) . ($anchor !== '' ? '#' . rawurlencode($anchor) : '');
+                // Unescaped: the layout escapes the address once for the attribute.
+                return Route::_('index.php?Itemid=' . $itemId, false) . ($anchor !== '' ? '#' . rawurlencode($anchor) : '');
             }
         }
 

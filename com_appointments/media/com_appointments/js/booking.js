@@ -53,8 +53,9 @@
         };
 
         // focus: selector of the control that gets the focus back after the update, or ''.
-        // remember: write the address of the shown day into the history entry (day and month links).
-        const load = (href, focus, remember) => {
+        // history: the address written into the current history entry after the update, so a reload
+        // or a bookmark shows the same day and zone, or '' to leave the entry alone.
+        const load = (href, focus, history) => {
             const page = new URL(href, window.location.href);
             const part = new URL(page.href);
             const request = new AbortController();
@@ -96,8 +97,8 @@
                     picker = adopted;
                     sync();
 
-                    if (remember && window.history && window.history.replaceState) {
-                        window.history.replaceState(window.history.state, '', page.href);
+                    if (history && window.history && window.history.replaceState) {
+                        window.history.replaceState(window.history.state, '', history);
                     }
 
                     const target = (focus && picker.querySelector(focus + ':not(.disabled)'))
@@ -143,7 +144,7 @@
                 focus = '.com-appointments-calendar-next';
             }
 
-            load(link.href, focus, true);
+            load(link.href, focus, link.href);
         });
 
         const zoneAddress = (zone) => {
@@ -160,7 +161,16 @@
         };
 
         if (zoneSelect && zoneForm) {
-            zoneSelect.addEventListener('change', () => load(zoneAddress(zoneSelect.value), '', false));
+            // A zone the visitor chose is kept in the address of the page, without the day, which the
+            // server chooses again for the new zone.
+            zoneSelect.addEventListener('change', () => {
+                const kept = new URL(window.location.href);
+
+                kept.searchParams.set('timezone', zoneSelect.value);
+                kept.searchParams.delete('day');
+                kept.hash = 'appointment-picker';
+                load(zoneAddress(zoneSelect.value), '', kept.href);
+            });
 
             // The visitor's own zone, unless the address already names one (a chosen zone,
             // a day link or a refused submission keep theirs).
@@ -175,7 +185,7 @@
             const known = Array.prototype.some.call(zoneSelect.options, (option) => option.value === browserZone);
 
             if (known && browserZone !== picker.dataset.zone && !new URL(window.location.href).searchParams.has('timezone')) {
-                load(zoneAddress(browserZone), '', false);
+                load(zoneAddress(browserZone), '', '');
             }
         }
     };

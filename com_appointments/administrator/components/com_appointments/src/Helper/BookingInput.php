@@ -36,11 +36,11 @@ final class BookingInput
 
     /**
      * Calling codes whose national numbers keep their leading zero after the code
-     * (Italy, San Marino, Vatican City, Côte d'Ivoire, Republic of the Congo). Everywhere
+     * (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Everywhere
      * else a single leading zero is the national trunk prefix and is not dialled after
      * the country code, so "+41 079 …" is stored as "+4179…".
      */
-    private const KEEP_LEADING_ZERO = ['39', '378', '379', '225', '242'];
+    private const KEEP_LEADING_ZERO = ['39', '378', '379', '225', '229', '242'];
 
     /** Whether an event type with this location type asks for the invitee's telephone number. */
     public static function requiresPhone(string $locationType): bool

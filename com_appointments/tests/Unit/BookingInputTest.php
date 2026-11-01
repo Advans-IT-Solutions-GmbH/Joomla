@@ -134,6 +134,8 @@ final class BookingInputTest extends TestCase
         yield 'international 00 prefix' => [['country' => '', 'number' => '0044 20 7946 0958'], '+442079460958'];
         yield 'three-digit code' => [['country' => '423', 'number' => '234 56 78'], '+4232345678'];
         yield 'Italy keeps its leading zero' => [['country' => '39', 'number' => '06 1234 5678'], '+390612345678'];
+        yield 'Benin keeps its leading zero, national' => [['country' => '229', 'number' => '01 97 12 34 56'], '+2290197123456'];
+        yield 'Benin keeps its leading zero, international' => [['country' => '', 'number' => '+229 01 97 12 34 56'], '+2290197123456'];
         yield 'North America' => [['country' => '1', 'number' => '(212) 555-0100'], '+12125550100'];
     }
 

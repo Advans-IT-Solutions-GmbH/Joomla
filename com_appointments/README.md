@@ -360,7 +360,7 @@ calling code** (digits only, for example `41`) preselects a code. The visitor ma
 whole international number starting with `+` or `00`; the code is then read from the number.
 Spaces, brackets, dots, slashes and hyphens are ignored, and a single national trunk zero is
 dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
-keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Republic of the Congo). Numbers are
+keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Numbers are
 stored in E.164 form, at most 15 digits.
 
 A telephone event type that collected the number through a custom telephone field (before the
