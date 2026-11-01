@@ -39,7 +39,7 @@ $cells = array_merge($cells, array_fill(0, 42 - count($cells), null));
 $chevron = static fn (string $path): string => '<svg class="com-appointments-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="' . $path . '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 $hasSlots = !empty($this->slots[$this->day]);
 ?>
-<div id="appointment-picker" class="com-appointments-picker" data-appointments-picker data-month="<?php echo $this->escape($month); ?>" data-zone="<?php echo $this->escape($zone); ?>" data-has-slots="<?php echo $hasSlots ? '1' : '0'; ?>">
+<div id="appointment-picker" class="com-appointments-picker" data-appointments-picker data-month="<?php echo $this->escape($month); ?>" data-day="<?php echo $this->escape($this->day); ?>" data-zone="<?php echo $this->escape($zone); ?>" data-has-slots="<?php echo $hasSlots ? '1' : '0'; ?>">
     <div class="com-appointments-picker-grid">
         <section class="com-appointments-calendar" aria-labelledby="appointment-calendar-title">
             <nav class="com-appointments-calendar-nav" aria-label="<?php echo Text::_('COM_APPOINTMENTS_BOOKING_MONTH'); ?>">

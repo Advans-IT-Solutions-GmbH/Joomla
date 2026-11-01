@@ -29,6 +29,7 @@
         const details = root.querySelector('#appointment-details');
         const zoneSelect = root.querySelector('#appointment-zone');
         const zoneForm = root.querySelector('#appointment-zone-form');
+        const form = root.querySelector('#appointment-booking');
         const status = document.createElement('p');
         let pending = null;
 
@@ -50,6 +51,10 @@
             if (zoneForm && zoneForm.elements.month && picker.dataset.month) {
                 zoneForm.elements.month.value = picker.dataset.month;
             }
+
+            if (zoneForm && zoneForm.elements.day && picker.dataset.day) {
+                zoneForm.elements.day.value = picker.dataset.day;
+            }
         };
 
         // focus: selector of the control that gets the focus back after the update, or ''.
@@ -69,6 +74,10 @@
 
             pending = request;
             picker.setAttribute('aria-busy', 'true');
+            // The times shown belong to the previous choice: they cannot be chosen or sent meanwhile.
+            picker.querySelectorAll('input[name="booking[start]"]').forEach((input) => {
+                input.disabled = true;
+            });
             // Hold the current height while loading, so nothing below moves twice.
             picker.style.minHeight = picker.offsetHeight + 'px';
 
@@ -126,6 +135,15 @@
                 });
         };
 
+        // No booking while the times are being replaced; the visitor sends again once they are shown.
+        if (form) {
+            form.addEventListener('submit', (event) => {
+                if (pending) {
+                    event.preventDefault();
+                }
+            });
+        }
+
         root.addEventListener('click', (event) => {
             const link = event.target.closest('a[data-appointments-load]');
 
@@ -161,13 +179,13 @@
         };
 
         if (zoneSelect && zoneForm) {
-            // A zone the visitor chose is kept in the address of the page, without the day, which the
-            // server chooses again for the new zone.
+            // A zone the visitor chose is kept in the address of the page, with the day shown.
             zoneSelect.addEventListener('change', () => {
                 const kept = new URL(window.location.href);
 
                 kept.searchParams.set('timezone', zoneSelect.value);
-                kept.searchParams.delete('day');
+                kept.searchParams.set('month', picker.dataset.month || '');
+                kept.searchParams.set('day', picker.dataset.day || '');
                 kept.hash = 'appointment-picker';
                 load(zoneAddress(zoneSelect.value), '', kept.href);
             });

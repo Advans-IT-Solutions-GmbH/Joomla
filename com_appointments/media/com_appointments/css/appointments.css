@@ -169,11 +169,15 @@
 .com-appointments-picker {
     display: grid;
     gap: 0.75rem;
-    transition: opacity 0.15s ease-in-out;
 }
 
+/* Loading: no fading, so every text keeps its contrast; the old times stay visible but inert. */
 .com-appointments-picker[aria-busy="true"] {
-    opacity: 0.6;
+    cursor: progress;
+}
+
+.com-appointments-picker[aria-busy="true"] .com-appointments-picker-grid {
+    pointer-events: none;
 }
 
 .com-appointments-picker-grid {
@@ -230,7 +234,9 @@
     cursor: default;
 }
 
+/* Every cell is as high as a day, empty weeks included, so the calendar keeps its height. */
 .com-appointments-day-cell {
+    height: var(--appointments-target);
     padding: 0;
     text-align: center;
 }

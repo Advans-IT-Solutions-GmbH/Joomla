@@ -224,6 +224,7 @@ $consentText = trim((string) $this->params->get('consent_text', '')) ?: Text::_(
             <input type="hidden" name="view" value="eventtype">
             <input type="hidden" name="id" value="<?php echo $id; ?>">
             <input type="hidden" name="month" value="<?php echo $this->escape($this->month->format('Y-m')); ?>">
+            <input type="hidden" name="day" value="<?php echo $this->escape($this->day); ?>">
         </form>
     </div>
 </div>
