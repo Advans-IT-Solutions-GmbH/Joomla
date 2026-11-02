@@ -6,7 +6,7 @@
         <field name="title" type="text" label="JGLOBAL_TITLE" required="true" maxlength="255" />
         <field name="alias" type="text" label="JFIELD_ALIAS_LABEL" maxlength="255" />
         <field name="description" type="editor" label="JGLOBAL_DESCRIPTION" filter="safehtml" />
-        <field name="schedule_id" type="sql" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" required="true" filter="integer" query="SELECT id, title FROM #__appointments_schedules ORDER BY title" key_field="id" value_field="title">
+        <field name="schedule_id" type="schedulelist" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" required="true" filter="integer">
             <option value="">JOPTION_SELECT</option>
         </field>
         <field name="host_user_id" type="user" label="COM_APPOINTMENTS_EVENTTYPE_HOST" required="true" filter="integer" />

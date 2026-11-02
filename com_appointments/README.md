@@ -102,7 +102,8 @@ currently available.
   has its own Joomla permission asset and independently generated feed credential. An event type's
   host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
-  manager. Direct links enforce publication, access and content language too.
+  manager, in one content language or in *All*, with SEF addresses. Direct links enforce
+  publication, access and content language too.
 - **Public booking.** One page in two steps: date and time (server-rendered month grid, available
   days, the times of the chosen day), then the visitor's details. Everything works without
   JavaScript; the bundled booking script only updates the date-and-time part in the background,
@@ -166,16 +167,24 @@ ACL. Event types, custom fields, schedules and blocked periods are configured fr
 
 ### Links and web-server rules
 
-The component has no SEF router. Its guest links are non-SEF on purpose:
+The booking pages have a SEF router, built from Joomla's standard routing rules like the core
+components. The guest links in e-mails and the calendar subscriptions stay non-SEF on purpose:
 
+- **Booking pages** are reached through a Joomla menu item of type *Event types* or *Book an
+  appointment*, in one content language or in *All*. The event type of a *Book an appointment* item
+  is chosen from the published event types; an item whose event type was unpublished later keeps it,
+  marked as unpublished. Links the component builds (the event type list, the month and day
+  navigation, redirects inside the booking flow) use the event type's own menu item in the current
+  language or in *All*, otherwise an *Event types* item (`/<list item>/<event type alias>`),
+  otherwise `/component/appointments/eventtype/<event type alias>`. Earlier addresses such as
+  `/component/appointments/?view=eventtype&id=…` and non-SEF
+  `index.php?option=com_appointments&view=eventtype&id=…` keep working.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
   `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
   They are signed, are also sent by the reminder task from the command line, where no site router is
-  available, and must stay valid for as long as the booking exists.
+  available, and must stay valid for as long as the booking exists. On a multilingual site Joomla
+  adds the language prefix when such a link is opened.
 - **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
-- **Booking pages** are reached through a Joomla menu item of type *Event types* or *Event type*.
-  Redirects inside the booking flow use the menu item when one matches, otherwise Joomla's
-  `/component/appointments/…` form.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
 otherwise guests cannot open the links of their e-mails or subscribe to a feed. Each line goes
@@ -204,10 +213,9 @@ match, so `?option=com_users&x=option=com_appointments` would also be exempted.
 No exception is needed for `tmpl=component` or `format=feed`: the component uses neither. The
 feed is served by the task `feed.download`.
 
-A router would not remove these exceptions. The signed mail links and feed URLs have to be
+The router does not remove these exceptions. The signed mail links and feed URLs have to be
 stable and buildable without a site router, and without a menu item a routed address is still
-`/component/appointments/…`. A router can be added later for nicer addresses of the booking pages,
-in which case the existing non-SEF links must keep working.
+`/component/appointments/…`.
 
 ### Video conferencing
 Select a provider in **Options → Video conferencing**, then set the event's location to **Video

@@ -11,6 +11,8 @@ namespace Advans\Component\Appointments\Administrator\Extension;
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\Component\Router\RouterServiceInterface;
+use Joomla\CMS\Component\Router\RouterServiceTrait;
 use Joomla\CMS\Extension\BootableExtensionInterface;
 use Joomla\CMS\Extension\MVCComponent;
 use Joomla\CMS\HTML\HTMLRegistryAwareTrait;
@@ -20,13 +22,17 @@ use Psr\Container\ContainerInterface;
 /**
  * Component class for Appointments. It serves the administrator and the site
  * part, which is why it lives in the administrator namespace and is referenced
- * by both service providers, the way Joomla's own components do it.
+ * by both service providers, the way Joomla's own components do it. It also
+ * provides the site router (Site\Service\Router), so SEF addresses of the
+ * booking pages resolve through menu items in every language and in "All".
  *
  * @since  1.0.0
  */
-class AppointmentsComponent extends MVCComponent implements BootableExtensionInterface
+class AppointmentsComponent extends MVCComponent implements BootableExtensionInterface, RouterServiceInterface
 {
     use HTMLRegistryAwareTrait;
+    use RouterServiceTrait;
+
     private ConferenceManager $conferenceManager;
 
     public function getConferenceManager(): ConferenceManager

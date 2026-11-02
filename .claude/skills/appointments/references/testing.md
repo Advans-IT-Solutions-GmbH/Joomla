@@ -101,6 +101,7 @@ com_appointments/tests/scripts/
 ├── 13-conference.php        # link in mail, ICS and page; provider failure handled
 ├── 14-privacy.php           # typed Joomla events, Unicode ownership and legal blocking
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
+├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 
