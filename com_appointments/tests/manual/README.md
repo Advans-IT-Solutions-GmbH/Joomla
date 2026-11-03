@@ -288,11 +288,11 @@ Additional field administration:
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| BU-01 | POS | Open E-A, choose a free day/slot and submit valid data and consent. | Exactly one booking; correct confirmation; backend entry; slot then occupied. |
-| BU-02 | POS | Repeat the whole flow with JavaScript disabled. | Month, day, slot, time zone, form and confirmation usable without JavaScript. |
-| BU-03 | POS | Use Tab, Shift+Tab, Enter and Space to operate the form. | Visible focus, sensible order, clearly labelled fields and selectable slots. |
-| BU-04 | POS | With a screen reader, inspect at least date, slot, required fields and errors. | Understandable control names; errors discoverable and associated with the field. |
-| BU-05 | POS | Book on a narrow smartphone screen and at 200% zoom. | No clipped required actions, unusable tables or overlapping controls. |
+| BU-01 | POS | Open E-A, choose a free day, a time and **Next**, then submit valid data and consent. | Exactly one booking; one step visible at a time; the chosen time stands in the information column on step 2; confirmation with summary, working `.ics` download and reschedule/cancel links; backend entry; slot then occupied. |
+| BU-02 | POS | Repeat the whole flow with JavaScript disabled, and reload each step. | Month, day, time with **Next**, **Back**, time zone, form and confirmation usable without JavaScript; each step keeps its address (`month`, `day`, `start`) on reload. |
+| BU-03 | POS | Use Tab, Shift+Tab, arrow keys, Enter and Space to operate calendar, times, **Next**, **Back** and the form. | Visible focus, sensible order, clearly labelled fields and selectable slots; after a step change the focus stands at the new times or the new step title. |
+| BU-04 | POS | With a screen reader, inspect at least date, slot, step changes, required fields and errors. | Understandable control names; each step change announced ("Step 2 of 3: …" or the times of the day); errors discoverable and associated with the field. |
+| BU-05 | POS | Book on a narrow smartphone screen and at 200% zoom, with both information-column layouts. | Date, times and details one at a time with a way back; no clipped required actions, unusable tables or overlapping controls. |
 | BU-06 | NEG | Omit name, email or consent. Bypass browser validation and resubmit. | Server-side refusal too; no booking or notification; previously valid input retained. |
 | BU-07 | NEG | Submit a form older than one hour. | Understandable refusal or required reload; no booking. |
 | BU-08 | NEG | Fill the honeypot using developer tools, or submit in less than two seconds. | Refusal without booking; no external CAPTCHA request. |
@@ -300,7 +300,7 @@ Additional field administration:
 | BU-10 | NEG | Enter more than ten guests, then an invalid guest address. | Understandable refusal; no partially created booking. |
 | BU-11 | NEG | Submit an unavailable slot, a different event type or a past time in POST. | Server-side recheck refuses the operation. |
 | BU-12 | NEG | Open the confirmation URL in another browser without the original session. | No other person's booking data visible; confirmation page is not a public record lookup. |
-| BU-13 | GRZ | After success, reload, navigate back/forward and resend the same POST. | No second active booking for the same slot; no false success. |
+| BU-13 | GRZ | Navigate back/forward between the steps; after success, reload, navigate back/forward and resend the same POST. | Back and forward show the step of their address; no second active booking for the same slot; no false success. |
 | BU-14 | POS | Return to the event type; open a fully booked or closed period. | Understandable empty state and useful navigation instead of an error page. |
 
 ## 7. Slot calculation, time zones and boundaries

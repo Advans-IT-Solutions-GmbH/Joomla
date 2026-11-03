@@ -37,6 +37,7 @@ class EventtypeModel extends BaseDatabaseModel
             'e.buffer_before_minutes', 'e.buffer_after_minutes', 'e.min_notice_minutes', 'e.horizon_days',
             'e.horizon_start_utc', 'e.horizon_end_utc', 'e.max_per_day', 'e.max_per_week', 'e.schedule_id',
             'e.host_user_id', 'e.location_type', 'e.location_text', 'e.requires_approval', 'e.colour',
+            'e.info_layout', 'e.info_logo', 'e.info_photo', 'e.info_name', 'e.info_role',
         ]))->select($db->quoteName('s.timezone'))
             ->from($db->quoteName('#__appointments_eventtypes', 'e'))
             ->join('INNER', $db->quoteName('#__appointments_schedules', 's'), $db->quoteName('s.id') . ' = ' . $db->quoteName('e.schedule_id'))

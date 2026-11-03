@@ -140,6 +140,7 @@ class SitePageTest
         }
 
         $this->runPopulatedChecks();
+        $this->runBookingSteps();
 
         echo "\n=== Site Page Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
@@ -217,6 +218,217 @@ class SitePageTest
     }
 
     /**
+     * The booking page in steps, the way a visitor without JavaScript goes through it:
+     * the calendar alone, the times of a chosen day, the GET form of a time with its
+     * "Next" button, and the details of that time. Then the ways the address can be
+     * wrong: a time that is no longer offered, a malformed time and an unknown layout.
+     * Both information-column layouts are rendered, with markup in the name and role.
+     */
+    private function runBookingSteps(): void
+    {
+        echo "\n--- booking page in steps ---\n";
+
+        $utc = new \DateTimeZone('UTC');
+        $day = (new \DateTimeImmutable('now', $utc))->modify('+2 days')->format('Y-m-d');
+        $month = substr($day, 0, 7);
+        $person = 'Muster <i>Person</i> & "Co"';
+
+        try {
+            $event = $this->seedBookable($person);
+            $base = 'index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC';
+
+            // 1a: the calendar alone, no times and no form of details yet.
+            $page = $this->request($base . '&month=' . $month);
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the calendar answers HTTP 200 without a PHP error', function () use ($page) {
+                return $page['code'] === 200 && !preg_match('/(Fatal error|Warning|Notice|Deprecated):/', $page['body']);
+            });
+            $this->test('steps: without a chosen day the calendar stands alone, without times or details', function () use ($xpath) {
+                return $xpath->query('//form[@id="appointment-time-form"][@method="get"]')->length === 1
+                    && $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]')->length === 1
+                    && $xpath->query('//input[@name="start"]')->length === 0
+                    && $xpath->query('//form[@id="appointment-details-form"]')->length === 0
+                    && $xpath->query('//*[@id="appointment-picker"][@data-day=""]')->length === 1;
+            });
+            $this->test('steps: the step title names step 1 of 3 and the event type is the main heading', function () use ($xpath) {
+                $title = preg_replace('/\s+/', ' ', trim($xpath->query('//*[@id="appointment-step-title"]')->item(0)?->textContent ?? ''));
+
+                return $title === 'Step 1 of 3: Choose a date and time'
+                    && trim($xpath->query('//h1[contains(@class, "com-appointments-heading")]')->item(0)?->textContent ?? '') === 'Bookable steps talk';
+            });
+            $dayLink = '';
+            foreach ($xpath->query('//a[contains(@class, "com-appointments-day-available")]') as $link) {
+                if (str_contains(html_entity_decode($link->getAttribute('href')), 'day=' . $day)) {
+                    $dayLink = html_entity_decode($link->getAttribute('href'));
+                }
+            }
+            $this->test('steps: a bookable day is a plain link that lands at the date and time part', function () use ($dayLink) {
+                return $dayLink !== '' && str_ends_with($dayLink, '#appointment-picker');
+            });
+            $this->test('steps: the company-logo layout shows the logo with an address from the site root', function () use ($xpath) {
+                $logo = $xpath->query('//img[contains(@class, "com-appointments-logo")]')->item(0);
+
+                return $logo instanceof \DOMElement && str_starts_with($logo->getAttribute('src'), '/')
+                    && str_ends_with($logo->getAttribute('src'), 'images/joomla_black.png') && $logo->getAttribute('alt') === ''
+                    && $xpath->query('//*[contains(@class, "com-appointments-host")]')->length === 0;
+            });
+
+            // 1b: the chosen day, its times, each with its own "Next" button in the GET form.
+            $page = $this->request(preg_replace('#^/#', '', parse_url($dayLink, PHP_URL_PATH)) . '?' . parse_url($dayLink, PHP_URL_QUERY));
+            $xpath = $this->dom($page['body']);
+            $radios = $xpath->query('//form[@id="appointment-time-form"]//input[@type="radio"][@name="start"]');
+            $this->test('steps: the chosen day shows its times as radio buttons named start, each with a "Next" button', function () use ($xpath, $radios, $day) {
+                $slots = $xpath->query('//form[@id="appointment-time-form"]//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-slot ")]');
+                $next = $xpath->query('//form[@id="appointment-time-form"]//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-slot ")]/button[@type="submit"][contains(@class, "com-appointments-slot-next")]');
+
+                return $radios->length > 0 && $slots->length === $radios->length && $next->length === $radios->length
+                    && str_starts_with($radios->item(0)->getAttribute('value'), $day . ' ')
+                    && trim($next->item(0)->textContent) === 'Next'
+                    && $xpath->query('//form[@id="appointment-details-form"]')->length === 0;
+            });
+            $this->test('steps: the way back to the calendar of a narrow screen leaves the day out', function () use ($xpath) {
+                $back = $xpath->query('//a[contains(@class, "com-appointments-times-back")]')->item(0);
+
+                return $back instanceof \DOMElement && !str_contains(html_entity_decode($back->getAttribute('href')), 'day=')
+                    && trim($back->textContent) === 'Back to the calendar';
+            });
+
+            // The no-JavaScript path: send the GET form with the first time, as its "Next" button does.
+            $form = $xpath->query('//form[@id="appointment-time-form"]')->item(0);
+            $query = [];
+            foreach ($xpath->query('.//input[@type="hidden"]', $form) as $input) {
+                $query[$input->getAttribute('name')] = $input->getAttribute('value');
+            }
+            $chosen = $radios->length > 0 ? $radios->item(0)->getAttribute('value') : '';
+            $query['start'] = $chosen;
+            $action = html_entity_decode($form instanceof \DOMElement ? $form->getAttribute('action') : '');
+            $page = $this->request(ltrim((string) parse_url($action, PHP_URL_PATH), '/') . '?' . http_build_query($query));
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the "Next" button opens step 2 with the details form of the chosen time', function () use ($page, $xpath, $chosen) {
+                $start = $xpath->query('//form[@id="appointment-details-form"][@method="post"]//input[@type="hidden"][@name="booking[start]"]')->item(0);
+                $zone = $xpath->query('//form[@id="appointment-details-form"]//input[@type="hidden"][@name="booking[timezone]"]')->item(0);
+                $title = preg_replace('/\s+/', ' ', trim($xpath->query('//*[@id="appointment-step-title"]')->item(0)?->textContent ?? ''));
+
+                return $page['code'] === 200 && $chosen !== '' && $start instanceof \DOMElement && $start->getAttribute('value') === $chosen
+                    && $zone instanceof \DOMElement && $zone->getAttribute('value') === 'UTC'
+                    && $title === 'Step 2 of 3: Your details'
+                    && $xpath->query('//input[@name="start"]')->length === 0
+                    && $xpath->query('//input[@id="booking-name"][@required]')->length === 1
+                    && $xpath->query('//input[@id="booking-consent"][@required]')->length === 1;
+            });
+            $this->test('steps: the information column shows the chosen time and its zone', function () use ($xpath, $chosen) {
+                $start = new \DateTimeImmutable($chosen, new \DateTimeZone('UTC'));
+                $time = trim($xpath->query('//*[contains(@class, "com-appointments-selected-time")]')->item(0)?->textContent ?? '');
+
+                return $time === $start->format('H:i') . ' – ' . $start->modify('+30 minutes')->format('H:i')
+                    && trim($xpath->query('//li[contains(@class, "com-appointments-selected-zone")]')->item(0)?->textContent ?? '') === 'UTC';
+            });
+            $this->test('steps: "Back" leads to the times of the same day, without the chosen time', function () use ($xpath, $day) {
+                $back = $xpath->query('//a[contains(@class, "com-appointments-back")][@data-appointments-step]')->item(0);
+                $href = $back instanceof \DOMElement ? html_entity_decode($back->getAttribute('href')) : '';
+
+                return str_contains($href, 'day=' . $day) && !str_contains($href, 'start=') && str_ends_with($href, '#appointment-picker')
+                    && trim($back->textContent) === 'Back';
+            });
+
+            // The person layout, with markup in the name and the role.
+            $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_layout='person' WHERE id={$event}");
+            $page = $this->request($base . '&start=' . urlencode($chosen));
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the person layout shows photo, name and role, escaped', function () use ($page, $xpath, $person) {
+                $photo = $xpath->query('//img[contains(@class, "com-appointments-host-photo")]')->item(0);
+
+                return $page['code'] === 200 && $photo instanceof \DOMElement && str_starts_with($photo->getAttribute('src'), '/')
+                    && trim($xpath->query('//*[contains(@class, "com-appointments-host-name")]')->item(0)?->textContent ?? '') === $person
+                    && trim($xpath->query('//*[contains(@class, "com-appointments-host-role")]')->item(0)?->textContent ?? '') === 'Role <b>&'
+                    && !str_contains($page['body'], '<i>Person</i>')
+                    && $xpath->query('//img[contains(@class, "com-appointments-logo")]')->length === 0;
+            });
+
+            // An unknown layout value falls back to the company-logo layout; an empty logo shows no image.
+            $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_layout='bogus', info_logo='' WHERE id={$event}");
+            $page = $this->request($base . '&month=' . $month);
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: an unknown layout falls back to the logo layout, and no logo means no image', function () use ($page, $xpath) {
+                return $page['code'] === 200 && $xpath->query('//*[contains(@class, "com-appointments-info-logo")]')->length === 1
+                    && $xpath->query('//*[contains(@class, "com-appointments-layout")][contains(@class, "com-appointments-info-logo")]')->length === 1
+                    && $xpath->query('//img')->length === $xpath->query('//img[not(ancestor::*[contains(@class, "com-appointments")])]')->length
+                    && $xpath->query('//h1[contains(@class, "com-appointments-heading")]')->length === 1;
+            });
+
+            // A time that is not offered (here before the schedule opens) returns to the times of its day.
+            $page = $this->request($base . '&start=' . urlencode($day . ' 03:00:00'));
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: a time that is no longer offered shows the times of its day with the reason', function () use ($page, $xpath) {
+                $taken = trim((string) ($this->strings['COM_APPOINTMENTS_BOOKING_ERROR_TAKEN'] ?? ''));
+
+                return $page['code'] === 200 && $taken !== '' && trim($xpath->query('//*[@id="booking-start-error"]')->item(0)?->textContent ?? '') === $taken
+                    && $xpath->query('//input[@name="start"]')->length > 0
+                    && $xpath->query('//form[@id="appointment-details-form"]')->length === 0;
+            });
+
+            $page = $this->request($base . '&start=not-a-time');
+            $this->test('steps: a malformed time is an explicit 400', function () use ($page) {
+                return $page['code'] === 400;
+            });
+
+            // The background update of a month: the date-and-time part without times while no day is chosen.
+            $page = $this->request($base . '&month=' . $month . '&format=raw');
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the slot endpoint of a month without a day returns the calendar without times', function () use ($page, $xpath) {
+                return $page['code'] === 200 && $xpath->query('//*[@id="appointment-picker"][@data-day=""]')->length === 1
+                    && $xpath->query('//input[@name="start"]')->length === 0
+                    && $xpath->query('//*[contains(@class, "com-appointments-day-available")]')->length > 0;
+            });
+        } finally {
+            $this->cleanUp();
+        }
+    }
+
+    /** A published event type with an open UTC schedule every day, 09:00 to 17:00, and both layouts' settings. */
+    private function seedBookable(string $person): int
+    {
+        $this->cleanUp();
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $this->db->query(
+            "INSERT INTO {$this->dbPrefix}appointments_schedules (title, timezone, published, created_utc, modified_utc)"
+            . " VALUES ('sitepage-seed-schedule', 'UTC', 1, '{$now}', '{$now}')"
+        );
+        $this->scheduleId = (int) $this->db->insert_id;
+
+        for ($weekday = 1; $weekday <= 7; $weekday++) {
+            $this->db->query(
+                "INSERT INTO {$this->dbPrefix}appointments_schedule_rules (schedule_id, weekday, start_time, end_time)"
+                . " VALUES ({$this->scheduleId}, {$weekday}, '09:00:00', '17:00:00')"
+            );
+        }
+
+        $statement = $this->db->prepare(
+            "INSERT INTO {$this->dbPrefix}appointments_eventtypes (title, alias, duration_minutes, slot_step_minutes, horizon_days,"
+            . " access, language, published, feed_token, created_utc, modified_utc, schedule_id,"
+            . " info_layout, info_logo, info_photo, info_name, info_role)"
+            . " VALUES ('Bookable steps talk', ?, 30, 30, 30, 1, '*', 1, ?, ?, ?, ?, 'logo',"
+            . " 'images/joomla_black.png#joomlaImage://local-images/joomla_black.png?width=225&height=50', 'images/joomla_black.png', ?, 'Role <b>&')"
+        );
+        $alias = self::SEED_MARKER . 'steps';
+        $token = str_repeat('f', 64);
+        $statement->bind_param('ssssis', $alias, $token, $now, $now, $this->scheduleId, $person);
+        $statement->execute();
+        $id = (int) $statement->insert_id;
+        $statement->close();
+
+        return $id;
+    }
+
+    private function dom(string $html): \DOMXPath
+    {
+        $document = new \DOMDocument();
+        @$document->loadHTML('<?xml encoding="utf-8"?>' . $html);
+
+        return new \DOMXPath($document);
+    }
+
+    /**
      * Insert the four fixtures. `feed_token` has no default on purpose, so each
      * row brings its own, and the aliases are unique as the schema demands.
      */
@@ -278,6 +490,7 @@ class SitePageTest
         $statement->execute();
         $statement->close();
         if ($this->scheduleId > 0) {
+            $this->db->query("DELETE FROM {$this->dbPrefix}appointments_schedule_rules WHERE schedule_id = {$this->scheduleId}");
             $this->db->query("DELETE FROM {$this->dbPrefix}appointments_schedules WHERE id = {$this->scheduleId}");
             $this->scheduleId = 0;
         }

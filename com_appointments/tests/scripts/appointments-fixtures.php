@@ -54,7 +54,7 @@ final class AppointmentsFixture
         $html = $browser->request($path, $form);
         $time = $this->db->real_escape_string($start);
         $booking = $this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}' AND state IN (0,1)")->fetch_assoc();
-        if (!$booking || $browser->status !== 200 || !str_contains($html, 'Appointment received')) {
+        if (!$booking || $browser->status !== 200 || preg_match('/Appointment (?:received|confirmed)/', $html) !== 1) {
             throw new RuntimeException('The fixture HTTP booking did not succeed.');
         }
 

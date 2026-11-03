@@ -82,7 +82,7 @@ try {
     $before = $spool();
     $html = $browser->request($path, $form);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 10:00:00'")->fetch_assoc();
-    $check($booking && str_contains($html, 'Appointment received'), 'Public confirmation sends real email after saving');
+    $check($booking && preg_match('/Appointment (?:received|confirmed)/', $html) === 1, 'Public confirmation sends real email after saving');
     $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3, 'Fixture override');
 
     $db->query("UPDATE {$prefix}appointments_bookings SET invitee_language='de-DE' WHERE id=" . (int) $booking['id']);
@@ -151,7 +151,7 @@ try {
     $html = $browser->request($path, $form);
     $saved = $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 12:00:00'")->fetch_row()[0];
     $check((int) $saved === 1 && $before === $spool()
-        && str_contains($html, 'Appointment received') && str_contains($html, 'Your appointment was saved, but'),
+        && preg_match('/Appointment (?:received|confirmed)/', $html) === 1 && str_contains($html, 'Your appointment was saved, but'),
         'Mail failure explicitly preserves the saved booking and warns against duplicate booking');
     // The booking is saved, so the message is a warning, like the missing conference link:
     // messages of one kind look the same in every template.

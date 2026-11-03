@@ -125,7 +125,7 @@ final class AppointmentsHttp
     public function bookingForm(int $event, string $start, array $details = []): array
     {
         $html = $this->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-            . '&timezone=UTC&month=' . substr($start, 0, 7) . '&day=' . substr($start, 0, 10));
+            . '&timezone=UTC&start=' . urlencode($start));
 
         if ($this->status !== 200 || !str_contains($html, 'name="booking[start]"')) {
             throw new RuntimeException('The public booking form did not render: HTTP ' . $this->status . '.');

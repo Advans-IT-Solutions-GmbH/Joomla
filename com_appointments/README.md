@@ -104,13 +104,18 @@ currently available.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
   manager, in one content language or in *All*, with SEF addresses. Direct links enforce
   publication, access and content language too.
-- **Public booking.** One page in two steps: date and time (server-rendered month grid, available
-  days, the times of the chosen day), then the visitor's details. Everything works without
-  JavaScript; the bundled booking script only updates the date-and-time part in the background,
-  so choosing a day or month neither reloads nor scrolls the page, and applies the browser's time
-  zone. The form collects contact details, the telephone number for telephone appointments,
-  optional guests and configured custom fields. Consent, a honeypot, a session-bound signed render
-  time and a short-lived keyed rate limit protect submission without an external CAPTCHA.
+- **Public booking.** A booking page in steps, one at a time, beside an information column of
+  the event type: 1. the month calendar, then the times of the chosen day, where the chosen time
+  shows its **Next** button; 2. the visitor's details, with the chosen time and a **Back** link in
+  the information column; 3. the confirmation with the summary, an `.ics` download and the
+  reschedule and cancel links. On a narrow screen the date, the times and the details follow one
+  after the other. Every step has its own address (`month`, `day`, `start`), so a reload and the
+  browser's back button keep it, and everything works without JavaScript; the bundled booking
+  script loads the next step in the background, writes it into the browser history, moves the
+  focus and announces the step, and applies the browser's time zone. The form collects contact
+  details, the telephone number for telephone appointments, optional guests and configured custom
+  fields. Consent, a honeypot, a session-bound signed render time and a short-lived keyed rate
+  limit protect submission without an external CAPTCHA.
 - **Booking integrity and approval.** Pending and confirmed appointments both hold their slot.
   Submission serialises on the host row, rechecks the exact slot against current availability,
   and retains the database's unique active-slot constraint. The administrator can approve a
@@ -396,7 +401,9 @@ button applies the choice, with JavaScript the selection applies directly.
 
 The displayed zone never changes the stored UTC appointment. Public times always come from the
 schedule, including its clock-change conventions. If someone else takes a time while the form is
-open, submission returns to the same day with a friendly message and refreshed slot choices.
+open, submission returns to the times of the same day with a friendly message and refreshed slot
+choices; an address of step 2 whose time is no longer offered shows the times of its day with the
+same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
@@ -412,39 +419,146 @@ page heading replaces the default heading when the menu item shows the page head
 cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an
 appointment that crosses midnight in the displayed zone.
 
-The public pages are template-neutral. They use Joomla's standard form classes and add
-`com-appointments-*` hooks for a site template. The bundled stylesheet only provides the content
-column, the calendar grid, touch targets of at least 44 px and the error state; typography and
-colours stay with the template. The custom properties on `.com-appointments`
-(`--appointments-max-width`, `--appointments-target`, `--appointments-radius`,
-`--appointments-error`, `--appointments-gap`, `--appointments-border`) can be overridden.
+**Information column.** Each event type chooses in **Display → Information column** what stands
+beside the calendar above the appointment details: *Company logo and appointment* (an optional
+logo from the media manager; the default, also for event types created before this setting) or
+*Person with photo* (an optional photo shown as a circle, a name and an optional role). Both show
+the title, duration, location type, description and location text, and on step 2 the chosen date,
+time and time zone. An empty image, name or role is left out, and an unknown value falls back to
+the logo layout. Images are local paths chosen in the media field; a relative path is made
+absolute so it also resolves below a menu item's address.
+
+**Customisation.** The public pages are template-neutral: Joomla's standard form classes plus
+`com-appointments-*` hooks. The bundled stylesheet draws a neutral look (a card with the
+information column, round days, a column of times with a **Next** button on the chosen time) from
+CSS custom properties on `.com-appointments`. A site template restyles the pages by setting them,
+for example in its `user.css`:
+
+```css
+.com-appointments {
+    --appointments-accent: #000;
+    --appointments-accent-hover: #333;
+    --appointments-radius: 0;
+    --appointments-font-heading: "My Display Font", sans-serif;
+}
+```
+
+The layout adapts to the width of the template's content column (container queries on
+`.com-appointments-container`), not only to the screen: below 36rem one column of fields, below
+46rem the steps one after the other without a card frame, from 60rem calendar and times side by
+side.
+
+| Property | Default | Used for |
+|---|---|---|
+| `--appointments-accent` | `#0b57d0` | Primary buttons, available days, the times, the selected day, the loading bar |
+| `--appointments-accent-contrast` | `#fff` | Text on the accent colour |
+| `--appointments-accent-hover` | `#0842a0` | Primary buttons on hover and keyboard focus |
+| `--appointments-accent-hover-contrast` | `#fff` | Text on the hover colour |
+| `--appointments-accent-soft` | accent at 10 % | Background of available days, month arrows and the confirmation mark |
+| `--appointments-selected` | `#3c4043` | Background of the chosen time |
+| `--appointments-selected-contrast` | `#fff` | Text of the chosen time |
+| `--appointments-surface` | `#fff` | Background of the card, the time buttons and the list entries |
+| `--appointments-surface-alt` | `#f6f7f9` | Background of the summary and of secondary buttons on hover |
+| `--appointments-text` | `#1f2328` | Text and headings |
+| `--appointments-muted` | `#59636e` | Secondary text: meta line, weekdays, notes, unavailable days |
+| `--appointments-border-color` | `#d0d7de` | Card, column and secondary-button borders |
+| `--appointments-border` | `1px solid` border colour | The border shorthand of card, columns and list entries |
+| `--appointments-error` | `#b3261e` | Field errors and the danger button |
+| `--appointments-focus` | accent | Focus outline of every control |
+| `--appointments-radius` | `0.5rem` | Card, fields, list entries |
+| `--appointments-button-radius` | radius | Buttons and time buttons |
+| `--appointments-day-radius` | `50%` | Calendar days and month arrows (`0` for squares) |
+| `--appointments-shadow` | soft shadow | Card shadow (`none` for a flat card) |
+| `--appointments-font` | `inherit` | Text font of the pages |
+| `--appointments-font-heading` | `inherit` | Headings: title, step, month, confirmation |
+| `--appointments-heading-weight` | `700` | Weight of the headings |
+| `--appointments-heading-size` | `1.5rem` | Size of the main heading |
+| `--appointments-label-weight` | `600` | Field labels and the times legend |
+| `--appointments-label-letter-spacing` | `normal` | Field labels |
+| `--appointments-button-font` | `inherit` | Button font |
+| `--appointments-button-size` | `1rem` | Button text size |
+| `--appointments-button-weight` | `600` | Button text weight |
+| `--appointments-button-transform` | `none` | Button text transform, for example `uppercase` |
+| `--appointments-button-letter-spacing` | `normal` | Button letter spacing |
+| `--appointments-field-background` | surface | Background of text fields and lists |
+| `--appointments-field-border-color` | border colour | Border of text fields and lists |
+| `--appointments-field-border-width` | `1px` | Border width of fields, for example `0 0 1px` for an underline |
+| `--appointments-field-radius` | radius | Corner radius of fields |
+| `--appointments-field-max-width` | `none` | Maximum width of a field |
+| `--appointments-gap` | `0.75rem` | Gap between list entries |
+| `--appointments-target` | `44px` | Minimum size of every touch target |
+| `--appointments-day-size` | `2.75rem` | Diameter of a calendar day (never below the touch target) |
+| `--appointments-card-padding` | `1.5rem` | Inner padding of the card columns and the confirmation |
+| `--appointments-max-width` | `66rem` | Width of the booking page |
+| `--appointments-narrow-width` | `42rem` | Width of the list, confirmation and manage pages |
+| `--appointments-info-width` | `18rem` | Width of the information column beside the step |
+| `--appointments-times-width` | `14rem` | Width of the times column beside the calendar |
+
+Markup changes go into Joomla template overrides (**System → Site Templates → your template →
+Create Overrides → com_appointments**), which copies the files to
+`templates/<template>/html/com_appointments/`. Each part of the booking page is a file of its own:
+
+| File | Part |
+|---|---|
+| `eventtype/default.php` | The booking page: the card, the information column, the step title and the step (also the time-zone choice) |
+| `eventtype/default_info_logo.php` | Information column, layout *Company logo and appointment* |
+| `eventtype/default_info_person.php` | Information column, layout *Person with photo* |
+| `eventtype/default_info_event.php` | The event details both column layouts show, with the chosen time on step 2 |
+| `eventtype/default_picker.php` | Step 1: calendar and times; also the whole response of the slot endpoint |
+| `eventtype/default_details.php` | Step 2: the details form |
+| `booking/default.php` | Step 3: the confirmation |
+| `eventtypes/default.php` | The list of event types |
+| `manage/default.php` | The reschedule, cancel and erase pages |
+
+An override must keep the ids, the `data-appointments-*` attributes and the form field names it
+copies, because the booking script and the server rely on them.
 
 | Part | Structure and classes |
 |---|---|
-| Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`) |
-| Header | `.com-appointments-header` with `h1.com-appointments-heading`, the meta line `ul.com-appointments-meta` (`li.com-appointments-duration` and, for telephone, in-person and conference locations, `li.com-appointments-location-type`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` (the event type's location text) |
-| Steps | `form#appointment-booking.com-appointments-form.com-appointments-booking` holds two `section.com-appointments-step`: `.com-appointments-step-time` and `#appointment-details.com-appointments-step-details` (carries `hidden` while the chosen day has no time), each with `h2.com-appointments-step-title` and `span.com-appointments-step-number` |
-| Date and time | `#appointment-picker.com-appointments-picker` (layout `default_picker.php`, also the whole response of the slot endpoint) with `.com-appointments-picker-grid` (calendar and `.com-appointments-times`, side by side from 48rem), `p.form-text.com-appointments-zone-note#appointment-zone-note` and the hidden zone of the booking; while the script loads it carries `aria-busy="true"` (progress cursor, a loading bar as `.com-appointments-calendar-nav::after`, the previous times disabled and the booking not sent) |
-| Time zone | `details.com-appointments-zone` with `summary`, `.com-appointments-zone-row` (`label.form-label`, `select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`, hidden while the script runs); the select and the button belong to `form#appointment-zone-form` after the booking form. The manage page keeps `form.com-appointments-zone` |
+| Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
+| Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
+| Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
+| Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
+| Date and time | `form#appointment-time-form.com-appointments-time-form` (GET) around `#appointment-picker.com-appointments-picker` (layout `default_picker.php`; `.com-appointments-picker-day` and `data-day` once a day is chosen) with `.com-appointments-picker-grid` (calendar and `#appointment-times.com-appointments-times`), `p.form-text.com-appointments-zone-note#appointment-zone-note` and the hidden `timezone`; while the script loads it carries `aria-busy="true"` (progress cursor, a loading bar as `.com-appointments-calendar-nav::after`, the previous times disabled) |
+| Time zone | `details.com-appointments-zone` with `summary`, `.com-appointments-zone-row` (`label.form-label`, `select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`, hidden while the script runs); the select and the button belong to `form#appointment-zone-form`. The manage page keeps `form.com-appointments-zone` |
 | Calendar | `section.com-appointments-calendar` with `nav.com-appointments-calendar-nav` (arrow buttons `a.btn.btn-outline-secondary.com-appointments-calendar-prev` / `-next` with `aria-label`, an inline chevron `svg.com-appointments-icon`; the way back from the current month is `span.disabled`; `h3.com-appointments-calendar-title`) and `table.com-appointments-calendar-grid` of always six weeks: a `thead` row of `th.com-appointments-weekday > abbr[title]` from Monday, `td.com-appointments-day-cell` (empty cells add `.com-appointments-day-empty`) holding `a.com-appointments-day.com-appointments-day-available` (selected day: `.com-appointments-day-selected`, `aria-current="date"`) or `span.com-appointments-day.com-appointments-day-unavailable` |
-| Times | `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input[type=radio]`, `label.form-check-label`), or `p.com-appointments-empty` |
+| Times | `a.btn.com-appointments-back.com-appointments-times-back` (back to the calendar, narrow columns only), `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input.com-appointments-slot-input[type=radio][name=start]`, visually hidden; `label.form-check-label.com-appointments-slot-time`, the visible time button; `button.btn.btn-primary.com-appointments-slot-next`, shown for the checked time only), or `p.com-appointments-empty` |
+| Details | `form#appointment-details-form.com-appointments-form.com-appointments-booking` (POST) with `section#appointment-details.com-appointments-step.com-appointments-step-details` and the hidden `booking[start]` and `booking[timezone]` |
 | Form | `form.com-appointments-form` (manage pages `.com-appointments-manage-form`); on the booking page the fields stand in `.com-appointments-fields` (two columns from 36rem: `.com-appointments-field-half` takes one column, every other field the full row), one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields are `div.input-group.com-appointments-tel` with `select.com-appointments-tel-country` and `input.com-appointments-tel-number`, the fixed one in `.com-appointments-field-phone`; guests in `details.com-appointments-guests` |
 | Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
 | Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` |
 | Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
-| Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-join > a.btn.btn-primary`, `p.com-appointments-status` |
+| Confirmation | `.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status`, `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
+| Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-status` |
+
+**Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
+(`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC
+(`YYYY-MM-DD HH:MM:SS`), and takes month and day from it; every address carries the displayed
+`timezone`. A malformed `start` is a 400. The **Next** button of a time sends the GET form
+`#appointment-time-form` to the step 2 address; the details are sent as before with
+`task=booking.submit`. The confirmation offers the appointment as an `.ics` file through
+`task=booking.ics`, with the same UID and sequence as the attachment of the confirmation email, and
+the signed reschedule and cancel links of that email; like the confirmation page itself it is
+only available to the browser session that made the booking. When the links cannot be built (an
+invalid public site address in **Options**), only the `.ics` download is shown.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page. It
-adds `.com-appointments-js` to `.com-appointments`, intercepts the day and month links
-(`a[data-appointments-load]`) and the zone selection, requests the same address plus `format=raw`
-and replaces `#appointment-picker` with the response. That response is the layout
-`default_picker.php` alone, so a template override of it applies to the page and to the update,
-and the script never formats a date or time itself. Without JavaScript every link loads the full
-page and lands at `#appointment-picker`; a refused submission lands there too when its messages
-stand at the fields. The script writes no text of its own, contains no inline code and makes no
-third-party request, so the page works under a Content Security Policy without `unsafe-inline`.
-When a background request fails, it falls back to the normal page request.
+adds `.com-appointments-js` to `.com-appointments`. A day or month link (`a[data-appointments-load]`)
+and the zone selection request the same address plus `format=raw` and replace `#appointment-picker`
+with the response; that response is the layout `default_picker.php` alone, so a template override
+of it applies to the page and to the update, and the script never formats a date or time itself.
+The **Next** button and the **Back** link (`a[data-appointments-step]`) request the full page of
+their address and replace `[data-appointments-view]` with its counterpart. Each change is written
+into the browser history (`history.pushState`; the back and forward buttons load the step of their
+address the same way), the focus moves to the new times or the new step title, and a polite live
+region announces the times legend or the step title. Details typed into step 2 are kept when the
+visitor goes back for another time. Without JavaScript every link and the time form load the full
+page and land at `#appointment-picker` or `#appointment-booking`; a refused submission lands at
+`#appointment-details` when its messages stand at the fields. The script writes no text of its
+own, contains no inline code and makes no third-party request, so the page works under a Content
+Security Policy without `unsafe-inline`. When a background request fails, it falls back to the
+normal page request.
 
 ### Email templates
 
@@ -534,6 +648,7 @@ routines; a never-run task is explicitly shown as needing attention.
 | Require approval | Holds a pending request's slot until approval or cancellation |
 | Retention days | Per-event override; empty inherits the component setting, zero expires after the meeting ends |
 | Colour | Six-digit hexadecimal colour |
+| Display: information column | *Company logo and appointment* (logo) or *Person with photo* (photo, name, role) beside the calendar; see "Page markup and styling" |
 | Published, access, language | Visibility controls for the public list and direct event links |
 | Ordering | Order in the public list |
 | Permissions | Joomla per-event-type edit, state and deletion rules |

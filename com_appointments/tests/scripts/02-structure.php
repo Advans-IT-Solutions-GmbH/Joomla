@@ -332,6 +332,7 @@ class StructureTest
 
         $this->testScheduleReferences();
         $this->testScheduleMigration();
+        $this->testDisplayColumns();
 
         $files = [
             'Administrator provider'  => $this->admin . '/services/provider.php',
@@ -356,11 +357,19 @@ class StructureTest
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
+            'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',
             'Site event type list'    => $this->site . '/src/View/Eventtypes/HtmlView.php',
             'Site layout'             => $this->site . '/tmpl/eventtypes/default.php',
+            'Booking page layout'     => $this->site . '/tmpl/eventtype/default.php',
+            'Date and time layout'    => $this->site . '/tmpl/eventtype/default_picker.php',
+            'Details layout'          => $this->site . '/tmpl/eventtype/default_details.php',
+            'Logo column layout'      => $this->site . '/tmpl/eventtype/default_info_logo.php',
+            'Person column layout'    => $this->site . '/tmpl/eventtype/default_info_person.php',
+            'Event details layout'    => $this->site . '/tmpl/eventtype/default_info_event.php',
+            'Confirmation layout'     => $this->site . '/tmpl/booking/default.php',
             'Site LICENSE'            => $this->site . '/LICENSE.txt',
         ];
 
@@ -579,6 +588,81 @@ class StructureTest
      * happens to have, so a field added later is covered without anybody
      * remembering this.
      */
+    /**
+     * The information column of the booking page: the installed table carries its five
+     * columns with the documented defaults, and the 1.3.0 migration adds them to a table of
+     * the previous version, where every existing event type gets the company-logo layout.
+     */
+    private function testDisplayColumns(): void
+    {
+        $expected = [
+            'info_layout' => ['varchar(16)', 'logo'],
+            'info_logo'   => ['varchar(2048)', ''],
+            'info_photo'  => ['varchar(2048)', ''],
+            'info_name'   => ['varchar(255)', ''],
+            'info_role'   => ['varchar(255)', ''],
+        ];
+        $columns = function (string $table): array {
+            $found = [];
+            $result = $this->db->query("SHOW COLUMNS FROM {$table} WHERE Field LIKE 'info\\_%'");
+
+            while ($result && ($row = $result->fetch_assoc())) {
+                $found[$row['Field']] = [strtolower($row['Type']), (string) $row['Default'], $row['Null']];
+            }
+
+            return $found;
+        };
+        $matches = static function (array $found) use ($expected): bool {
+            foreach ($expected as $name => [$type, $default]) {
+                // MariaDB reports a string default with its quotes, MySQL without.
+                if (!isset($found[$name]) || $found[$name][0] !== $type || trim($found[$name][1], "'") !== $default || $found[$name][2] !== 'NO') {
+                    return false;
+                }
+            }
+
+            return count($found) === count($expected);
+        };
+
+        $this->test('Event types carry the information-column settings with their defaults', function () use ($columns, $matches) {
+            return $matches($columns("{$this->dbPrefix}appointments_eventtypes"));
+        });
+
+        $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.3.0.sql');
+        $events = "{$this->dbPrefix}appointments_upgrade_test_eventtypes";
+
+        $this->test('Display migration adds the columns and keeps existing event types on the logo layout', function () use ($migration, $events, $columns, $matches, $expected) {
+            if ($migration === false) {
+                return false;
+            }
+
+            try {
+                $this->db->query("DROP TABLE IF EXISTS {$events}");
+                // CREATE LIKE deliberately does not copy foreign keys.
+                $this->db->query("CREATE TABLE {$events} LIKE {$this->dbPrefix}appointments_eventtypes");
+
+                foreach (array_keys($expected) as $column) {
+                    $this->db->query("ALTER TABLE {$events} DROP COLUMN {$column}");
+                }
+
+                $this->db->query(
+                    "INSERT INTO {$events} (id, alias, schedule_id, feed_token, created_utc, modified_utc)"
+                    . " VALUES (1, 'legacy-display', 1, '" . str_repeat('e', 64) . "', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                );
+                $sql = str_replace('#__appointments_', $this->dbPrefix . 'appointments_upgrade_test_', preg_replace('/^--.*$/m', '', $migration));
+
+                foreach (array_filter(array_map('trim', explode(';', $sql))) as $statement) {
+                    $this->db->query($statement);
+                }
+
+                $row = $this->db->query("SELECT info_layout, info_logo, info_name FROM {$events} WHERE id = 1")->fetch_assoc();
+
+                return $matches($columns($events)) && $row['info_layout'] === 'logo' && $row['info_logo'] === '' && $row['info_name'] === '';
+            } finally {
+                $this->db->query("DROP TABLE IF EXISTS {$events}");
+            }
+        });
+    }
+
     private function testCalendarFields(): void
     {
         $forms = glob($this->admin . '/forms/*.xml') ?: [];

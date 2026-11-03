@@ -7,84 +7,175 @@
  */
 
 /*
- * Progressive enhancement of the booking page. Without this script every day, month and
- * time-zone change is a normal page request that lands at #appointment-picker again.
- * With it, only the date-and-time part (#appointment-picker) is loaded in the background
- * from the same address plus format=raw and replaced in place, so the page neither
- * reloads nor scrolls and the details already typed stay untouched. The browser's time
- * zone is applied once on arrival. The script writes no text of its own: everything it
- * shows comes from the server-rendered part. When a request fails, it falls back to the
- * normal page request. No inline code, no third-party request.
+ * Progressive enhancement of the booking page. Without this script every step is a normal
+ * page request: a day or month is a link, the chosen time is sent with its "Next" button as
+ * a GET form (start=…), the details are a POST form. With it, the same addresses are loaded
+ * in the background and written into the browser history, so the page neither reloads nor
+ * scrolls, and the back button and a reload show the same step:
+ *
+ *   - a day or month (a[data-appointments-load]) replaces only the date-and-time part
+ *     (#appointment-picker), requested as the same address plus format=raw;
+ *   - the "Next" button of a time and the "Back" link of the details (a[data-appointments-step])
+ *     replace the whole step ([data-appointments-view]) with the one of the full page;
+ *   - the back and forward buttons load the step of their address in the same way.
+ *
+ * After each change the focus moves to the new content and a live region announces it. The
+ * details typed into step 2 are kept when the visitor goes back to choose another time. The
+ * browser's time zone is applied once on arrival. The script writes no text of its own:
+ * everything it shows or announces comes from the server-rendered page. When a request
+ * fails, it falls back to the normal page request. No inline code, no third-party request.
  */
 (() => {
     'use strict';
 
     const enhance = (root) => {
-        let picker = root.querySelector('[data-appointments-picker]');
-
-        if (!picker || !window.fetch || !window.DOMParser || !window.URL || !window.AbortController) {
+        if (!root.querySelector('[data-appointments-view]') || !window.fetch || !window.DOMParser || !window.URL
+            || !window.AbortController || !window.FormData || !window.history || !window.history.pushState) {
             return;
         }
 
-        const details = root.querySelector('#appointment-details');
-        const zoneSelect = root.querySelector('#appointment-zone');
-        const zoneForm = root.querySelector('#appointment-zone-form');
-        const form = root.querySelector('#appointment-booking');
         const status = document.createElement('p');
+        const kept = new Map();
         let pending = null;
 
         root.classList.add('com-appointments-js');
         status.className = 'visually-hidden com-appointments-status';
+        status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
         root.appendChild(status);
 
-        // Keep the other controls in step with the part that was just loaded.
-        const sync = () => {
-            if (details) {
-                details.hidden = picker.dataset.hasSlots !== '1';
+        const view = () => root.querySelector('[data-appointments-view]');
+        const picker = () => root.querySelector('[data-appointments-picker]');
+        const announce = (element) => {
+            // A new text in the live region is read out; the same text twice needs a change first.
+            status.textContent = '';
+            window.setTimeout(() => {
+                status.textContent = element ? element.textContent.replace(/\s+/g, ' ').trim() : '';
+            }, 50);
+        };
+        const focus = (element) => {
+            if (!element) {
+                return;
             }
 
-            if (zoneSelect && picker.dataset.zone) {
-                zoneSelect.value = picker.dataset.zone;
-            }
+            element.focus({ preventScroll: true });
 
-            if (zoneForm && zoneForm.elements.month && picker.dataset.month) {
-                zoneForm.elements.month.value = picker.dataset.month;
-            }
+            const box = (root.querySelector('#appointment-booking') || element).getBoundingClientRect();
 
-            if (zoneForm && zoneForm.elements.day && picker.dataset.day) {
-                zoneForm.elements.day.value = picker.dataset.day;
+            // Bring the top of the booking card back into view when the step starts above it.
+            if (box.top < 0) {
+                (root.querySelector('#appointment-booking') || element).scrollIntoView({ block: 'start' });
             }
         };
 
-        // focus: selector of the control that gets the focus back after the update, or ''.
-        // history: the address written into the current history entry after the update, so a reload
-        // or a bookmark shows the same day and zone, or '' to leave the entry alone.
-        const load = (href, focus, history) => {
-            const page = new URL(href, window.location.href);
-            const part = new URL(page.href);
-            const request = new AbortController();
+        // Keep the controls outside the date-and-time part in step with the part just loaded.
+        const sync = () => {
+            const part = picker();
+            const zoneSelect = root.querySelector('#appointment-zone');
+            const zoneForm = root.querySelector('#appointment-zone-form');
+            const layout = root.querySelector('#appointment-booking');
 
-            part.hash = '';
-            part.searchParams.set('format', 'raw');
+            if (!part) {
+                return;
+            }
+
+            if (layout) {
+                layout.classList.toggle('com-appointments-layout-day', part.classList.contains('com-appointments-picker-day'));
+            }
+
+            if (zoneSelect && part.dataset.zone) {
+                zoneSelect.value = part.dataset.zone;
+            }
+
+            if (zoneForm) {
+                Array.prototype.slice.call(zoneForm.querySelectorAll('input[name="month"], input[name="day"]')).forEach((input) => {
+                    input.remove();
+                });
+
+                [['month', part.dataset.month], ['day', part.dataset.day]].forEach(([name, value]) => {
+                    if (value) {
+                        const input = document.createElement('input');
+
+                        input.type = 'hidden';
+                        input.name = name;
+                        input.value = value;
+                        zoneForm.appendChild(input);
+                    }
+                });
+            }
+        };
+
+        // The details typed so far, so a visitor who goes back for another time keeps them.
+        const remember = () => {
+            const form = root.querySelector('#appointment-details-form');
+
+            if (!form) {
+                return;
+            }
+
+            kept.clear();
+            Array.prototype.forEach.call(form.elements, (element) => {
+                if (!element.name || !element.name.startsWith('booking[') || element.type === 'hidden'
+                    || element.name === 'booking[start]' || element.name === 'booking[timezone]') {
+                    return;
+                }
+
+                if (element.type === 'checkbox' || element.type === 'radio') {
+                    kept.set(element.id, element.checked);
+                } else {
+                    kept.set(element.id, element.value);
+                }
+            });
+        };
+
+        const restore = () => {
+            const form = root.querySelector('#appointment-details-form');
+
+            if (!form || kept.size === 0) {
+                return;
+            }
+
+            kept.forEach((value, id) => {
+                const element = id ? form.querySelector('#' + CSS.escape(id)) : null;
+
+                if (!element) {
+                    return;
+                }
+
+                if (element.type === 'checkbox' || element.type === 'radio') {
+                    element.checked = value;
+                } else if (element.value === '' || element.tagName === 'SELECT') {
+                    element.value = value;
+                }
+            });
+
+            const guests = form.querySelector('.com-appointments-guests');
+
+            if (guests && form.querySelector('#booking-guests') && form.querySelector('#booking-guests').value !== '') {
+                guests.open = true;
+            }
+        };
+
+        const request = (address, part) => {
+            const target = new URL(address, window.location.href);
+            const controller = new AbortController();
+
+            target.hash = '';
+
+            if (part) {
+                target.searchParams.set('format', 'raw');
+            }
 
             if (pending) {
                 pending.abort();
             }
 
-            pending = request;
-            picker.setAttribute('aria-busy', 'true');
-            // The times shown belong to the previous choice: they cannot be chosen or sent meanwhile.
-            picker.querySelectorAll('input[name="booking[start]"]').forEach((input) => {
-                input.disabled = true;
-            });
-            // Hold the current height while loading, so nothing below moves twice.
-            picker.style.minHeight = picker.offsetHeight + 'px';
+            pending = controller;
 
-            return fetch(part.href, {
+            return fetch(target.href, {
                 credentials: 'same-origin',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                signal: request.signal,
+                signal: controller.signal,
             })
                 .then((response) => {
                     if (!response.ok) {
@@ -93,8 +184,48 @@
 
                     return response.text();
                 })
-                .then((html) => {
-                    const fresh = new DOMParser().parseFromString(html, 'text/html').querySelector('[data-appointments-picker]');
+                .then((html) => new DOMParser().parseFromString(html, 'text/html'))
+                .finally(() => {
+                    if (pending === controller) {
+                        pending = null;
+                    }
+                });
+        };
+
+        const fail = (address) => (error) => {
+            if (error.name !== 'AbortError') {
+                window.location.assign(address);
+            }
+        };
+
+        // history: 'push' for a new step or day, 'replace' for the same step in another zone, '' for none.
+        const write = (address, history) => {
+            if (history === 'push') {
+                window.history.pushState({ appointments: true }, '', address);
+            } else if (history === 'replace') {
+                window.history.replaceState({ appointments: true }, '', address);
+            }
+        };
+
+        // Only the date-and-time part: a day, a month, another time zone.
+        const loadPart = (address, history, target) => {
+            const current = picker();
+
+            if (!current) {
+                return loadStep(address, history);
+            }
+
+            current.setAttribute('aria-busy', 'true');
+            // The times shown belong to the previous choice: they cannot be chosen or sent meanwhile.
+            current.querySelectorAll('input[name="start"], .com-appointments-slot-next').forEach((input) => {
+                input.disabled = true;
+            });
+            // Hold the current height while loading, so nothing below moves twice.
+            current.style.minHeight = current.offsetHeight + 'px';
+
+            return request(address, true)
+                .then((page) => {
+                    const fresh = page.querySelector('[data-appointments-picker]');
 
                     if (!fresh) {
                         throw new Error('Unexpected response');
@@ -102,50 +233,81 @@
 
                     const adopted = document.importNode(fresh, true);
 
-                    picker.replaceWith(adopted);
-                    picker = adopted;
+                    current.replaceWith(adopted);
                     sync();
+                    write(address, history);
 
-                    if (history && window.history && window.history.replaceState) {
-                        window.history.replaceState(window.history.state, '', history);
+                    if (target) {
+                        focus(target(adopted));
                     }
 
-                    const target = (focus && picker.querySelector(focus + ':not(.disabled)'))
-                        || picker.querySelector('.com-appointments-calendar-next');
-
-                    if (target && focus) {
-                        target.focus({ preventScroll: true });
-                    }
-
-                    const summary = picker.querySelector('.com-appointments-slots-legend, .com-appointments-empty');
-
-                    status.textContent = summary ? summary.textContent.trim() : '';
+                    announce(adopted.querySelector('.com-appointments-slots-legend, .com-appointments-empty')
+                        || adopted.querySelector('.com-appointments-calendar-title'));
                 })
-                .catch((error) => {
-                    if (error.name !== 'AbortError') {
-                        window.location.assign(page.href);
-                    }
-                })
+                .catch(fail(address))
                 .finally(() => {
-                    if (pending === request) {
-                        pending = null;
-                        picker.removeAttribute('aria-busy');
-                        picker.style.minHeight = '';
+                    const part = picker();
+
+                    // Still the old part and no newer request running: it stays, usable again.
+                    if (!pending && part && part === current) {
+                        part.removeAttribute('aria-busy');
+                        part.style.minHeight = '';
+                        part.querySelectorAll('input[name="start"], .com-appointments-slot-next').forEach((input) => {
+                            input.disabled = false;
+                        });
                     }
                 });
         };
 
-        // No booking while the times are being replaced; the visitor sends again once they are shown.
-        if (form) {
-            form.addEventListener('submit', (event) => {
-                if (pending) {
-                    event.preventDefault();
+        // A whole step: the time chosen, back to the times, the back and forward buttons.
+        const loadStep = (address, history) => {
+            const current = view();
+
+            current.setAttribute('aria-busy', 'true');
+            remember();
+
+            return request(address, false)
+                .then((page) => {
+                    const fresh = page.querySelector('[data-appointments-booking] [data-appointments-view]');
+
+                    if (!fresh) {
+                        throw new Error('Unexpected response');
+                    }
+
+                    const adopted = document.importNode(fresh, true);
+
+                    view().replaceWith(adopted);
+                    sync();
+                    restore();
+                    write(address, history);
+
+                    const title = adopted.querySelector('#appointment-step-title');
+
+                    focus(title);
+                    announce(title);
+                })
+                .catch(fail(address))
+                .finally(() => {
+                    if (!pending) {
+                        current.removeAttribute('aria-busy');
+                    }
+                });
+        };
+
+        const firstOf = (selectors) => (part) => {
+            for (const selector of selectors) {
+                const found = part.querySelector(selector);
+
+                if (found && found.offsetParent !== null) {
+                    return found;
                 }
-            });
-        }
+            }
+
+            return null;
+        };
 
         root.addEventListener('click', (event) => {
-            const link = event.target.closest('a[data-appointments-load]');
+            const link = event.target.closest('a[data-appointments-load], a[data-appointments-step]');
 
             if (!link || !root.contains(link) || event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
@@ -154,57 +316,104 @@
 
             event.preventDefault();
 
-            let focus = '.com-appointments-day-selected';
+            if (link.hasAttribute('data-appointments-step')) {
+                loadStep(link.href, 'push');
 
-            if (link.classList.contains('com-appointments-calendar-prev')) {
-                focus = '.com-appointments-calendar-prev';
-            } else if (link.classList.contains('com-appointments-calendar-next')) {
-                focus = '.com-appointments-calendar-next';
+                return;
             }
 
-            load(link.href, focus, link.href);
+            let target = firstOf(['input[name="start"]:checked', 'input[name="start"]', '#appointment-times', '.com-appointments-day-selected']);
+
+            if (link.classList.contains('com-appointments-calendar-prev')) {
+                target = firstOf(['.com-appointments-calendar-prev:not(.disabled)', '.com-appointments-calendar-next']);
+            } else if (link.classList.contains('com-appointments-calendar-next')) {
+                target = firstOf(['.com-appointments-calendar-next']);
+            } else if (link.classList.contains('com-appointments-times-back')) {
+                target = firstOf(['.com-appointments-day-available', '.com-appointments-calendar-next']);
+            }
+
+            loadPart(link.href, 'push', target);
+        });
+
+        root.addEventListener('submit', (event) => {
+            const form = event.target;
+
+            // No booking while a step is being replaced; the visitor sends again once it is shown.
+            if (pending) {
+                event.preventDefault();
+
+                return;
+            }
+
+            // Attributes, not properties: the hidden fields "id" and "option" of a non-SEF address
+            // shadow form.id and similar properties of the form element.
+            if (form.getAttribute('id') !== 'appointment-time-form') {
+                return;
+            }
+
+            event.preventDefault();
+
+            const address = new URL(form.getAttribute('action') || '', window.location.href);
+
+            address.search = '';
+            new FormData(form).forEach((value, name) => {
+                address.searchParams.append(name, value);
+            });
+            loadStep(address.href, 'push');
         });
 
         const zoneAddress = (zone) => {
-            const address = new URL(zoneForm.action, window.location.href);
+            const address = new URL(window.location.href);
+            const part = picker();
 
-            Array.prototype.forEach.call(zoneForm.elements, (element) => {
-                if (element.name && element.type === 'hidden') {
-                    address.searchParams.set(element.name, element.value);
-                }
-            });
+            address.searchParams.delete('start');
             address.searchParams.set('timezone', zone);
+            address.searchParams.set('month', part ? part.dataset.month : '');
+
+            if (part && part.dataset.day) {
+                address.searchParams.set('day', part.dataset.day);
+            } else {
+                address.searchParams.delete('day');
+            }
+
+            address.hash = 'appointment-picker';
 
             return address.href;
         };
 
-        if (zoneSelect && zoneForm) {
-            // A zone the visitor chose is kept in the address of the page, with the day shown.
-            zoneSelect.addEventListener('change', () => {
-                const kept = new URL(window.location.href);
-
-                kept.searchParams.set('timezone', zoneSelect.value);
-                kept.searchParams.set('month', picker.dataset.month || '');
-                kept.searchParams.set('day', picker.dataset.day || '');
-                kept.hash = 'appointment-picker';
-                load(zoneAddress(zoneSelect.value), '', kept.href);
-            });
-
-            // The visitor's own zone, unless the address already names one (a chosen zone,
-            // a day link or a refused submission keep theirs).
-            let browserZone = '';
-
-            try {
-                browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-            } catch (error) {
-                browserZone = '';
+        // A zone the visitor chose is kept in the address of the page, with the day shown.
+        root.addEventListener('change', (event) => {
+            if (event.target.id === 'appointment-zone') {
+                loadPart(zoneAddress(event.target.value), 'replace', null);
             }
+        });
 
-            const known = Array.prototype.some.call(zoneSelect.options, (option) => option.value === browserZone);
-
-            if (known && browserZone !== picker.dataset.zone && !new URL(window.location.href).searchParams.has('timezone')) {
-                load(zoneAddress(browserZone), '', '');
+        // The back and forward buttons: the step of that address, loaded like any other.
+        window.addEventListener('popstate', (event) => {
+            if (event.state && event.state.appointments) {
+                loadStep(window.location.href, '');
             }
+        });
+
+        window.history.replaceState({ appointments: true }, '', window.location.href);
+
+        // The visitor's own zone, unless the address already names one (a chosen zone, a day
+        // link or a refused submission keep theirs) or the step is past the choice of a time.
+        const part = picker();
+        const zoneSelect = root.querySelector('#appointment-zone');
+        let browserZone = '';
+
+        try {
+            browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch (error) {
+            browserZone = '';
+        }
+
+        if (part && zoneSelect && browserZone !== part.dataset.zone
+            && Array.prototype.some.call(zoneSelect.options, (option) => option.value === browserZone)
+            && !new URL(window.location.href).searchParams.has('timezone')) {
+            // The address then names the zone, so the back button returns to the times in that zone.
+            loadPart(zoneAddress(browserZone), 'replace', null);
         }
     };
 

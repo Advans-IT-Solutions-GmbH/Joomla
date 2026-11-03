@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -98,6 +99,40 @@ class BookingController extends BaseController
         return true;
     }
 
+    /**
+     * The calendar entry of the appointment on the confirmation page, as an .ics download.
+     * Like that page it is only available to the browser session that made the booking; the
+     * entry carries the same UID as the one attached to the confirmation email, so a calendar
+     * that already holds the appointment updates it instead of adding a second one.
+     */
+    public function ics(): void
+    {
+        $booking = $this->getModel('Booking')->getItem();
+
+        if ((int) $booking->state === 2) {
+            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+        }
+
+        try {
+            $calendar = (new FeedService(Factory::getContainer()->get(DatabaseInterface::class)))->export((int) $booking->id);
+        } catch (\DomainException | \InvalidArgumentException $e) {
+            throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_DATA'), 500, $e);
+        }
+
+        $this->app->setHeader('Cache-Control', 'private, no-store', true);
+        $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
+        $this->app->setHeader('Referrer-Policy', 'no-referrer', true);
+        $this->app->setHeader('Content-Type', 'text/calendar; charset=UTF-8; method=' . $calendar['method'], true);
+        $this->app->setHeader('Content-Disposition', 'attachment; filename="' . $calendar['filename'] . '"', true);
+        $this->app->sendHeaders();
+
+        if ($this->input->getMethod() !== 'HEAD') {
+            echo $calendar['body'];
+        }
+
+        $this->app->close();
+    }
+
     public function manage(): bool
     {
         $token = Session::getFormToken();
@@ -180,16 +215,22 @@ class BookingController extends BaseController
         $start = is_string($data['start'] ?? null) ? UtcTimestamp::parse($data['start']) : null;
         $zone = is_string($data['timezone'] ?? null) ? $data['timezone'] : '';
         $url = 'index.php?option=com_appointments&view=eventtype&id=' . $eventId;
+        // Back to the details of the same time, unless the time itself is the problem: then
+        // the times of its day, refreshed, so the visitor chooses another one.
+        $details = !isset($fieldErrors['start']) && $key !== 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN';
 
         if ($start !== null && in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $local = $start->setTimezone(new \DateTimeZone($zone));
-            $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d');
+            $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
+                . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '');
+        } else {
+            $details = false;
         }
 
         // Field messages stand at their fields, so the page lands at the form instead of its
         // top. A message for the whole form is shown in the template's message area at the
         // top of the page, which the anchor would scroll out of view.
-        $this->setRedirect(Route::_($url, false) . ($key === '' ? '#appointment-picker' : ''));
+        $this->setRedirect(Route::_($url, false) . ($key === '' ? ($details ? '#appointment-details' : '#appointment-picker') : ''));
 
         return false;
     }

@@ -98,7 +98,8 @@ class InstallationTest
             );
             $row = $result ? $result->fetch_assoc() : null;
 
-            return $row && $row['version_id'] === '1.0.0';
+            // The newest file in sql/updates/mysql: an update runs every later file exactly once.
+            return $row && $row['version_id'] === '1.3.0';
         });
 
         $this->test('Administrator language file en-GB is installed', function () {

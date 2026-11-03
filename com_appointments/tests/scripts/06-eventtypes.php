@@ -39,6 +39,8 @@ try {
         'max_per_day' => 0, 'max_per_week' => 0, 'location_type' => 'phone_host_calls',
         'location_text' => 'Fixture instructions', 'requires_approval' => 0, 'retention_days' => '',
         'colour' => '#123456', 'published' => 1, 'access' => 1, 'language' => '*', 'ordering' => 3,
+        'info_layout' => 'person', 'info_logo' => '', 'info_photo' => 'images/joomla_black.png',
+        'info_name' => 'Fixture & "host"', 'info_role' => 'Fixture role',
     ];
     $http->submit('eventtype', $event);
     $row = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE alias='{$tag}'")->fetch_assoc();
@@ -46,6 +48,14 @@ try {
     $check($eventId > 0 && (int) $row['duration_minutes'] === 20 && (int) $row['slot_step_minutes'] === 30, 'Event type retains acceptance settings');
     $check($row && preg_match('/^[a-f0-9]{64}$/D', $row['feed_token']) === 1, 'Feed credential generated');
     $check($row && (int) $row['asset_id'] > 0, 'Joomla per-event asset created');
+    $check($row && $row['info_layout'] === 'person' && $row['info_photo'] === 'images/joomla_black.png'
+        && $row['info_name'] === 'Fixture & "host"' && $row['info_role'] === 'Fixture role' && $row['info_logo'] === '',
+        'The display settings of the information column are saved through the form');
+    $form = $http->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventId);
+    $check(str_contains($form, 'name="jform[info_layout]"') && str_contains($form, 'name="jform[info_photo]"')
+        && str_contains($form, 'id="eventtype-display"') && !str_contains($form, 'COM_APPOINTMENTS_EVENTTYPE_INFO'),
+        'The edit form shows the translated display settings');
+    $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($form) => 1]);
     $hostRow = $db->query("SELECT * FROM {$prefix}appointments_hosts WHERE user_id={$host}")->fetch_assoc();
     $check($hostRow && $hostRow['feed_token'] !== $row['feed_token'], 'Host feed credential independent');
 
@@ -67,6 +77,11 @@ try {
     $edited = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc();
     $check($edited && $edited['title'] === $tag . '-edited' && $edited['feed_token'] === $row['feed_token'], 'Edit preserves feed token and persists content');
 
+    $event['info_layout'] = 'bogus';
+    $http->submit('eventtype', $event);
+    $check($db->query("SELECT info_layout FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_layout'] === 'person',
+        'An unknown layout of the information column is refused');
+    $event['info_layout'] = 'person';
     $event['duration_minutes'] = 0;
     $http->submit('eventtype', $event);
     $check((int) $db->query("SELECT duration_minutes FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['duration_minutes'] === 20, 'Invalid duration does not change event type');
@@ -86,6 +101,8 @@ try {
     $public = new AppointmentsHttp('http://localhost', 'events-public');
     $html = $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
+    $check(str_contains($html, 'Fixture &amp; &quot;host&quot;') && str_contains($html, 'com-appointments-host-photo')
+        && str_contains($html, 'Fixture role'), 'The booking page shows the saved person layout, escaped');
     if ($public->status !== 200 || !str_contains($html, $tag . '-edited')) {
         echo 'Public response status: ' . $public->status . "\n";
         echo substr(preg_replace('/\s+/', ' ', strip_tags($html)), 0, 3000) . "\n";

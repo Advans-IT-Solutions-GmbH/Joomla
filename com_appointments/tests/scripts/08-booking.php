@@ -23,7 +23,7 @@ $admin = new AppointmentsHttp('http://localhost', 'booking-admin');
 
 $prepare = static function (int $event, string $start) use ($check): array {
     $client = new AppointmentsHttp('http://localhost', 'booking-guest');
-    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&month=' . substr($start, 0, 7) . '&day=' . substr($start, 0, 10));
+    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start));
     $check($client->status === 200 && str_contains($html, 'name="booking[start]"'), 'No-JavaScript booking form rendered');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -83,7 +83,7 @@ try {
     $second = $prepare($eventIds[0], $slot);
     sleep(2);
     $bodies = AppointmentsHttp::parallel([$first, $second]);
-    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment received')));
+    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment confirmed')));
     $friendly = count(array_filter($bodies, static fn ($html) => str_contains($html, 'This time was just taken')));
     $count = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]} AND start_utc='{$slot}' AND state IN(0,1)")->fetch_assoc()['n'];
     $check($successes === 1 && $friendly === 1 && $count === 1, 'Identical concurrent slot: exactly one success and one friendly refreshed form');
@@ -121,7 +121,7 @@ try {
             $db->rollback();
         }
     }
-    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment received')));
+    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment confirmed')));
     $friendly = count(array_filter($bodies, static fn ($html) => str_contains($html, 'This time was just taken')));
     $count = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id IN(" . implode(',', $eventIds) . ') AND state IN(0,1)')->fetch_assoc()['n'];
     $check($bothWaited, 'Both requests wait on the host row rather than their different schedules');
@@ -258,8 +258,10 @@ try {
     // this one client address, so the following checks start with a fresh rate-limit window.
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $page = new AppointmentsHttp('http://localhost', 'booking-page');
-    $show = static fn (int $event): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-        . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day));
+    // Step 1 shows the times of the day, step 2 (start=) the details form of the chosen time.
+    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
+        . '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start))));
+    $freeSlot = $day . ' 15:00:00';
 
     // Without JavaScript every step is a link or a form; the script is an external, deferred
     // file of the component and the markup carries no inline code (CSP without unsafe-inline).
@@ -277,6 +279,7 @@ try {
         && trim($xpath->query('//a[contains(@class, "com-appointments-calendar-next")]')->item(0)->textContent) === ''
         && $xpath->query('//*[contains(@class, "com-appointments-calendar-prev")][contains(@class, "disabled")]')->length === (substr($day, 0, 7) === gmdate('Y-m') ? 1 : 0),
         'Month navigation uses arrow buttons with accessible names, and the current month has no way back into the past');
+    $xpath = $show($eventIds[1], $freeSlot);
     $check($xpath->query('//input[@id="booking-phone"]')->length === 0, 'Without a telephone location the form has no fixed telephone field');
     $check($xpath->query('//label[@for="booking-consent"]//a')->length === 0
         && trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent) === 'I agree to the processing of my data for this appointment.',
@@ -286,7 +289,7 @@ try {
     $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
     $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking', 'phone_default_country' => '41']));
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
-    $xpath = $show($eventIds[1]);
+    $xpath = $show($eventIds[1], $freeSlot);
     $privacy = $xpath->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking'
         && $privacy->getAttribute('target') === '_blank' && str_contains($privacy->getAttribute('rel'), 'noopener')
@@ -303,12 +306,12 @@ try {
     $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking',
         'phone_default_country' => '41', 'privacy_menuitem' => (string) $privacyMenu, 'privacy_anchor' => 'privacy-section']));
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
-    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $privacy = $show($eventIds[1], $freeSlot)->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && (str_contains($privacy->getAttribute('href'), $menuAlias) || str_contains($privacy->getAttribute('href'), 'Itemid=' . $privacyMenu))
         && str_ends_with($privacy->getAttribute('href'), '#privacy-section') && !str_contains($privacy->getAttribute('href'), '&amp;'),
         'The privacy menu item takes precedence over the URL and keeps its section anchor');
     $db->query("UPDATE {$prefix}menu SET access=3 WHERE id={$privacyMenu}");
-    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $privacy = $show($eventIds[1], $freeSlot)->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking',
         'A privacy menu item the visitor cannot open is not linked, the URL applies instead');
     // One host serves both events, so each books its own hour.
@@ -324,7 +327,7 @@ try {
         $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,location_type,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},30,30,'{$location}','{$token}','{$time}','{$time}')");
         $eventIds[] = $phoneEvent = (int) $db->insert_id;
 
-        $xpath = $show($phoneEvent);
+        $xpath = $show($phoneEvent, $phoneSlot);
         $number = $xpath->query('//input[@id="booking-phone"]')->item(0);
         $selected = $xpath->query('//select[@id="booking-phone-country"][@name="booking[phone][country]"]/option[@selected]')->item(0);
         $check($number instanceof DOMElement && $number->getAttribute('name') === 'booking[phone][number]'
@@ -351,7 +354,7 @@ try {
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $stored = $db->query("SELECT id,invitee_phone,custom_fields FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc();
-        $check(str_contains($body, 'Appointment received') && $stored && $stored['invitee_phone'] === '+41791234567'
+        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
         $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');

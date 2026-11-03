@@ -141,6 +141,11 @@ empty table, which is the empty-state branch, and once with four seeded event ty
 and three that each have to be filtered out for a different reason, namely unpublished, an access
 level a guest does not hold, and a different content language. The visible one carries `<`, `&` and
 `"` in its title, so the layout's escaping is asserted and not only the model's filters.
+It then walks the booking page in steps without JavaScript: the calendar alone, the times of a
+chosen day with one **Next** button each, the GET form of a time to step 2 (`start=`) and its
+**Back** link, both information-column layouts with markup in name and role, an unknown layout
+(falls back to the logo layout), a time no longer offered (times of its day with the reason) and
+a malformed `start` (400). `16-menu-routing.php` sends the same GET form on a SEF menu address.
 
 ### The schedule permission assertions
 
