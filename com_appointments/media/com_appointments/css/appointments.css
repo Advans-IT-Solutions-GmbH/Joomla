@@ -550,13 +550,16 @@
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.com-appointments-day-available:hover {
+/* Hover and focus keep the accent text: a template's a:hover or a:focus colour must not take it. */
+.com-appointments .com-appointments-day-available:hover,
+.com-appointments .com-appointments-day-available:focus {
     border-color: var(--appointments-accent);
     color: var(--appointments-accent);
 }
 
 .com-appointments .com-appointments-day-selected,
-.com-appointments .com-appointments-day-selected:hover {
+.com-appointments .com-appointments-day-selected:hover,
+.com-appointments .com-appointments-day-selected:focus {
     border-color: var(--appointments-accent);
     background-color: var(--appointments-accent);
     color: var(--appointments-accent-contrast);

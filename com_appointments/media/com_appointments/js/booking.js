@@ -217,6 +217,9 @@
                 return loadStep(address, history);
             }
 
+            // A step still loading is given up for this part (request() aborts it): the step stays usable.
+            view().removeAttribute('aria-busy');
+
             current.setAttribute('aria-busy', 'true');
             // The times shown belong to the previous choice: they cannot be chosen or sent meanwhile.
             current.querySelectorAll('input[name="start"], .com-appointments-slot-next').forEach((input) => {
