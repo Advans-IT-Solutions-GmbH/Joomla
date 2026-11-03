@@ -33,7 +33,8 @@ $selected = $this->selected;
 <?php if ($selected !== null) : ?>
     <?php
     $local = $selected->setTimezone($this->zone);
-    $end = $local->modify('+' . $minutes . ' minutes');
+    // The duration is added in UTC, like the saved booking, so a clock change in between counts.
+    $end = $selected->modify('+' . $minutes . ' minutes')->setTimezone($this->zone);
     $dates = new DateDisplay(static fn (string $key): string => Text::_($key));
     $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
     ?>

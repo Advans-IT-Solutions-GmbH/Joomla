@@ -37,7 +37,9 @@ class HtmlView extends BaseHtmlView
 
         // A cancelled appointment has nothing to add to a calendar and nothing left to change.
         if ((int) $this->item->state !== 2) {
-            $this->calendarLink = Route::_('index.php?option=com_appointments&task=booking.ics');
+            // The id binds the download to the appointment shown: after a second booking in another
+            // tab, this page's link must not return the newer appointment (the controller checks it).
+            $this->calendarLink = Route::_('index.php?option=com_appointments&task=booking.ics&id=' . (int) $this->item->id);
 
             try {
                 $links = (new NotificationService(Factory::getContainer()->get(DatabaseInterface::class)))

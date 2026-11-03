@@ -142,9 +142,11 @@
                     return;
                 }
 
+                // The visitor's latest input wins, also over values the server shows again after a
+                // refused submission: those are older than what was typed since.
                 if (element.type === 'checkbox' || element.type === 'radio') {
                     element.checked = value;
-                } else if (element.value === '' || element.tagName === 'SELECT') {
+                } else {
                     element.value = value;
                 }
             });

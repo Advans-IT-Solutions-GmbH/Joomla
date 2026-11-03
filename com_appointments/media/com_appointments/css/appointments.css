@@ -50,6 +50,8 @@
     --appointments-font-heading: inherit;
     --appointments-heading-weight: 700;
     --appointments-heading-size: 1.5rem;
+    --appointments-font-subheading: var(--appointments-font-heading);
+    --appointments-subheading-weight: var(--appointments-heading-weight);
     --appointments-label-weight: 600;
     --appointments-label-letter-spacing: normal;
     --appointments-button-font: inherit;
@@ -62,8 +64,11 @@
     --appointments-field-background: var(--appointments-surface);
     --appointments-field-border-color: var(--appointments-border-color);
     --appointments-field-border-width: 1px;
+    --appointments-textarea-border-width: var(--appointments-field-border-width);
     --appointments-field-radius: var(--appointments-radius);
     --appointments-field-max-width: none;
+    --appointments-field-font-size: max(1rem, 16px);
+    --appointments-check-size: 1.25rem;
 
     /* Sizes */
     --appointments-gap: 0.75rem;
@@ -122,20 +127,24 @@
     vertical-align: -0.25em;
 }
 
-/* Headings in the template's heading font, sized for the column they stand in. */
+/* Headings in the template's heading fonts, sized for the column they stand in: the main
+   heading in --appointments-font-heading, the step, month and summary titles in
+   --appointments-font-subheading. */
 .com-appointments-heading,
 .com-appointments-title,
 .com-appointments-step-title,
 .com-appointments-calendar-title {
     color: var(--appointments-text);
-    font-family: var(--appointments-font-heading);
-    font-weight: var(--appointments-heading-weight);
+    font-family: var(--appointments-font-subheading);
+    font-weight: var(--appointments-subheading-weight);
     line-height: 1.25;
 }
 
-.com-appointments-heading {
+.com-appointments .com-appointments-heading {
     margin: 0 0 0.75rem;
+    font-family: var(--appointments-font-heading);
     font-size: var(--appointments-heading-size);
+    font-weight: var(--appointments-heading-weight);
 }
 
 .com-appointments-step-title {
@@ -241,6 +250,9 @@
 }
 
 .com-appointments-list-title {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--appointments-target);
     font-weight: 600;
 }
 
@@ -261,7 +273,7 @@
 .com-appointments-info,
 .com-appointments-main {
     min-width: 0;
-    padding-block: 1.25rem;
+    padding: 1.25rem 0;
 }
 
 .com-appointments-info {
@@ -589,7 +601,8 @@
     max-width: 24rem;
 }
 
-.com-appointments .com-appointments-slot {
+/* Two classes: .com-appointments .form-check further down must not wrap the row. */
+.com-appointments .form-check.com-appointments-slot {
     position: relative;
     display: flex;
     flex-wrap: nowrap;
@@ -650,15 +663,16 @@
     border-color: var(--appointments-error);
 }
 
+/* The state of the row decides, not a template's button rule: hidden and shown with !important. */
 .com-appointments .com-appointments-slot > .com-appointments-slot-next {
-    display: none;
+    display: none !important;
     flex: 1 1 0;
     min-width: 0;
     padding-inline: 0.5rem;
 }
 
 .com-appointments .com-appointments-slot > .com-appointments-slot-input:checked ~ .com-appointments-slot-next {
-    display: inline-flex;
+    display: inline-flex !important;
 }
 
 /* Another time zone: a closed disclosure below the times. */
@@ -694,7 +708,7 @@
 
 /* With the booking script a new zone applies on selection, without it the button does. */
 .com-appointments-js .com-appointments-zone-submit {
-    display: none;
+    display: none !important;
 }
 
 /* Forms */
@@ -748,6 +762,8 @@
     background-color: var(--appointments-field-background);
     color: var(--appointments-text);
     font: inherit;
+    /* Never below 16 px by default: a smaller field makes iOS zoom into the page on focus. */
+    font-size: var(--appointments-field-font-size);
 }
 
 .com-appointments .form-control:focus,
@@ -760,6 +776,7 @@
 
 .com-appointments textarea.form-control {
     min-height: 6rem;
+    border-width: var(--appointments-textarea-border-width);
 }
 
 .com-appointments .form-check {
@@ -775,8 +792,8 @@
 .com-appointments .form-check .form-check-input {
     flex: 0 0 auto;
     float: none;
-    width: 1.25rem;
-    height: 1.25rem;
+    width: var(--appointments-check-size);
+    height: var(--appointments-check-size);
     margin: 0;
     accent-color: var(--appointments-accent);
 }
@@ -989,7 +1006,7 @@
     }
 
     .com-appointments .com-appointments-times-back {
-        display: none;
+        display: none !important;
     }
 }
 

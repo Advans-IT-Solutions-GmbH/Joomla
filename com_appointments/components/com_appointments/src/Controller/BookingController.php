@@ -109,7 +109,9 @@ class BookingController extends BaseController
     {
         $booking = $this->getModel('Booking')->getItem();
 
-        if ((int) $booking->state === 2) {
+        // Only the appointment the page showed: a link of an earlier confirmation in another tab is
+        // stale once this session booked again, and never returns the newer appointment.
+        if ($this->input->getInt('id', 0) !== (int) $booking->id || (int) $booking->state === 2) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 

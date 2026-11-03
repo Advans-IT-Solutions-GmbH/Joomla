@@ -443,6 +443,10 @@ for example in its `user.css`:
 }
 ```
 
+The values must come after the component stylesheet or carry a more specific selector (for example
+`body .com-appointments`). A template stylesheet registered in the template's `index.php` comes
+after it, because the component registers its own stylesheet first.
+
 The layout adapts to the width of the template's content column (container queries on
 `.com-appointments-container`), not only to the screen: below 36rem one column of fields, below
 46rem the steps one after the other without a card frame, from 60rem calendar and times side by
@@ -470,9 +474,11 @@ side.
 | `--appointments-day-radius` | `50%` | Calendar days and month arrows (`0` for squares) |
 | `--appointments-shadow` | soft shadow | Card shadow (`none` for a flat card) |
 | `--appointments-font` | `inherit` | Text font of the pages |
-| `--appointments-font-heading` | `inherit` | Headings: title, step, month, confirmation |
-| `--appointments-heading-weight` | `700` | Weight of the headings |
+| `--appointments-font-heading` | `inherit` | The main heading (event type title, confirmation) |
+| `--appointments-heading-weight` | `700` | Weight of the main heading |
 | `--appointments-heading-size` | `1.5rem` | Size of the main heading |
+| `--appointments-font-subheading` | heading font | Step, month and summary titles |
+| `--appointments-subheading-weight` | heading weight | Weight of those titles |
 | `--appointments-label-weight` | `600` | Field labels and the times legend |
 | `--appointments-label-letter-spacing` | `normal` | Field labels |
 | `--appointments-button-font` | `inherit` | Button font |
@@ -483,8 +489,11 @@ side.
 | `--appointments-field-background` | surface | Background of text fields and lists |
 | `--appointments-field-border-color` | border colour | Border of text fields and lists |
 | `--appointments-field-border-width` | `1px` | Border width of fields, for example `0 0 1px` for an underline |
+| `--appointments-textarea-border-width` | field border width | Border width of multi-line fields |
 | `--appointments-field-radius` | radius | Corner radius of fields |
 | `--appointments-field-max-width` | `none` | Maximum width of a field |
+| `--appointments-field-font-size` | `max(1rem, 16px)` | Text size in fields; below 16 px iOS zooms into the page |
+| `--appointments-check-size` | `1.25rem` | Size of checkboxes and radio buttons |
 | `--appointments-gap` | `0.75rem` | Gap between list entries |
 | `--appointments-target` | `44px` | Minimum size of every touch target |
 | `--appointments-day-size` | `2.75rem` | Diameter of a calendar day (never below the touch target) |
@@ -537,7 +546,7 @@ copies, because the booking script and the server rely on them.
 `timezone`. A malformed `start` is a 400. The **Next** button of a time sends the GET form
 `#appointment-time-form` to the step 2 address; the details are sent as before with
 `task=booking.submit`. The confirmation offers the appointment as an `.ics` file through
-`task=booking.ics`, with the same UID and sequence as the attachment of the confirmation email, and
+`task=booking.ics&id=<booking>` (a link of an earlier confirmation is refused), with the same UID and sequence as the attachment of the confirmation email, and
 the signed reschedule and cancel links of that email; like the confirmation page itself it is
 only available to the browser session that made the booking. When the links cannot be built (an
 invalid public site address in **Options**), only the `.ics` download is shown.

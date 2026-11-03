@@ -135,6 +135,23 @@ try {
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
     $check($booking && (int) $booking['state'] === 0 && str_contains($body, 'held while'), 'Pending request holds its slot');
     $check($pageTitle($body) === 'Appointment received', 'The confirmation page sets its own title without a menu item of its own');
+    // Step 3: the calendar entry and the reschedule and cancel links of the confirmation mail.
+    $confirmation = $dom($body);
+    $calendarLink = $confirmation->query('//a[contains(@class, "com-appointments-calendar-add")]')->item(0);
+    $calendarHref = $calendarLink instanceof DOMElement ? preg_replace('#^https?://[^/]+#', '', html_entity_decode($calendarLink->getAttribute('href'))) : '';
+    $check(str_contains($calendarHref, 'task=booking.ics') && str_contains($calendarHref, 'id=' . (int) ($booking['id'] ?? 0))
+        && $confirmation->query('//a[contains(@class, "com-appointments-reschedule")][contains(@href, "action=reschedule")]')->length === 1
+        && $confirmation->query('//a[contains(@class, "com-appointments-cancel")][contains(@href, "action=cancel")]')->length === 1,
+        'The confirmation offers the calendar entry and the signed reschedule and cancel links');
+    $ics = $calendarHref !== '' ? $request[0]->request($calendarHref) : '';
+    $check($request[0]->status === 200 && str_starts_with($ics, 'BEGIN:VCALENDAR') && str_contains($ics, 'UID:' . ($booking['uid'] ?? '-')),
+        'The .ics download of the confirmation carries the appointment with the UID of its mail attachment');
+    $request[0]->request(str_replace('id=' . (int) ($booking['id'] ?? 0), 'id=' . ((int) ($booking['id'] ?? 0) + 1000), $calendarHref));
+    $stale = $request[0]->status;
+    $check($stale === 404, 'An .ics link of another appointment is refused in the booking session');
+    $stranger = new AppointmentsHttp('http://localhost', 'booking-stranger');
+    $stranger->request($calendarHref !== '' ? $calendarHref : '/index.php?option=com_appointments&task=booking.ics&id=1');
+    $check($stranger->status === 404, 'The .ics download is not available to another browser session');
     $bookingId = (int) ($booking['id'] ?? 0);
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
     $check($admin->status === 200 && str_contains($page, 'invitee@example.test'), 'Booking visible in administrator list');
