@@ -60,11 +60,12 @@
 
             element.focus({ preventScroll: true });
 
-            const box = (root.querySelector('#appointment-booking') || element).getBoundingClientRect();
+            // Scroll only when the focused control is out of view, and to the control itself: on a
+            // narrow screen the information column above it can be taller than the window.
+            const box = element.getBoundingClientRect();
 
-            // Bring the top of the booking card back into view when the step starts above it.
-            if (box.top < 0) {
-                (root.querySelector('#appointment-booking') || element).scrollIntoView({ block: 'start' });
+            if (box.top < 0 || box.bottom > window.innerHeight) {
+                element.scrollIntoView({ block: element.id === 'appointment-step-title' ? 'start' : 'center' });
             }
         };
 

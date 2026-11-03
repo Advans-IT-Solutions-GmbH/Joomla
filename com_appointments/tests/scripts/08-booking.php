@@ -210,6 +210,15 @@ try {
     $check(str_contains($body, 'The form has expired or could not be verified.') && !str_contains($body, 'Please confirm your consent.')
         && $bookings($eventIds[0]) === 1, 'A filled honeypot gets the form message, never the consent message');
 
+    // A sent time that is no time at all names no day: the reason stands above the calendar.
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['start'] = 'not-a-time';
+    sleep(2);
+    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $check(trim((string) ($xpath->query('//*[@id="booking-start-error"]')->item(0)?->textContent ?? '')) === 'Please choose an available time.'
+        && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
+        'A malformed time returns to the calendar with its message, without a booking');
+
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
     $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[1]
