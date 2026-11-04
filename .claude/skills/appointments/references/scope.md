@@ -139,7 +139,7 @@ These are recorded so that they are not silently added. Each is a candidate for 
 |---|---|
 | Reading an external calendar (Microsoft Graph, Google, CalDAV, ICS subscription) for conflicts | The component owns the calendar, and every one of these needs an outbound connection the self-hosted constraint rules out. |
 | Payment collection | Belongs to a shop component, not here. |
-| Round robin, collective and group events | Single-host scheduling is the requirement. |
+| Round robin, collective and group events | Single-host scheduling is the requirement. (Team calendars that a team shares and that block slots are a separate feature: `references/team-calendars.md`.) |
 | Routing forms | A separate problem: form logic, not scheduling. |
 | SMS reminders | Requires an external gateway, which contradicts the self-hosted constraint. |
 | Meeting polls | A different interaction model with its own data and its own pages. |

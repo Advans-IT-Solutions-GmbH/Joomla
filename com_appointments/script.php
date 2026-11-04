@@ -24,6 +24,18 @@ class Com_appointmentsInstallerScript extends InstallerScript
     protected $minimumPhp = '8.1';
 
     /**
+     * The plugins this package bundles: group => [element, enabled on first install].
+     * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
+     * disabled until an operator enables them: nothing is reachable by default.
+     */
+    private const BUNDLED_PLUGINS = [
+        'task'    => ['appointments', true],
+        'privacy' => ['appointments', true],
+        'system'  => ['appointmentsdav', false],
+        'user'    => ['appointments', false],
+    ];
+
+    /**
      * Hard requirement checks before the files are copied.
      *
      * @param   string  $type    install|update|discover_install
@@ -91,11 +103,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->ensureUpdateSite();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
+        $this->initialiseLegacyFeedSetting($type);
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
         $this->removeLegacyManifest();
+        $this->ensureTeamGroups();
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -129,12 +143,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
     public function uninstall($parent)
     {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        foreach (['task', 'privacy'] as $group) {
+        foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
                 ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
-                ->where($db->quoteName('element') . ' = ' . $db->quote('appointments'));
+                ->where($db->quoteName('element') . ' = ' . $db->quote($element));
             $id = (int) $db->setQuery($query)->loadResult();
             if ($id > 0) {
                 foreach (['#__schemas', '#__extensions'] as $table) {
@@ -142,13 +156,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
                         ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
                 }
             }
-            $folder = JPATH_PLUGINS . '/' . $group . '/appointments';
+            $folder = JPATH_PLUGINS . '/' . $group . '/' . $element;
             if (is_dir($folder) && !Folder::delete($folder)) {
                 throw new \RuntimeException('The bundled appointments plugin could not be removed.');
             }
             foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
                 foreach (['ini', 'sys.ini'] as $suffix) {
-                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/plg_' . $group . '_appointments.' . $suffix;
+                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/plg_' . $group . '_' . $element . '.' . $suffix;
                     if (is_file($file) && !File::delete($file)) {
                         throw new \RuntimeException('The bundled appointments plugin language could not be removed.');
                     }
@@ -171,9 +185,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $group = (string) $entry['group'];
             $element = (string) $entry['element'];
             $folder = (string) $entry['folder'];
-            if (!in_array($group, ['task', 'privacy'], true) || $element !== 'appointments'
-                || $folder !== 'plugins/' . $group . '/appointments'
-                || !is_file($source . '/' . $folder . '/appointments.xml')) {
+            if (!isset(self::BUNDLED_PLUGINS[$group]) || $element !== self::BUNDLED_PLUGINS[$group][0]
+                || $folder !== 'plugins/' . $group . '/' . $element
+                || !is_file($source . '/' . $folder . '/' . $element . '.xml')) {
                 throw new \RuntimeException('The bundled appointments plugin package is invalid.');
             }
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
@@ -187,7 +201,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
             if (!$installer->install($source . '/' . $folder)) {
                 throw new \RuntimeException('The bundled appointments plugin could not be installed.');
             }
-            if (!$existed) {
+            if (!$existed && self::BUNDLED_PLUGINS[$group][1]) {
                 $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__extensions'))
                     ->set($db->quoteName('enabled') . ' = 1')
                     ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
@@ -195,6 +209,199 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
             }
         }
+    }
+
+    /**
+     * The token feeds are a secret address and are replaced by the team calendars
+     * (removed in 2.0.0). A new installation starts with them switched off, an
+     * existing installation keeps them on until the operator switches them off.
+     * An explicit choice of the operator is never overwritten.
+     */
+    private function initialiseLegacyFeedSetting(string $type): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $element = 'com_appointments';
+        $query = $this->createDbQuery($db)
+            ->select([$db->quoteName('extension_id'), $db->quoteName('params')])
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('element') . ' = :element')
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->bind(':element', $element);
+        $row = $db->setQuery($query)->loadObject();
+
+        if (!$row) {
+            return;
+        }
+
+        $params = json_decode((string) $row->params, true);
+        $params = \is_array($params) ? $params : [];
+
+        if (\array_key_exists('legacy_feeds', $params)) {
+            return;
+        }
+
+        $params['legacy_feeds'] = $type === 'install' ? '0' : '1';
+        $json = json_encode($params);
+        $id = (int) $row->extension_id;
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__extensions'))
+            ->set($db->quoteName('params') . ' = :params')
+            ->where($db->quoteName('extension_id') . ' = :id')
+            ->bind(':params', $json)
+            ->bind(':id', $id, ParameterType::INTEGER);
+        $db->setQuery($query)->execute();
+    }
+
+    /**
+     * The user groups of the team calendars: one for team members, one for
+     * external users, both below the registration group (normally «Registered»)
+     * and without any further permission, plus a view level holding both for the
+     * «My calendars» menu item. Membership means «may receive calendar grants and
+     * must use a second factor»; the role per calendar is in the grants table.
+     *
+     * Created only when the option `team_create_groups` is not switched off and
+     * the configured group is missing. Both groups are added to Joomla's own
+     * «enforce multi-factor authentication» list (com_users, forceMFAUserGroups);
+     * nothing is ever removed from that list. Uninstalling leaves the groups,
+     * because they may hold accounts.
+     */
+    private function ensureTeamGroups(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = $this->componentParams($db, 'com_appointments');
+
+        if ($params === null || (string) ($params['team_create_groups'] ?? '1') === '0') {
+            return;
+        }
+
+        $users = $this->componentParams($db, 'com_users') ?? [];
+        $parent = (int) ($users['new_usertype'] ?? 2) ?: 2;
+        $internal = array_values(array_filter(array_map('intval', (array) ($params['team_groups'] ?? []))));
+        $external = (int) ($params['external_group'] ?? 0);
+
+        if ($internal === [] || !$this->groupExists($db, $internal[0])) {
+            $internal = [$this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_INTERNAL', 'Team calendars internal'))];
+        }
+
+        if ($external <= 0 || !$this->groupExists($db, $external)) {
+            $external = $this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_EXTERNAL', 'Team calendars external'));
+        }
+
+        $level = (int) ($params['team_viewlevel'] ?? 0);
+
+        if ($level <= 0 || !$this->viewLevelExists($db, $level)) {
+            $level = $this->findOrCreateViewLevel($db, $this->text('COM_APPOINTMENTS_TEAM_VIEWLEVEL', 'Team calendars'), array_merge($internal, [$external]));
+        }
+
+        $params['team_groups'] = $internal;
+        $params['external_group'] = $external;
+        $params['team_viewlevel'] = $level;
+        $this->saveComponentParams($db, 'com_appointments', $params);
+
+        $forced = array_values(array_unique(array_map('intval', (array) ($users['forceMFAUserGroups'] ?? []))));
+        $missing = array_diff(array_merge($internal, [$external]), $forced);
+
+        if ($missing !== []) {
+            $users['forceMFAUserGroups'] = array_map('strval', array_values(array_merge($forced, $missing)));
+            $this->saveComponentParams($db, 'com_users', $users);
+        }
+    }
+
+    private function text(string $key, string $fallback): string
+    {
+        $text = Text::_($key);
+
+        return $text === $key ? $fallback : $text;
+    }
+
+    private function groupExists(DatabaseInterface $db, int $id): bool
+    {
+        $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__usergroups'))
+            ->where($db->quoteName('id') . ' = :id')->bind(':id', $id, ParameterType::INTEGER);
+
+        return (int) $db->setQuery($query)->loadResult() === 1;
+    }
+
+    private function findOrCreateGroup(DatabaseInterface $db, int $parent, string $title): int
+    {
+        $query = $this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__usergroups'))
+            ->where($db->quoteName('parent_id') . ' = :parent')->where($db->quoteName('title') . ' = :title')
+            ->bind(':parent', $parent, ParameterType::INTEGER)->bind(':title', $title);
+        $id = (int) $db->setQuery($query)->loadResult();
+
+        if ($id > 0) {
+            return $id;
+        }
+
+        $table = new \Joomla\CMS\Table\Usergroup($db);
+
+        if (!$table->save(['parent_id' => $parent, 'title' => $title])) {
+            throw new \RuntimeException('The team calendar user group could not be created.');
+        }
+
+        return (int) $table->id;
+    }
+
+    private function viewLevelExists(DatabaseInterface $db, int $id): bool
+    {
+        $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__viewlevels'))
+            ->where($db->quoteName('id') . ' = :id')->bind(':id', $id, ParameterType::INTEGER);
+
+        return (int) $db->setQuery($query)->loadResult() === 1;
+    }
+
+    /**
+     * @param   int[]  $groups
+     */
+    private function findOrCreateViewLevel(DatabaseInterface $db, string $title, array $groups): int
+    {
+        $query = $this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__viewlevels'))
+            ->where($db->quoteName('title') . ' = :title')->bind(':title', $title);
+        $id = (int) $db->setQuery($query)->loadResult();
+
+        if ($id > 0) {
+            return $id;
+        }
+
+        $table = new \Joomla\CMS\Table\ViewLevel($db);
+
+        if (!$table->save(['title' => $title, 'rules' => json_encode(array_values(array_map('intval', $groups)))])) {
+            throw new \RuntimeException('The team calendar access level could not be created.');
+        }
+
+        return (int) $table->id;
+    }
+
+    /**
+     * @return  array<string, mixed>|null  Null when the component is not registered.
+     */
+    private function componentParams(DatabaseInterface $db, string $element): ?array
+    {
+        $query = $this->createDbQuery($db)->select($db->quoteName('params'))->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('element') . ' = :element')->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->bind(':element', $element);
+        $raw = $db->setQuery($query)->loadResult();
+
+        if ($raw === null) {
+            return null;
+        }
+
+        $params = json_decode((string) $raw, true);
+
+        return \is_array($params) ? $params : [];
+    }
+
+    /**
+     * @param   array<string, mixed>  $params
+     */
+    private function saveComponentParams(DatabaseInterface $db, string $element, array $params): void
+    {
+        $json = json_encode($params);
+        $query = $this->createDbQuery($db)->update($db->quoteName('#__extensions'))
+            ->set($db->quoteName('params') . ' = :params')
+            ->where($db->quoteName('element') . ' = :element')->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->bind(':params', $json)->bind(':element', $element);
+        $db->setQuery($query)->execute();
     }
 
     /**

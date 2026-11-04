@@ -14,6 +14,9 @@ triggers:
   - video conferencing
   - jitsi
   - meet
+  - CalDAV
+  - team calendar
+  - app password
 references:
   - references/scope.md
   - references/architecture.md
@@ -23,6 +26,7 @@ references:
   - references/privacy-and-deletion.md
   - references/implementation-plan.md
   - references/testing.md
+  - references/team-calendars.md
 ---
 
 # com_appointments — Self-hosted scheduling for Joomla
@@ -74,6 +78,7 @@ preference — see `references/architecture.md`, section "Self-hosted by design"
 | How does a person get their data deleted? | `references/privacy-and-deletion.md` |
 | In which order is this built, and what is the acceptance criterion per stage? | `references/implementation-plan.md` |
 | How is it tested, which CI workflows are added? | `references/testing.md` |
+| Team calendars: CalDAV, encryption, grants, devices, clean-up, the end of the token feeds? | `references/team-calendars.md` |
 
 ## Repository conventions that apply
 

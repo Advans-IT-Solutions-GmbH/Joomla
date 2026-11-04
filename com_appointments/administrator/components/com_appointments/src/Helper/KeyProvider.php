@@ -40,6 +40,21 @@ final class KeyProvider
     public const PURPOSE_RATE_LIMIT = 'rate-limit';
 
     /**
+     * Team calendars, one key per purpose. See
+     * `.claude/skills/appointments/references/team-calendars.md`, section
+     * "Server keys". Changing the site secret invalidates every one of them.
+     */
+    public const PURPOSE_TEAM_APP_PASSWORD = 'team-app-password';
+    public const PURPOSE_TEAM_DEVICE_KEK = 'team-device-kek';
+    public const PURPOSE_TEAM_PASSWORD_KEK = 'team-password-kek';
+    public const PURPOSE_TEAM_TIMING = 'team-timing';
+    public const PURPOSE_TEAM_ROW_MAC = 'team-row-mac';
+    public const PURPOSE_TEAM_UID = 'team-uid';
+    public const PURPOSE_TEAM_LOG = 'team-log';
+    public const PURPOSE_TEAM_AUTH_BUCKET = 'team-auth-bucket';
+    public const PURPOSE_TEAM_INVITATION = 'team-invitation';
+
+    /**
      * @var  string
      */
     private $siteSecret;

@@ -102,6 +102,7 @@ com_appointments/tests/scripts/
 ├── 14-privacy.php           # typed Joomla events, Unicode ownership and legal blocking
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 ├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
+├── 21-teamcalendars.php     # team calendars: one runner, one part file team-<letter>-*.php per work package
 └── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
 ```
 

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    @copyright (C) 2026 Advans IT Solutions GmbH
+    @license GNU General Public License version 3 or later; see LICENSE.txt
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<extension type="plugin" group="system" method="upgrade">
+    <name>PLG_SYSTEM_APPOINTMENTSDAV</name>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-11</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <version>1.0.0</version>
+    <description>PLG_SYSTEM_APPOINTMENTSDAV_XML_DESCRIPTION</description>
+    <namespace path="src">Advans\Plugin\System\AppointmentsDav</namespace>
+    <files>
+        <folder plugin="appointmentsdav">services</folder>
+        <folder>src</folder>
+        <folder>language</folder>
+        <filename>LICENSE.txt</filename>
+    </files>
+    <languages folder="language">
+        <language tag="en-GB">en-GB/plg_system_appointmentsdav.ini</language>
+        <language tag="en-GB">en-GB/plg_system_appointmentsdav.sys.ini</language>
+        <language tag="de-DE">de-DE/plg_system_appointmentsdav.ini</language>
+        <language tag="de-DE">de-DE/plg_system_appointmentsdav.sys.ini</language>
+        <language tag="fr-FR">fr-FR/plg_system_appointmentsdav.ini</language>
+        <language tag="fr-FR">fr-FR/plg_system_appointmentsdav.sys.ini</language>
+    </languages>
+</extension>

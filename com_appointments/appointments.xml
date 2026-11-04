@@ -19,6 +19,8 @@
     <plugins>
         <plugin group="task" element="appointments" folder="plugins/task/appointments" />
         <plugin group="privacy" element="appointments" folder="plugins/privacy/appointments" />
+        <plugin group="system" element="appointmentsdav" folder="plugins/system/appointmentsdav" />
+        <plugin group="user" element="appointments" folder="plugins/user/appointments" />
     </plugins>
 
     <install>
@@ -62,6 +64,7 @@
         <menu link="option=com_appointments">COM_APPOINTMENTS</menu>
         <files folder="administrator/components/com_appointments">
             <folder>forms</folder>
+            <folder>lib</folder>
             <folder>services</folder>
             <folder>sql</folder>
             <folder>src</folder>
@@ -70,6 +73,7 @@
             <filename>config.xml</filename>
             <filename>index.html</filename>
             <filename>LICENSE.txt</filename>
+            <filename>THIRD-PARTY-NOTICES.txt</filename>
         </files>
 
         <languages folder="administrator/language">

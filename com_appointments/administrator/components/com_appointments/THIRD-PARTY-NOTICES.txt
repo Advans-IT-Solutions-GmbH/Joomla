@@ -1,0 +1,10 @@
+Third-party notices for com_appointments
+========================================
+
+This file lists third-party code shipped with the component, with its source,
+version and licence. Each listed licence is compatible with the component's
+GPL-3.0-or-later. Upstream copyright notices are kept unchanged in the files.
+
+No third-party code is shipped yet. The bundled CalDAV libraries (sabre/dav and
+its dependencies, BSD-3-Clause) are added to administrator/components/com_appointments/lib/
+together with their entries here.

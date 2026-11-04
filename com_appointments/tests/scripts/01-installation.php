@@ -42,6 +42,23 @@ class InstallationTest
                 && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
         });
 
+        $this->test('Team calendar plugins are installed and stay disabled until an operator enables them', function () {
+            // Default deny: the CalDAV endpoint and the key handling at sign-in
+            // are off after installation. Enabling them is a deliberate step.
+            foreach (['system' => 'appointmentsdav', 'user' => 'appointments'] as $group => $element) {
+                $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='{$element}' AND type='plugin' AND folder='{$group}'");
+                $row = $result ? $result->fetch_assoc() : null;
+
+                if (!$row || (int) $row['enabled'] !== 0
+                    || !is_file("/var/www/html/plugins/{$group}/{$element}/services/provider.php")
+                    || !is_file("/var/www/html/plugins/{$group}/{$element}/LICENSE.txt")) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
         $this->test('Admin menu entry exists', function () {
             $result = $this->db->query("SELECT id FROM {$this->dbPrefix}menu WHERE link LIKE '%com_appointments%' AND client_id = 1");
             return $result && $result->num_rows > 0;
@@ -99,7 +116,7 @@ class InstallationTest
             $row = $result ? $result->fetch_assoc() : null;
 
             // The newest file in sql/updates/mysql: an update runs every later file exactly once.
-            return $row && $row['version_id'] === '1.3.0';
+            return $row && $row['version_id'] === '1.4.0';
         });
 
         $this->test('Administrator language file en-GB is installed', function () {

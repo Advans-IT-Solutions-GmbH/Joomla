@@ -24,6 +24,22 @@ class UninstallTest
         'appointments_templates',
         'appointments_audit',
         'appointments_ratelimit',
+        'appointments_keyring',
+        'appointments_user_keys',
+        'appointments_calendars',
+        'appointments_calendar_keys',
+        'appointments_calendar_grants',
+        'appointments_calendar_key_wraps',
+        'appointments_calendar_objects',
+        'appointments_calendar_changes',
+        'appointments_calendar_busy',
+        'appointments_devices',
+        'appointments_device_calendars',
+        'appointments_invitations',
+        'appointments_teamlog',
+        'appointments_teamlog_head',
+        'appointments_auth_failures',
+        'appointments_eventtype_calendars',
     ];
 
     public function __construct()
@@ -96,6 +112,26 @@ class UninstallTest
             return true;
         });
 
+        $this->test('Bundled team calendar plugins and their languages removed', function () {
+            foreach (['system' => 'appointmentsdav', 'user' => 'appointments'] as $group => $element) {
+                $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='{$element}' AND type='plugin' AND folder='{$group}'");
+                $row = $result ? $result->fetch_assoc() : null;
+
+                if (!$row || (int) $row['cnt'] !== 0 || is_dir("/var/www/html/plugins/{$group}/{$element}")) {
+                    return false;
+                }
+
+                foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                    foreach (['ini', 'sys.ini'] as $suffix) {
+                        if (is_file("/var/www/html/administrator/language/{$tag}/plg_{$group}_{$element}.{$suffix}")) {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
+        });
         $this->test('Appointment tables dropped by the uninstall SQL', function () {
             // Every table created by the install schema must be gone, not just
             // one: a partial drop would leave personal data of invitees behind.

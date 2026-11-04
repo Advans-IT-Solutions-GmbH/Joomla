@@ -127,6 +127,12 @@ token or URL.
 **Done when:** `shared/tests/lang-lint.php` passes, the README documents every shipped setting, and
 the Copilot definition of done in `AGENTS.md` is met.
 
+## Stage 11 — team calendars (1.4.0)
+
+CalDAV calendars for the team with encryption at rest, grants, devices and clean-up, built in
+parallel work packages on one feature branch. Specification, acceptance and file ownership:
+`references/team-calendars.md`.
+
 ## Order of pull requests
 
 Stages 1 and 2 were delivered separately. Stages 3–10 are delivered together in one feature
