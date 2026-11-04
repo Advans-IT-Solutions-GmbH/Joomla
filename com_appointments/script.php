@@ -106,6 +106,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
+        $this->encryptExistingBookings();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -253,6 +254,32 @@ class Com_appointmentsInstallerScript extends InstallerScript
             ->bind(':params', $json)
             ->bind(':id', $id, ParameterType::INTEGER);
         $db->setQuery($query)->execute();
+    }
+
+    /**
+     * Encrypt the personal fields of existing bookings (team-calendars.md, 5.10)
+     * in batches for at most 20 seconds; the Scheduler finishes what is left.
+     * Idempotent, and a no-op until the booking record class exists.
+     */
+    private function encryptExistingBookings(): void
+    {
+        $class = '\\Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (!class_exists($class) || !method_exists($class, 'migrate')) {
+            return;
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
+        $until = microtime(true) + 20;
+
+        try {
+            while (microtime(true) < $until && $class::migrate($db, $keys, 200) > 0) {
+                // Next batch.
+            }
+        } catch (\Throwable $e) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_BOOKING_ENCRYPTION_PENDING'), 'warning');
+        }
     }
 
     /**

@@ -705,8 +705,16 @@ class StructureTest
 
             return $found;
         };
+        // Text types since 1.4.0, because the values are stored encrypted.
         $expected = [
-            ['invitee_name', 'varchar(255)', 'YES', null],
+            ['invitee_name', 'text', 'YES', null],
+            ['invitee_first_name', 'text', 'YES', null],
+            ['invitee_last_name', 'text', 'YES', null],
+        ];
+        // What the 1.3.0 migration alone adds to a table of the previous version;
+        // 1.4.0 then turns both columns into text.
+        $afterNameMigration = [
+            ['invitee_name', 'text', 'YES', null],
             ['invitee_first_name', 'varchar(255)', 'YES', null],
             ['invitee_last_name', 'varchar(255)', 'YES', null],
         ];
@@ -727,7 +735,7 @@ class StructureTest
         $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.3.0.sql');
         $bookings = "{$this->dbPrefix}appointments_upgrade_test_bookings";
 
-        $this->test('Name migration splits existing full names without data loss and keeps anonymised rows empty', function () use ($migration, $bookings, $columns, $expected) {
+        $this->test('Name migration splits existing full names without data loss and keeps anonymised rows empty', function () use ($migration, $bookings, $columns, $afterNameMigration) {
             if ($migration === false) {
                 return false;
             }
@@ -772,7 +780,7 @@ class StructureTest
                 }
                 $unset = (int) $this->db->query("SELECT COUNT(*) AS n FROM {$bookings} WHERE consent_utc IS NOT NULL OR consent_version IS NOT NULL")->fetch_assoc()['n'];
 
-                return $columns($bookings) === $expected && $unset === 0
+                return $columns($bookings) === $afterNameMigration && $unset === 0
                     && $consent === [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']] && $rows === [
                     1 => ['Anna Muster', 'Anna', 'Muster'],
                     2 => ['  Anna Maria  von Muster ', 'Anna Maria  von', 'Muster'],

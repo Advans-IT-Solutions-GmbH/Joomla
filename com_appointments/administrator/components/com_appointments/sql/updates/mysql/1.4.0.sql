@@ -10,6 +10,23 @@
 --
 
 ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `calendar_id` INT UNSIGNED DEFAULT NULL AFTER `info_title`;
+
+--
+-- Personal fields of bookings at rest: the values are encrypted with a server
+-- key ("v1:" plus Base64), so the columns become text types and lose their
+-- e-mail index; a lookup by address decrypts on the server (no blind index).
+-- script.php encrypts the existing rows in batches after this file has run.
+--
+ALTER TABLE `#__appointments_bookings` DROP INDEX `idx_invitee_email`;
+ALTER TABLE `#__appointments_bookings` MODIFY `invitee_name` TEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `invitee_first_name` TEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `invitee_last_name` TEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `invitee_email` TEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `invitee_phone` TEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `guest_emails` MEDIUMTEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `custom_fields` MEDIUMTEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `cancel_reason` MEDIUMTEXT;
+ALTER TABLE `#__appointments_bookings` MODIFY `conference_url` TEXT;
 --
 -- Team calendars (CalDAV). Specification: .claude/skills/appointments/references/team-calendars.md.
 --
