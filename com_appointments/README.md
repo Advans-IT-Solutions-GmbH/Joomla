@@ -735,6 +735,7 @@ Templates are plain text. Placeholders are written `{name}` and replaced in one 
 | `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
 | `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings |
 | `{state_label}` | The translated status |
+| `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
 | `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
 | `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |

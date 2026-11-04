@@ -70,7 +70,8 @@ final class MailComposer
         $fields = [
             'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
             'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
-            'invitee_timezone', 'invitee_language', 'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
+            'invitee_timezone', 'invitee_language', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version',
+            'conference_provider', 'conference_url', 'conference_room',
             'conference_state', 'conference_error', 'cancel_reason', 'reminder_sent_utc',
             'anonymised_utc', 'created_utc', 'modified_utc',
         ];
