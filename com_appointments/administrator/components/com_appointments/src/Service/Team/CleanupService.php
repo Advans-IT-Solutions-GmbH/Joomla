@@ -87,7 +87,7 @@ final class CleanupService implements CleanupServiceInterface
             TeamStates::DEVICE_ACTIVE => self::VIEW_NORMAL,
             // Empty only for a calendar the device synchronised before: a
             // blocked device cannot probe calendars it never had.
-            TeamStates::DEVICE_CLEANUP_EMPTY => \in_array($calendarId, $this->calendarsInCleanup($session), true)
+            TeamStates::DEVICE_CLEANUP_EMPTY => isset($this->calendarsInCleanup($session)[$calendarId])
                 ? self::VIEW_EMPTY : self::VIEW_HIDDEN,
             default => self::VIEW_HIDDEN,
         };
@@ -95,10 +95,11 @@ final class CleanupService implements CleanupServiceInterface
 
     /**
      * The calendars a device in the empty phase still gets listed (with no
-     * objects): those it synchronised and that still exist. Its grants are
-     * usually suspended by then, so the grant service would list none of them.
+     * objects), with the role it had at its first synchronisation: those it
+     * synchronised and that still exist. Its grants are usually suspended by
+     * then, so the grant service would list none of them.
      *
-     * @return  int[]
+     * @return  array<int, int>  Calendar id => CalendarRole value.
      */
     public function calendarsInCleanup(DeviceSession $session): array
     {
@@ -107,13 +108,19 @@ final class CleanupService implements CleanupServiceInterface
         }
 
         $db = $this->db();
-
-        return array_map('intval', $db->setQuery($this->query()->select($db->quoteName('dc.calendar_id'))
+        $rows = $db->setQuery($this->query()->select($db->quoteName(['dc.calendar_id', 'dc.role']))
             ->from($db->quoteName('#__appointments_device_calendars', 'dc'))
             ->join('INNER', $db->quoteName('#__appointments_calendars', 'c') . ' ON ' . $db->quoteName('c.id')
                 . ' = ' . $db->quoteName('dc.calendar_id'))
             ->where($db->quoteName('dc.device_id') . ' = ' . $session->deviceId)
-            ->order($db->quoteName('dc.calendar_id') . ' ASC'))->loadColumn() ?: []);
+            ->order($db->quoteName('dc.calendar_id') . ' ASC'))->loadAssocList() ?: [];
+        $calendars = [];
+
+        foreach ($rows as $row) {
+            $calendars[(int) $row['calendar_id']] = (int) $row['role'];
+        }
+
+        return $calendars;
     }
 
     public function markDelivered(DeviceSession $session, int $calendarId): void

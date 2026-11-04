@@ -49,9 +49,14 @@ defined('_JEXEC') or die;
  * at most nine guesses before the first lock and one per lock window after it. A reservation ends
  * with the failure (which sets the real lock), the success, the end of the request, or by itself.
  *
+ * Subjects (`$username`) are opaque: the website passes the sign-in name, which is mapped to the
+ * user id; CalDAV passes `dav:<name>@<address>`, used as it is, so CalDAV and website lock
+ * independently. The address bucket counts both.
+ *
  * Accepted by the specification (section 1, «never permanent»): whoever knows a user name can keep
- * that account locked for up to 60 minutes at a time by failing again; the lock is the price of
- * stopping the guessing.
+ * that account locked, renewable without limit, at the cost of about one wrong password per lock
+ * window (60 minutes at most). Administrators can lift it at once in the devices view
+ * ({@see self::clearFor()}); every lock is logged as `login.locked`.
  *
  * @since  1.4.0
  */
@@ -453,9 +458,10 @@ final class LockoutService implements LockoutServiceInterface
     }
 
     /**
-     * A request that ends without a result (an error, a refused form) gives
-     * its reservations back, so nobody can keep a bucket reserved by starting
-     * attempts that never finish. Counted attempts stay counted.
+     * A request that ends without a result gives back what it took: a POST
+     * that only looked like a sign-in, a form Joomla refused, an error. A
+     * failure or success already settled its attempts; an unfinished attempt
+     * therefore cannot hold a bucket or count invisibly.
      */
     private function releaseAtShutdown(): void
     {
@@ -466,11 +472,11 @@ final class LockoutService implements LockoutServiceInterface
         self::$shutdown = true;
         register_shutdown_function(function (): void {
             try {
-                foreach (self::$attempts as $hex => $taken) {
-                    if ($taken !== self::COUNTED) {
-                        $this->giveBack((string) $hex);
-                    }
+                foreach (array_keys(self::$attempts) as $hex) {
+                    $this->giveBack((string) $hex);
                 }
+
+                self::$refused = [];
             } catch (\Throwable $e) {
                 // The reservation lapses by itself after CLAIM_SECONDS.
             }
@@ -497,7 +503,41 @@ final class LockoutService implements LockoutServiceInterface
     {
         $username = trim($username);
 
+        if (str_starts_with($username, 'dav:')) {
+            return $username;
+        }
+
         return self::identityFor($username === '' ? 0 : (int) UserHelper::getUserId($username), $username);
+    }
+
+    /**
+     * Whether guardLogin() refused this sign-in in this request, so the user
+     * plugin can skip its `login.failure` row for a password that was never
+     * compared.
+     */
+    public function wasRefused(string $username, string $ip): bool
+    {
+        return isset(self::$refused[$this->refusalKey($username, $ip)]);
+    }
+
+    /**
+     * Lift the lock of an account at once (an administrator, from the devices
+     * view): the account's website bucket is deleted. Address buckets stay.
+     */
+    public function clearFor(int $userId, ?int $actorUserId): void
+    {
+        if ($userId <= 0) {
+            return;
+        }
+
+        $db = $this->db();
+        $bucket = self::buckets($this->key(), self::identityFor($userId, ''), '')['user'];
+        $db->setQuery($this->query()->delete($db->quoteName('#__appointments_auth_failures'))
+            ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote(bin2hex($bucket)) . ')'))->execute();
+        $unlocked = AuditEvent::class . '::LOGIN_UNLOCKED';
+        $this->services->audit()->log(\defined($unlocked) ? (string) \constant($unlocked) : AuditEvent::LOGIN_LOCKED, [
+            'actor_user_id' => $actorUserId, 'subject_user_id' => $userId, 'details' => ['action' => 'cleared'],
+        ]);
     }
 
     private function refusalKey(string $username, string $ip): string

@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
+use Advans\Component\Appointments\Administrator\Service\Team\LockoutService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -79,6 +80,32 @@ class DevicesController extends BaseController
 
             return \count($users);
         }, 'COM_APPOINTMENTS_TEAM_F_DEVICES_USERS_BLOCKED');
+    }
+
+    /**
+     * Lift the sign-in lock of the users of the selected devices at once.
+     */
+    public function unlock(): bool
+    {
+        return $this->run(static function (TeamServices $services, array $ids, int $actor): int {
+            $lockout = $services->lockout();
+
+            if (!$lockout instanceof LockoutService) {
+                return 0;
+            }
+
+            $db = $services->db();
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $users = array_values(array_unique(array_map('intval', $db->setQuery($query->select($db->quoteName('user_id'))
+                ->from($db->quoteName('#__appointments_devices'))
+                ->where($db->quoteName('id') . ' IN (' . implode(',', $ids) . ')'))->loadColumn() ?: [])));
+
+            foreach ($users as $userId) {
+                $lockout->clearFor($userId, $actor);
+            }
+
+            return \count($users);
+        }, 'COM_APPOINTMENTS_TEAM_F_DEVICES_UNLOCKED');
     }
 
     /**

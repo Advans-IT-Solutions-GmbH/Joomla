@@ -83,9 +83,16 @@ final class TeamPrivacy
         }
     }
 
+    /** Properties of an entry that the export keeps: its times and its title and place. */
+    private const KEPT = ['BEGIN', 'END', 'VERSION', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE',
+        'RECURRENCE-ID', 'STATUS', 'TRANSP', 'TZID', 'TZOFFSETFROM', 'TZOFFSETTO', 'TZNAME', 'SUMMARY', 'LOCATION'];
+
     /**
-     * The requester's data in one entry: ATTENDEE and ORGANIZER of anybody
-     * else and every other e-mail address in the text are replaced.
+     * The requester's part of one entry, as a whitelist: the times, the title
+     * and the place (other addresses in them replaced), and the requester's own
+     * ATTENDEE or ORGANIZER line, compared exactly by its address. Everything
+     * else (description, notes, contacts, attachments, other attendees, UID,
+     * extensions) stays out, because it may be about other people.
      */
     public static function redact(string $ics, string $email, string $otherPerson = 'other person'): string
     {
@@ -94,11 +101,22 @@ final class TeamPrivacy
         $lines = [];
 
         foreach (preg_split('/\r?\n/', $unfolded) ?: [] as $line) {
-            if (preg_match('/^(ATTENDEE|ORGANIZER)[;:]/i', $line, $m) === 1 && !str_contains(mb_strtolower($line, 'UTF-8'), $email)) {
-                $line = strtoupper($m[1]) . ':' . $otherPerson;
+            $name = strtoupper((string) preg_replace('/[;:].*$/s', '', $line));
+
+            if ($name === 'ATTENDEE' || $name === 'ORGANIZER') {
+                // The value follows the first colon outside quoted parameter values.
+                $value = preg_match('/^(?:[^:"]|"[^"]*")*:(.*)$/s', $line, $m) === 1 ? $m[1] : '';
+                $address = mb_strtolower(trim((string) preg_replace('/^mailto:/i', '', trim($value))), 'UTF-8');
+                $lines[] = $address === $email ? $line : $name . ':' . $otherPerson;
+
+                continue;
             }
 
-            $lines[] = preg_replace_callback('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i',
+            if (!\in_array($name, self::KEPT, true)) {
+                continue;
+            }
+
+            $lines[] = preg_replace_callback('/[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}.\-]+\.\p{L}{2,}/u',
                 static fn (array $match): string => mb_strtolower($match[0], 'UTF-8') === $email ? $match[0] : '[redacted]', $line) ?? '';
         }
 
@@ -125,6 +143,7 @@ final class TeamPrivacy
                 $this->field($item, 'calendar', $title);
                 $this->field($item, 'modified_utc', $object->modifiedUtc->format('Y-m-d H:i:s'));
                 $this->field($item, 'content', self::redact($ics, $email, $other));
+                $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_CONTENT_NOTE'));
                 $entries->addItem($item);
             }
 
@@ -133,7 +152,10 @@ final class TeamPrivacy
             $counts['not_searched'] = \count($search['unsearched']);
 
             if ($search['unsearched'] !== []) {
-                $domains[] = $this->unsearchedDomain($search['unsearched']);
+                // The export goes to the requester: a count, never the titles of
+                // team calendars. The administrator sees the titles.
+                $domains[] = $this->unsearchedDomain(\count($search['unsearched']));
+                $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_UNSEARCHED', implode(', ', $search['unsearched'])), 'warning');
             }
         } catch (\Throwable $e) {
             Log::add('Team calendars: the privacy export of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -329,6 +351,11 @@ final class TeamPrivacy
         foreach (\array_slice($rows, 0, self::LOG_ROWS) as $row) {
             $own = (int) $row['subject_user_id'] === $userId
                 || ($row['subject_user_id'] === null && $row['calendar_id'] === null && $row['object_ref'] === null);
+            if ($own && (int) $row['actor_user_id'] !== $userId) {
+                // Who acted on the person is staff accountability data, not theirs.
+                unset($row['actor_user_id'], $row['actor_device_id']);
+            }
+
             $domain->addItem($this->item($own ? $row : ['id' => $row['id'], 'occurred_utc' => $row['occurred_utc'], 'event' => $row['event']]));
         }
 
@@ -370,20 +397,14 @@ final class TeamPrivacy
         }
     }
 
-    /**
-     * @param   array<int, string>  $calendars  Title by id.
-     */
-    private function unsearchedDomain(array $calendars): Domain
+    private function unsearchedDomain(int $count): Domain
     {
         $domain = $this->domain('appointments_calendar_entries_not_searched', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_INCOMPLETE');
-
-        foreach ($calendars as $id => $title) {
-            $item = new Item();
-            $item->id = $id;
-            $this->field($item, 'calendar', $title);
-            $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_NOT_SEARCHED'));
-            $domain->addItem($item);
-        }
+        $item = new Item();
+        $item->id = 0;
+        $this->field($item, 'calendars', (string) $count);
+        $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_NOT_SEARCHED'));
+        $domain->addItem($item);
 
         return $domain;
     }

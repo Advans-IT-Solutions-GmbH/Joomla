@@ -71,13 +71,22 @@ PHP;
     });
 
     // ---- Log chain, on a copy of the log ------------------------------------
+    // The file anchor of the log (work package B) only rises; this part works
+    // on a copy of the log, so it sets the anchor file aside as well.
+    $anchorFile = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+    $anchorCopy = is_file($anchorFile) ? (string) file_get_contents($anchorFile) : null;
+    $earlier = $run('$v = $services->audit()->verify(); return ["intact" => $v->intact, "rows" => $v->checkedRows];');
     $db->query("DROP TABLE IF EXISTS {$p}{$tag}_log");
     $db->query("DROP TABLE IF EXISTS {$p}{$tag}_head");
     $db->query("CREATE TABLE {$p}{$tag}_log AS SELECT * FROM {$p}appointments_teamlog");
     $db->query("CREATE TABLE {$p}{$tag}_head AS SELECT * FROM {$p}appointments_teamlog_head");
-    $fresh = static function () use ($db, $p): void {
+    $fresh = static function () use ($db, $p, $anchorFile): void {
         $db->query("DELETE FROM {$p}appointments_teamlog");
         $db->query("DELETE FROM {$p}appointments_teamlog_head");
+
+        if (is_file($anchorFile)) {
+            unlink($anchorFile);
+        }
     };
     $verify = static fn (): array => $run('$v = $services->audit()->verify(); return ["intact" => $v->intact, "rows" => $v->checkedRows, "broken" => $v->firstBrokenId, "head" => $v->headHash];');
     $row = static function (int $id) use ($db, $p): array {
@@ -191,6 +200,43 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
             return $v['intact'] === true && count($ids()) === $before + 45;
         });
 
+        $suite->test('A cut end stays detected after the next event (the head is not sealed over)', static function () use ($db, $p, $ids, $run, $verify) {
+            $all = $ids();
+            $db->query("DELETE FROM {$p}appointments_teamlog WHERE id=" . end($all));
+            $db->query("UPDATE {$p}appointments_teamlog_head SET last_id=" . prev($all));
+            $run('$services->audit()->log(AuditEvent::LOGIN_FAILURE, ["subject_user_id" => 42]); return true;');
+
+            return $verify()['intact'] === false;
+        });
+
+        $fresh();
+        $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]); return true;');
+        $suite->test('A head reset to the empty state stays detected after the next event', static function () use ($db, $p, $run, $verify, $tag) {
+            $db->query("INSERT INTO {$p}appointments_calendars (uri, title, owner_user_id, row_mac, created_utc, modified_utc) VALUES ('" . md5($tag . 'w') . "', 'F wipe', 0, REPEAT(CHAR(0), 32), UTC_TIMESTAMP(), UTC_TIMESTAMP())");
+            $calendar = (int) $db->insert_id;
+
+            try {
+                $empty = $run('return bin2hex(AuditService::emptyHead($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_LOG)));');
+                $db->query("DELETE FROM {$p}appointments_teamlog");
+                $db->query("UPDATE {$p}appointments_teamlog_head SET last_id=0, last_hash=UNHEX('{$empty}'), pruned_through_id=0, pruned_through_hash=NULL");
+                $run('$services->audit()->log(AuditEvent::LOGIN_FAILURE, ["subject_user_id" => 42]); return true;');
+
+                return $verify()['intact'] === false;
+            } finally {
+                $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
+            }
+        });
+
+        $fresh();
+        $suite->test('Repeated CalDAV failures are written once per minute', static function () use ($run, $db, $p) {
+            $run('for ($i = 0; $i < 5; $i++) { $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "192.0.2.9", "details" => ["reason" => "bad"]]); }
+                $now = $now->modify("+61 seconds");
+                $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "192.0.2.9", "details" => ["reason" => "bad"]]);
+                return true;');
+
+            return (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_teamlog WHERE event='dav.auth_failure'")->fetch_row()[0] === 2;
+        });
+
         $fresh();
         $suite->test('Pruning removes rows older than twelve months and the rest still verifies', static function () use ($run, $verify, $db, $p, $ids) {
             $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]);
@@ -248,12 +294,18 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
         $db->query("INSERT INTO {$p}appointments_teamlog_head SELECT * FROM {$p}{$tag}_head");
         $db->query("DROP TABLE IF EXISTS {$p}{$tag}_log");
         $db->query("DROP TABLE IF EXISTS {$p}{$tag}_head");
+
+        if ($anchorCopy !== null) {
+            file_put_contents($anchorFile, $anchorCopy);
+        } elseif (is_file($anchorFile)) {
+            unlink($anchorFile);
+        }
     }
 
-    $suite->test('The earlier parts\' log is back and still verifies', static function () use ($verify, $db, $p) {
-        $rows = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_teamlog")->fetch_row()[0];
+    $suite->test('The earlier parts\' log is back in the state it had', static function () use ($verify, $earlier) {
+        $now = $verify();
 
-        return $verify()['intact'] === true && $verify()['rows'] === $rows;
+        return $now['intact'] === $earlier['intact'] && $now['rows'] === $earlier['rows'];
     });
 
     // ---- Lock-out, with the service's clock -----------------------------------
@@ -390,7 +442,7 @@ sleep(3);
                     foreach ([1, 2] as $n) {
                         $db->setQuery("INSERT INTO #__appointments_devices (user_id, name, client, secret_hash, kek_salt, user_key_version, state, rule_version, rule_accepted_utc, created_utc, row_mac) VALUES (999999, \"F device $n\", \"other\", UNHEX(\"" . bin2hex(random_bytes(32)) . "\"), UNHEX(\"" . bin2hex(random_bytes(16)) . "\"), 1, 1, \"1\", UTC_TIMESTAMP(), UTC_TIMESTAMP(), REPEAT(CHAR(0), 32))")->execute();
                         $ids[$n] = (int) $db->insertid();
-                        $db->setQuery("INSERT INTO #__appointments_device_calendars (device_id, calendar_id, last_sync_utc) VALUES ($ids[$n], $c, UTC_TIMESTAMP())")->execute();
+                        $db->setQuery("INSERT INTO #__appointments_device_calendars (device_id, calendar_id, role, last_sync_utc) VALUES ($ids[$n], $c, 2, UTC_TIMESTAMP())")->execute();
                         $services->cleanup()->startForDevice($ids[$n], "test", null);
                     }
                     $state = static fn (int $id): int => (int) $db->setQuery("SELECT state FROM #__appointments_devices WHERE id = $id")->loadResult();
@@ -410,7 +462,7 @@ sleep(3);
                 $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
             }
 
-            return $r === [2, 'empty', [$calendar], 3, 0, 3, 0];
+            return $r === [2, 'empty', [$calendar => 2], 3, 0, 3, 0];
         });
     }
 

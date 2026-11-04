@@ -125,25 +125,34 @@ final class AuditService implements AuditServiceInterface
             $head = $db->setQuery($this->query()->select('*')->from($db->quoteName('#__appointments_teamlog_head'))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadAssoc() ?: null;
             $otherData = $this->teamDataExists();
-            $result = self::verifyChain($key, $head, $this->rows(), $otherData);
+            $anchored = $this->anchoredLastId();
+            $result = self::verifyChain($key, $head, $this->rows(), $otherData, $anchored);
             $db->transactionCommit(true);
-
-            return $result;
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
 
             throw $e;
         }
+
+        // An intact chain moves the file anchor up to its newest row, so a
+        // later cut below it, or a database played back, is detected.
+        if ($result->intact && $head !== null) {
+            $this->anchorLastId((int) $head['last_id']);
+        }
+
+        return $result;
     }
 
     public function headHash(): string
     {
+        $this->ensureHead();
         $db = $this->db();
         $hash = $db->setQuery($this->query()->select($db->quoteName('last_hash'))
             ->from($db->quoteName('#__appointments_teamlog_head'))
             ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
 
-        return bin2hex(\is_string($hash) && \strlen($hash) === 32 ? $hash : self::emptyHead($this->key()));
+        // No head yet: nothing to show (the constant empty head is not handed out).
+        return \is_string($hash) && \strlen($hash) === 32 ? bin2hex($hash) : '';
     }
 
     public function prune(\DateTimeImmutable $nowUtc): int
@@ -191,6 +200,9 @@ final class AuditService implements AuditServiceInterface
                 'anchor'     => bin2hex($anchor),
             ]]);
             $db->transactionCommit(true);
+            $lastId = (int) $db->setQuery($this->query()->select($db->quoteName('last_id'))
+                ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
+            $this->anchorLastId($lastId);
 
             return $deleted;
         } catch (\Throwable $e) {
@@ -207,10 +219,17 @@ final class AuditService implements AuditServiceInterface
      * @param   array<string, mixed>|null            $head       The head row, null when there is none.
      * @param   iterable<array<string, mixed>>       $rows       Every log row, ascending by id.
      * @param   bool                                 $otherData  Whether internet calendar data (calendars, devices, grants) exists.
+     * @param   int                                  $anchoredLastId  The newest row id the file anchor knows, 0 for none.
      */
-    public static function verifyChain(string $key, ?array $head, iterable $rows, bool $otherData = false): AuditVerification
+    public static function verifyChain(string $key, ?array $head, iterable $rows, bool $otherData = false, int $anchoredLastId = 0): AuditVerification
     {
         $genesis = self::genesis($key);
+
+        // The file anchor knows a newer row than the database: rows were cut
+        // off, or the database was played back without its files.
+        if ($anchoredLastId > 0 && ($head === null || (int) $head['last_id'] < $anchoredLastId)) {
+            return new AuditVerification(false, 0, $anchoredLastId, $head === null ? '' : bin2hex((string) $head['last_hash']));
+        }
 
         if ($head === null) {
             foreach ($rows as $row) {
@@ -483,6 +502,13 @@ final class AuditService implements AuditServiceInterface
             // The time is taken under the lock, so ids and times ascend together
             // and pruning can remove an exact prefix.
             $row['occurred_utc'] = $this->time();
+
+            if ($this->summarised($row)) {
+                $db->transactionCommit(true);
+
+                return;
+            }
+
             $row['prev_hash'] = $this->predecessorLink($head, $key);
             $rowHash = self::rowHash($key, $row);
             $columns = array_merge(self::HASHED_COLUMNS, ['row_hash']);
@@ -508,48 +534,138 @@ final class AuditService implements AuditServiceInterface
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->execute();
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            try {
+                // After a deadlock InnoDB has rolled back the whole transaction
+                // and the savepoint is gone: roll back completely, so Joomla's
+                // transaction depth is right again, and report the conflict.
+                self::isLockConflict($e) ? $db->transactionRollback(false) : $db->transactionRollback(true);
+            } catch (\Throwable $rollback) {
+                // The original error is what the caller needs.
+            }
 
             throw $e;
         }
     }
 
     /**
-     * The `prev_hash` of the next row: the link of the newest row, the prune
-     * anchor when every row was pruned, the genesis (or the restart marker) of
-     * a log without rows. A newest row that is missing although the head names
-     * it gets a link that can never verify, so the gap stays visible.
+     * Repeated failure events are written once per window: `dav.auth_failure`
+     * and `dav.locked` per subject, address and minute, `key.mac_failure` per
+     * calendar and reason for 24 hours. The first row of a window says so in
+     * `details.summary`, the others are not written, so a flood cannot fill
+     * the log or slow its verification.
+     *
+     * @param   array<string, mixed>  $row
+     */
+    private function summarised(array &$row): bool
+    {
+        $windows = [AuditEvent::DAV_AUTH_FAILURE => 60, AuditEvent::DAV_LOCKED => 60, AuditEvent::ROW_MAC_FAILURE => 86400];
+
+        if (!isset($windows[$row['event']])) {
+            return false;
+        }
+
+        $db = $this->db();
+        $since = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))
+            ->modify('-' . $windows[$row['event']] . ' seconds')->format('Y-m-d H:i:s');
+        $query = $this->query()->select($db->quoteName('details'))->from($db->quoteName('#__appointments_teamlog'))
+            ->where($db->quoteName('event') . ' = ' . $db->quote($row['event']))
+            ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote($since));
+        $same = static fn (string $column, ?string $value): string => $value === null
+            ? $db->quoteName($column) . ' IS NULL' : $db->quoteName($column) . ' = ' . $value;
+
+        if ($row['event'] === AuditEvent::ROW_MAC_FAILURE) {
+            $query->where($same('calendar_id', $row['calendar_id'] === null ? null : (string) (int) $row['calendar_id']));
+        } else {
+            $query->where($same('subject_user_id', $row['subject_user_id'] === null ? null : (string) (int) $row['subject_user_id']))
+                ->where($same('object_ref', $row['object_ref'] === null ? null : $db->quote((string) $row['object_ref'])))
+                ->where($same('ip_hash', $row['ip_hash'] === null ? null : $this->binary($row['ip_hash'])));
+        }
+
+        $reason = self::decodeDetails($row['details'])['reason'] ?? null;
+
+        foreach ($db->setQuery($query->setLimit(50))->loadColumn() ?: [] as $details) {
+            if ($row['event'] !== AuditEvent::ROW_MAC_FAILURE || (self::decodeDetails($details)['reason'] ?? null) === $reason) {
+                return true;
+            }
+        }
+
+        $details = self::decodeDetails($row['details']) ?? [];
+        $details['summary'] = $windows[$row['event']];
+        $row['details'] = self::encodeDetails($details);
+
+        return false;
+    }
+
+    /**
+     * The `prev_hash` of the next row. The head is checked first: its seal must
+     * match its newest row, an empty head must be the never-written state, and
+     * the file anchor must not know a newer row. Otherwise the next row links
+     * to a marker that can never verify, so a manipulated head is not sealed
+     * over by the next event.
      *
      * @param   array<string, mixed>  $head
      */
     private function predecessorLink(array $head, string $key): string
     {
         $lastId = (int) $head['last_id'];
-        $prunedThrough = (int) $head['pruned_through_id'];
         $anchor = $head['pruned_through_hash'] ?? null;
+        $gap = hash_hmac('sha256', CipherSuite::associatedData('teamlog-gap', $lastId), $key, true);
+
+        if ($lastId < $this->anchoredLastId()) {
+            return $gap;
+        }
 
         if ($lastId === 0) {
-            return \is_string($anchor) ? $anchor : self::genesis($key);
+            $db = $this->db();
+            $rows = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog')))->loadResult();
+            // The never-written state, before any calendar data exists. The
+            // first event of an installation is the recovery key, which is
+            // created before any calendar; a head that is empty while calendar
+            // data exists was emptied.
+            $fresh = (int) $head['pruned_through_id'] === 0 && $anchor === null && $rows === 0
+                && \is_string($head['last_hash']) && hash_equals(self::emptyHead($key), $head['last_hash'])
+                && !$this->teamDataExists();
+
+            return $fresh ? self::genesis($key) : self::restartMarker($key);
         }
 
         $db = $this->db();
         $rowHash = $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($db->quoteName('#__appointments_teamlog'))
             ->where($db->quoteName('id') . ' = ' . $lastId))->loadResult();
 
-        if (\is_string($rowHash) && \strlen($rowHash) === 32) {
+        if (\is_string($rowHash) && \strlen($rowHash) === 32 && \is_string($head['last_hash'])
+            && hash_equals(self::seal($key, $lastId, $rowHash), $head['last_hash'])) {
             return self::link($key, $lastId, $rowHash);
         }
 
-        if ($lastId === $prunedThrough && \is_string($anchor)) {
-            return $anchor;
+        return $gap;
+    }
+
+    /**
+     * Create the head of a log that was never written, before any internet
+     * calendar data exists, so the first event later never looks like a
+     * re-created head. Called when the log view or the check reads the head.
+     */
+    private function ensureHead(): void
+    {
+        $db = $this->db();
+        $exists = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog_head')))->loadResult() > 0;
+
+        if ($exists || $this->anchoredLastId() > 0 || $this->teamDataExists()
+            || (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog')))->loadResult() > 0) {
+            return;
         }
 
-        return hash_hmac('sha256', CipherSuite::associatedData('teamlog-gap', $lastId), $key, true);
+        $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName('#__appointments_teamlog_head') . ' ('
+            . implode(',', $db->quoteName(['id', 'last_id', 'last_hash', 'pruned_through_id', 'pruned_through_hash', 'modified_utc']))
+            . ') VALUES (' . self::HEAD_ID . ', 0, ' . $this->binary(self::emptyHead($this->key())) . ', 0, NULL, '
+            . $db->quote($this->time()) . ')')->execute();
     }
 
     /**
      * The head row, locked FOR UPDATE. Created with the first row; created
-     * with the restart marker when log rows or calendar data exist already.
+     * with the restart marker when log rows, calendar data or a file anchor
+     * exist already (the head was deleted).
      *
      * @return  array<string, mixed>
      */
@@ -563,7 +679,7 @@ final class AuditService implements AuditServiceInterface
         if (!$head) {
             $key = $this->key();
             $rows = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog')))->loadResult();
-            $restart = $rows > 0 || $this->teamDataExists();
+            $restart = $rows > 0 || $this->teamDataExists() || $this->anchoredLastId() > 0;
 
             if ($restart) {
                 Log::add('Team calendars: the log head was missing and was re-created; the chain is reported as broken.', Log::WARNING, 'com_appointments');
@@ -582,6 +698,55 @@ final class AuditService implements AuditServiceInterface
         }
 
         return $head;
+    }
+
+    /**
+     * The anchor kind of the log in the signed file of work package B, null
+     * while that kind does not exist.
+     */
+    private static function anchorKind(): ?string
+    {
+        $constant = EpochAnchorInterface::class . '::KIND_LOG';
+
+        return \defined($constant) ? (string) \constant($constant) : null;
+    }
+
+    /**
+     * The newest row id the file anchor knows, 0 without an anchor.
+     */
+    private function anchoredLastId(): int
+    {
+        $kind = self::anchorKind();
+
+        if ($kind === null) {
+            return 0;
+        }
+
+        try {
+            return $this->services->anchor()->minimum($kind, self::HEAD_ID);
+        } catch (\Throwable $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Raise the file anchor to a committed newest row id. Only from a verified
+     * chain and after a prune, both outside any caller's transaction, so an
+     * append that is rolled back later can never leave the anchor ahead.
+     */
+    private function anchorLastId(int $lastId): void
+    {
+        $kind = self::anchorKind();
+
+        if ($kind === null || $lastId <= 0) {
+            return;
+        }
+
+        try {
+            $this->services->anchor()->record($kind, self::HEAD_ID, $lastId);
+        } catch (\Throwable $e) {
+            Log::add('Team calendars: the log anchor could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+        }
     }
 
     /**

@@ -148,12 +148,11 @@ class SystemModel extends BaseDatabaseModel
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR', $anchor, Text::_($anchor ? 'JYES' : 'JNO'),
             'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_FIX');
 
-        if (class_exists('Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords')) {
+        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (class_exists($records) && method_exists($records, 'pending')) {
             // Booking rows still in clear (section 5.10): the retention routine encrypts them.
-            $clear = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_bookings'))
-                ->where($db->quoteName('anonymised_utc') . ' IS NULL')
-                ->where($db->quoteName('invitee_email') . ' IS NOT NULL')
-                ->where($db->quoteName('invitee_email') . " NOT LIKE 'v1:%'"))->loadResult();
+            $clear = (int) $records::pending($db);
             $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
                 'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
         }
