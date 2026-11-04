@@ -9,6 +9,7 @@
 namespace Advans\Plugin\User\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
+use Advans\Component\Appointments\Administrator\Service\Team\KeySession;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Event\User\AfterDeleteEvent;
@@ -26,15 +27,22 @@ use Joomla\Event\SubscriberInterface;
 defined('_JEXEC') or die;
 
 /**
- * Connects Joomla's account events to the team calendars. It only delegates:
- * the key handling to the key session (work package B), the lock-out, the log
- * and the clean-up to work package F. Work package B owns this file.
+ * Connects Joomla's account events to the internet calendars. It only
+ * delegates: the key handling to the key session (work package B), the
+ * lock-out, the log and the clean-up to work package F. Work package B owns
+ * this file.
  *
- * Every handler does nothing while the team calendars are switched off, and
- * no failure of the team calendars may break a sign-in, a sign-out or a save
- * of an account: errors are logged without detail and swallowed. The one
- * deliberate exception is the lock-out in onUserAuthorisation, which refuses a
- * sign-in on purpose.
+ * Event names and getters are the same in Joomla 5.4 and 6:
+ * `LoginEvent::getAuthenticationResponse()` (array; `password` holds what was
+ * typed, `type` the authentication plugin), `AuthorisationEvent::getAuthenticationResponse()`
+ * (object), `AfterSaveEvent::getUser()['password_clear']` (empty unless a new
+ * password was set), `LogoutEvent::getParameters()['id']`.
+ *
+ * Every handler does nothing while the internet calendars are switched off,
+ * and no failure here may break a sign-in, a sign-out or a save of an account:
+ * every delegation is guarded on its own, errors are logged without detail.
+ * The one deliberate refusal is the lock-out in onUserAuthorisation, the second
+ * safeguard behind the lock-out check of the system plugin.
  *
  * @since  1.4.0
  */
@@ -64,25 +72,36 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
         $response = $event->getAuthenticationResponse();
         $username = (string) ($response['username'] ?? '');
+        $userId = $username === '' ? 0 : (int) UserHelper::getUserId($username);
+
+        if ($userId <= 0) {
+            return;
+        }
+
         $ip = $this->clientAddress();
 
-        $this->guard(static function () use ($services, $response, $username, $ip): void {
-            $userId = (int) UserHelper::getUserId($username);
+        if ($this->isCalendarUser($services, $userId)) {
+            $this->guard(static fn () => $services->lockout()->recordSuccess($username, $ip));
+            $this->guard(static fn () => $services->audit()->log(AuditEvent::LOGIN_SUCCESS, ['actor_user_id' => $userId, 'ip' => $ip]));
+        }
 
-            if ($userId <= 0 || $services->grants()->audienceOf($userId) === 'none') {
-                return;
-            }
+        // A sign-in without a password (passkey, "remember me": its response
+        // carries the stored hash instead) passes an empty password, which
+        // clears any key of the session. The key session checks the password
+        // against the account's hash once more and decides on eligibility.
+        $silent = \in_array(strtolower((string) ($response['type'] ?? '')), KeySession::silentResponseTypes(), true);
+        $password = $silent ? '' : (string) ($response['password'] ?? '');
 
-            $services->lockout()->recordSuccess($username, $ip);
-            $services->audit()->log(AuditEvent::LOGIN_SUCCESS, ['actor_user_id' => $userId, 'ip' => $ip]);
-            $services->keySession()->onLogin($userId, (string) ($response['password'] ?? ''));
-        });
+        $this->guard(static fn () => $services->keySession()->onLogin($userId, $password));
     }
 
     /**
-     * The lock-out. Joomla asks the user plugins whether an authenticated
-     * account may sign in before it starts the session; a denied response here
-     * stops the sign-in, even with the correct password.
+     * The second safeguard of the lock-out. Joomla asks the user plugins
+     * whether an authenticated account may sign in before it starts the
+     * session; a denied response here stops the sign-in, even with the correct
+     * password. The error text is the one of a wrong password, but Joomla 5.4
+     * and 6 add their own «login denied» message for a denied authorisation
+     * (CMSApplication::login), so only the first safeguard is free of an oracle.
      */
     public function onUserAuthorisation(AuthorisationEvent $event): void
     {
@@ -96,19 +115,23 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $username = (string) $response->username;
         $ip = $this->clientAddress();
 
-        $this->guard(static function () use ($services, $event, $response, $username, $ip): void {
+        try {
             $userId = (int) UserHelper::getUserId($username);
 
-            if ($userId <= 0 || $services->grants()->audienceOf($userId) === 'none'
+            if ($userId <= 0 || !$this->isCalendarUser($services, $userId)
                 || $services->lockout()->retryAfter($username, $ip) === 0) {
                 return;
             }
+        } catch (\Throwable $e) {
+            $this->failed($e);
 
-            $services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
-            $response->status = Authentication::STATUS_DENIED;
-            $response->error_message = Text::_('PLG_USER_APPOINTMENTS_LOGIN_LOCKED');
-            $event->addResult($response);
-        });
+            return;
+        }
+
+        $this->guard(static fn () => $services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]));
+        $response->status = Authentication::STATUS_DENIED;
+        $response->error_message = Text::_('JGLOBAL_AUTH_INVALID_PASS');
+        $event->addResult($response);
     }
 
     public function onUserLoginFailure(LoginFailureEvent $event): void
@@ -120,18 +143,15 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
 
         $username = (string) ($event->getAuthenticationResponse()['username'] ?? '');
+        $userId = $username === '' ? 0 : (int) UserHelper::getUserId($username);
         $ip = $this->clientAddress();
 
-        $this->guard(static function () use ($services, $username, $ip): void {
-            $userId = (int) UserHelper::getUserId($username);
-
-            // Only accounts with a calendar right are counted and logged here;
-            // the site's other accounts are outside the team calendars.
-            if ($userId > 0 && $services->grants()->audienceOf($userId) !== 'none') {
-                $services->lockout()->recordFailure($username, $ip);
-                $services->audit()->log(AuditEvent::LOGIN_FAILURE, ['subject_user_id' => $userId, 'ip' => $ip]);
-            }
-        });
+        // Only accounts with a calendar right are counted and logged here; the
+        // site's other accounts are outside the internet calendars.
+        if ($userId > 0 && $this->isCalendarUser($services, $userId)) {
+            $this->guard(static fn () => $services->lockout()->recordFailure($username, $ip));
+            $this->guard(static fn () => $services->audit()->log(AuditEvent::LOGIN_FAILURE, ['subject_user_id' => $userId, 'ip' => $ip]));
+        }
     }
 
     public function onUserLogout(LogoutEvent $event): void
@@ -143,9 +163,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $this->guard(static function () use ($services, $userId): void {
-            $services->keySession()->onLogout($userId);
-        });
+        $this->guard(static fn () => $services->keySession()->onLogout($userId));
     }
 
     public function onUserAfterSave(AfterSaveEvent $event): void
@@ -158,19 +176,17 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $this->guard(static function () use ($services, $user, $userId): void {
-            if ((int) ($user['block'] ?? 0) === 1) {
-                $services->cleanup()->onUserBlocked($userId, null);
+        // A new password first: a reset suspends the grants and starts the
+        // clean-up, a block below does the same again, idempotently.
+        $password = (string) ($user['password_clear'] ?? '');
 
-                return;
-            }
+        if ($password !== '') {
+            $this->guard(static fn () => $services->keySession()->onPasswordChanged($userId, $password));
+        }
 
-            $password = (string) ($user['password_clear'] ?? '');
-
-            if ($password !== '') {
-                $services->keySession()->onPasswordChanged($userId, $password);
-            }
-        });
+        if ((int) ($user['block'] ?? 0) === 1) {
+            $this->guard(static fn () => $services->cleanup()->onUserBlocked($userId, null));
+        }
     }
 
     public function onUserAfterDelete(AfterDeleteEvent $event): void
@@ -182,9 +198,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $this->guard(static function () use ($services, $userId): void {
-            $services->cleanup()->onUserDeleted($userId);
-        });
+        $this->guard(static fn () => $services->cleanup()->onUserDeleted($userId));
     }
 
     private function services(): ?TeamServices
@@ -198,13 +212,32 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
     }
 
+    private function isCalendarUser(TeamServices $services, int $userId): bool
+    {
+        try {
+            return $services->grants()->audienceOf($userId) !== 'none';
+        } catch (\Throwable $e) {
+            $this->failed($e);
+
+            return false;
+        }
+    }
+
     private function guard(callable $operation): void
     {
         try {
             $operation();
         } catch (\Throwable $e) {
-            // No message text: it could name a user, a key state or a path.
-            Log::add('Team calendars: an account event could not be processed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            $this->failed($e);
+        }
+    }
+
+    private function failed(\Throwable $e): void
+    {
+        // No message text: it could name a user, a key state or a path.
+        try {
+            Log::add('Internet calendars: an account event could not be processed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+        } catch (\Throwable $ignored) {
         }
     }
 

@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\AppPassword;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKey;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
@@ -50,9 +51,6 @@ defined('_JEXEC') or die;
  */
 final class KeyService implements KeyServiceInterface
 {
-    /** Audit event of a failed row MAC. */
-    private const EVENT_MAC_FAILURE = 'key.mac_failure';
-
     /** `#__appointments_keyring.purpose` of the site recovery key. */
     private const RECOVERY = 'recovery';
 
@@ -538,7 +536,7 @@ final class KeyService implements KeyServiceInterface
         $current = $keyring->current()->version();
         $written = 0;
 
-        foreach ($this->keyHolders($calendarId) as $holder) {
+        foreach ($this->keyHolders($calendarId, false) ?? [] as $holder) {
             $have = $this->wrappedVersions($calendarId, $holder['user_id'], $holder['key_version']);
             $completed = 0;
 
@@ -589,6 +587,14 @@ final class KeyService implements KeyServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
         }
 
+        // Every remaining holder must be known before a version nobody else can
+        // open is created; an account that cannot be judged now postpones the rotation.
+        $holders = $this->keyHolders($calendarId, true);
+
+        if ($holders === null || $holders === []) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
+        }
+
         $db = $this->services->db();
         $newKey = CipherSuite::randomKey();
         $db->transactionStart(true);
@@ -611,7 +617,7 @@ final class KeyService implements KeyServiceInterface
             $version = (int) $stored + 1;
             $this->insertKeyVersion($calendarId, $version, $newKey, $recovery);
 
-            foreach ($this->keyHolders($calendarId) as $holder) {
+            foreach ($holders as $holder) {
                 $this->writeWrap($calendarId, $version, $holder['user_id'], $holder['key_version'], $holder['public_key'], $newKey);
             }
 
@@ -836,7 +842,7 @@ final class KeyService implements KeyServiceInterface
         $status = 'usable';
 
         if (!$this->verifyStoredRow('user_keys', $raw)) {
-            $this->macFailure('user_keys', ['subject_user_id' => $userId]);
+            $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
             $status = 'tampered';
         } elseif ($raw['password_wrapped'] === null || !CipherSuite::acceptableLimits((int) $raw['pwhash_opslimit'], (int) $raw['pwhash_memlimit'])) {
             $status = 'reset';
@@ -1203,7 +1209,7 @@ final class KeyService implements KeyServiceInterface
         }
 
         if (!$this->verifyStoredRow('keyring', $row) || \strlen((string) $row['public_key']) !== CipherSuite::KEY_BYTES) {
-            $this->macFailure('keyring', []);
+            $this->macFailure('keyring', 'mismatch', []);
 
             return null;
         }
@@ -1242,7 +1248,7 @@ final class KeyService implements KeyServiceInterface
         }
 
         if (!$this->verifyStoredRow('user_keys', $row) || \strlen((string) $row['public_key']) !== CipherSuite::KEY_BYTES) {
-            $this->macFailure('user_keys', ['subject_user_id' => $userId]);
+            $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
 
             return null;
         }
@@ -1292,7 +1298,7 @@ final class KeyService implements KeyServiceInterface
             )->loadAssoc();
 
             if ($row && (!$this->verifyStoredRow('calendar_keys', $row) || \strlen((string) $row['box_public_key']) !== CipherSuite::KEY_BYTES)) {
-                $this->macFailure('calendar_keys', ['calendar_id' => $calendarId]);
+                $this->macFailure('calendar_keys', 'mismatch', ['calendar_id' => $calendarId]);
                 $row = null;
             }
 
@@ -1350,7 +1356,7 @@ final class KeyService implements KeyServiceInterface
 
         if (!$this->opensBox($calendarId, $version, $calendarKey, $keyRow)) {
             CipherSuite::wipe($calendarKey);
-            $this->macFailure('calendar_key_wraps', ['calendar_id' => $calendarId, 'subject_user_id' => $keys->userId()]);
+            $this->macFailure('calendar_key_wraps', 'foreign_key', ['calendar_id' => $calendarId, 'subject_user_id' => $keys->userId()]);
 
             return null;
         }
@@ -1450,23 +1456,27 @@ final class KeyService implements KeyServiceInterface
     /**
      * Grantees that hold a key: grant MAC valid, state active or waiting for
      * its key (never suspended, never waiting for confirmation), a key-holding
-     * role, an effective account and a usable key pair. Without the grant
-     * service's MAC field list (work package C not present) nobody qualifies.
+     * role, an effective account and a usable key pair.
      *
-     * @return  array<int, array{user_id: int, key_version: int, public_key: string}>
+     * With `$strict` (a rotation, which must not leave a holder behind) the
+     * answer is null as soon as one account cannot be judged, for example
+     * because the grant service fails; without, such an account is skipped and
+     * the next completion picks it up.
+     *
+     * @return  array<int, array{user_id: int, key_version: int, public_key: string}>|null
      */
-    private function keyHolders(int $calendarId): array
+    private function keyHolders(int $calendarId, bool $strict): ?array
     {
         if (!method_exists(GrantService::class, 'macFields')) {
-            return [];
+            return $strict ? null : [];
         }
 
-        /** @var string[] $macFields */
-        $macFields = GrantService::macFields();
         $db = $this->services->db();
+        // The grant table holds no secret; every column is read so that the
+        // grant service alone decides which ones its MAC covers.
         $rows = $db->setQuery(
             $this->query()
-                ->select($db->quoteName(array_values(array_unique(array_merge($macFields, ['user_id', 'role', 'state', 'row_mac'])))))
+                ->select('*')
                 ->from($db->quoteName('#__appointments_calendar_grants'))
                 ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
                 ->where($db->quoteName('state') . ' IN (' . TeamStates::GRANT_ACTIVE . ', ' . TeamStates::GRANT_PENDING_KEY . ')')
@@ -1474,22 +1484,29 @@ final class KeyService implements KeyServiceInterface
         $holders = [];
 
         foreach ($rows as $row) {
-            $fields = [];
-
-            foreach ($macFields as $name) {
-                $fields[$name] = $row[$name];
-            }
+            /** @var array<string, scalar|null> $fields */
+            $fields = GrantService::macFields($row);
 
             if (!$this->verifyRowMac('calendar_grants', $fields, (string) $row['row_mac'])) {
-                $this->macFailure('calendar_grants', ['calendar_id' => $calendarId, 'subject_user_id' => (int) $row['user_id']]);
+                $this->macFailure('calendar_grants', 'mismatch', ['calendar_id' => $calendarId, 'subject_user_id' => (int) $row['user_id']]);
 
                 continue;
             }
 
-            $role = \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::tryFrom((int) $row['role']);
+            $role = CalendarRole::tryFrom((int) $row['role']);
             $userId = (int) $row['user_id'];
 
-            if ($role === null || !$role->holdsKey() || !$this->accountEffective($userId)) {
+            if ($role === null || !$role->holdsKey()) {
+                continue;
+            }
+
+            $effective = $this->accountEffective($userId);
+
+            if ($effective === null && $strict) {
+                return null;
+            }
+
+            if ($effective !== true) {
                 continue;
             }
 
@@ -1503,7 +1520,10 @@ final class KeyService implements KeyServiceInterface
         return $holders;
     }
 
-    private function accountEffective(int $userId): bool
+    /**
+     * @return  bool|null  Null when it cannot be judged now.
+     */
+    private function accountEffective(int $userId): ?bool
     {
         try {
             $db = $this->services->db();
@@ -1516,7 +1536,7 @@ final class KeyService implements KeyServiceInterface
                 && $this->services->grants()->audienceOf($userId) !== 'none'
                 && $this->services->grants()->hasSecondFactor($userId);
         } catch (\Throwable $e) {
-            return false;
+            return null;
         }
     }
 
@@ -1528,17 +1548,19 @@ final class KeyService implements KeyServiceInterface
             ->from($db->quoteName('#__appointments_calendar_objects'))
             ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
             ->where('(' . $db->quoteName('enc_scheme') . ' = ' . TeamStates::SCHEME_SEALED
-                . ' OR ' . $db->quoteName('key_version') . ' < ' . $currentVersion . ')');
+                . ' OR ' . $db->quoteName('key_version') . ' < ' . $currentVersion . ')')
+            ->setLimit(1);
 
-        return (bool) $db->setQuery($query, 0, 1)->loadResult();
+        return (bool) $db->setQuery($query)->loadResult();
     }
 
     /**
+     * @param   string              $reason   `mismatch` (MAC) or `foreign_key` (a wrap that does not open its key row).
      * @param   array<string, int>  $context
      */
-    private function macFailure(string $table, array $context): void
+    private function macFailure(string $table, string $reason, array $context): void
     {
-        $this->log(self::EVENT_MAC_FAILURE, $context + ['details' => ['table' => $table]]);
+        $this->log(AuditEvent::ROW_MAC_FAILURE, $context + ['details' => ['table' => $table, 'reason' => $reason]]);
     }
 
     /**
