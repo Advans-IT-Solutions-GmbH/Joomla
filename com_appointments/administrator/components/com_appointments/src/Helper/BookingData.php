@@ -129,8 +129,20 @@ final class BookingData
      */
     public static function migrationCutoff(string $token, KeyProvider $keys, int $now): ?int
     {
-        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[1] <= $now
-            || (int) $match[1] > $now + self::MIGRATION_DAYS * 86400 || (int) $match[2] > $now) {
+        $cutoff = self::authenticCutoff($token, $keys, $now);
+
+        return $cutoff !== null && (int) explode('.', $token)[0] > $now && (int) explode('.', $token)[0] <= $now + self::MIGRATION_DAYS * 86400
+            ? $cutoff : null;
+    }
+
+    /**
+     * The update time of a token made with this site's key, expired or not: the
+     * migration may resume from it (only rows created before that time), while
+     * reading clear text needs an unexpired token.
+     */
+    public static function authenticCutoff(string $token, KeyProvider $keys, int $now): ?int
+    {
+        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[2] > $now) {
             return null;
         }
 
@@ -224,6 +236,8 @@ final class BookingData
 
         $uid = (string) ($row['uid'] ?? '');
         $created = (string) ($row['created_utc'] ?? '');
+        // Decided on the row as stored, before any field is opened.
+        $clearAccepted = $this->clearAccepted($row);
 
         foreach (self::COLUMNS as $column) {
             if (!\array_key_exists($column, $row) || $row[$column] === null) {
@@ -231,7 +245,7 @@ final class BookingData
             }
 
             if (!self::isSealed($row[$column])) {
-                if (!$this->clearAccepted($row)) {
+                if (!$clearAccepted) {
                     $failed[] = $column;
                     $row[$column] = null;
                 }
@@ -269,11 +283,22 @@ final class BookingData
         return $row;
     }
 
-    /** Whether a clear value of this row is read as it is: a row created before the update, while the migration runs. */
+    /**
+     * Whether a clear value of this row is read as it is: while the migration
+     * runs, in a row created before the update that holds no sealed field (a row
+     * of 1.3 has none, and the migration seals all fields of a row at once; a
+     * row with a backdated creation time and one clear field put in is refused).
+     */
     private function clearAccepted(array $row): bool
     {
         if ($this->clearBefore === null) {
             return false;
+        }
+
+        foreach (self::COLUMNS as $column) {
+            if (self::isSealed($row[$column] ?? null)) {
+                return false;
+            }
         }
 
         $created = UtcTimestamp::parse((string) ($row['created_utc'] ?? ''));

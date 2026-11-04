@@ -342,7 +342,9 @@ final class TimingIndex implements TimingIndexInterface
                 $to = new \DateTimeImmutable($event->DTEND->getDateTime($floatingZone)->format('Y-m-d'), $utc);
                 $days = $to > $from ? max(1, (int) $from->diff($to)->days) : 1;
             } elseif (isset($event->DURATION)) {
-                $days = max(1, (int) $event->DURATION->getDateInterval()->d);
+                // Days as written; hours some clients write for a date are rounded up to whole days.
+                $interval = $event->DURATION->getDateInterval();
+                $days = max(1, (int) $interval->d + intdiv((int) $interval->h * 3600 + (int) $interval->i * 60 + (int) $interval->s + 86399, 86400));
             }
 
             return static fn (\DateTimeImmutable $at): \DateTimeImmutable => $at->setTimezone($floatingZone)->setTime(0, 0)->modify('+' . $days . ' days');

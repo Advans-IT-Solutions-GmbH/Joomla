@@ -115,6 +115,12 @@ final class BookingDataTest extends TestCase
         $later = array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']);
         $this->data($update)->openLenient($later, $failed);
         self::assertCount(8, $failed, 'Clear text in a row made after the update is never data');
+
+        // A 1.4 row backdated and given one clear address: refused, because it holds sealed fields.
+        $mixed = array_replace($this->data()->seal($this->row()['uid'], $this->row()['created_utc'], $this->row()), ['invitee_email' => 'planted@example.test']);
+        $opened = $this->data($update)->openLenient($mixed, $failed);
+        self::assertNull($opened['invitee_email']);
+        self::assertContains('invitee_email', $failed);
         self::assertFalse(BookingData::isSealed('v1:short'));
         self::assertFalse(BookingData::isSealed('anna@example.test'));
     }
@@ -127,6 +133,7 @@ final class BookingDataTest extends TestCase
 
         self::assertSame($now - 60, BookingData::migrationCutoff($token, $keys, $now));
         self::assertNull(BookingData::migrationCutoff($token, $keys, $now + 86400), 'Expired');
+        self::assertSame($now - 60, BookingData::authenticCutoff($token, $keys, $now + 86400), 'An expired token still lets the migration resume');
         self::assertNull(BookingData::migrationCutoff($token, new KeyProvider('another-site-secret'), $now), 'Another site');
         self::assertNull(BookingData::migrationCutoff(($now + 86400) . '.' . ($now - 60) . '.' . str_repeat('0', 64), $keys, $now), 'Forged');
         self::assertNull(BookingData::migrationCutoff(str_replace('.' . ($now - 60) . '.', '.' . ($now - 30) . '.', $token), $keys, $now), 'Update time changed');

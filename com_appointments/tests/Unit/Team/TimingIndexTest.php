@@ -348,6 +348,9 @@ final class TimingIndexTest extends TestCase
         self::assertSame(['2027-03-27T23:00Z/2027-03-28T22:00Z'], $this->expand($ics, '2027-03-20 00:00:00', '2027-04-05 00:00:00'));
         self::assertSame(['2027-03-28T00:00Z/2027-03-29T00:00Z'], $this->expand($ics, '2027-03-20 00:00:00', '2027-04-05 00:00:00', 'UTC'));
 
+        $hours = self::calendar(self::event('DTSTART;VALUE=DATE:20271030', 'DURATION:PT48H'));
+        self::assertSame(['2027-10-29T22:00Z/2027-10-31T23:00Z'], $this->expand($hours, '2027-10-20 00:00:00', '2027-11-05 00:00:00'), 'Hours on a date round up to days');
+
         $twoDays = self::calendar(self::event('DTSTART;VALUE=DATE:20271030', 'DTEND;VALUE=DATE:20271101'));
         self::assertSame(['2027-10-29T22:00Z/2027-10-31T23:00Z'], $this->expand($twoDays, '2027-10-20 00:00:00', '2027-11-05 00:00:00'));
     }

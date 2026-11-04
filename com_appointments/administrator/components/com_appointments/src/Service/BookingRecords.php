@@ -85,7 +85,7 @@ final class BookingRecords
     public static function migrate(DatabaseInterface $db, KeyProvider $keys, int $batch): int
     {
         $token = self::token($db);
-        $cutoff = BookingData::migrationCutoff($token, $keys, time());
+        $cutoff = BookingData::migrationCutoff($token, $keys, time()) ?? BookingData::authenticCutoff($token, $keys, time());
 
         if ($cutoff === null) {
             // A new installation, a database without clear rows or an expired token with none left: over.
