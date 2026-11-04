@@ -110,6 +110,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
             return true;
         }
 
+        // A fresh installation has fresh tables, so an epoch anchor left behind by
+        // an earlier installation would close the new calendars and users.
+        if ($type === 'install') {
+            $this->removeEpochAnchor();
+        }
+
         $this->ensureUpdateSite();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
@@ -154,6 +160,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     public function uninstall($parent)
     {
+        $this->removeEpochAnchor();
+
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
@@ -186,6 +194,21 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 . ',' . $db->quote('plg_task_appointments.retention') . ')'))->execute();
 
         return true;
+    }
+
+    /**
+     * The replay-protection anchor of the internet calendars belongs to the
+     * tables of one installation (team-calendars.md, 5.11).
+     */
+    private function removeEpochAnchor(): void
+    {
+        $folder = JPATH_ADMINISTRATOR . '/components/com_appointments/data';
+
+        foreach (glob($folder . '/epochs.php*') ?: [] as $file) {
+            if (is_file($file) && !@unlink($file)) {
+                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+            }
+        }
     }
 
     private function installBundledPlugins($parent): void

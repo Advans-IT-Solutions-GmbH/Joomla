@@ -327,7 +327,8 @@ play back an older, validly signed grant, calendar, device or invitation row.
   the highest epoch per calendar and per user in a signed file below the Joomla directory; a row is
   valid only when its epoch is at least the anchored one. Without a writable file the feature works
   without this protection and the system check says so. Restoring files and database together is a
-  legitimate rollback.
+  legitimate rollback. The anchor belongs to one installation: a fresh installation and an uninstall
+  remove `data/epochs.php`. There is deliberately no `forget()`; tests delete files they created.
 - Known residual risk, low: a database writer can put back an older, validly sealed envelope at the
   same URI (the envelope binds no revision). The booking row stays the source of truth and the next
   booking change rewrites the copy.

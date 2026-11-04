@@ -54,7 +54,9 @@ interface DeviceServiceInterface
      * of the device and calendar pair. The pair row is written at the first
      * synchronisation of a calendar always. Its role is the role of the latest
      * synchronisation and is updated at once, without throttling, whenever it
-     * changes; only the time is updated at most once per device and minute. `$syncToken` is the
+     * changes; only the time is updated at most once per device and minute.
+     * A failure to write the pair row (role, sync token) throws, and the caller
+     * then does not deliver the response; only the throttled times are best effort. `$syncToken` is the
      * highest sync token delivered to the device for that calendar; it only rises
      * and is always written (not throttled) while the device is active.
      */
