@@ -87,10 +87,15 @@ No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape o
 `tests/caldav/tls/setup-tls.sh` at build time: a throw-away test CA signs a server certificate for
 `localhost`, `joomla` (the compose service name) and `127.0.0.1`, and Apache serves the site on
 port 443 next to the unchanged port 80. The CA is at `/etc/ssl/appointments-test/ca.pem` in the
-image and trusted by the image itself; clients verify against it rather than disabling
-verification. The images set `TEAM_BASE_URL=https://localhost`, which `21-teamcalendars.php` reads;
-every other suite keeps using `http://localhost`. Host ports: 8443 (J5), 8444 (J6), 8445 (MariaDB).
-The workflow checks the TLS handshake against the CA right after each container is ready.
+image and in the image's system trust store. The images set `TEAM_BASE_URL=https://localhost`,
+which `21-teamcalendars.php` reads; every other suite keeps using `http://localhost`. Host ports:
+8443 (J5), 8444 (J6), 8445 (MariaDB).
+
+Which requests verify the certificate: the workflow's `curl --cacert` probe right after each
+container is ready does, so a broken TLS set-up fails before any suite runs. `TeamSuite::http()` in
+`21-teamcalendars.php` does **not**: it sets `CURLOPT_SSL_VERIFYPEER` and `CURLOPT_SSL_VERIFYHOST`
+off, so the internet calendar suites test the HTTPS behaviour of the server, not the certificate.
+A client outside the container verifies against `ca.pem` (copy it out with `docker cp`).
 
 ```
 com_appointments/tests/scripts/
