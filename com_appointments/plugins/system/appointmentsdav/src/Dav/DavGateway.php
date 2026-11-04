@@ -171,8 +171,11 @@ final class DavGateway
             try {
                 $session = $this->services->devices->authenticate($credentials->username, $credentials->password);
             } catch (\Throwable $e) {
-                // A failing lookup counts and answers like any other refusal.
+                // A failing lookup counts, and the client is told to retry, not that its password is wrong.
                 $this->report($e);
+                $lockout->recordFailure($bucket, $this->env->ip);
+
+                return new Response(503);
             }
         }
 
@@ -212,11 +215,17 @@ final class DavGateway
     }
 
     /**
-     * An XML body sabre may parse: UTF-8 without NUL and without a document
-     * type declaration or entity, so no other encoding hides one from the check.
+     * An XML body sabre may parse: UTF-8 (also as declared) without NUL and
+     * without a document type declaration or entity, so no other encoding hides
+     * one from the check.
      */
     public static function plainXml(string $body): bool
     {
+        // An XML declaration may only name UTF-8: UTF-7 would hide a declaration in plain ASCII.
+        if (preg_match('/^\s*<\?xml[^>]*\bencoding\s*=\s*["\']([^"\']*)["\']/i', $body, $declared) === 1 && strcasecmp($declared[1], 'UTF-8') !== 0) {
+            return false;
+        }
+
         return mb_check_encoding($body, 'UTF-8')
             && !str_contains($body, "\0")
             && preg_match('/<!\s*(DOCTYPE|ENTITY)/i', $body) !== 1;

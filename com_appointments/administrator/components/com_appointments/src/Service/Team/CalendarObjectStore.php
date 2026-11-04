@@ -56,8 +56,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
      * writer can make listing or synchronising the calendar fail for everybody.
      * Booking objects are always written.
      */
-    public const MAX_OBJECTS_PER_CALENDAR = 20000;
-    public const MAX_BYTES_PER_CALENDAR = 33554432;
+    public const MAX_OBJECTS_PER_CALENDAR = 10000;
+    public const MAX_BYTES_PER_CALENDAR = 8388608;
 
     private const COLUMNS = ['id', 'calendar_id', 'uri', 'etag', 'size', 'enc_scheme', 'key_version', 'payload', 'timing', 'booking_id', 'modified_utc'];
 
@@ -159,7 +159,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
     /**
      * Collapses journal rows after a token into what the client must do: an
      * address added after the token and not deleted is «added», one deleted at
-     * the end is «deleted», any other is «modified».
+     * the end is «deleted», any other is «modified». An address added after the
+     * token and deleted again is left out: the client never had it.
      *
      * @param   array<int, array{uri: string, operation: int}>  $rows  In token order.
      *
@@ -179,6 +180,10 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         $result = ['added' => [], 'modified' => [], 'deleted' => []];
 
         foreach ($last as $uri => $operation) {
+            if ($operation === TeamStates::CHANGE_DELETED && $first[$uri] === TeamStates::CHANGE_ADDED) {
+                continue;
+            }
+
             if ($operation === TeamStates::CHANGE_DELETED) {
                 $result['deleted'][] = (string) $uri;
             } elseif ($first[$uri] === TeamStates::CHANGE_ADDED) {
@@ -455,7 +460,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
             ->where('(' . $db->quoteName('enc_scheme') . ' <> ' . TeamStates::SCHEME_CALENDAR_KEY
                 . ' OR ' . $db->quoteName('key_version') . ' <> ' . (int) $current->version() . ')')
-            ->order($db->quoteName('id'));
+            // In random order: rows that can never be opened must not fill every batch and starve the rest.
+            ->order('RAND()');
         $done = 0;
         $refused = 0;
 

@@ -205,6 +205,8 @@ final class DavServerTest extends TestCase
         $utf16 = "\xFF\xFE" . mb_convert_encoding('<?xml version="1.0" encoding="UTF-16"?>' . substr($xxe, 21), 'UTF-16LE', 'UTF-8');
         self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], $utf16)->getStatus());
         self::assertSame(400, $this->send('REPORT', '/dav/', ['Depth' => '0'], "<?xml version=\"1.0\"?>\0<x/>")->getStatus());
+        self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '<?xml version="1.0" encoding="UTF-7"?>+ADw-!DOCTYPE d+AD4-<d:propfind xmlns:d="DAV:"/>')->getStatus());
+        self::assertSame(207, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>')->getStatus());
     }
 
     public function testMethodsOutsideTheCalDavSubsetAreForbidden(): void
@@ -217,12 +219,12 @@ final class DavServerTest extends TestCase
         }
     }
 
-    public function testAFailingDeviceLookupCountsAndAnswersLikeAnyRefusal(): void
+    public function testAFailingDeviceLookupCountsAndTellsTheClientToRetry(): void
     {
         $this->world->notReady = true;
         $response = $this->propfind('/dav/', '0');
 
-        self::assertSame(401, $response->getStatus());
+        self::assertSame(503, $response->getStatus());
         self::assertSame('', self::body($response));
         self::assertSame(['retry:dav:alice@192.0.2.10', 'failure:dav:alice@192.0.2.10'], $this->world->lockout->calls);
     }

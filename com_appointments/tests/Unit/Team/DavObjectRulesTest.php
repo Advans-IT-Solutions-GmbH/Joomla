@@ -99,7 +99,7 @@ final class DavObjectRulesTest extends TestCase
         ];
 
         self::assertSame(
-            ['added' => ['new.ics'], 'modified' => ['old.ics', 'back.ics'], 'deleted' => ['gone.ics', 'brief.ics']],
+            ['added' => ['new.ics'], 'modified' => ['old.ics', 'back.ics'], 'deleted' => ['gone.ics']],
             CalendarObjectStore::collapse($rows)
         );
     }
