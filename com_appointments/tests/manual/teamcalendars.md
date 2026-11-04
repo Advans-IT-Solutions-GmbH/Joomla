@@ -243,7 +243,7 @@ same points in the CI; this confirms them on the installation the clients use.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | SV-01 | POS | `curl -i https://<test-site>/.well-known/caldav` | `301` to `/dav/`. |
-| SV-02 | NEG | `curl -i http://<test-site>/dav/`, once without credentials and once with made-up ones (`-u test:test`), never a real app password. | `403` without body, without redirect and without `WWW-Authenticate` in both cases: plain HTTP is refused before the `Authorization` header is read. |
+| SV-02 | NEG | `curl -i` on the plain HTTP address of the same installation (`http://<test-site>/dav/`, for the test stack `http://localhost:8081/dav/`, because port 8444 speaks TLS only), once without credentials and once with made-up ones (`-u test:test`), never a real app password. | `403` without body, without redirect and without `WWW-Authenticate` in both cases: plain HTTP is refused before the `Authorization` header is read. |
 | SV-03 | NEG | Ten requests with a wrong app password for one user, then one with the correct one. | The request after the tenth failure gets `429` with `Retry-After`, also with the correct password; after the delay the correct password works again. |
 | SV-04 | NEG | `MKCALENDAR` and `ACL` on the calendar home with a valid device. | `403`. |
 | SV-05 | POS | Response headers of an authenticated `PROPFIND`. | `Cache-Control: private, no-store`, `X-Robots-Tag: noindex, nofollow`, no session cookie. |
@@ -258,8 +258,10 @@ same points in the CI; this confirms them on the installation the clients use.
 - **Not applicable:** a case whose procedure starts with a condition on the client («where the
   client allows it», «in clients that accept a calendar address», «where the client imports mail
   invitations»: `IC-04`, `IC-19`, `IC-23`) is recorded as **NOT APPLICABLE** when the client offers
-  no such function, with the client's version and where this was checked. It does not block
-  acceptance. If the client offers the function, the case is mandatory.
+  no such function, with the client's version and where this was checked. The same applies to
+  `OL-04` («test stack only») on an installation with a publicly trusted certificate. It does not
+  block acceptance. If the client offers the function, or the run uses the test stack, the case is
+  mandatory.
 - **Observed behaviour:** a behaviour that the specification leaves to the client (`IC-23`,
   `IC-26`, `IC-28`, `OL-08`, `OL-11`) is recorded as observed and counts as **PASS**, unless data
   is lost on the server, data stays visible to a user without a grant, or deleted events come back;
