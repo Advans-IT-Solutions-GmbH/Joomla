@@ -132,6 +132,35 @@ jobs:
           cd com_appointments
           composer test:unit
 
+  # The CalDAV libraries in lib/ are generated code: sabre/dav and its
+  # dependencies from the pinned composer.lock, prefixed with php-scoper. This
+  # job regenerates them and fails on any difference, so lib/ is always exactly
+  # what tests/tools/sabre/generate.php produces from the lock files.
+  sabre-lib:
+    name: Bundled sabre/dav
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, xml
+          tools: composer
+      - name: Regenerate lib/ and compare
+        run: |
+          php com_appointments/tests/tools/sabre/generate.php
+          changes="$(git status --porcelain -- com_appointments/administrator/components/com_appointments/lib)"
+          if [ -n "$changes" ]; then
+            echo "lib/ differs from what generate.php produces:"
+            echo "$changes" | head -50
+            exit 1
+          fi
+
   test-j5:
     name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
@@ -425,6 +454,7 @@ jobs:
       - syntax-check
       - language-lint
       - unit-tests
+      - sabre-lib
       - test-j5
       - test-j6
       - test-mariadb

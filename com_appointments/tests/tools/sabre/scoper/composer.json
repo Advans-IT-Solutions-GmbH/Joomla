@@ -1,0 +1,13 @@
+{
+    "name": "advans/com-appointments-sabre-scoper",
+    "description": "php-scoper for the sabre/dav bundle of com_appointments. Not shipped.",
+    "type": "project",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": "^8.2",
+        "humbug/php-scoper": "0.18.20"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

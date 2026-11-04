@@ -29,10 +29,67 @@ final class VendorAutoloader
     public const PREFIX = 'Advans\\Component\\Appointments\\Vendor\\';
 
     /**
+     * Result of the first call, so later calls neither register twice nor
+     * load the function files twice.
+     *
+     * @var  bool|null
+     */
+    private static $registered = null;
+
+    /**
      * @return  bool  Whether the bundled libraries are present and registered.
      */
     public static function register(): bool
     {
-        return false;
+        if (self::$registered !== null) {
+            return self::$registered;
+        }
+
+        $lib = \dirname(__DIR__, 3) . '/lib';
+        $map = is_file($lib . '/autoload.php') ? require $lib . '/autoload.php' : null;
+
+        if (!\is_array($map) || !\is_array($map['psr4'] ?? null) || !\is_array($map['files'] ?? null)) {
+            return self::$registered = false;
+        }
+
+        $namespaces = [];
+
+        foreach ($map['psr4'] as $namespace => $path) {
+            // Only the bundle's own prefix, so a broken map can never claim another namespace.
+            if (\is_string($namespace) && \is_string($path) && str_starts_with($namespace, self::PREFIX)) {
+                $namespaces[$namespace] = $lib . '/' . $path . '/';
+            }
+        }
+
+        if ($namespaces === []) {
+            return self::$registered = false;
+        }
+
+        spl_autoload_register(static function (string $class) use ($namespaces): void {
+            if (!str_starts_with($class, self::PREFIX)) {
+                return;
+            }
+
+            // The map is ordered longest namespace first.
+            foreach ($namespaces as $namespace => $directory) {
+                if (str_starts_with($class, $namespace)) {
+                    $file = $directory . str_replace('\\', '/', substr($class, \strlen($namespace))) . '.php';
+
+                    if (is_file($file)) {
+                        require_once $file;
+                    }
+
+                    return;
+                }
+            }
+        });
+
+        foreach ($map['files'] as $file) {
+            if (\is_string($file)) {
+                require_once $lib . '/' . $file;
+            }
+        }
+
+        return self::$registered = true;
     }
 }
