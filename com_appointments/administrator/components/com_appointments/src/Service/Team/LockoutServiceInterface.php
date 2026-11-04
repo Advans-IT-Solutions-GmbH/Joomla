@@ -22,7 +22,13 @@ defined('_JEXEC') or die;
  * is, so CalDAV and website lock independently.
  * From the tenth failure in a bucket, the bucket is locked for 1, 2, 4, 8, 16,
  * 32 and then 60 minutes per further failure, never longer and never
- * permanently. A success resets the user bucket. Counters without a failure for
+ * permanently. A success resets the user bucket.
+ *
+ * When the check itself fails (exception): the website sign-in fails open, so a
+ * database error never locks everybody out, including administrators; the
+ * failure is logged (Joomla log and `login.guard_failed` when the log is
+ * writable) and the system check warns. A CalDAV sign-in and «Add device» fail
+ * closed: the request is refused with a generic 401 or 503 without detail. Counters without a failure for
  * 24 hours are deleted. While locked, a correct password is refused too, so the
  * lock is no oracle.
  *

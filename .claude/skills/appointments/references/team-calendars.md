@@ -410,7 +410,10 @@ play back an older, validly signed grant, calendar, device or invitation row.
   `onUserAuthorisation` refuses with Joomla's JLIB_LOGIN_DENIED, which shows that the password was
   right. The README advises to keep the API's Basic authentication plugin off (Joomla's default).
   Administrators get a mail when an account with a calendar right is locked (`accountLocked()`) and
-  can lift a lock in the devices view (`login.unlocked`). Accepted residual risks: a POST that looks like a sign-in (`username`
+  can lift a lock in the devices view (`login.unlocked`). If the lock-out check itself fails: the website
+  sign-in fails **open** (a database error must not lock everybody out, administrators included), with a
+  Joomla log entry, `login.guard_failed` when the log can be written, and a warning in the system check;
+  a CalDAV sign-in and «Add device» fail **closed** (generic 401 or 503 without detail). Accepted residual risks: a POST that looks like a sign-in (`username`
   and `password` at the top level with a valid form token) counts as an attempt for that account; the
   aggregated `dav.*` log rows carry no count; lock mails are limited per account, not across accounts. The website subject is the account
   (F maps the sign-in name to the user id); the CalDAV subject is `dav:<name>@<address>`, so CalDAV and

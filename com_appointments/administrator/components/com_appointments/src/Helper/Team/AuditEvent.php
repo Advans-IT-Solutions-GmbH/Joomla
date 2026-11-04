@@ -26,6 +26,7 @@ final class AuditEvent
     public const LOGIN_FAILURE = 'login.failure';
     public const LOGIN_LOCKED = 'login.locked';
     public const LOGIN_UNLOCKED = 'login.unlocked';
+    public const LOGIN_GUARD_FAILED = 'login.guard_failed';
     public const DAV_AUTH_FAILURE = 'dav.auth_failure';
     public const DAV_LOCKED = 'dav.locked';
 
