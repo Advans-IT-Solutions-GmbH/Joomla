@@ -54,6 +54,8 @@ final class DavObjectRulesTest extends TestCase
             'a VTODO'        => self::ics(self::event('u1') . "BEGIN:VTODO\r\nUID:u1\r\nDTSTAMP:20260101T000000Z\r\nEND:VTODO\r\n"),
             'no UID'         => self::ics("BEGIN:VEVENT\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260101T090000Z\r\nEND:VEVENT\r\n"),
             'not iCalendar'  => 'hello',
+            'two calendars'  => self::ics(self::event('u1')) . self::ics(self::event('u2')),
+            'trailing data'  => self::ics(self::event('u1')) . "BEGIN:VEVENT\r\nUID:u2\r\nEND:VEVENT\r\n",
             'a vCard'        => "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:x\r\nEND:VCARD\r\n",
         ];
 

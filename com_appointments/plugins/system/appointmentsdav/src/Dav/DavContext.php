@@ -59,6 +59,8 @@ final class DavContext
 
     private ?RequestInterface $request = null;
 
+    private bool $wantsCalendarData = false;
+
     /**
      * @param   \Closure(int): string           $busySummary  Text of a redacted busy block in the user's language.
      * @param   \Closure(\Throwable): void|null  $onError      Records an unexpected error without failing the request.
@@ -79,6 +81,8 @@ final class DavContext
     public function setRequest(RequestInterface $request): void
     {
         $this->request = $request;
+        $body = $request->getBody();
+        $this->wantsCalendarData = $request->getMethod() === 'REPORT' && \is_string($body) && stripos($body, 'calendar-data') !== false;
     }
 
     public function request(): ?RequestInterface
@@ -93,6 +97,15 @@ final class DavContext
     public function wantsData(): bool
     {
         return $this->request !== null && $this->request->getMethod() === 'REPORT';
+    }
+
+    /**
+     * Whether the REPORT asks for calendar data at all. A sync-collection or a
+     * multiget for ETags only needs no payload and opens no key.
+     */
+    public function wantsCalendarData(): bool
+    {
+        return $this->wantsCalendarData;
     }
 
     /**

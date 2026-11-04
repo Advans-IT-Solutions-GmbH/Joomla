@@ -191,6 +191,8 @@ final class DavServerTest extends TestCase
         self::assertSame(403, $response->getStatus());
         self::assertSame('', self::body($response));
         self::assertSame('no_mfa', $this->world->audit->events[0][1]['details']['reason']);
+        // The secret was right: the attempt counts as a success, not as a failure.
+        self::assertSame(['retry:dav:bob@192.0.2.10', 'success:dav:bob@192.0.2.10'], $this->world->lockout->calls);
     }
 
     public function testBodiesAboveOneMebibyteAndXmlEntitiesAreRefused(): void
@@ -332,6 +334,10 @@ final class DavServerTest extends TestCase
         self::assertSame(204, $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-Match' => '"aaaa", ' . $etag], self::ics('new', 'Listed'))->getStatus());
         self::assertStringContainsString('Listed', $this->world->store->objects[1]['new.ics']['ics']);
 
+        $otherUid = $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar'], self::ics('another-uid'));
+        self::assertSame(403, $otherUid->getStatus(), 'An object keeps its UID.');
+        self::assertStringContainsString('no-uid-conflict', self::body($otherUid));
+
         self::assertSame(412, $this->send('DELETE', $base . 'new.ics', ['If-Match' => '"0000"'])->getStatus());
         self::assertSame(204, $this->send('DELETE', $base . 'new.ics')->getStatus());
         self::assertSame([], $this->world->store->objects[1]);
@@ -371,6 +377,19 @@ final class DavServerTest extends TestCase
 
         self::assertSame(403, $this->send('PUT', $base . 'x.ics', ['Content-Type' => 'text/calendar'], self::ics('x'))->getStatus());
         self::assertSame(0, $this->world->keyringOpened);
+    }
+
+    public function testACalendarQueryDecryptsEachObjectOnce(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $this->world->store->seed(1, 'b.ics', self::ics('b'));
+
+        $query = $this->send('REPORT', '/dav/calendars/u5/' . $this->teamUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="20261101T000000Z" end="20261201T000000Z"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>');
+
+        self::assertSame(207, $query->getStatus());
+        self::assertSame(2, substr_count(self::body($query), 'Planning with client'));
+        self::assertSame(0, $this->world->store->gets, 'No object is read a second time.');
     }
 
     public function testOnlyTheOwnDisplayPropertiesCanBeChanged(): void
@@ -425,6 +444,13 @@ final class DavServerTest extends TestCase
         self::assertStringNotContainsString('b.ics', $next);
         self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $next);
         self::assertStringContainsString('http://sabre.io/ns/sync/5', $next);
+
+        // A sync-collection for ETags opens no key.
+        self::assertSame(0, $this->world->keyringOpened);
+
+        $page = self::body($this->send('REPORT', '/dav/calendars/u5/' . $this->teamUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/1</d:sync-token><d:sync-level>1</d:sync-level><d:limit><d:nresults>1</d:nresults></d:limit><d:prop><d:getetag/></d:prop></d:sync-collection>'));
+        self::assertStringContainsString('http://sabre.io/ns/sync/2', $page);
+        self::assertStringContainsString('507', $page, 'A limited page says that more changes follow.');
 
         $this->world->store->oldest[1] = 4;
         $expired = $this->sync($this->teamUri, 'http://sabre.io/ns/sync/2');

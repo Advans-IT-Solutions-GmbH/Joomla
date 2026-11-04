@@ -92,6 +92,12 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
         }
 
+        // The reader stops after the first calendar; a second one, or anything after
+        // its end, would be stored without being checked.
+        if (preg_match_all('/^BEGIN:VCALENDAR\r?$/mi', $ics) !== 1 || preg_match('/^END:VCALENDAR\s*\z/mi', $ics) !== 1) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_A_OBJECT_INVALID', 400);
+        }
+
         try {
             $calendar = Reader::read($ics);
         } catch (\Throwable $e) {
@@ -278,7 +284,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_A_PRECONDITION_FAILED', 412);
             }
 
-            if ($this->uidTakenElsewhere($calendarId, $uidHash, $uri)) {
+            // RFC 4791 no-uid-conflict: no other object has the UID, and a replaced object keeps its own.
+            if ($this->uidTakenElsewhere($calendarId, $uidHash, $uri) || ($existing !== null && !hash_equals($existing['uid_hash'], $uidHash))) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_A_UID_CONFLICT', 409);
             }
 
@@ -375,13 +382,14 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
     {
         $db = $this->db();
         $query = $this->query()
-            ->select($db->quoteName(['calendar_id', 'uri']))
+            ->select($db->quoteName(['id', 'calendar_id', 'uri']))
             ->from($db->quoteName('#__appointments_calendar_objects'))
             ->where($db->quoteName('booking_id') . ' = ' . (int) $bookingId);
         $removed = 0;
 
         foreach ($db->setQuery($query)->loadAssocList() ?: [] as $row) {
-            $objectId = $this->deleteOne((int) $row['calendar_id'], (string) $row['uri'], null);
+            // Under the lock it must still be this row of this booking, not a later object at the same address.
+            $objectId = $this->deleteOne((int) $row['calendar_id'], (string) $row['uri'], null, static fn (array $o): bool => $o['id'] === (int) $row['id'] && $o['booking_id'] === $bookingId);
 
             if ($objectId !== null) {
                 $removed++;
@@ -421,6 +429,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             }
 
             $payload = $this->services->keys()->encryptObject($current, $object->uri, $ics);
+            // bind() takes a reference, which a readonly property cannot give.
+            $etag = $object->etag;
             $scheme = TeamStates::SCHEME_CALENDAR_KEY;
             $version = $current->version();
 
@@ -437,7 +447,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 ->bind(':payload', $payload)
                 ->bind(':scheme', $scheme, ParameterType::INTEGER)
                 ->bind(':version', $version, ParameterType::INTEGER)
-                ->bind(':etag', $object->etag);
+                ->bind(':etag', $etag);
             $db->setQuery($update)->execute();
             $done += $db->getAffectedRows() > 0 ? 1 : 0;
         }
@@ -454,10 +464,11 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         $before = $beforeUtc->setTimezone(new \DateTimeZone('UTC'));
         $deleted = 0;
 
-        foreach ($this->skeletons($calendarId) as $entry) {
+        foreach ($this->listing($calendarId) as $object) {
             // Times without a zone count as UTC: the retention works in days, hours do not matter.
             try {
-                $end = $this->services->timing()->lastEnd($entry['skeleton'], new \DateTimeZone('UTC'));
+                $skeleton = $this->services->keys()->openTiming($calendarId, $object->uri, $object->timing);
+                $end = $skeleton === null ? null : $this->services->timing()->lastEnd($skeleton, new \DateTimeZone('UTC'));
             } catch (TeamException $e) {
                 $end = null;
             }
@@ -466,7 +477,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 continue;
             }
 
-            if ($this->deleteOne($calendarId, $entry['uri'], null) !== null) {
+            // Only the version that was judged: a change in the meantime may have moved the event.
+            if ($this->deleteOne($calendarId, $object->uri, null, static fn (array $o): bool => $o['id'] === $object->id && hash_equals($o['etag'], $object->etag)) !== null) {
                 $deleted++;
             }
         }
@@ -502,7 +514,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
 
         // No token, or one this server never issued: the full set, as added.
         if ($token === '' || preg_match('/^\d{1,19}$/', $token) !== 1 || (int) $token > $current) {
-            return new ChangeSet((string) $current, array_map(static fn (StoredObject $o): string => $o->uri, $this->all($calendarId)), [], []);
+            return new ChangeSet((string) $current, array_map(static fn (StoredObject $o): string => $o->uri, $this->listing($calendarId)), [], []);
         }
 
         $since = (int) $token;
@@ -563,11 +575,14 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
     }
 
     /**
-     * Deletes one object with its journal row; null when it does not exist.
+     * Deletes one object with its journal row; null when it does not exist or,
+     * with $still, when the locked row is no longer the one the caller meant.
+     *
+     * @param   (\Closure(array{id: int, etag: string, booking_id: int|null, uid_hash: string}): bool)|null  $still
      *
      * @throws  TeamException  412 when the precondition fails.
      */
-    private function deleteOne(int $calendarId, string $uri, ?string $ifMatch): ?int
+    private function deleteOne(int $calendarId, string $uri, ?string $ifMatch, ?\Closure $still = null): ?int
     {
         $db = $this->db();
         $db->transactionStart();
@@ -576,7 +591,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             $synctoken = $this->lockCalendar($calendarId);
             $existing = $this->lockObject($calendarId, $uri);
 
-            if ($existing === null) {
+            if ($existing === null || ($still !== null && !$still($existing))) {
                 $db->transactionCommit();
 
                 return null;
@@ -625,13 +640,13 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
     }
 
     /**
-     * @return  array{id: int, etag: string, booking_id: int|null}|null
+     * @return  array{id: int, etag: string, booking_id: int|null, uid_hash: string}|null
      */
     private function lockObject(int $calendarId, string $uri): ?array
     {
         $db = $this->db();
         $query = $this->query()
-            ->select($db->quoteName(['id', 'etag', 'booking_id']))
+            ->select($db->quoteName(['id', 'etag', 'booking_id', 'uid_hash']))
             ->from($db->quoteName('#__appointments_calendar_objects'))
             ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
             ->where($db->quoteName('uri') . ' = ' . $db->quote($uri));
@@ -641,6 +656,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             'id'         => (int) $row['id'],
             'etag'       => (string) $row['etag'],
             'booking_id' => $row['booking_id'] === null ? null : (int) $row['booking_id'],
+            'uid_hash'   => (string) $row['uid_hash'],
         ] : null;
     }
 

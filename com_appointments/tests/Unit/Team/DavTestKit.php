@@ -79,6 +79,8 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
 
     public int $reencrypted = 0;
 
+    public int $gets = 0;
+
     private int $nextId = 1;
 
     public function addCalendar(int $calendarId, int $token = 1): void
@@ -116,6 +118,8 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
 
     public function get(int $calendarId, string $uri): ?StoredObject
     {
+        $this->gets++;
+
         return isset($this->objects[$calendarId][$uri]) ? $this->object($calendarId, $uri) : null;
     }
 
@@ -138,6 +142,10 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
             if ($other !== $uri && $object['uid'] === $uid) {
                 throw new TeamException('X', 409);
             }
+        }
+
+        if ($existing !== null && $existing['uid'] !== $uid) {
+            throw new TeamException('X', 409);
         }
 
         return $this->seed($calendarId, $uri, $ics, $existing['booking'] ?? null);
@@ -199,9 +207,16 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
         }
 
         $rows = array_values(array_filter($this->journal[$calendarId], static fn (array $r) => $r['synctoken'] > (int) $syncToken));
+        $token = $current;
+
+        if ($limit !== null && count($rows) > $limit) {
+            $rows = array_slice($rows, 0, $limit);
+            $token = end($rows)['synctoken'];
+        }
+
         $changes = CalendarObjectStore::collapse($rows);
 
-        return new ChangeSet((string) $current, $changes['added'], $changes['modified'], $changes['deleted']);
+        return new ChangeSet((string) $token, $changes['added'], $changes['modified'], $changes['deleted']);
     }
 
     public function skeletons(int $calendarId): iterable

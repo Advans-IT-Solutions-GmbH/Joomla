@@ -44,6 +44,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     private const COLOUR = self::NS_APPLE . 'calendar-color';
     private const ORDER = self::NS_APPLE . 'calendar-order';
 
+    /**
+     * @var  array<int, array<string, array<string, mixed>>>  Decrypted rows of this request, per calendar and URI.
+     */
+    private array $decrypted = [];
+
     public function __construct(private readonly DavContext $context)
     {
     }
@@ -190,6 +195,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             return $object === null ? null : $this->freeBusyRow($calendar, $uri, $object);
         }
 
+        // A calendar-query decrypted its candidates already; sabre asks for each match again.
+        if (isset($this->decrypted[$calendar->id][$uri])) {
+            return $this->decrypted[$calendar->id][$uri];
+        }
+
         $object = $this->store(fn () => $this->context->services->objects->get($calendar->id, $uri));
 
         return $object === null ? null : $this->row($calendar, $object, true);
@@ -212,6 +222,19 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             foreach ($uris as $uri) {
                 if (isset($map[$uri]) && ($row = $this->freeBusyRow($calendar, $uri, $map[$uri])) !== null) {
                     $rows[] = $row;
+                }
+            }
+
+            return $rows;
+        }
+
+        if (!$this->context->wantsCalendarData()) {
+            // ETags only (sync-collection, multiget without calendar-data): no payload, no key.
+            $wanted = array_flip($uris);
+
+            foreach ($this->store(fn () => $this->context->services->objects->listing($calendar->id)) as $object) {
+                if (isset($wanted[$object->uri])) {
+                    $rows[] = $this->row($calendar, $object, false);
                 }
             }
 
@@ -282,6 +305,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $changes = $this->context->services->objects->changesSince($calendar->id, $token === '' ? null : $token, $limit)->toSabre();
         } catch (TeamException $e) {
             throw DavErrors::fromTeam($e, 'sync');
+        }
+
+        // A page of a limited request: the client has to ask again (RFC 6578, 507 for the collection).
+        if ($limit !== null && (int) $changes['syncToken'] < $this->store(fn () => $this->context->services->objects->syncToken($calendar->id))) {
+            $changes['result_truncated'] = true;
         }
 
         if ($calendar->isFreeBusy()) {
@@ -449,6 +477,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
 
             $row['calendardata'] = $data;
             $row['size'] = \strlen($data);
+            $this->decrypted[$calendar->id][$object->uri] = $row;
         }
 
         return $row;
