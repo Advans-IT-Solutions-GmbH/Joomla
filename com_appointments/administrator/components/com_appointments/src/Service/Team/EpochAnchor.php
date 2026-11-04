@@ -22,16 +22,18 @@ defined('_JEXEC') or die;
  * The file holds one line that stops any direct request (`defined('_JEXEC')
  * or die;`) and, after it, a JSON document that is read as data, never
  * included, so no opcode cache can serve an old copy:
- * `{"v":1,"calendar":{…},"calendar_key":{…},"log":{…},"user":{…},"mac":"<hex>"}`
+ * `{"v":2,"calendar":{…},"calendar_key":{…},"log":{…},"user":{…},"mac":"<hex>"}`
  * (each map id => value) with
- * `mac = HMAC-SHA256(key(TEAM_ANCHOR), "com_appointments/epoch-anchor/v1|" . json(the document without mac))`,
+ * `mac = HMAC-SHA256(key(TEAM_ANCHOR), "com_appointments/epoch-anchor/v2|" . json(the document without mac))`,
  * the maps sorted by id. Writes happen under an exclusive lock of a side file
  * and replace the file atomically (temporary file in the same folder, synced,
  * then renamed), so a reader needs no lock and sees the old or the new
  * document, never half of one.
  *
- * - Not writable: a valid file is still enforced; without one nothing is
- *   anchored and writable() is false.
+ * - Not writable, or unavailable (no lock, no space, a database error during
+ *   a rebuild): a valid file is still enforced; without one nothing is
+ *   anchored, the request runs without a lower bound and no row is ever
+ *   treated as tampered because of the anchor.
  * - Missing (first use, or deleted) or wrongly signed: rebuilt from the rows of
  *   the database whose MAC verifies, logged once. Never while the site secret
  *   looks changed: the file is then kept for the old secret.
@@ -44,7 +46,7 @@ defined('_JEXEC') or die;
  */
 final class EpochAnchor implements EpochAnchorInterface
 {
-    private const VERSION = 1;
+    private const VERSION = 2;
 
     private const HEADER = "<?php defined('_JEXEC') or die;\n";
 
@@ -166,8 +168,25 @@ final class EpochAnchor implements EpochAnchorInterface
             // A valid file is enforced even when it cannot be written any more.
             $data = $this->parse(is_file($this->file()) ? (string) @file_get_contents($this->file()) : '');
 
-            if ($data === null && $this->writable()) {
-                $data = $this->locked(fn (): ?array => $this->load(true));
+            if ($data === null) {
+                // A rebuild inside a transaction would read this request's own,
+                // uncommitted rows and could anchor values that roll back: there
+                // the call works without a lower bound and the rebuild waits for
+                // a call outside the transaction.
+                if ($this->insideTransaction() || !$this->writable()) {
+                    return 0;
+                }
+
+                try {
+                    $data = $this->locked(fn (): ?array => $this->load(true));
+                } catch (\Throwable $e) {
+                    // The anchor is unavailable (no lock, no space, a database
+                    // error): for this request it works like a folder that cannot
+                    // be written, without a lower bound, and is not tried again.
+                    // A failure here never makes a row look tampered.
+                    $this->warn('the epoch anchor is unavailable', $e);
+                    $data = null;
+                }
             }
 
             $this->data = $data ?? self::empty();
@@ -207,7 +226,7 @@ final class EpochAnchor implements EpochAnchorInterface
             $document[$kind] = (object) $map;
         }
 
-        return 'com_appointments/epoch-anchor/v1|' . json_encode($document, JSON_THROW_ON_ERROR);
+        return 'com_appointments/epoch-anchor/v2|' . json_encode($document, JSON_THROW_ON_ERROR);
     }
 
     /**

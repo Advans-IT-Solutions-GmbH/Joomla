@@ -406,6 +406,8 @@ final class KeyService implements KeyServiceInterface
      * committed. In one transaction the user's grants are bound to the new version
      * and suspended, and the wraps go. Refused while the site secret looks
      * changed, because then every row fails and the old secret is the way back.
+     * The actor must be the signed-in user; without a signed-in identity (CLI)
+     * only the actor's own permission is checked.
      */
     public function discardUserKey(int $actorUserId, int $userId): void
     {
