@@ -14,6 +14,9 @@ use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Advans\Component\Appointments\Administrator\Service\Team\CalendarService;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface;
 use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
 use Advans\Component\Appointments\Administrator\Service\Team\KeyService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
@@ -38,7 +41,11 @@ return static function (TeamSuite $suite): void {
     $db = $suite->db;
     $p = $suite->prefix;
     $tag = 'teamb' . bin2hex(random_bytes(4));
-    $st = ['users' => [], 'calendar' => 0, 'createdRecovery' => false];
+    // The key service reads the epoch anchor below the component folder. This
+    // process may run as another system user than the web server, so a file it
+    // creates is removed again at the end.
+    $anchorFile = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+    $st = ['users' => [], 'calendar' => 0, 'createdRecovery' => false, 'anchorExisted' => is_file($anchorFile), 'anchorDir' => is_dir(\dirname($anchorFile))];
     $services = TeamServices::fromApplication();
     /** @var KeyService $keys */
     $keys = $services->keys();
@@ -221,12 +228,14 @@ return static function (TeamSuite $suite): void {
         return $keys->decryptObject($keys->openKeyring($st['calendar'], $ownerKeys), $object) === null;
     });
 
-    $suite->test('B: a key version set back or forward in the calendar row is not followed', static function () use ($db, $p, &$ownerKeys, &$st) {
+    $suite->test('B: the key version of the calendar row is never followed down, and a missing newer key row fails closed', static function () use ($db, $p, &$ownerKeys, &$st) {
+        $db->query("UPDATE {$p}appointments_calendars SET key_version = 0 WHERE id = {$st['calendar']}");
+        $back = TeamServices::fromApplication()->keys()->openKeyring($st['calendar'], $ownerKeys);
         $db->query("UPDATE {$p}appointments_calendars SET key_version = 7 WHERE id = {$st['calendar']}");
-        $ring = TeamServices::fromApplication()->keys()->openKeyring($st['calendar'], $ownerKeys);
+        $forward = TeamServices::fromApplication()->keys()->openKeyring($st['calendar'], $ownerKeys);
         $db->query("UPDATE {$p}appointments_calendars SET key_version = 1 WHERE id = {$st['calendar']}");
 
-        return $ring !== null && $ring->current()->version() === 1;
+        return $back !== null && $back->current()->version() === 1 && $forward === null;
     });
 
     $suite->test('B: a reset never overwrites a key row that fails its MAC (the old site secret must still find it)', static function () use ($db, $keys, $member, $p, $refusal, $row) {
@@ -269,12 +278,18 @@ return static function (TeamSuite $suite): void {
     // Completion and rotation need the grant service (work package C)
     // ------------------------------------------------------------------
 
-    if ($suite->isStub(GrantService::class) || !method_exists(GrantService::class, 'macFields')) {
+    if ($suite->isStub(GrantService::class) || !method_exists(GrantService::class, 'rowValid') || !method_exists(CalendarService::class, 'bumpEpoch')) {
         $suite->pending('B: pending wraps are completed for effective grants only, never for suspended ones', 'C');
         $suite->pending('B: rotation creates the next version for every remaining holder and the recovery key', 'C');
     } else {
+        // The grant service verifies the calendar row too: give the fixture
+        // calendar a valid MAC under the current epoch.
+        $calendarRow = $row("SELECT * FROM {$p}appointments_calendars WHERE id = {$st['calendar']}");
+        $db->query("UPDATE {$p}appointments_calendars SET row_mac = " . $hex($keys->rowMac('calendars', CalendarService::macFields((object) $calendarRow))) . " WHERE id = {$st['calendar']}");
         $grant = static function (int $userId, int $role, int $state) use ($db, $p, $hex, $keys, &$st): void {
-            $fields = GrantService::macFields(['calendar_id' => $st['calendar'], 'user_id' => $userId, 'role' => $role, 'state' => $state, 'audience' => TeamStates::AUDIENCE_TEAM, 'granted_by' => 42, 'confirmed_by' => null]);
+            $epoch = GrantService::calendarEpoch(TeamServices::fromApplication(), $st['calendar']);
+            $version = GrantService::userKeyVersion(TeamServices::fromApplication(), $userId);
+            $fields = GrantService::macFields(['calendar_id' => $st['calendar'], 'user_id' => $userId, 'role' => $role, 'state' => $state, 'audience' => TeamStates::AUDIENCE_TEAM, 'granted_by' => 42, 'confirmed_by' => null], $epoch, $version);
             $mac = $keys->rowMac('calendar_grants', $fields);
             $db->query("REPLACE INTO {$p}appointments_calendar_grants (calendar_id, user_id, role, state, audience, granted_by, row_mac, created_utc, modified_utc) VALUES ({$st['calendar']}, {$userId}, {$role}, {$state}, 'team', 42, " . $hex($mac) . ', UTC_TIMESTAMP(), UTC_TIMESTAMP())');
         };
@@ -427,7 +442,49 @@ return static function (TeamSuite $suite): void {
 
     // ------------------------------------------------------------------
 
-    $suite->test('B: removes its fixture data', static function () use ($db, $p, &$st) {
+    $suite->test('B: the epoch anchor keeps the highest epoch, never lowers it, and rebuilds itself when its signature fails', static function () use ($services) {
+        $file = sys_get_temp_dir() . '/teamb-anchor-' . bin2hex(random_bytes(6)) . '/epochs.php';
+        $anchor = new EpochAnchor($services, $file);
+        $anchor->record(EpochAnchorInterface::KIND_CALENDAR, 5, 3);
+        $anchor->record(EpochAnchorInterface::KIND_CALENDAR, 5, 2);
+        $anchor->record(EpochAnchorInterface::KIND_USER, 9, 4);
+        $fresh = new EpochAnchor($services, $file);
+        $kept = $fresh->minimum(EpochAnchorInterface::KIND_CALENDAR, 5) === 3 && $fresh->minimum(EpochAnchorInterface::KIND_USER, 9) === 4
+            && !$fresh->accepts(EpochAnchorInterface::KIND_CALENDAR, 5, 2) && $fresh->accepts(EpochAnchorInterface::KIND_CALENDAR, 5, 3)
+            && str_starts_with((string) file_get_contents($file), "<?php defined('_JEXEC') or die;");
+        // A forged raise of the anchor (without the server key) is not believed.
+        file_put_contents($file, str_replace('"5":3', '"5":99', (string) file_get_contents($file)));
+        $forged = (new EpochAnchor($services, $file))->minimum(EpochAnchorInterface::KIND_CALENDAR, 5) !== 99;
+
+        foreach (glob(\dirname($file) . '/*') ?: [] as $leftover) {
+            @unlink($leftover);
+        }
+
+        @rmdir(\dirname($file));
+
+        return $kept && $forged;
+    });
+
+    $suite->test('B: without a writable anchor everything works without it', static function () use ($services) {
+        $anchor = new EpochAnchor($services, '/proc/teamb-not-writable/epochs.php');
+
+        return !$anchor->writable() && $anchor->minimum(EpochAnchorInterface::KIND_USER, 1) === 0 && $anchor->accepts(EpochAnchorInterface::KIND_USER, 1, 1);
+    });
+
+    $suite->test('B: removes its fixture data', static function () use ($db, $p, $anchorFile, &$st) {
+        if (!$st['anchorExisted']) {
+            foreach ([$anchorFile, $anchorFile . '.lock'] as $file) {
+                @unlink($file);
+            }
+
+            foreach (glob(\dirname($anchorFile) . '/*.tmp') ?: [] as $leftover) {
+                @unlink($leftover);
+            }
+
+            if (!$st['anchorDir']) {
+                @rmdir(\dirname($anchorFile));
+            }
+        }
         $users = implode(',', array_map('intval', $st['users'] ?: [0]));
 
         if ($st['calendar'] > 0) {

@@ -98,7 +98,7 @@ final class KeySession implements KeySessionInterface
         return array_values(array_unique($types));
     }
 
-    public function onLogin(int $userId, string $clearPassword): void
+    public function onLogin(int $userId, #[\SensitiveParameter] string $clearPassword): void
     {
         try {
             $this->forget();
@@ -117,7 +117,7 @@ final class KeySession implements KeySessionInterface
         $this->forgetQuietly();
     }
 
-    public function onPasswordChanged(int $userId, string $clearPassword): void
+    public function onPasswordChanged(int $userId, #[\SensitiveParameter] string $clearPassword): void
     {
         try {
             $keys = $this->keyService();
@@ -139,6 +139,16 @@ final class KeySession implements KeySessionInterface
             // does): suspend and clean up, but never destroy key material.
             if ($status === 'reset' || $status === 'tampered') {
                 $this->forgetIfOwnedBy($userId);
+
+                // A changed site secret makes every row fail: suspending would
+                // re-sign the grants under the wrong secret. Log only, so the old
+                // secret can still be restored with everything intact.
+                if ($status === 'tampered' && $keys->siteSecretSuspect()) {
+                    $keys->reportMacFailure('user_keys', ['subject_user_id' => $userId]);
+
+                    return;
+                }
+
                 $this->suspendFlow($userId, $reason, $actorUserId);
 
                 return;
@@ -201,7 +211,7 @@ final class KeySession implements KeySessionInterface
 
     // ------------------------------------------------------------------
 
-    private function login(int $userId, string $password): void
+    private function login(int $userId, #[\SensitiveParameter] string $password): void
     {
         $app = Factory::getApplication();
         $client = $this->client($app);
@@ -397,6 +407,12 @@ final class KeySession implements KeySessionInterface
             $db->transactionRollback(true);
             $this->warn('a key reset was refused', $e);
             $done = false;
+
+            // Written after the rollback, which would otherwise take the log row
+            // of a tampered key row with it.
+            if ($e instanceof TeamException && $e->getCode() === 409) {
+                $this->keyService()->reportMacFailure('user_keys', ['subject_user_id' => $userId]);
+            }
         }
 
         $this->step(fn () => $this->services->cleanup()->startForUser($userId, $reason, $actorUserId));
@@ -442,7 +458,7 @@ final class KeySession implements KeySessionInterface
         return $block !== null && (int) $block === 0;
     }
 
-    private function store(CMSApplicationInterface $app, string $client, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $payload): void
+    private function store(CMSApplicationInterface $app, string $client, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, #[\SensitiveParameter] string $payload): void
     {
         $sessionKey = random_bytes(CipherSuite::KEY_BYTES);
 
@@ -454,7 +470,7 @@ final class KeySession implements KeySessionInterface
         }
     }
 
-    private function seal(object $session, string $client, string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $payload): void
+    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, #[\SensitiveParameter] string $payload): void
     {
         $nonce = random_bytes(16);
         $session->set(self::SESSION_KEY . $client, [

@@ -90,7 +90,7 @@ final class KeyService implements KeyServiceInterface
     {
         return match (self::canonicalTable($table)) {
             'appointments_keyring' => ['purpose', 'public_key', 'fingerprint', 'created_by', 'created_utc'],
-            'appointments_user_keys' => ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit'],
+            'appointments_user_keys' => ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch'],
             'appointments_calendar_keys' => ['calendar_id', 'key_version', 'box_public_key', 'box_secret_wrapped', 'recovery_wrapped', 'recovery_fingerprint'],
             default => throw new \InvalidArgumentException('This service does not own that table.'),
         };
@@ -304,6 +304,7 @@ final class KeyService implements KeyServiceInterface
             'password_salt'    => $salt,
             'pwhash_opslimit'  => $ops,
             'pwhash_memlimit'  => $mem,
+            'device_epoch'     => (int) $row['device_epoch'],
         ];
         $db = $this->services->db();
         $db->setQuery(
@@ -331,7 +332,7 @@ final class KeyService implements KeyServiceInterface
 
         try {
             $query = $this->query()
-                ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'row_mac']))
+                ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac']))
                 ->from($db->quoteName('#__appointments_user_keys'))
                 ->where($db->quoteName('user_id') . ' = ' . $userId);
             $stored = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
@@ -358,6 +359,7 @@ final class KeyService implements KeyServiceInterface
                     'password_salt'    => random_bytes(CipherSuite::PWHASH_SALT_BYTES),
                     'pwhash_opslimit'  => CipherSuite::PWHASH_OPSLIMIT,
                     'pwhash_memlimit'  => CipherSuite::PWHASH_MEMLIMIT,
+                    'device_epoch'     => (int) $stored['device_epoch'],
                 ];
                 $db->setQuery(
                     'UPDATE ' . $db->quoteName('#__appointments_user_keys')
@@ -371,6 +373,7 @@ final class KeyService implements KeyServiceInterface
                     . ', ' . $db->quoteName('modified_utc') . ' = ' . $db->quote($this->nowSql())
                     . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $userId
                 )->execute();
+                $this->rebindGrants($userId, $current);
             }
 
             $this->deleteAllWrapsOfUser($userId);
@@ -572,7 +575,7 @@ final class KeyService implements KeyServiceInterface
             try {
                 $this->lockCalendar($calendarId);
 
-                foreach ($this->missingWraps($calendarId, $keyring, $this->keyHolders($calendarId, false) ?? []) as $userId => $missing) {
+                foreach ($this->missingWraps($calendarId, $keyring, $this->keyHolders($calendarId, false, true) ?? [], true) as $userId => $missing) {
                     foreach ($missing['versions'] as $version) {
                         $this->writeWrap($calendarId, $version, $userId, $missing['key_version'], $missing['public_key'], $keyring->version($version)->key());
                         $written++;
@@ -635,11 +638,21 @@ final class KeyService implements KeyServiceInterface
                 return $keyring;
             }
 
+            // A rotation is a change of who holds the key: the grant epoch rises
+            // (spec 5.11) and the grant service re-signs the verified grants, so
+            // no grant row from before can be played back. Without that service
+            // (work package C) there is no rotation.
+            if (!method_exists(CalendarService::class, 'bumpEpoch')) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
+            }
+
+            $epoch = (int) CalendarService::bumpEpoch($this->services, $calendarId);
+
             // Every remaining holder must be known before a version nobody else
             // can open is created; an account that cannot be judged now, or no
             // holder at all, postpones the rotation. Determined under the lock, so
             // a revocation running at the same time is either fully before or after.
-            $holders = $this->keyHolders($calendarId, true);
+            $holders = $this->keyHolders($calendarId, true, true);
 
             if ($holders === null || $holders === []) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
@@ -663,6 +676,12 @@ final class KeyService implements KeyServiceInterface
             CipherSuite::wipe($newKey);
 
             throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+        }
+
+        // Outside the database only after the commit; a failing anchor never
+        // undoes the rotation (the system check reports a missing anchor).
+        if (method_exists(CalendarService::class, 'anchor')) {
+            CalendarService::anchor($this->services, [$calendarId => $epoch]);
         }
 
         $keys = [CalendarKey::create($calendarId, $version, $newKey)];
@@ -870,14 +889,14 @@ final class KeyService implements KeyServiceInterface
      * (no usable secret, the next password sign-in creates a pair), `usable`
      * or `tampered` (MAC mismatch, logged). Only public data.
      *
-     * @return  array{status: string, version: int, public_key: string, salt: string, opslimit: int, memlimit: int}
+     * @return  array{status: string, version: int, public_key: string, salt: string, opslimit: int, memlimit: int, device_epoch: int}
      */
     public function userKeyStatus(int $userId): array
     {
         $raw = $this->rawUserKeyRow($userId);
 
         if ($raw === null) {
-            return ['status' => 'none', 'version' => 0, 'public_key' => '', 'salt' => '', 'opslimit' => 0, 'memlimit' => 0];
+            return ['status' => 'none', 'version' => 0, 'public_key' => '', 'salt' => '', 'opslimit' => 0, 'memlimit' => 0, 'device_epoch' => 0];
         }
 
         $status = 'usable';
@@ -896,6 +915,7 @@ final class KeyService implements KeyServiceInterface
             'salt'       => (string) $raw['password_salt'],
             'opslimit'   => (int) $raw['pwhash_opslimit'],
             'memlimit'   => (int) $raw['pwhash_memlimit'],
+            'device_epoch' => (int) $raw['device_epoch'],
         ];
     }
 
@@ -932,7 +952,10 @@ final class KeyService implements KeyServiceInterface
 
     /**
      * A key pair wrapped with an already derived password key. Replaces only a
-     * row in state `reset`; a usable or tampered row is refused with 409.
+     * row in state `reset`; a usable or tampered row is refused with 409. In
+     * the same transaction every stale wrap of the user goes and the user's
+     * grants are bound to the new key version (`GrantService::rebindUserKey()`),
+     * so grants given while the user had no usable pair stay valid.
      */
     public function createUserKeyWithKek(int $userId, #[\SensitiveParameter] string $kek, string $salt, int $opslimit, int $memlimit): KeyContext
     {
@@ -940,29 +963,45 @@ final class KeyService implements KeyServiceInterface
             throw new \InvalidArgumentException('A key pair belongs to a user.');
         }
 
-        $status = $this->userKeyStatus($userId);
-
-        if ($status['status'] === 'usable' || $status['status'] === 'tampered') {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_EXISTS', 409);
-        }
-
-        $version = $status['status'] === 'none' ? 1 : $status['version'] + 1;
-        $pair = CipherSuite::keyPair();
-        $fields = [
-            'user_id'          => $userId,
-            'key_version'      => $version,
-            'public_key'       => $pair['public'],
-            'password_wrapped' => CipherSuite::encrypt($kek, $pair['secret'], self::passwordAd($userId, $version)),
-            'password_salt'    => $salt,
-            'pwhash_opslimit'  => $opslimit,
-            'pwhash_memlimit'  => $memlimit,
-        ];
-        $mac = $this->rowMac('user_keys', $fields);
         $db = $this->services->db();
-        $now = $this->nowSql();
+        $pair = CipherSuite::keyPair();
+        $db->transactionStart(true);
 
         try {
-            if ($status['status'] === 'none') {
+            $query = $this->query()
+                ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac']))
+                ->from($db->quoteName('#__appointments_user_keys'))
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
+            $stored = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+
+            if ($stored !== null && (!$this->verifyStoredRow('user_keys', $stored)
+                || ($stored['password_wrapped'] !== null && CipherSuite::acceptableLimits((int) $stored['pwhash_opslimit'], (int) $stored['pwhash_memlimit'])))) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_EXISTS', 409);
+            }
+
+            $previous = $stored === null ? 0 : (int) $stored['key_version'];
+            // Above every version a wrap of this user still names, so a stale wrap
+            // can never pass for one of the new pair.
+            $highestWrap = (int) $db->setQuery(
+                $this->query()->select('MAX(' . $db->quoteName('user_key_version') . ')')
+                    ->from($db->quoteName('#__appointments_calendar_key_wraps'))
+                    ->where($db->quoteName('user_id') . ' = ' . $userId)
+            )->loadResult();
+            $version = max($previous, $highestWrap) + 1;
+            $fields = [
+                'user_id'          => $userId,
+                'key_version'      => $version,
+                'public_key'       => $pair['public'],
+                'password_wrapped' => CipherSuite::encrypt($kek, $pair['secret'], self::passwordAd($userId, $version)),
+                'password_salt'    => $salt,
+                'pwhash_opslimit'  => $opslimit,
+                'pwhash_memlimit'  => $memlimit,
+                'device_epoch'     => $stored === null ? 1 : (int) $stored['device_epoch'],
+            ];
+            $mac = $this->rowMac('user_keys', $fields);
+            $now = $this->nowSql();
+
+            if ($stored === null) {
                 $this->insert('#__appointments_user_keys', $fields + ['row_mac' => $mac, 'created_utc' => $now, 'modified_utc' => $now], ['public_key', 'password_wrapped', 'password_salt', 'row_mac']);
             } else {
                 $db->setQuery(
@@ -976,20 +1015,17 @@ final class KeyService implements KeyServiceInterface
                     . ', ' . $db->quoteName('row_mac') . ' = ' . self::hex($mac)
                     . ', ' . $db->quoteName('modified_utc') . ' = ' . $db->quote($now)
                     . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $userId
-                    . ' AND ' . $db->quoteName('key_version') . ' = ' . $status['version']
-                    . ' AND ' . $db->quoteName('password_wrapped') . ' IS NULL'
                 )->execute();
-
-                if ($db->getAffectedRows() !== 1) {
-                    throw new \RuntimeException('Concurrent change.');
-                }
-
-                $this->deleteAllWrapsOfUser($userId);
             }
+
+            $this->deleteAllWrapsOfUser($userId);
+            $this->rebindGrants($userId, $previous);
+            $db->transactionCommit(true);
         } catch (\Throwable $e) {
+            $db->transactionRollback(true);
             CipherSuite::wipe($pair['secret']);
 
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_EXISTS', 409);
+            throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
 
         $context = KeyContext::create($userId, $version, $pair['secret'], $pair['public']);
@@ -999,6 +1035,28 @@ final class KeyService implements KeyServiceInterface
         return $context;
     }
 
+    /**
+     * A MAC mismatch found by the key session, logged after its transaction
+     * was rolled back (a log row written inside it would be rolled back too).
+     *
+     * @param   array<string, int>  $context
+     */
+    public function reportMacFailure(string $table, array $context): void
+    {
+        $this->macFailure($table, 'mismatch', $context);
+    }
+
+    /**
+     * Whether the site secret looks changed: a recovery key row exists and its
+     * MAC fails. Then every row fails, and nothing may be suspended or rewritten
+     * under the new secret, so the old one can still be restored.
+     */
+    public function siteSecretSuspect(): bool
+    {
+        $row = $this->rawRecoveryRow();
+
+        return $row !== null && !$this->verifyStoredRow('keyring', $row);
+    }
     // ------------------------------------------------------------------
     // Formulas (pure, public for the unit tests)
     // ------------------------------------------------------------------
@@ -1238,7 +1296,38 @@ final class KeyService implements KeyServiceInterface
             $fields[$name] = $row[$name];
         }
 
-        return $this->verifyRowMac($table, $fields, (string) ($row['row_mac'] ?? ''));
+        if (!$this->verifyRowMac($table, $fields, (string) ($row['row_mac'] ?? ''))) {
+            return false;
+        }
+
+        // A user key row played back together with an older device epoch is
+        // refused once the anchor outside the database knows a newer one.
+        return self::canonicalTable($table) !== 'appointments_user_keys'
+            || $this->anchorAccepts(EpochAnchorInterface::KIND_USER, (int) $row['user_id'], (int) $row['device_epoch']);
+    }
+
+    private function anchorAccepts(string $kind, int $id, int $epoch): bool
+    {
+        try {
+            return $this->services->anchor()->accepts($kind, $id, $epoch);
+        } catch (\Throwable $e) {
+            // Without a usable anchor the protection is off (the system check says so).
+            $this->warn('the epoch anchor could not be read', $e);
+
+            return true;
+        }
+    }
+
+    /**
+     * Grants of the user, MAC-bound to the previous key version, are bound to
+     * the current one (work package C). Without it nothing is rebound and the
+     * grants stay ineffective until somebody grants again.
+     */
+    private function rebindGrants(int $userId, int $previousKeyVersion): void
+    {
+        if (method_exists(GrantService::class, 'rebindUserKey')) {
+            GrantService::rebindUserKey($this->services, $userId, $previousKeyVersion);
+        }
     }
 
     /**
@@ -1280,28 +1369,27 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  array<string, mixed>|null
      */
-    private function rawUserKeyRow(int $userId): ?array
+    private function rawUserKeyRow(int $userId, bool $locking = false): ?array
     {
         if ($userId <= 0) {
             return null;
         }
 
         $db = $this->services->db();
+        $query = $this->query()
+            ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac']))
+            ->from($db->quoteName('#__appointments_user_keys'))
+            ->where($db->quoteName('user_id') . ' = ' . $userId);
 
-        return $db->setQuery(
-            $this->query()
-                ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'row_mac']))
-                ->from($db->quoteName('#__appointments_user_keys'))
-                ->where($db->quoteName('user_id') . ' = ' . $userId)
-        )->loadAssoc() ?: null;
+        return $db->setQuery((string) $query . ($locking ? ' FOR UPDATE' : ''))->loadAssoc() ?: null;
     }
 
     /**
      * @return  array<string, mixed>|null  A verified row with a usable wrapped secret.
      */
-    private function usableUserKey(int $userId): ?array
+    private function usableUserKey(int $userId, bool $locking = false): ?array
     {
-        $row = $this->rawUserKeyRow($userId);
+        $row = $this->rawUserKeyRow($userId, $locking);
 
         if ($row === null) {
             return null;
@@ -1366,13 +1454,29 @@ final class KeyService implements KeyServiceInterface
                 ->order($db->quoteName('key_version') . ' DESC')
         )->loadColumn() ?: [];
 
-        foreach ($versions as $version) {
-            if ($this->calendarKeyRow($calendarId, (int) $version) !== null) {
-                return (int) $version;
-            }
+        // Only the newest row counts. If it fails its MAC the calendar fails
+        // closed instead of silently falling back to an older version, which a
+        // database writer could otherwise force by damaging or deleting rows.
+        $newest = $versions === [] ? null : (int) $versions[0];
+
+        if ($newest === null || $this->calendarKeyRow($calendarId, $newest) === null) {
+            return null;
         }
 
-        return null;
+        $stored = (int) $db->setQuery(
+            $this->query()->select($db->quoteName('key_version'))->from($db->quoteName('#__appointments_calendars'))
+                ->where($db->quoteName('id') . ' = ' . $calendarId)
+        )->loadResult();
+
+        // A newest row below the version the calendar row names means key rows
+        // were removed: fail closed as well.
+        if ($newest < $stored) {
+            $this->macFailure('calendar_keys', 'missing', ['calendar_id' => $calendarId]);
+
+            return null;
+        }
+
+        return $newest;
     }
 
     private function lockCalendar(int $calendarId): void
@@ -1392,12 +1496,12 @@ final class KeyService implements KeyServiceInterface
      *
      * @return  array<int, array{key_version: int, public_key: string, versions: int[]}>
      */
-    private function missingWraps(int $calendarId, CalendarKeyring $keyring, array $holders): array
+    private function missingWraps(int $calendarId, CalendarKeyring $keyring, array $holders, bool $locking = false): array
     {
         $missing = [];
 
         foreach ($holders as $holder) {
-            $have = $this->wrappedVersions($calendarId, $holder['user_id'], $holder['key_version']);
+            $have = $this->wrappedVersions($calendarId, $holder['user_id'], $holder['key_version'], $locking);
             $versions = [];
 
             for ($version = 1; $version <= $keyring->current()->version(); $version++) {
@@ -1572,25 +1676,30 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  array<int, true>  Versions the user holds a wrap of with this user key version.
      */
-    private function wrappedVersions(int $calendarId, int $userId, int $userKeyVersion): array
+    private function wrappedVersions(int $calendarId, int $userId, int $userKeyVersion, bool $locking = false): array
     {
         $db = $this->services->db();
-        $versions = $db->setQuery(
-            $this->query()
-                ->select($db->quoteName('key_version'))
-                ->from($db->quoteName('#__appointments_calendar_key_wraps'))
-                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-                ->where($db->quoteName('user_id') . ' = ' . $userId)
-                ->where($db->quoteName('user_key_version') . ' = ' . $userKeyVersion)
-        )->loadColumn() ?: [];
+        $query = $this->query()
+            ->select($db->quoteName('key_version'))
+            ->from($db->quoteName('#__appointments_calendar_key_wraps'))
+            ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            ->where($db->quoteName('user_id') . ' = ' . $userId)
+            ->where($db->quoteName('user_key_version') . ' = ' . $userKeyVersion);
+        $versions = $db->setQuery((string) $query . ($locking ? ' FOR UPDATE' : ''))->loadColumn() ?: [];
 
         return array_fill_keys(array_map('intval', $versions), true);
     }
 
     /**
-     * Grantees that hold a key: grant MAC valid, state active or waiting for
-     * its key (never suspended, never waiting for confirmation), a key-holding
-     * role, an effective account and a usable key pair.
+     * Grantees that hold a key: grant valid (MAC under the calendar's current
+     * grant epoch and the grantee's current key version, checked by the grant
+     * service), state active or waiting for its key (never suspended), a
+     * key-holding role, an effective account and a usable key pair.
+     *
+     * With `$locking` every row is read with FOR UPDATE: a locking read always
+     * sees the newest committed state, also inside an outer transaction whose
+     * snapshot is older, so a revocation committed while this request waited
+     * for the calendar lock is never missed.
      *
      * With `$strict` (a rotation, which must not leave a holder behind) the
      * answer is null as soon as one account cannot be judged, for example
@@ -1599,38 +1708,58 @@ final class KeyService implements KeyServiceInterface
      *
      * @return  array<int, array{user_id: int, key_version: int, public_key: string}>|null
      */
-    private function keyHolders(int $calendarId, bool $strict): ?array
+    private function keyHolders(int $calendarId, bool $strict, bool $locking = false): ?array
     {
-        if (!method_exists(GrantService::class, 'macFields')) {
+        if (!method_exists(GrantService::class, 'rowValid')) {
             return $strict ? null : [];
         }
 
         $db = $this->services->db();
+        $lock = $locking ? ' FOR UPDATE' : '';
+        $epochQuery = $this->query()
+            ->select($db->quoteName('grant_epoch'))
+            ->from($db->quoteName('#__appointments_calendars'))
+            ->where($db->quoteName('id') . ' = ' . $calendarId);
+        $epoch = (int) $db->setQuery((string) $epochQuery . $lock)->loadResult();
         // The grant table holds no secret; every column is read so that the
         // grant service alone decides which ones its MAC covers.
-        $rows = $db->setQuery(
-            $this->query()
-                ->select('*')
-                ->from($db->quoteName('#__appointments_calendar_grants'))
-                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-                ->where($db->quoteName('state') . ' IN (' . TeamStates::GRANT_ACTIVE . ', ' . TeamStates::GRANT_PENDING_KEY . ')')
-        )->loadAssocList() ?: [];
+        $grantQuery = $this->query()
+            ->select('*')
+            ->from($db->quoteName('#__appointments_calendar_grants'))
+            ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            ->where($db->quoteName('state') . ' IN (' . TeamStates::GRANT_ACTIVE . ', ' . TeamStates::GRANT_PENDING_KEY . ')');
+        $rows = $db->setQuery((string) $grantQuery . $lock)->loadObjectList() ?: [];
         $holders = [];
 
         foreach ($rows as $row) {
-            /** @var array<string, scalar|null> $fields */
-            $fields = GrantService::macFields($row);
+            $role = CalendarRole::tryFrom((int) $row->role);
+            $userId = (int) $row->user_id;
 
-            if (!$this->verifyRowMac('calendar_grants', $fields, (string) $row['row_mac'])) {
-                $this->macFailure('calendar_grants', 'mismatch', ['calendar_id' => $calendarId, 'subject_user_id' => (int) $row['user_id']]);
-
+            if ($role === null || !$role->holdsKey()) {
                 continue;
             }
 
-            $role = CalendarRole::tryFrom((int) $row['role']);
-            $userId = (int) $row['user_id'];
+            $key = $this->usableUserKey($userId, $locking);
 
-            if ($role === null || !$role->holdsKey()) {
+            if ($key === null) {
+                continue;
+            }
+
+            try {
+                $valid = GrantService::rowValid($this->services, $row, $epoch, (int) $key['key_version']);
+            } catch (\Throwable $e) {
+                $valid = null;
+            }
+
+            if ($valid === null && $strict) {
+                return null;
+            }
+
+            if ($valid !== true) {
+                if ($valid === false) {
+                    $this->macFailure('calendar_grants', 'mismatch', ['calendar_id' => $calendarId, 'subject_user_id' => $userId]);
+                }
+
                 continue;
             }
 
@@ -1640,20 +1769,13 @@ final class KeyService implements KeyServiceInterface
                 return null;
             }
 
-            if ($effective !== true) {
-                continue;
-            }
-
-            $key = $this->usableUserKey($userId);
-
-            if ($key !== null) {
+            if ($effective === true) {
                 $holders[$userId] = ['user_id' => $userId, 'key_version' => (int) $key['key_version'], 'public_key' => (string) $key['public_key']];
             }
         }
 
         return $holders;
     }
-
     /**
      * @return  bool|null  Null when it cannot be judged now.
      */

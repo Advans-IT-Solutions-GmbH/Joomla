@@ -112,7 +112,7 @@ final class KeyServiceTest extends TestCase
     public function testMacFieldsOfTheOwnTables(): void
     {
         self::assertSame(['purpose', 'public_key', 'fingerprint', 'created_by', 'created_utc'], KeyService::macFields('keyring'));
-        self::assertSame(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit'], KeyService::macFields('#__appointments_user_keys'));
+        self::assertSame(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch'], KeyService::macFields('#__appointments_user_keys'));
         self::assertSame(['calendar_id', 'key_version', 'box_public_key', 'box_secret_wrapped', 'recovery_wrapped', 'recovery_fingerprint'], KeyService::macFields('appointments_calendar_keys'));
 
         $this->expectException(\InvalidArgumentException::class);
@@ -240,7 +240,7 @@ final class KeyServiceTest extends TestCase
     {
         $dir = dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team';
 
-        foreach (['KeyService.php', 'KeySession.php'] as $file) {
+        foreach (['KeyService.php', 'KeySession.php', 'EpochAnchor.php'] as $file) {
             self::assertStringNotContainsString('TEAM_NOT_' . 'READY', (string) file_get_contents($dir . '/' . $file), $file);
         }
     }
