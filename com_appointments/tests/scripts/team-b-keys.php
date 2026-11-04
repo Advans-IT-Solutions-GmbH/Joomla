@@ -418,7 +418,8 @@ return static function (TeamSuite $suite): void {
     });
 
     $suite->test('B: a backup or e-mail code used after the sign-in changes the factor proof, a counting method does not', static function () use ($db, $p, $member, $services) {
-        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[]', UTC_TIMESTAMP())");
+        // Joomla ignores MFA records with empty options, so the codes are real.
+        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[\"40517342\",\"83610277\"]', UTC_TIMESTAMP())");
         $session = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession($services);
         $snapshot = new \ReflectionMethod($session, 'factorSnapshot');
         $atSignIn = $snapshot->invoke($session, $member);
