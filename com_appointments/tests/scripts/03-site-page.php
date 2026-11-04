@@ -250,6 +250,14 @@ class SitePageTest
                     && $xpath->query('//form[@id="appointment-details-form"]')->length === 0
                     && $xpath->query('//*[@id="appointment-picker"][@data-day=""]')->length === 1;
             });
+            $this->test('steps: before a day is chosen the times column holds the hint, the zone stands in one line below', function () use ($xpath) {
+                $line = '//div[contains(@class, "com-appointments-zone-line")]';
+
+                return trim($xpath->query('//*[@id="appointment-picker"]//*[contains(@class, "com-appointments-times-hint")]')->item(0)?->textContent ?? '') === 'Please choose a day'
+                    && trim($xpath->query($line . '/p[@id="appointment-zone-note"]')->item(0)?->textContent ?? '') === 'All times are shown in the UTC time zone.'
+                    && $xpath->query('//*[@id="appointment-picker"]//*[@id="appointment-zone-note"]')->length === 0
+                    && $xpath->query($line . '/details[contains(@class, "com-appointments-zone")]//label[@for="appointment-zone"][contains(@class, "visually-hidden")]')->length === 1;
+            });
             $this->test('steps: the step title names step 1 of 3 and the event type is the main heading', function () use ($xpath) {
                 $title = preg_replace('/\s+/', ' ', trim($xpath->query('//*[@id="appointment-step-title"]')->item(0)?->textContent ?? ''));
 
@@ -363,6 +371,20 @@ class SitePageTest
                     && $xpath->query($info . '//a[contains(@class, "com-appointments-back")]')->length === 1;
             });
 
+            // The title above the card: still the one main heading of the page, now before the card.
+            $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_title='above' WHERE id={$event}");
+            $page = $this->request($base . '&start=' . urlencode($chosen));
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the title above the card is the only main heading, outside the information column', function () use ($page, $xpath) {
+                $above = $xpath->query('//*[@data-appointments-view]/h1[contains(@class, "com-appointments-page-title")]')->item(0);
+
+                return $page['code'] === 200 && $above instanceof \DOMElement && trim($above->textContent) === 'Bookable steps talk'
+                    && $xpath->query('//*[@data-appointments-booking]//h1')->length === 1
+                    && $xpath->query('//header[contains(@class, "com-appointments-info")]//h1')->length === 0
+                    && $xpath->query('following-sibling::*[1][@id="appointment-booking"]', $above)->length === 1;
+            });
+            $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_title='card' WHERE id={$event}");
+
             // An unknown layout value falls back to the company-logo layout; an empty logo shows no image.
             $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_layout='bogus', info_logo='' WHERE id={$event}");
             $page = $this->request($base . '&month=' . $month);
@@ -396,7 +418,8 @@ class SitePageTest
             $this->test('steps: the slot endpoint of a month without a day returns the calendar without times', function () use ($page, $xpath) {
                 return $page['code'] === 200 && $xpath->query('//*[@id="appointment-picker"][@data-day=""]')->length === 1
                     && $xpath->query('//input[@name="start"]')->length === 0
-                    && $xpath->query('//*[contains(@class, "com-appointments-day-available")]')->length > 0;
+                    && $xpath->query('//*[contains(@class, "com-appointments-day-available")]')->length > 0
+                    && trim($xpath->query('//p[@id="appointment-zone-note"]')->item(0)?->textContent ?? '') === 'All times are shown in the UTC time zone.';
             });
         } finally {
             $this->cleanUp();

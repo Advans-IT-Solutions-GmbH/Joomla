@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `info_photo` VARCHAR(2048) NOT NULL DEFAULT '',
     `info_name` VARCHAR(255) NOT NULL DEFAULT '',
     `info_role` VARCHAR(255) NOT NULL DEFAULT '',
+    `info_title` VARCHAR(16) NOT NULL DEFAULT 'card',
     `access` INT UNSIGNED NOT NULL DEFAULT 1,
     `language` CHAR(7) NOT NULL DEFAULT '*',
     `published` TINYINT(1) NOT NULL DEFAULT 1,

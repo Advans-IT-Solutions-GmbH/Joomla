@@ -60,6 +60,8 @@ class HtmlView extends BaseHtmlView
     protected ?\DateTimeImmutable $selected = null;
     /** Layout of the information column: the sub-layout default_info_<name>.php. */
     protected string $infoLayout = 'logo';
+    /** The title of the event type above the card instead of in the information column. */
+    protected bool $titleAbove = false;
 
     public function display($tpl = null)
     {
@@ -166,6 +168,7 @@ class HtmlView extends BaseHtmlView
         $this->step = $this->selected !== null ? 'details' : 'time';
         $layout = (string) ($this->item->info_layout ?? '');
         $this->infoLayout = in_array($layout, ['logo', 'person', 'event'], true) ? $layout : 'logo';
+        $this->titleAbove = (string) ($this->item->info_title ?? '') === 'above';
 
         // Iterate Gregorian dates independently of time-zone gaps.
         $calendar = new \DateTimeImmutable($date . '-01', new \DateTimeZone('UTC'));

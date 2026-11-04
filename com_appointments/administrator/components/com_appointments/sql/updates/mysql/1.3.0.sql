@@ -1,7 +1,8 @@
 --
--- Information column of the booking page: the layout ("logo" or "person") and its
--- image, name and role. Existing event types keep the company-logo layout, which
--- without a logo shows the event details alone, as before. One column per statement,
+-- Information column of the booking page: the layout ("logo", "person" or "event"), its
+-- image, name and role, and where the title stands ("card" or "above"). Existing event
+-- types keep the company-logo layout with the title in the card, which without a logo
+-- shows the event details alone, as before. One column per statement,
 -- so Joomla's database check (System > Maintenance > Database) can verify each one.
 --
 -- @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
@@ -14,3 +15,4 @@ ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `info_logo` VARCHAR(2048) NO
 ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `info_photo` VARCHAR(2048) NOT NULL DEFAULT '' AFTER `info_logo`;
 ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `info_name` VARCHAR(255) NOT NULL DEFAULT '' AFTER `info_photo`;
 ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `info_role` VARCHAR(255) NOT NULL DEFAULT '' AFTER `info_name`;
+ALTER TABLE `#__appointments_eventtypes` ADD COLUMN `info_title` VARCHAR(16) NOT NULL DEFAULT 'card' AFTER `info_role`;

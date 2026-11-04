@@ -17,6 +17,9 @@ defined('_JEXEC') or die;
  * Step 2 of the booking page: the visitor's details for the chosen time, sent as one POST
  * form with the chosen time and time zone as hidden values. The information column shows
  * the chosen time and the way back to the times of its day.
+ *
+ * One column of fields; only name and email share a row on a wider column. Every required
+ * field carries the same mark after its label (decorative: the control itself is required).
  */
 $id = (int) $this->item->id;
 $values = $this->inputData;
@@ -57,23 +60,24 @@ $dialOptions = function (string $selected): string {
 $phone = is_array($values['phone'] ?? null) ? $values['phone'] : [];
 $guestsOpen = $value('guests') !== '' || isset($errors['guests']);
 $consentText = trim((string) $this->params->get('consent_text', '')) ?: Text::_('COM_APPOINTMENTS_BOOKING_CONSENT_TEXT');
+$mark = '<span class="com-appointments-required" aria-hidden="true">*</span>';
 ?>
 <form id="appointment-details-form" method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=booking.submit&id=' . $id); ?>" class="com-appointments-form com-appointments-booking">
     <section id="appointment-details" class="com-appointments-step com-appointments-step-details" aria-labelledby="appointment-step-title">
         <div class="com-appointments-fields">
             <div class="com-appointments-field com-appointments-field-half">
-                <label class="form-label" for="booking-name"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NAME'); ?></label>
+                <label class="form-label" for="booking-name"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NAME') . $mark; ?></label>
                 <input class="form-control<?php echo $invalid('name'); ?>" id="booking-name" name="booking[name]" maxlength="255" required autocomplete="name" value="<?php echo $value('name'); ?>"<?php echo $aria('name'); ?>>
                 <?php echo $error('name'); ?>
             </div>
             <div class="com-appointments-field com-appointments-field-half">
-                <label class="form-label" for="booking-email"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_EMAIL'); ?></label>
+                <label class="form-label" for="booking-email"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_EMAIL') . $mark; ?></label>
                 <input class="form-control<?php echo $invalid('email'); ?>" id="booking-email" type="email" name="booking[email]" maxlength="255" required autocomplete="email" value="<?php echo $value('email'); ?>"<?php echo $aria('email'); ?>>
                 <?php echo $error('email'); ?>
             </div>
             <?php if ($this->phoneRequired) : ?>
-                <div class="com-appointments-field com-appointments-field-half com-appointments-field-phone">
-                    <label class="form-label" for="booking-phone"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_PHONE'); ?></label>
+                <div class="com-appointments-field com-appointments-field-phone">
+                    <label class="form-label" for="booking-phone"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_PHONE') . $mark; ?></label>
                     <div class="input-group com-appointments-tel">
                         <label class="visually-hidden" for="booking-phone-country"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_COUNTRY'); ?></label>
                         <select class="form-select com-appointments-tel-country<?php echo $invalid('phone'); ?>" id="booking-phone-country" name="booking[phone][country]" autocomplete="tel-country-code"<?php echo isset($errors['phone']) ? ' aria-invalid="true" aria-describedby="booking-phone-error"' : ''; ?>><?php echo $dialOptions($dialCode($phone)); ?></select>
@@ -94,7 +98,7 @@ $consentText = trim((string) $this->params->get('consent_text', '')) ?: Text::_(
                 $options = json_decode((string) ($field['options'] ?? '[]'), true) ?: [];
                 $fieldDescription = $field['description'] ? 'booking-desc-' . $fieldId : '';
                 $descriptionHtml = $fieldDescription !== '' ? '<div id="' . $fieldDescription . '" class="form-text com-appointments-field-description">' . $this->escape($field['description']) . '</div>' : '';
-                $labelText = $this->escape($field['label']) . ($required ? ' *' : '');
+                $labelText = $this->escape($field['label']) . ($required ? $mark : '');
                 ?>
                 <?php if (in_array($field['type'], ['radio', 'checkboxes'], true)) : ?>
                     <fieldset class="com-appointments-field com-appointments-field-group" id="booking-field-<?php echo $fieldId; ?>"<?php echo trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) !== '' ? ' aria-describedby="' . trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) . '"' : ''; ?>>
@@ -118,7 +122,7 @@ $consentText = trim((string) $this->params->get('consent_text', '')) ?: Text::_(
                         </div>
                     </div>
                 <?php else : ?>
-                    <div class="com-appointments-field<?php echo in_array($field['type'], ['textarea'], true) ? '' : ' com-appointments-field-half'; ?>">
+                    <div class="com-appointments-field">
                         <label class="form-label" for="booking-field-<?php echo $fieldId; ?>"><?php echo $labelText; ?></label>
                         <?php if ($field['type'] === 'textarea') : ?>
                             <textarea class="form-control<?php echo $invalid($key); ?>" id="booking-field-<?php echo $fieldId; ?>" name="<?php echo $name; ?>" maxlength="8000"<?php echo $required; ?><?php echo $aria($key, $fieldDescription); ?>><?php echo $textValue; ?></textarea>
@@ -156,7 +160,7 @@ $consentText = trim((string) $this->params->get('consent_text', '')) ?: Text::_(
         <div class="com-appointments-field com-appointments-privacy">
             <div class="form-check com-appointments-consent">
                 <input class="form-check-input<?php echo $invalid('consent'); ?>" id="booking-consent" type="checkbox" name="consent" value="1" required<?php echo $aria('consent', 'booking-consent-text'); ?>>
-                <label class="form-check-label" for="booking-consent"><?php if ($this->privacyLink !== '') : ?><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_CONSENT_LINK', '<a class="com-appointments-privacy-link" href="' . $this->escape($this->privacyLink) . '" target="_blank" rel="noopener">' . Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK') . '<span class="visually-hidden"> ' . Text::_('COM_APPOINTMENTS_BOOKING_NEW_WINDOW') . '</span></a>'); ?><?php else : ?><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONSENT'); ?><?php endif; ?></label>
+                <label class="form-check-label" for="booking-consent"><?php if ($this->privacyLink !== '') : ?><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_CONSENT_LINK', '<a class="com-appointments-privacy-link" href="' . $this->escape($this->privacyLink) . '" target="_blank" rel="noopener">' . Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK') . '<span class="visually-hidden"> ' . Text::_('COM_APPOINTMENTS_BOOKING_NEW_WINDOW') . '</span></a>'); ?><?php else : ?><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONSENT'); ?><?php endif; ?><?php echo $mark; ?></label>
                 <?php echo $error('consent'); ?>
             </div>
             <p id="booking-consent-text" class="form-text com-appointments-consent-text"><?php echo $this->escape($consentText); ?> <?php echo Text::_('COM_APPOINTMENTS_BOOKING_ERASURE_NOTICE'); ?></p>

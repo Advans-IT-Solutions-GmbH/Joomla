@@ -30,10 +30,18 @@
     --appointments-accent-soft: color-mix(in srgb, var(--appointments-accent) 10%, transparent);
     --appointments-selected: #3c4043;
     --appointments-selected-contrast: #fff;
+    --appointments-selected-border: var(--appointments-selected);
+    --appointments-selected-border-width: 1px;
+    --appointments-slot-hover-background: var(--appointments-surface);
+    --appointments-nav-background: var(--appointments-accent-soft);
+    --appointments-nav-hover-background: var(--appointments-accent-soft);
+    --appointments-nav-hover-border-color: var(--appointments-accent);
     --appointments-surface: #fff;
     --appointments-surface-alt: #f6f7f9;
     --appointments-text: #1f2328;
     --appointments-muted: #59636e;
+    --appointments-unavailable: var(--appointments-muted);
+    --appointments-unavailable-opacity: 0.6;
     --appointments-border-color: #d0d7de;
     --appointments-border: 1px solid var(--appointments-border-color);
     --appointments-error: #b3261e;
@@ -59,6 +67,15 @@
     --appointments-button-weight: 600;
     --appointments-button-transform: none;
     --appointments-button-letter-spacing: normal;
+    --appointments-strong-weight: 600;
+    --appointments-meta-weight: var(--appointments-strong-weight);
+    --appointments-weekday-weight: var(--appointments-strong-weight);
+    --appointments-small-size: 0.875rem;
+    --appointments-step-title-size: 1.125rem;
+    --appointments-month-size: 0.9375rem;
+    --appointments-day-font-size: 0.9375rem;
+    --appointments-weekday-size: 0.6875rem;
+    --appointments-slot-font-size: 1rem;
 
     /* Fields */
     --appointments-field-background: var(--appointments-surface);
@@ -149,9 +166,14 @@
     font-weight: var(--appointments-heading-weight);
 }
 
+/* The title above the card, when the event type shows it there. */
+.com-appointments .com-appointments-page-title {
+    margin: 0 auto 1.5rem;
+}
+
 .com-appointments-step-title {
     margin: 0 0 1rem;
-    font-size: 1.125rem;
+    font-size: var(--appointments-step-title-size);
 }
 
 .com-appointments-step-title:focus {
@@ -160,7 +182,7 @@
 
 .com-appointments-title {
     margin: 0 0 0.5rem;
-    font-size: 1.125rem;
+    font-size: var(--appointments-step-title-size);
 }
 
 /* Visible focus on every control, in the focus colour. */
@@ -255,12 +277,12 @@
     display: inline-flex;
     align-items: center;
     min-height: var(--appointments-target);
-    font-weight: 600;
+    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments-list .com-appointments-duration {
     color: var(--appointments-muted);
-    font-size: 0.875rem;
+    font-size: var(--appointments-small-size);
 }
 
 /* The booking card: the information column and the step. On a narrow column the two stand
@@ -320,12 +342,12 @@
 }
 
 .com-appointments-host-name {
-    font-weight: 600;
+    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments-host-role {
     color: var(--appointments-muted);
-    font-size: 0.875rem;
+    font-size: var(--appointments-small-size);
 }
 
 .com-appointments-meta {
@@ -334,7 +356,7 @@
     margin: 0 0 1rem;
     padding: 0;
     color: var(--appointments-muted);
-    font-weight: 600;
+    font-weight: var(--appointments-meta-weight);
     list-style: none;
 }
 
@@ -353,6 +375,7 @@
 .com-appointments-selected,
 .com-appointments-selected-zone {
     color: var(--appointments-text);
+    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments-selected-text > span {
@@ -375,7 +398,13 @@
 .com-appointments-location {
     max-width: 65ch;
     color: var(--appointments-muted);
-    font-size: 0.875rem;
+    font-size: var(--appointments-small-size);
+}
+
+/* Step 2 on a narrow column: the chosen date, time and zone stay, the longer texts go. */
+.com-appointments-layout-details .com-appointments-info .com-appointments-description,
+.com-appointments-layout-details .com-appointments-info .com-appointments-location {
+    display: none;
 }
 
 .com-appointments .com-appointments-back {
@@ -480,12 +509,13 @@
     padding: 0;
     border-color: transparent;
     border-radius: var(--appointments-day-radius);
-    background-color: var(--appointments-accent-soft);
+    background-color: var(--appointments-nav-background);
     color: var(--appointments-accent);
 }
 
 .com-appointments .com-appointments-calendar-nav .btn:hover {
-    border-color: var(--appointments-accent);
+    border-color: var(--appointments-nav-hover-border-color);
+    background-color: var(--appointments-nav-hover-background);
 }
 
 .com-appointments .com-appointments-calendar-nav .disabled {
@@ -498,7 +528,7 @@
 .com-appointments-calendar-title {
     flex: 1 1 auto;
     margin: 0;
-    font-size: 0.9375rem;
+    font-size: var(--appointments-month-size);
     text-align: center;
 }
 
@@ -513,8 +543,8 @@
 .com-appointments-weekday {
     padding: 0.25rem 0 0.375rem;
     color: var(--appointments-muted);
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: var(--appointments-weekday-size);
+    font-weight: var(--appointments-weekday-weight);
     text-align: center;
     text-transform: uppercase;
 }
@@ -541,7 +571,7 @@
     min-height: var(--appointments-target);
     margin-inline: auto;
     border-radius: var(--appointments-day-radius);
-    font-size: 0.9375rem;
+    font-size: var(--appointments-day-font-size);
     aspect-ratio: 1;
 }
 
@@ -570,8 +600,8 @@
 }
 
 .com-appointments-day-unavailable {
-    color: var(--appointments-muted);
-    opacity: 0.6;
+    color: var(--appointments-unavailable);
+    opacity: var(--appointments-unavailable-opacity);
 }
 
 .com-appointments-empty {
@@ -582,7 +612,17 @@
 .com-appointments-zone-note {
     margin: 0;
     color: var(--appointments-muted);
-    font-size: 0.875rem;
+    font-size: var(--appointments-small-size);
+}
+
+/* Before a day is chosen the times column holds a hint, not on a narrow column, where the
+   calendar and the times are views of their own. */
+.com-appointments-times-hint {
+    display: none;
+}
+
+.com-appointments-times-hint-text {
+    margin: 0;
 }
 
 /* Times: a column of buttons. The chosen time turns dark and shares its row with "Next". */
@@ -643,13 +683,17 @@
     border-radius: var(--appointments-button-radius);
     background-color: var(--appointments-surface);
     color: var(--appointments-accent);
+    font-size: var(--appointments-slot-font-size);
     font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: normal;
     text-align: center;
     cursor: pointer;
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .com-appointments .com-appointments-slot > .com-appointments-slot-time:hover {
+    background-color: var(--appointments-slot-hover-background);
     box-shadow: inset 0 0 0 1px var(--appointments-accent);
 }
 
@@ -660,10 +704,10 @@
 
 .com-appointments .com-appointments-slot > .com-appointments-slot-input:checked + .com-appointments-slot-time {
     flex: 1 1 0;
-    border-color: var(--appointments-selected);
+    border-color: var(--appointments-selected-border);
     background-color: var(--appointments-selected);
     color: var(--appointments-selected-contrast);
-    box-shadow: none;
+    box-shadow: inset 0 0 0 calc(var(--appointments-selected-border-width) - 1px) var(--appointments-selected-border);
 }
 
 .com-appointments .com-appointments-slot > .com-appointments-slot-input.is-invalid + .com-appointments-slot-time {
@@ -682,9 +726,34 @@
     display: inline-flex !important;
 }
 
-/* Another time zone: a closed disclosure below the times. */
+/* The time zone in one line below the times: the zone shown and, as a closed disclosure,
+   another zone. Opened, the disclosure takes a line of its own. */
+.com-appointments-zone-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.4em;
+    align-items: baseline;
+    margin: 1rem 0 0;
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
+}
+
+.com-appointments-zone-line > .com-appointments-zone-note {
+    margin: 0;
+    color: inherit;
+    font-size: inherit;
+}
+
 .com-appointments-zone {
     margin: 1rem 0 0;
+}
+
+.com-appointments-zone-line > .com-appointments-zone {
+    margin: 0;
+}
+
+.com-appointments-zone-line > .com-appointments-zone[open] {
+    flex: 1 0 100%;
 }
 
 .com-appointments-zone > summary,
@@ -711,6 +780,7 @@
 .com-appointments-zone-row .form-select {
     flex: 1 1 14rem;
     width: auto;
+    max-width: 20rem;
 }
 
 /* With the booking script a new zone applies on selection, without it the button does. */
@@ -730,11 +800,23 @@
     gap: 1rem;
 }
 
+/* One column of fields, at most --appointments-field-max-width wide; only name and email
+   share a row on a wider column. Each field starts at the top of its row, so a taller
+   neighbour never moves its label or its control. */
+.com-appointments-fields {
+    max-width: var(--appointments-field-max-width);
+}
+
 .com-appointments-field {
     display: grid;
     gap: 0.375rem;
+    align-content: start;
     min-width: 0;
     margin: 0;
+}
+
+.com-appointments-required {
+    margin-inline-start: 0.25em;
 }
 
 .com-appointments fieldset {
@@ -753,7 +835,7 @@
 
 .com-appointments .form-text {
     color: var(--appointments-muted);
-    font-size: 0.875rem;
+    font-size: var(--appointments-small-size);
 }
 
 .com-appointments .form-control,
@@ -816,6 +898,8 @@
     flex: 1 1 0;
     margin: 0;
     padding-block: 0.5rem;
+    font-size: inherit;
+    letter-spacing: normal;
     cursor: pointer;
 }
 
@@ -864,8 +948,8 @@
 .com-appointments .com-appointments-field-error {
     display: block;
     color: var(--appointments-error);
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: var(--appointments-small-size);
+    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments .is-invalid {
@@ -900,7 +984,7 @@
 }
 
 .com-appointments-summary dt {
-    font-weight: 600;
+    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments-summary dd {
@@ -994,17 +1078,19 @@
  * The card is only as wide as its content, so a wide content column keeps a compact card.
  */
 @container appointments (min-width: 36rem) {
-    .com-appointments-layout {
+    /* The card keeps its width through every step: the times column stands beside the
+       calendar from the first view, with a hint until a day is chosen. The title above the
+       card (Display: Title above the card) starts at its left edge. */
+    .com-appointments-layout,
+    .com-appointments-page-title {
         max-width: calc(2 * var(--appointments-card-padding) + var(--appointments-calendar-width) + 1.25rem + var(--appointments-times-width));
+    }
+
+    .com-appointments-layout {
         border: var(--appointments-border);
         border-radius: var(--appointments-radius);
         background: var(--appointments-surface);
         box-shadow: var(--appointments-shadow);
-    }
-
-    /* Before a day is chosen the card only holds the information and the calendar. */
-    .com-appointments-layout-time:not(.com-appointments-layout-day) {
-        max-width: calc(2 * var(--appointments-card-padding) + var(--appointments-calendar-width));
     }
 
     .com-appointments-info,
@@ -1027,8 +1113,20 @@
         display: none !important;
     }
 
-    .com-appointments-picker-day .com-appointments-picker-grid {
+    .com-appointments-picker-grid {
         grid-template-columns: minmax(0, 1fr) var(--appointments-times-width);
+    }
+
+    .com-appointments-times-hint {
+        display: block;
+    }
+
+    .com-appointments-layout-details .com-appointments-info .com-appointments-description {
+        display: block;
+    }
+
+    .com-appointments-layout-details .com-appointments-info .com-appointments-location {
+        display: block;
     }
 
     .com-appointments-picker-day .com-appointments-times {
@@ -1041,11 +1139,11 @@
 @container appointments (min-width: 54rem) {
     .com-appointments-layout {
         grid-template-columns: var(--appointments-info-width) minmax(0, 1fr);
-        max-width: calc(var(--appointments-info-width) + 4 * var(--appointments-card-padding) + var(--appointments-calendar-width) + 1.25rem + var(--appointments-times-width));
     }
 
-    .com-appointments-layout-time:not(.com-appointments-layout-day) {
-        max-width: calc(var(--appointments-info-width) + 4 * var(--appointments-card-padding) + var(--appointments-calendar-width));
+    .com-appointments-layout,
+    .com-appointments-page-title {
+        max-width: calc(var(--appointments-info-width) + 4 * var(--appointments-card-padding) + var(--appointments-calendar-width) + 1.25rem + var(--appointments-times-width));
     }
 
     .com-appointments-info {
@@ -1058,6 +1156,7 @@
         gap: 0.5rem;
     }
 }
+
 @media (prefers-reduced-motion: reduce) {
     .com-appointments *,
     .com-appointments *::before,

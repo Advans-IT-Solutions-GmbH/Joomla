@@ -108,6 +108,7 @@ class EventtypeTable extends Table
         // Information column of the booking page. An empty layout is the default one; text is
         // stored as entered and escaped on output, images are paths chosen in the media field.
         $this->info_layout = trim((string) $this->info_layout) ?: 'logo';
+        $this->info_title = trim((string) ($this->info_title ?? '')) ?: 'card';
 
         foreach (['info_logo' => 2048, 'info_photo' => 2048, 'info_name' => 255, 'info_role' => 255] as $column => $length) {
             $this->$column = trim((string) $this->$column);
@@ -119,7 +120,7 @@ class EventtypeTable extends Table
             }
         }
 
-        if (!in_array($this->info_layout, ['logo', 'person', 'event'], true)) {
+        if (!in_array($this->info_layout, ['logo', 'person', 'event'], true) || !in_array($this->info_title, ['card', 'above'], true)) {
             $this->setError(Text::_('COM_APPOINTMENTS_EVENTTYPE_ERROR_DISPLAY'));
 
             return false;

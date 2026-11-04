@@ -16,7 +16,8 @@ defined('_JEXEC') or die;
  * The event details of the information column: the title, duration, location type,
  * description and location text. On the details step it adds the chosen date, time and time
  * zone. The layouts "logo" and "person" show it below their image; the layout "event"
- * ("Appointment only") shows it alone, so it carries the page heading itself.
+ * ("Appointment only") shows it alone, so it carries the page heading itself, unless the
+ * event type shows the title above the card (default.php).
  */
 $icon = static fn (string $paths): string => '<svg class="com-appointments-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' . $paths . '</svg>';
 $locationTypes = [
@@ -40,7 +41,9 @@ $selected = $this->selected;
     $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
     ?>
 <?php endif; ?>
-<h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
+<?php if (!$this->titleAbove) : ?>
+    <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
+<?php endif; ?>
 <ul class="com-appointments-meta">
     <li class="com-appointments-duration"><?php echo $icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'); ?><span><?php echo Text::sprintf($minutes === 1 ? 'COM_APPOINTMENTS_DURATION_MINUTES_1' : 'COM_APPOINTMENTS_DURATION_MINUTES_MORE', $minutes); ?></span></li>
     <?php if ($locationType !== null) : ?>

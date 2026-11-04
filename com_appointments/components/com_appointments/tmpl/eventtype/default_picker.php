@@ -13,9 +13,11 @@ defined('_JEXEC') or die;
 
 /*
  * Step 1 of the booking page: month navigation, calendar and, once a day is chosen, the
- * times of that day and the displayed time zone. The full page includes it inside the
- * GET form #appointment-time-form, and the same file is the whole response of the
- * background update (format=raw), so a template override of this file applies to both.
+ * times of that day; before that a hint to choose a day stands where the times will be, so
+ * the card keeps its width. The full page includes it inside the GET form
+ * #appointment-time-form, and the same file is the response of the background update
+ * (format=raw, together with default_zone_note.php), so a template override of this file
+ * applies to both.
  *
  * Every day and month is a plain link that ends at #appointment-picker. A time is a radio
  * button named "start" with its own "Next" button: the stylesheet shows the button of the
@@ -29,6 +31,8 @@ $dates = new DateDisplay(static fn (string $key): string => Text::_($key));
 $values = $this->inputData;
 $slotError = $this->errors['start'] ?? null;
 $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
+// The legend shows the day without the year, which stands in the month title above it.
+$dayMonthFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY_MONTH');
 $timeFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
 $withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $selectedDay = new DateTimeImmutable($this->day . ' 00:00:00', $this->zone);
@@ -105,7 +109,7 @@ $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
                     <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NO_SLOTS'); ?></p>
                 <?php else : ?>
                     <fieldset class="com-appointments-slots"<?php echo $slotError !== null ? ' aria-describedby="booking-start-error"' : ''; ?>>
-                        <legend class="com-appointments-slots-legend"><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_SLOTS_ON', $this->escape($dates->format($selectedDay, $dayFormat))); ?></legend>
+                        <legend class="com-appointments-slots-legend"><span class="visually-hidden com-appointments-slots-legend-full"><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_SLOTS_ON', $this->escape($dates->format($selectedDay, $dayFormat))); ?></span><span class="com-appointments-slots-legend-day" aria-hidden="true"><?php echo $this->escape($dates->format($selectedDay, $dayMonthFormat)); ?></span></legend>
                         <?php if ($slotError !== null) : ?>
                             <div id="booking-start-error" class="invalid-feedback com-appointments-field-error"><?php echo $this->escape(Text::_($slotError)); ?></div>
                         <?php endif; ?>
@@ -122,8 +126,11 @@ $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
                     </fieldset>
                 <?php endif; ?>
             </div>
+        <?php else : ?>
+            <div class="com-appointments-times-hint">
+                <p class="com-appointments-times-hint-text"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_TIMES_HINT'); ?></p>
+            </div>
         <?php endif; ?>
     </div>
-    <p id="appointment-zone-note" class="form-text com-appointments-zone-note"><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_ZONE_NOTE', $this->escape($zone)); ?></p>
     <input type="hidden" name="timezone" value="<?php echo $this->escape($zone); ?>">
 </div>

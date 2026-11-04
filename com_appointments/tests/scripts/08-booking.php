@@ -229,8 +229,9 @@ try {
     $check($pageTitle($html) === $tag . '-1' && $text('//h1[contains(@class, "com-appointments-heading")]') === $tag . '-1',
         'The booking page uses the event type title as page title and heading without a menu item of its own');
     $check($text('//*[@id="appointment-calendar-title"]') === $date->format('F Y'), 'The month heading is written in words');
-    $check($text('//legend[contains(@class, "com-appointments-slots-legend")]') === 'Available times on ' . $date->format('l, j F Y'),
-        'The slot legend names the weekday and the date in words');
+    $check($text('//legend[contains(@class, "com-appointments-slots-legend")]/span[contains(@class, "visually-hidden")]') === 'Available times on ' . $date->format('l, j F Y')
+        && $text('//legend[contains(@class, "com-appointments-slots-legend")]/span[@aria-hidden="true"]') === $date->format('l, j F'),
+        'The slot legend shows the weekday and the date without the year, its full wording for screen readers');
     $check($text('//label[@for="booking-slot-0"]') === '09:00' && preg_match('/\b\d{2}:\d{2} (?:UTC|CES?T)\b/', $html) === 0,
         'Slot times read 09:00 without a zone abbreviation at every time');
     $check(substr_count($html, 'All times are shown in the UTC time zone.') === 1, 'The time zone is stated once');
@@ -308,7 +309,8 @@ try {
     $xpath = $show($eventIds[1], $freeSlot);
     $check($xpath->query('//input[@id="booking-phone"]')->length === 0, 'Without a telephone location the form has no fixed telephone field');
     $check($xpath->query('//label[@for="booking-consent"]//a')->length === 0
-        && trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent) === 'I agree to the processing of my data for this appointment.',
+        && rtrim(trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent), '*') === 'I agree to the processing of my data for this appointment.'
+        && $xpath->query('//label[@for="booking-consent"]/span[contains(@class, "com-appointments-required")][@aria-hidden="true"]')->length === 1,
         'Without a configured privacy notice the consent label is plain text');
 
     // The privacy notice option: the consent label links to it, and the calling-code option preselects a code.

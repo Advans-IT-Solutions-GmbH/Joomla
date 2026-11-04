@@ -14,7 +14,8 @@
  * scrolls, and the back button and a reload show the same step:
  *
  *   - a day or month (a[data-appointments-load]) replaces only the date-and-time part
- *     (#appointment-picker), requested as the same address plus format=raw;
+ *     (#appointment-picker) and the time-zone note below it (#appointment-zone-note),
+ *     requested as the same address plus format=raw;
  *   - the "Next" button of a time and the "Back" link of the details (a[data-appointments-step])
  *     replace the whole step ([data-appointments-view]) with the one of the full page;
  *   - the back and forward buttons load the step of their address in the same way.
@@ -238,8 +239,15 @@
                     }
 
                     const adopted = document.importNode(fresh, true);
+                    const note = page.querySelector('#appointment-zone-note');
+                    const shownNote = root.querySelector('#appointment-zone-note');
 
                     current.replaceWith(adopted);
+
+                    if (note && shownNote) {
+                        shownNote.replaceWith(document.importNode(note, true));
+                    }
+
                     sync();
                     write(address, history);
 
@@ -247,7 +255,9 @@
                         focus(target(adopted));
                     }
 
-                    announce(adopted.querySelector('.com-appointments-slots-legend, .com-appointments-empty')
+                    // The legend shows the day only; its full wording is the hidden text inside it.
+                    announce(adopted.querySelector('.com-appointments-slots-legend-full')
+                        || adopted.querySelector('.com-appointments-slots-legend, .com-appointments-empty')
                         || adopted.querySelector('.com-appointments-calendar-title'));
                 })
                 .catch(fail(address))

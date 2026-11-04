@@ -589,9 +589,10 @@ class StructureTest
      * remembering this.
      */
     /**
-     * The information column of the booking page: the installed table carries its five
+     * The information column of the booking page: the installed table carries its six
      * columns with the documented defaults, and the 1.3.0 migration adds them to a table of
-     * the previous version, where every existing event type gets the company-logo layout.
+     * the previous version, where every existing event type gets the company-logo layout
+     * with the title in the card.
      */
     private function testDisplayColumns(): void
     {
@@ -601,6 +602,7 @@ class StructureTest
             'info_photo'  => ['varchar(2048)', ''],
             'info_name'   => ['varchar(255)', ''],
             'info_role'   => ['varchar(255)', ''],
+            'info_title'  => ['varchar(16)', 'card'],
         ];
         $columns = function (string $table): array {
             $found = [];
@@ -654,9 +656,9 @@ class StructureTest
                     $this->db->query($statement);
                 }
 
-                $row = $this->db->query("SELECT info_layout, info_logo, info_name FROM {$events} WHERE id = 1")->fetch_assoc();
+                $row = $this->db->query("SELECT info_layout, info_logo, info_name, info_title FROM {$events} WHERE id = 1")->fetch_assoc();
 
-                return $matches($columns($events)) && $row['info_layout'] === 'logo' && $row['info_logo'] === '' && $row['info_name'] === '';
+                return $matches($columns($events)) && $row['info_layout'] === 'logo' && $row['info_logo'] === '' && $row['info_name'] === '' && $row['info_title'] === 'card';
             } finally {
                 $this->db->query("DROP TABLE IF EXISTS {$events}");
             }

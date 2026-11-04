@@ -427,7 +427,24 @@ logo from the media manager; the default, also for event types created before th
 three show the title, duration, location type, description and location text, and on step 2 the
 chosen date, time and time zone. An empty image, name or role is left out, and an unknown value falls back to
 the logo layout. Images are local paths chosen in the media field; a relative path is made
-absolute so it also resolves below a menu item's address.
+absolute so it also resolves below a menu item's address. **Display → Title** places the title of
+the event type *In the card* (the default, at the top of the information column) or *Above the
+card* (as a heading above the card, aligned with its left edge, for all three layouts). Either way
+it is the one main heading (`h1`) of the page.
+
+**Step 1.** From the first view the card has its full width: the times column stands beside the
+calendar and asks the visitor to choose a day until one is chosen, so the card does not grow when
+the times appear (on a narrow column the calendar and the times stay views of their own). The
+times legend shows the weekday and date without the year, which the month title already names;
+screen readers hear the full "Available times on …" wording. The time zone is one line below the
+times: the zone shown, then **Choose another time zone** as a closed disclosure with the zone list
+(its label is only read by screen readers).
+
+**Step 2.** One column of fields, at most `--appointments-field-max-width` wide; only name and
+email share a row on a wider column. Every required field carries the same `*` after its label
+(`.com-appointments-required`, hidden from screen readers, which hear that the control is
+required). On a narrow column the information column of step 2 keeps the chosen date, time and
+zone and leaves out the description and the location text.
 
 **Customisation.** The public pages are template-neutral: Joomla's standard form classes plus
 `com-appointments-*` hooks. The bundled stylesheet draws a neutral look (a card with the
@@ -467,10 +484,18 @@ narrower widths.
 | `--appointments-accent-soft` | accent at 10 % | Background of available days, month arrows and the confirmation mark |
 | `--appointments-selected` | `#3c4043` | Background of the chosen time |
 | `--appointments-selected-contrast` | `#fff` | Text of the chosen time |
+| `--appointments-selected-border` | selected colour | Border of the chosen time |
+| `--appointments-selected-border-width` | `1px` | Border width of the chosen time, for example `2px` for an outline without fill |
+| `--appointments-slot-hover-background` | surface | Background of a time on hover |
+| `--appointments-nav-background` | accent soft | Background of the month arrows |
+| `--appointments-nav-hover-background` | accent soft | Background of the month arrows on hover |
+| `--appointments-nav-hover-border-color` | accent | Border of the month arrows on hover |
 | `--appointments-surface` | `#fff` | Background of the card, the time buttons and the list entries |
 | `--appointments-surface-alt` | `#f6f7f9` | Background of the summary and of secondary buttons on hover |
 | `--appointments-text` | `#1f2328` | Text and headings |
-| `--appointments-muted` | `#59636e` | Secondary text: meta line, weekdays, notes, unavailable days |
+| `--appointments-muted` | `#59636e` | Secondary text: meta line, weekdays, notes |
+| `--appointments-unavailable` | muted | Days without free times |
+| `--appointments-unavailable-opacity` | `0.6` | Opacity of those days (`1` for a flat colour) |
 | `--appointments-border-color` | `#d0d7de` | Card, column and secondary-button borders |
 | `--appointments-border` | `1px solid` border colour | The border shorthand of card, columns and list entries |
 | `--appointments-error` | `#b3261e` | Field errors and the danger button |
@@ -492,6 +517,15 @@ narrower widths.
 | `--appointments-button-weight` | `600` | Button text weight |
 | `--appointments-button-transform` | `none` | Button text transform, for example `uppercase` |
 | `--appointments-button-letter-spacing` | `normal` | Button letter spacing |
+| `--appointments-strong-weight` | `600` | Emphasised text: the chosen date, time and zone, names, summary terms, field errors |
+| `--appointments-meta-weight` | strong weight | Duration and location type in the information column |
+| `--appointments-weekday-weight` | strong weight | Weekday letters of the calendar |
+| `--appointments-small-size` | `0.875rem` | Small text: time-zone line, field hints, consent note, location text, errors |
+| `--appointments-step-title-size` | `1.125rem` | Step and summary titles |
+| `--appointments-month-size` | `0.9375rem` | Month title of the calendar |
+| `--appointments-day-font-size` | `0.9375rem` | Day numbers of the calendar |
+| `--appointments-weekday-size` | `0.6875rem` | Weekday letters of the calendar |
+| `--appointments-slot-font-size` | `1rem` | The times |
 | `--appointments-field-background` | surface | Background of text fields and lists |
 | `--appointments-field-border-color` | border colour | Border of text fields and lists |
 | `--appointments-field-border-width` | `1px` | Border width of fields, for example `0 0 1px` for an underline |
@@ -520,6 +554,7 @@ Create Overrides → com_appointments**), which copies the files to
 | `eventtype/default_info_logo.php` | Information column, layout *Company logo and appointment* |
 | `eventtype/default_info_person.php` | Information column, layout *Person with photo* |
 | `eventtype/default_info_event.php` | The event details every column layout shows, with the chosen time on step 2; on its own the layout *Appointment only* |
+| `eventtype/default_zone_note.php` | The time zone of the times, at the start of the time-zone line (also sent with the background update) |
 | `eventtype/default_picker.php` | Step 1: calendar and times; also the whole response of the slot endpoint |
 | `eventtype/default_details.php` | Step 2: the details form |
 | `booking/default.php` | Step 3: the confirmation |

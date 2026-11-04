@@ -52,7 +52,7 @@ try {
         && $row['info_name'] === 'Fixture & "host"' && $row['info_role'] === 'Fixture role' && $row['info_logo'] === '',
         'The display settings of the information column are saved through the form');
     $form = $http->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventId);
-    $check(str_contains($form, 'name="jform[info_layout]"') && str_contains($form, 'name="jform[info_photo]"')
+    $check(str_contains($form, 'name="jform[info_layout]"') && str_contains($form, 'name="jform[info_title]"') && str_contains($form, 'name="jform[info_photo]"')
         && str_contains($form, 'id="eventtype-display"') && !str_contains($form, 'COM_APPOINTMENTS_EVENTTYPE_INFO'),
         'The edit form shows the translated display settings');
     $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($form) => 1]);
@@ -90,6 +90,16 @@ try {
     $http->submit('eventtype', $event);
     $check($db->query("SELECT info_layout FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_layout'] === 'person',
         'The person layout can be chosen again');
+    $event['info_title'] = 'above';
+    $http->submit('eventtype', $event);
+    $check($db->query("SELECT info_title FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_title'] === 'above',
+        'The title above the card is saved through the form');
+    $event['info_title'] = 'bogus';
+    $http->submit('eventtype', $event);
+    $check($db->query("SELECT info_title FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_title'] === 'above',
+        'An unknown place of the title is refused');
+    $event['info_title'] = 'card';
+    $http->submit('eventtype', $event);
     $event['duration_minutes'] = 0;
     $http->submit('eventtype', $event);
     $check((int) $db->query("SELECT duration_minutes FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['duration_minutes'] === 20, 'Invalid duration does not change event type');
