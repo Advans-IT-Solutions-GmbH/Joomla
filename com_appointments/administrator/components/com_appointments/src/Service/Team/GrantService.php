@@ -16,6 +16,8 @@ use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Joomla\CMS\Access\Access;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\User\User;
 use Joomla\CMS\User\UserFactoryInterface;
@@ -27,7 +29,12 @@ defined('_JEXEC') or die;
  * is {@see GrantServiceInterface}.
  *
  * Row MAC of `#__appointments_calendar_grants` ({@see self::macFields()}):
- * calendar_id, user_id, role, state, audience, granted_by.
+ * calendar_id, user_id, role, state, audience, granted_by, plus the calendar's
+ * `grant_epoch` and the grantee's `user_keys.key_version` (spec 5.11). Every
+ * change of the grants of a calendar raises its epoch and gives the verified
+ * grants a new MAC, so an older grant row played back from a copy no longer
+ * verifies; a new user key of the grantee does the same for the user's grants
+ * ({@see self::rebindUserKey()}).
  * `client_props`, `created_utc` and `modified_utc` are display data and not
  * covered. A row whose MAC does not verify grants nothing, and no method of
  * this class ever computes a new MAC from the values of such a row: it is
@@ -49,6 +56,11 @@ final class GrantService implements GrantServiceInterface
     /** The states in which a grant can be effective (the rest of the checks permitting). */
     private const EFFECTIVE_STATES = [TeamStates::GRANT_ACTIVE, TeamStates::GRANT_PENDING_KEY];
 
+    /**
+     * @var  array<int, int>  Epochs raised in the open transaction, recorded in the anchor after the commit.
+     */
+    private $epochs = [];
+
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -61,19 +73,24 @@ final class GrantService implements GrantServiceInterface
      * The fields the row MAC of a grant covers, normalised so that a row read
      * from the database and a row about to be written produce the same bytes.
      *
-     * @return  array{calendar_id: int, user_id: int, role: int, state: int, audience: string, granted_by: int}
+     * @param   int  $grantEpoch      `#__appointments_calendars.grant_epoch` of the grant's calendar.
+     * @param   int  $userKeyVersion  `#__appointments_user_keys.key_version` of the grantee, 0 without a key pair.
+     *
+     * @return  array{calendar_id: int, user_id: int, role: int, state: int, audience: string, granted_by: int, grant_epoch: int, user_key_version: int}
      */
-    public static function macFields(object|array $row): array
+    public static function macFields(object|array $row, int $grantEpoch, int $userKeyVersion): array
     {
         $row = (array) $row;
 
         return [
-            'calendar_id' => (int) ($row['calendar_id'] ?? 0),
-            'user_id'     => (int) ($row['user_id'] ?? 0),
-            'role'        => (int) ($row['role'] ?? 0),
-            'state'       => (int) ($row['state'] ?? 0),
-            'audience'    => (string) ($row['audience'] ?? ''),
-            'granted_by'  => (int) ($row['granted_by'] ?? 0),
+            'calendar_id'      => (int) ($row['calendar_id'] ?? 0),
+            'user_id'          => (int) ($row['user_id'] ?? 0),
+            'role'             => (int) ($row['role'] ?? 0),
+            'state'            => (int) ($row['state'] ?? 0),
+            'audience'         => (string) ($row['audience'] ?? ''),
+            'granted_by'       => (int) ($row['granted_by'] ?? 0),
+            'grant_epoch'      => $grantEpoch,
+            'user_key_version' => $userKeyVersion,
         ];
     }
 
@@ -321,7 +338,7 @@ final class GrantService implements GrantServiceInterface
         $fields = self::macFields([
             'calendar_id' => $calendarId, 'user_id' => $userId, 'role' => $role->value, 'state' => $state,
             'audience' => $audience, 'granted_by' => $grantedBy,
-        ]);
+        ], self::calendarEpoch($services, $calendarId), self::userKeyVersion($services, $userId));
         $mac = $services->keys()->rowMac(self::TABLE, $fields);
         $now = $db->quote($services->now()->format('Y-m-d H:i:s'));
         $macSql = 'UNHEX(' . $db->quote(bin2hex($mac)) . ')';
@@ -341,7 +358,10 @@ final class GrantService implements GrantServiceInterface
      * those calendars due for rotation (the one-step revoke of an activation).
      * Rows that do not verify go too: removing never grants.
      *
-     * @return  int[]  The calendars the account had a grant on.
+     * Raises the epoch of every calendar concerned; the caller records the
+     * returned epochs in the anchor after the commit.
+     *
+     * @return  array<int, int>  Calendar id => new epoch, for every calendar the account had a grant on.
      */
     public static function removeAllForUser(TeamServices $services, int $userId): array
     {
@@ -353,6 +373,10 @@ final class GrantService implements GrantServiceInterface
         $calendars = array_map('intval', $db->setQuery(
             'SELECT calendar_id FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE user_id = ' . $userId
         )->loadColumn() ?: []);
+
+        foreach ($calendars as $calendarId) {
+            $db->setQuery('SELECT id FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id = ' . $calendarId . ' FOR UPDATE')->loadResult();
+        }
         $wrapped = array_map('intval', $db->setQuery(
             'SELECT DISTINCT calendar_id FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE user_id = ' . $userId
         )->loadColumn() ?: []);
@@ -365,7 +389,126 @@ final class GrantService implements GrantServiceInterface
             )->execute();
         }
 
-        return $calendars;
+        $epochs = [];
+
+        foreach ($calendars as $calendarId) {
+            try {
+                $epochs[$calendarId] = CalendarService::bumpEpoch($services, $calendarId);
+            } catch (TeamException) {
+                // A calendar row that does not verify grants nothing anyway.
+                $epochs[$calendarId] = 0;
+            }
+        }
+
+        return $epochs;
+    }
+
+    /**
+     * The grant epoch of a calendar as stored (the calendar MAC is checked
+     * separately), 0 for an unknown calendar.
+     */
+    public static function calendarEpoch(TeamServices $services, int $calendarId): int
+    {
+        $db = $services->db();
+
+        return (int) $db->setQuery(
+            'SELECT grant_epoch FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id = ' . $calendarId
+        )->loadResult();
+    }
+
+    /**
+     * The key version of a user's key pair as stored, 0 without a key pair.
+     */
+    public static function userKeyVersion(TeamServices $services, int $userId): int
+    {
+        $db = $services->db();
+
+        return (int) $db->setQuery(
+            'SELECT key_version FROM ' . $db->quoteName('#__appointments_user_keys') . ' WHERE user_id = ' . $userId
+        )->loadResult();
+    }
+
+    /**
+     * Whether a grant row verifies against the current epoch of its calendar
+     * and the current key version of its grantee. For other packages (the key
+     * service completes wraps of verified grants only); the calendar row itself
+     * is verified by {@see CalendarService::rowValid()}.
+     */
+    public static function rowValid(TeamServices $services, object $grant, ?int $grantEpoch = null, ?int $userKeyVersion = null): bool
+    {
+        $mac = (string) ($grant->row_mac ?? '');
+
+        if (\strlen($mac) !== 32) {
+            return false;
+        }
+
+        $fields = self::macFields(
+            $grant,
+            $grantEpoch ?? self::calendarEpoch($services, (int) $grant->calendar_id),
+            $userKeyVersion ?? self::userKeyVersion($services, (int) $grant->user_id)
+        );
+
+        return $services->keys()->verifyRowMac(self::TABLE, $fields, $mac);
+    }
+
+    /**
+     * Inside {@see CalendarService::bumpEpoch()}: every grant of the calendar
+     * that verifies under the old epoch gets a MAC under the new one. Rows that
+     * do not verify keep their MAC and stay ineffective.
+     */
+    public static function remacGrants(TeamServices $services, int $calendarId, int $oldEpoch, int $newEpoch): void
+    {
+        $db = $services->db();
+        $rows = $db->setQuery(
+            'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE calendar_id = ' . $calendarId . ' FOR UPDATE'
+        )->loadObjectList() ?: [];
+
+        foreach ($rows as $row) {
+            $version = self::userKeyVersion($services, (int) $row->user_id);
+
+            if (self::rowValid($services, $row, $oldEpoch, $version)) {
+                self::storeMac($services, $row, $newEpoch, $version);
+            }
+        }
+    }
+
+    /**
+     * The key version of a user changed (first key pair, reset): every grant of
+     * the user that verified under the previous version gets a MAC under the
+     * current one. The key service calls this in the transaction that changed
+     * `#__appointments_user_keys`, before it suspends anything.
+     *
+     * @return  int  Grants rebound.
+     */
+    public static function rebindUserKey(TeamServices $services, int $userId, int $previousKeyVersion): int
+    {
+        $db = $services->db();
+        $rows = $db->setQuery(
+            'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE user_id = ' . $userId . ' FOR UPDATE'
+        )->loadObjectList() ?: [];
+        $current = self::userKeyVersion($services, $userId);
+        $rebound = 0;
+
+        foreach ($rows as $row) {
+            $epoch = self::calendarEpoch($services, (int) $row->calendar_id);
+
+            if (self::rowValid($services, $row, $epoch, $previousKeyVersion)) {
+                self::storeMac($services, $row, $epoch, $current);
+                $rebound++;
+            }
+        }
+
+        return $rebound;
+    }
+
+    private static function storeMac(TeamServices $services, object $row, int $grantEpoch, int $userKeyVersion): void
+    {
+        $db = $services->db();
+        $mac = $services->keys()->rowMac(self::TABLE, self::macFields($row, $grantEpoch, $userKeyVersion));
+        $db->setQuery(
+            'UPDATE ' . $db->quoteName('#__' . self::TABLE) . ' SET row_mac = UNHEX(' . $db->quote(bin2hex($mac)) . ')'
+            . ' WHERE id = ' . (int) $row->id
+        )->execute();
     }
 
     /**
@@ -534,11 +677,23 @@ final class GrantService implements GrantServiceInterface
             return false;
         }
 
+        // An account Joomla never asks for a second factor has none, whatever
+        // it set up (com_users option «never enforce MFA»).
+        $never = array_values(array_filter(array_map('intval', (array) ComponentHelper::getParams('com_users')->get('neverMFAUserGroups', []))));
+
+        if ($never !== [] && array_intersect($never, array_map('intval', Access::getGroupsByUser($userId, true))) !== []) {
+            return false;
+        }
+
         $db = $this->services->db();
 
+        // Only methods whose plugin is enabled count, and neither backup codes
+        // nor the e-mail method (the same channel as a password reset).
         return (int) $db->setQuery(
-            'SELECT COUNT(*) FROM ' . $db->quoteName('#__user_mfa') . ' WHERE user_id = ' . $userId
-            . ' AND ' . $db->quoteName('method') . ' <> ' . $db->quote('backupcodes')
+            'SELECT COUNT(*) FROM ' . $db->quoteName('#__user_mfa') . ' AS m'
+            . ' INNER JOIN ' . $db->quoteName('#__extensions') . ' AS e ON e.type = ' . $db->quote('plugin')
+            . ' AND e.folder = ' . $db->quote('multifactorauth') . ' AND e.element = m.method AND e.enabled = 1'
+            . ' WHERE m.user_id = ' . $userId . ' AND m.method NOT IN (' . $db->quote('backupcodes') . ', ' . $db->quote('email') . ')'
         )->loadResult() > 0;
     }
 
@@ -581,6 +736,7 @@ final class GrantService implements GrantServiceInterface
             $previousRole = $previous !== null && $this->grantMacValid($previous) ? CalendarRole::tryFrom((int) $previous->role) : null;
             $audience = $this->audienceOf($granteeUserId);
             $state = $role->holdsKey() ? TeamStates::GRANT_PENDING_KEY : TeamStates::GRANT_ACTIVE;
+            $this->epochs[$calendarId] = CalendarService::bumpEpoch($this->services, $calendarId);
             self::write($this->services, $calendarId, $granteeUserId, $role, $state, $audience, $actorUserId);
 
             if (!$role->holdsKey()) {
@@ -592,6 +748,7 @@ final class GrantService implements GrantServiceInterface
 
             return ['previous' => $previous !== null, 'previous_role' => $previousRole, 'audience' => $audience];
         });
+        $this->flushEpochs();
 
         if ($result['previous_role'] !== null && $result['previous_role']->holdsKey() && !$role->holdsKey() && $keys !== null) {
             $this->rotateNow($calendarId, $keys);
@@ -637,9 +794,11 @@ final class GrantService implements GrantServiceInterface
                 'DELETE FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE calendar_id = ' . $calendarId . ' AND user_id = ' . $granteeUserId
             )->execute();
             $this->dropKeyAccess($calendarId, $granteeUserId);
+            $this->epochs[$calendarId] = CalendarService::bumpEpoch($this->services, $calendarId);
 
             return $grant;
         });
+        $this->flushEpochs();
 
         $role = CalendarRole::tryFrom((int) $grant->role);
         $keys = $actorKeys !== null && $actorKeys->userId() === $actorUserId ? $actorKeys : null;
@@ -671,6 +830,7 @@ final class GrantService implements GrantServiceInterface
 
         foreach ($rows as $row) {
             $role = CalendarRole::tryFrom((int) $row->role);
+            $calendarId = (int) $row->calendar_id;
 
             // A row that does not verify grants nothing already; giving it a
             // valid MAC, even as suspended, would legitimise a forged row.
@@ -678,15 +838,23 @@ final class GrantService implements GrantServiceInterface
                 continue;
             }
 
-            self::write(
-                $this->services,
-                (int) $row->calendar_id,
-                $userId,
-                $role,
-                TeamStates::GRANT_SUSPENDED,
-                (string) $row->audience,
-                (int) $row->granted_by
-            );
+            try {
+                $this->atomic(function () use ($calendarId, $userId, $role, $row): void {
+                    $this->epochs[$calendarId] = CalendarService::bumpEpoch($this->services, $calendarId);
+                    $current = $this->grantRow($calendarId, $userId, true);
+
+                    if ($current === null || !$this->grantMacValid($current)) {
+                        return;
+                    }
+
+                    self::write($this->services, $calendarId, $userId, $role, TeamStates::GRANT_SUSPENDED, (string) $row->audience, (int) $row->granted_by);
+                });
+            } catch (TeamException) {
+                // The calendar row does not verify: the grant is ineffective anyway.
+                continue;
+            }
+
+            $this->flushEpochs();
             $suspended++;
             $this->log(AuditEvent::GRANT_SUSPENDED, [
                 'subject_user_id' => $userId, 'calendar_id' => (int) $row->calendar_id, 'details' => ['reason' => $reason],
@@ -748,6 +916,7 @@ final class GrantService implements GrantServiceInterface
 
         $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $audience, $keyring, $makeOwner): bool {
             $previous = $this->grantRow($calendarId, $granteeUserId, true) !== null;
+            $this->epochs[$calendarId] = CalendarService::bumpEpoch($this->services, $calendarId);
 
             if (!$role->holdsKey()) {
                 self::write($this->services, $calendarId, $granteeUserId, $role, TeamStates::GRANT_ACTIVE, $audience, $actorUserId);
@@ -764,6 +933,7 @@ final class GrantService implements GrantServiceInterface
 
             return $previous;
         });
+        $this->flushEpochs();
 
         try {
             $this->services->keys()->completePendingWraps($keyring);
@@ -797,7 +967,7 @@ final class GrantService implements GrantServiceInterface
         };
         $effective = self::isEffective([
             'role'                     => $role,
-            'grant_mac'                => fn (): bool => $this->grantMacValid($grant),
+            'grant_mac'                => fn (): bool => $this->grantMacValid($grant, (int) $calendar->grant_epoch),
             'grant_state'              => (int) $grant->state,
             'grant_audience'           => (string) $grant->audience,
             // get() returns only rows whose MAC verified.
@@ -853,11 +1023,18 @@ final class GrantService implements GrantServiceInterface
         )->loadObject() ?: null;
     }
 
-    private function grantMacValid(object $row): bool
+    private function grantMacValid(object $row, ?int $grantEpoch = null): bool
     {
-        $mac = (string) ($row->row_mac ?? '');
+        return self::rowValid($this->services, $row, $grantEpoch);
+    }
 
-        return \strlen($mac) === 32 && $this->services->keys()->verifyRowMac(self::TABLE, self::macFields($row), $mac);
+    /**
+     * Record the epochs raised in this request in the anchor, after the commit.
+     */
+    private function flushEpochs(): void
+    {
+        CalendarService::anchor($this->services, array_filter($this->epochs));
+        $this->epochs = [];
     }
 
     private function wrapExists(int $calendarId, int $keyVersion, int $userId): bool

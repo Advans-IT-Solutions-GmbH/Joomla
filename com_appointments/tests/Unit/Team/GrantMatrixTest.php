@@ -192,8 +192,19 @@ final class GrantMatrixTest extends TestCase
         ];
         $written = ['calendar_id' => 3, 'user_id' => 5, 'role' => 2, 'state' => 1, 'audience' => 'team', 'granted_by' => 9];
 
-        self::assertSame($written, GrantService::macFields($fromDatabase));
-        self::assertSame(GrantService::macFields($written), GrantService::macFields($fromDatabase));
+        self::assertSame($written + ['grant_epoch' => 4, 'user_key_version' => 2], GrantService::macFields($fromDatabase, 4, 2));
+        self::assertSame(GrantService::macFields($written, 4, 2), GrantService::macFields($fromDatabase, 4, 2));
+    }
+
+    public function testAGrantRowIsBoundToTheEpochAndTheKeyVersion(): void
+    {
+        $row = ['calendar_id' => 3, 'user_id' => 5, 'role' => 2, 'state' => 1, 'audience' => 'team', 'granted_by' => 9];
+
+        // A grant written before the last change of the calendar's grants, or
+        // before the grantee's new key pair, has other MAC input: a row played
+        // back from an older copy does not verify.
+        self::assertNotSame(GrantService::macFields($row, 4, 2), GrantService::macFields($row, 5, 2));
+        self::assertNotSame(GrantService::macFields($row, 4, 2), GrantService::macFields($row, 4, 3));
     }
 
     public function testClientPropsAcceptOnlyColourAndOrder(): void

@@ -222,6 +222,7 @@ final class InvitationService implements InvitationServiceInterface
             'SELECT DISTINCT u.id, u.name, u.username FROM ' . $db->quoteName('#__users') . ' AS u'
             . ' INNER JOIN ' . $db->quoteName('#__user_usergroup_map') . ' AS m ON m.user_id = u.id'
             . ' WHERE u.block = 0 AND m.group_id IN (' . implode(',', $groups) . ')'
+            . " AND (u.lastvisitDate IS NULL OR u.lastvisitDate < '1000-01-01')"
             . ' AND NOT EXISTS (SELECT 1 FROM ' . $db->quoteName('#__' . self::TABLE) . ' AS i WHERE i.user_id = u.id'
             . ' AND i.state = ' . TeamStates::INVITATION_COMPLETED . ')'
             . ' ORDER BY u.name, u.id LIMIT 1000'
@@ -263,6 +264,10 @@ final class InvitationService implements InvitationServiceInterface
 
         if ($user->block || self::backendAccount($userId)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ELIGIBLE', 409);
+        }
+
+        if (self::hasSignedIn($user)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_SIGNED_IN', 409);
         }
 
         $email = strtolower(trim((string) $user->email));
@@ -432,9 +437,10 @@ final class InvitationService implements InvitationServiceInterface
         });
 
         if ($result['completed']) {
+            CalendarService::anchor($this->services, array_filter($result['calendars']));
             $this->endAccess($result['user'], $actorUserId);
 
-            foreach ($result['calendars'] as $calendarId) {
+            foreach (array_keys($result['calendars']) as $calendarId) {
                 $this->log(AuditEvent::GRANT_REVOKED, [
                     'actor_user_id' => $actorUserId, 'subject_user_id' => $result['user'], 'calendar_id' => $calendarId,
                     'details' => ['reason' => 'activation_revoked'],
@@ -495,11 +501,24 @@ final class InvitationService implements InvitationServiceInterface
 
         if ($user === null || $user->block || self::backendAccount($userId)
             || $this->services->grants()->audienceOf($userId) === GrantService::AUDIENCE_NONE
+            || self::hasSignedIn($user)
             || !hash_equals((string) $row->email_hash, self::emailHash($this->key(), (string) $user->email))) {
             return null;
         }
 
         return [$row, $user];
+    }
+
+    /**
+     * Whether the account has ever signed in. An activation link is only for an
+     * account that never did (spec 5.11): a link played back from an old copy of
+     * the database cannot take over an account in use.
+     */
+    private static function hasSignedIn(User $user): bool
+    {
+        $last = trim((string) ($user->lastvisitDate ?? ''));
+
+        return $last !== '' && !str_starts_with($last, '0000-00-00');
     }
 
     /**

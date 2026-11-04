@@ -266,14 +266,32 @@ return static function (TeamSuite $suite): void {
             'Activation link: never for an administrator account, team accounts only with core.admin',
             'Revoking a completed activation removes every grant and blocks the account',
         ];
+        $replayE2e = [
+            'A grant row played back after its revocation grants nothing',
+            'A calendar row rolled back together with its grants is refused by the anchor',
+        ];
+        $deleteE2e = 'Deleting a calendar removes it with its grants and mails the owner and the managers';
 
         if ($needKeys) {
             foreach ($grantE2e as $index => $name) {
                 $suite->pending($name, $index >= 7 ? 'B, D' : 'B');
             }
 
+            foreach ($replayE2e as $name) {
+                $suite->pending($name, 'B');
+            }
+
+            $suite->pending($deleteE2e, 'B, D');
+
             return;
         }
+
+        // A row exactly as it was, written back: binary columns as hex, the rest quoted.
+        $restore = static function (string $table, array $row) use ($db, $p): void {
+            $values = array_map(static fn (string $column, $value): string => $value === null ? 'NULL'
+                : ($column === 'row_mac' ? "UNHEX('" . bin2hex($value) . "')" : "'" . $db->real_escape_string((string) $value) . "'"), array_keys($row), $row);
+            $db->query("REPLACE INTO {$p}{$table} (`" . implode('`,`', array_keys($row)) . '`) VALUES (' . implode(',', $values) . ')');
+        };
 
         $super = $user('super', [8], true);
         $owner = $user('owner', [$teamGroup], true);
@@ -363,10 +381,41 @@ return static function (TeamSuite $suite): void {
                 && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_key_wraps WHERE calendar_id={$calendar} AND user_id={$member}")->fetch_row()[0] === 0;
         });
 
+        $suite->test($replayE2e[0], static function () use ($grants, $calendar, $super, $external, $restore, $db, $p) {
+            $before = $db->query("SELECT * FROM {$p}appointments_calendar_grants WHERE calendar_id={$calendar} AND user_id={$external}")->fetch_assoc();
+            $effective = $grants->accessFor($external, $calendar)?->role === CalendarRole::FreeBusy;
+            $grants->revoke($super, $calendar, $external, null);
+            $restore('appointments_calendar_grants', $before);
+            $replayed = $grants->accessFor($external, $calendar) === null;
+            $db->query("DELETE FROM {$p}appointments_calendar_grants WHERE calendar_id={$calendar} AND user_id={$external}");
+
+            return $before !== null && $effective && $replayed;
+        });
+
+        $boss = $user('boss', [$teamGroup, 8], true);
+        $keys->createUserKey($boss, 'Fixture-Password-1!');
+        $second = $services->calendars()->create($boss, ['title' => $tag . '-second', 'owner_user_id' => $boss, 'allow_external' => 1]);
+        $calendars[] = $second;
+
+        $suite->test($replayE2e[1], static function () use ($grants, $services, $second, $boss, $external, $restore, $db, $p) {
+            $grants->grant($boss, $second, $external, CalendarRole::FreeBusy, null);
+            $calendarBefore = $db->query("SELECT * FROM {$p}appointments_calendars WHERE id={$second}")->fetch_assoc();
+            $grantBefore = $db->query("SELECT * FROM {$p}appointments_calendar_grants WHERE calendar_id={$second} AND user_id={$external}")->fetch_assoc();
+            $services->calendars()->update($boss, $second, ['allow_external' => 0]);
+            $removed = $grants->accessFor($external, $second) === null;
+            $restore('appointments_calendars', $calendarBefore);
+            $restore('appointments_calendar_grants', $grantBefore);
+            $refused = $services->calendars()->get($second) === null && $grants->accessFor($external, $second) === null;
+
+            return $services->anchor()->writable() && $removed && $refused;
+        });
+
         if ($needMail) {
             foreach (array_slice($grantE2e, 7) as $name) {
                 $suite->pending($name, 'D');
             }
+
+            $suite->pending($deleteE2e, 'D');
 
             return;
         }
@@ -424,6 +473,23 @@ return static function (TeamSuite $suite): void {
             return $id > 0 && $nobody && $refused(static fn () => $invitations->revoke($super, $id), 404)
                 && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE user_id={$fresh}")->fetch_row()[0] === 0
                 && (int) $db->query("SELECT block FROM {$p}users WHERE id={$fresh}")->fetch_row()[0] === 1;
+        });
+
+        $third = $services->calendars()->create($boss, ['title' => $tag . '-third', 'owner_user_id' => $boss]);
+        $calendars[] = $third;
+
+        $suite->test($deleteE2e, static function () use ($services, $third, $boss, $tag, $db, $p) {
+            $before = AppointmentsMail::snapshot();
+            $services->calendars()->delete($boss, $third);
+            $mailed = false;
+
+            foreach (AppointmentsMail::messagesSince($before) as $mime) {
+                $mailed = $mailed || str_contains(AppointmentsMail::decoded($mime), $tag . 'boss@example.test');
+            }
+
+            return $mailed
+                && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendars WHERE id={$third}")->fetch_row()[0] === 0
+                && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE calendar_id={$third}")->fetch_row()[0] === 0;
         });
     } finally {
         $json = $db->real_escape_string($originalParams);

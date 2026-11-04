@@ -21,7 +21,9 @@ defined('_JEXEC') or die;
  * {@see CalendarServiceInterface}.
  *
  * Row MAC of `#__appointments_calendars` ({@see self::macFields()}): id, uri,
- * owner_user_id, allow_external, state. Deliberately not key_version,
+ * owner_user_id, allow_external, state, grant_epoch. A row also has to carry at
+ * least the epoch the anchor outside the database knows (spec 5.11), so a
+ * calendar row played back together with its grants is refused. Not key_version,
  * rotation_due and synctoken: the key service (rotation) and the object store
  * (every write) change them without a new MAC, and none of them grants
  * anything. Title, description and colour are display data.
@@ -55,7 +57,7 @@ final class CalendarService implements CalendarServiceInterface
     // ------------------------------------------------------------------
 
     /**
-     * @return  array{id: int, uri: string, owner_user_id: int, allow_external: int, state: int}
+     * @return  array{id: int, uri: string, owner_user_id: int, allow_external: int, state: int, grant_epoch: int}
      */
     public static function macFields(object|array $row): array
     {
@@ -67,7 +69,70 @@ final class CalendarService implements CalendarServiceInterface
             'owner_user_id'  => (int) ($row['owner_user_id'] ?? 0),
             'allow_external' => (int) ($row['allow_external'] ?? 0) === 1 ? 1 : 0,
             'state'          => (int) ($row['state'] ?? 0),
+            'grant_epoch'    => (int) ($row['grant_epoch'] ?? 1),
         ];
+    }
+
+    /**
+     * Whether a calendar row verifies: its MAC, and an epoch no older than the
+     * one anchored outside the database.
+     */
+    public static function rowValid(TeamServices $services, object $row): bool
+    {
+        $mac = (string) ($row->row_mac ?? '');
+
+        return \strlen($mac) === 32
+            && $services->keys()->verifyRowMac(self::TABLE, self::macFields($row), $mac)
+            && $services->anchor()->accepts(EpochAnchorInterface::KIND_CALENDAR, (int) $row->id, (int) ($row->grant_epoch ?? 1));
+    }
+
+    /**
+     * Raise the grant epoch of a calendar (spec 5.11): every grant row written
+     * before stops verifying, so none can be played back; the verified grants
+     * get a new MAC with the new epoch. Runs inside the caller's transaction and
+     * locks the calendar row itself. The caller records the returned epoch in the
+     * anchor after the commit ({@see self::anchor()}). The key service calls it
+     * at every rotation, under the same lock.
+     *
+     * @return  int  The new epoch.
+     */
+    public static function bumpEpoch(TeamServices $services, int $calendarId): int
+    {
+        $db = $services->db();
+        $row = $db->setQuery(
+            'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId . ' FOR UPDATE'
+        )->loadObject();
+
+        if (!$row || !self::rowValid($services, $row)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
+        }
+
+        $old = (int) $row->grant_epoch;
+        $new = $old + 1;
+        GrantService::remacGrants($services, $calendarId, $old, $new);
+        $row->grant_epoch = $new;
+        $db->setQuery(
+            'UPDATE ' . $db->quoteName('#__' . self::TABLE) . ' SET grant_epoch = ' . $new . ' WHERE id = ' . $calendarId
+        )->execute();
+        self::storeMac($services, $row);
+
+        return $new;
+    }
+
+    /**
+     * After the commit: remember the epochs outside the database. A failure of
+     * the anchor never undoes the change (the system check reports it).
+     *
+     * @param   array<int, int>  $epochs  Calendar id => epoch.
+     */
+    public static function anchor(TeamServices $services, array $epochs): void
+    {
+        foreach ($epochs as $calendarId => $epoch) {
+            try {
+                $services->anchor()->record(EpochAnchorInterface::KIND_CALENDAR, (int) $calendarId, (int) $epoch);
+            } catch (\Throwable) {
+            }
+        }
     }
 
     /**
@@ -165,7 +230,7 @@ final class CalendarService implements CalendarServiceInterface
             'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId . ' FOR UPDATE'
         )->loadObject();
 
-        if (!$row || !$services->keys()->verifyRowMac(self::TABLE, self::macFields($row), (string) $row->row_mac)) {
+        if (!$row || !self::rowValid($services, $row)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
         }
 
@@ -194,8 +259,7 @@ final class CalendarService implements CalendarServiceInterface
         )->loadObjectList() ?: [];
 
         foreach ($rows as $row) {
-            $row->mac_valid = \strlen((string) $row->row_mac) === 32
-                && $services->keys()->verifyRowMac(self::TABLE, self::macFields($row), (string) $row->row_mac);
+            $row->mac_valid = self::rowValid($services, $row);
             unset($row->row_mac);
         }
 
@@ -255,7 +319,7 @@ final class CalendarService implements CalendarServiceInterface
             $id = (int) $db->insertid();
             self::storeMac($this->services, (object) [
                 'id' => $id, 'uri' => $uri, 'owner_user_id' => $ownerId,
-                'allow_external' => (int) !empty($clean['allow_external']), 'state' => self::STATE_ACTIVE,
+                'allow_external' => (int) !empty($clean['allow_external']), 'state' => self::STATE_ACTIVE, 'grant_epoch' => 1,
             ]);
             $keys->createCalendarKeys($id, $ownerId);
             GrantService::write($this->services, $id, $ownerId, CalendarRole::Manage, TeamStates::GRANT_ACTIVE, TeamStates::AUDIENCE_TEAM, $actorUserId);
@@ -263,6 +327,7 @@ final class CalendarService implements CalendarServiceInterface
             return $id;
         });
 
+        self::anchor($this->services, [$id => 1]);
         $this->log(AuditEvent::CALENDAR_CREATED, [
             'actor_user_id' => $actorUserId, 'subject_user_id' => $ownerId, 'calendar_id' => $id,
             'details' => ['allow_external' => (int) !empty($clean['allow_external'])],
@@ -285,7 +350,8 @@ final class CalendarService implements CalendarServiceInterface
         $this->assertEnabled();
         $clean = $this->validated($data, true);
         $externalAfter = null;
-        $removed = $this->atomic(function () use ($actorUserId, $calendarId, $clean, &$externalAfter): array {
+        $epoch = null;
+        $removed = $this->atomic(function () use ($actorUserId, $calendarId, $clean, &$externalAfter, &$epoch): array {
             $db = $this->services->db();
             $row = $db->setQuery(
                 'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId . ' FOR UPDATE'
@@ -320,8 +386,19 @@ final class CalendarService implements CalendarServiceInterface
             $row->allow_external = (int) $externalAfter;
             self::storeMac($this->services, $row);
 
-            return $externalBefore && !$externalAfter ? $this->removeExternalGrants($calendarId) : [];
+            if (!$externalBefore || $externalAfter) {
+                return [];
+            }
+
+            $removed = $this->removeExternalGrants($calendarId);
+            $epoch = CalendarService::bumpEpoch($this->services, $calendarId);
+
+            return $removed;
         });
+
+        if ($epoch !== null) {
+            self::anchor($this->services, [$calendarId => $epoch]);
+        }
 
         $this->log(AuditEvent::CALENDAR_UPDATED, [
             'actor_user_id' => $actorUserId, 'calendar_id' => $calendarId,
@@ -351,9 +428,21 @@ final class CalendarService implements CalendarServiceInterface
         }
 
         $calendar = $this->get($calendarId);
+        $recipients = [];
 
         if ($calendar !== null) {
             $allowed = $this->services->grants()->accessFor($actorUserId, $calendarId)?->role === CalendarRole::Manage;
+
+            // Owner and effective managers, collected before the rows are gone.
+            foreach ($this->services->grants()->grantsOf($calendarId) as $grant) {
+                if ($grant->is_owner || ($grant->effective && $grant->role === CalendarRole::Manage->value)) {
+                    $recipients[] = (int) $grant->user_id;
+                }
+            }
+
+            if ((int) $calendar->owner_user_id > 0) {
+                $recipients[] = (int) $calendar->owner_user_id;
+            }
         } else {
             $db = $this->services->db();
             $exists = (int) $db->setQuery(
@@ -382,6 +471,15 @@ final class CalendarService implements CalendarServiceInterface
         });
 
         $this->log(AuditEvent::CALENDAR_DELETED, ['actor_user_id' => $actorUserId, 'calendar_id' => $calendarId]);
+        $recipients = array_values(array_unique($recipients));
+
+        if ($calendar !== null && $recipients !== []) {
+            try {
+                $this->services->mailer()->calendarDeleted((string) $calendar->title, $recipients, $actorUserId, $this->services->now());
+            } catch (\Throwable) {
+                // A mail failure never undoes the deletion; the log holds it.
+            }
+        }
     }
 
     public function get(int $calendarId): ?object
@@ -468,9 +566,7 @@ final class CalendarService implements CalendarServiceInterface
 
     private function macValid(object $row): bool
     {
-        $mac = (string) ($row->row_mac ?? '');
-
-        return \strlen($mac) === 32 && $this->services->keys()->verifyRowMac(self::TABLE, self::macFields($row), $mac);
+        return self::rowValid($this->services, $row);
     }
 
     private static function storeMac(TeamServices $services, object $row): void

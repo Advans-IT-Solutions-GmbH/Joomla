@@ -69,10 +69,10 @@ final class CalendarActivationRulesTest extends TestCase
     {
         $row = (object) [
             'id' => '4', 'uri' => str_repeat('a', 32), 'owner_user_id' => '7', 'allow_external' => '1', 'state' => '1',
-            'title' => 'T', 'key_version' => '3', 'rotation_due' => '1', 'synctoken' => '99', 'row_mac' => 'x',
+            'title' => 'T', 'key_version' => '3', 'rotation_due' => '1', 'synctoken' => '99', 'grant_epoch' => '6', 'row_mac' => 'x',
         ];
 
-        self::assertSame(['id' => 4, 'uri' => str_repeat('a', 32), 'owner_user_id' => 7, 'allow_external' => 1, 'state' => 1], CalendarService::macFields($row));
+        self::assertSame(['id' => 4, 'uri' => str_repeat('a', 32), 'owner_user_id' => 7, 'allow_external' => 1, 'state' => 1, 'grant_epoch' => 6], CalendarService::macFields($row));
         self::assertTrue(CalendarService::validUri(bin2hex(random_bytes(16))));
         self::assertFalse(CalendarService::validUri(str_repeat('A', 32)));
         self::assertFalse(CalendarService::validUri('../' . str_repeat('a', 29)));
