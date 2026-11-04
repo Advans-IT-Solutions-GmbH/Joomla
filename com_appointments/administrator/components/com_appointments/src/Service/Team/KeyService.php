@@ -20,7 +20,9 @@ use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
+use Joomla\CMS\User\UserFactoryInterface;
 
 defined('_JEXEC') or die;
 
@@ -393,9 +395,71 @@ final class KeyService implements KeyServiceInterface
         $this->log(AuditEvent::USER_KEY_RESET, ['subject_user_id' => $userId]);
     }
 
+    /**
+     * The repair of a user key row that fails its MAC. The device epoch is
+     * raised in the anchor first, above the stored and the anchored value, so a
+     * device row from before can never verify again and the next key pair
+     * (created at the next password sign-in) starts at that epoch.
+     */
     public function discardUserKey(int $actorUserId, int $userId): void
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        $actor = $actorUserId > 0 ? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($actorUserId) : null;
+
+        if ($actor === null || $actor->guest || !$actor->authorise('core.admin', 'com_appointments')) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NOT_ALLOWED', 403);
+        }
+
+        $stored = $this->rawUserKeyRow($userId);
+
+        if ($stored === null) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_USER_KEY', 404);
+        }
+
+        if ($this->verifyStoredRow('user_keys', $stored)) {
+            // A row that verifies is never discarded: that is what a reset is for.
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_VERIFIES', 409);
+        }
+
+        $epoch = max((int) $stored['device_epoch'], $this->anchorMinimum(EpochAnchorInterface::KIND_USER, $userId)) + 1;
+        $anchor = $this->services->anchor();
+
+        try {
+            if ($anchor->writable()) {
+                $anchor->record(EpochAnchorInterface::KIND_USER, $userId, $epoch);
+            }
+        } catch (\Throwable $e) {
+            // Nothing is deleted before the higher epoch is anchored.
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+        }
+
+        $db = $this->services->db();
+        $db->transactionStart(true);
+
+        try {
+            $db->setQuery(
+                'DELETE FROM ' . $db->quoteName('#__appointments_user_keys') . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $userId
+            )->execute();
+            $this->deleteAllWrapsOfUser($userId);
+            $this->services->grants()->suspendAllForUser($userId, 'key_discarded');
+            $db->transactionCommit(true);
+        } catch (\Throwable $e) {
+            $db->transactionRollback(true);
+
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+        }
+
+        foreach ([
+            fn () => $this->services->cleanup()->startForUser($userId, 'key_discarded', $actorUserId),
+            fn () => $this->services->mailer()->accessSuspended($userId, 'key_discarded'),
+        ] as $step) {
+            try {
+                $step();
+            } catch (\Throwable $e) {
+                $this->warn('a step after discarding a key failed', $e);
+            }
+        }
+
+        $this->log(AuditEvent::USER_KEY_RESET, ['actor_user_id' => $actorUserId, 'subject_user_id' => $userId, 'details' => ['reason' => 'discarded']]);
     }
 
     public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string
@@ -767,7 +831,7 @@ final class KeyService implements KeyServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_CALENDAR_KEY', 409);
         }
 
-        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ROW_MAC);
+        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ENVELOPE);
         $envelope = self::sealEnvelope($calendarId, $uri, $ics, $macKey);
         CipherSuite::wipe($macKey);
 
@@ -813,7 +877,7 @@ final class KeyService implements KeyServiceInterface
             return null;
         }
 
-        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ROW_MAC);
+        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ENVELOPE);
         $ics = self::openEnvelope($plain, $object->calendarId, $object->uri, $macKey);
         CipherSuite::wipe($macKey);
 
@@ -1165,7 +1229,7 @@ final class KeyService implements KeyServiceInterface
     /**
      * The scheme-2 envelope: `"ACv1\n" . json_encode(['c' => calendarId, 'u' => uri, 'm' => mac]) . "\n" . ics`.
      * Anybody can seal to the public sealing key, so the envelope carries
-     * `m = base64(HMAC-SHA256(key(TEAM_ROW_MAC), associatedData('envelope', calendarId, uri, ics)))`:
+     * `m = base64(HMAC-SHA256(key(TEAM_ENVELOPE), associatedData('envelope', calendarId, uri, ics)))`:
      * only the server (the booking flow) can write an envelope that opens, and
      * an object planted by somebody who can write the database alone is never
      * read, nor re-encrypted into scheme 1.

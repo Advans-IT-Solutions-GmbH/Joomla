@@ -249,6 +249,31 @@ return static function (TeamSuite $suite): void {
         return $code === 409 && $before === $after && $keys->hasUserKey($member);
     });
 
+    $superUser = (int) ($row("SELECT user_id FROM {$p}user_usergroup_map WHERE group_id = 8 ORDER BY user_id LIMIT 1")['user_id'] ?? 0);
+
+    $suite->test('B: discarding a key needs core.admin and is refused for a key row that still verifies', static function () use ($keys, $member, $owner, $refusal, $superUser) {
+        return $superUser > 0
+            && $refusal(static fn () => $keys->discardUserKey($owner, $member)) === 403
+            && $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 409
+            && $keys->hasUserKey($member);
+    });
+
+    if ($suite->isStub(GrantService::class)) {
+        $suite->pending('B: discarding a damaged key row deletes it and its wraps and raises the device epoch', 'C');
+    } else {
+        $suite->test('B: discarding a damaged key row deletes it and its wraps and raises the device epoch', static function () use ($db, $keys, $member, $memberPassword, $p, $superUser, $services) {
+            $before = (int) $db->query("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0];
+            $db->query("UPDATE {$p}appointments_user_keys SET public_key = CONCAT(LEFT(public_key, 31), CHAR(ASCII(RIGHT(public_key, 1)) ^ 1)) WHERE user_id = {$member}");
+            $keys->discardUserKey($superUser, $member);
+            $gone = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0] === 0
+                && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_key_wraps WHERE user_id = {$member}")->fetch_row()[0] === 0;
+            $again = $keys->createUserKey($member, $memberPassword);
+            $after = (int) $db->query("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0];
+
+            return $gone && $again !== null && (!$services->anchor()->writable() || $after > $before);
+        });
+    }
+
     $suite->test('B: the recovery secret opens the calendar, another secret does not', static function () use ($keys, &$recovery, &$ownerKeys, &$st) {
         $ring = $keys->recoverKeyring($st['calendar'], $recovery);
         $own = $keys->openKeyring($st['calendar'], $ownerKeys);
