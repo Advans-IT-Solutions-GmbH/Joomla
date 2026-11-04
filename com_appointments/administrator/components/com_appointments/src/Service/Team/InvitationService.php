@@ -481,33 +481,45 @@ final class InvitationService implements InvitationServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
         }
 
-        // Block first, outside every transaction (Joomla's user plugins react
-        // with transactions of their own), and under the account lock that
-        // complete() holds while it saves the password, so a stale save can
-        // never undo the block. When Joomla refuses, nothing has changed; when
-        // a later step fails, the account stays blocked and the link
-        // «completed», so the revoke can be repeated.
-        $this->withAccountLock($userId, function () use ($peek, $userId, $invitationId): void {
+        // The whole revoke runs under the account lock that complete() holds
+        // while it uses up a link and saves the password: a completion can
+        // neither slip in between nor undo the block with a stale save. Under
+        // the lock the link and the right to revoke are read again. The block
+        // comes first and outside every transaction (Joomla's user plugins
+        // react with transactions of their own): when Joomla refuses, nothing
+        // has changed; when a later step fails, the account stays blocked and
+        // the link «completed», so the revoke can be repeated.
+        $result = $this->withAccountLock($userId, function () use ($actorUserId, $invitationId, $userId): array {
             $current = $this->rows('id = ' . $invitationId, false)[0] ?? null;
 
-            if ($current !== null && $this->macValid($current) && (int) $current->state === TeamStates::INVITATION_COMPLETED) {
-                $this->block($userId);
-                $peek->state = TeamStates::INVITATION_COMPLETED;
-            }
-        });
-
-        $result = $this->atomic(function () use ($actorUserId, $invitationId, $peek, $userId): array {
-            $row = $this->rows('id = ' . $invitationId, true)[0] ?? null;
-
-            if ($row === null || !$this->macValid($row) || (int) $row->state !== (int) $peek->state || (int) $row->user_id !== $userId) {
+            if ($current === null || !$this->macValid($current) || (int) $current->user_id !== $userId
+                || !\in_array((int) $current->state, [TeamStates::INVITATION_OPEN, TeamStates::INVITATION_COMPLETED], true)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
             }
 
-            $completed = (int) $row->state === TeamStates::INVITATION_COMPLETED;
-            $calendars = $completed ? GrantService::removeAllForUser($this->services, $userId) : [];
-            $this->close($row, $actorUserId);
+            if (!$this->mayRevoke($actorUserId, $userId)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+            }
 
-            return ['completed' => $completed, 'calendars' => $calendars, 'user' => $userId];
+            $state = (int) $current->state;
+
+            if ($state === TeamStates::INVITATION_COMPLETED) {
+                $this->block($userId);
+            }
+
+            return $this->atomic(function () use ($actorUserId, $invitationId, $userId, $state): array {
+                $row = $this->rows('id = ' . $invitationId, true)[0] ?? null;
+
+                if ($row === null || !$this->macValid($row) || (int) $row->state !== $state || (int) $row->user_id !== $userId) {
+                    throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
+                }
+
+                $completed = $state === TeamStates::INVITATION_COMPLETED;
+                $calendars = $completed ? GrantService::removeAllForUser($this->services, $userId) : [];
+                $this->close($row, $actorUserId);
+
+                return ['completed' => $completed, 'calendars' => $calendars, 'user' => $userId];
+            });
         });
 
         if ($result['completed']) {
@@ -687,6 +699,8 @@ final class InvitationService implements InvitationServiceInterface
      */
     private function mayRevoke(int $actorUserId, int $userId): bool
     {
+        // Fresh permissions: a group change of either account a moment ago counts.
+        Access::clearStatics();
         $actor = GrantService::user($actorUserId);
 
         if ($actor === null || $actor->block || !$this->services->grants()->hasSecondFactor($actorUserId)) {
