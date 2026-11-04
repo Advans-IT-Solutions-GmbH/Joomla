@@ -155,7 +155,8 @@ and layout derive the label text with `ConsentMode::labelText()` and the link wi
 `Site\Helper\PrivacyLink::resolve()`, so the stored version names the label that was shown. Joomla's
 System - Privacy Consent plugin only extends com_users forms and never this form.
 
-The privacy notice of the booking page (and the checkbox, where the mode has one) shows:
+With `notice` the booking page shows one sentence at the foot of the information column, in every step, with the link to the site's own privacy notice (configured as a Joomla menu item or URL); without a configured notice nothing is shown. The delete link itself reaches the invitee with every mail.
+ a checkbox mode (`acknowledge` or `consent`) step 2 additionally shows the checkbox and below it:
 
 - What is collected and why, taken from a component setting so the operator writes their own text.
 - A link to the site's own privacy notice, configured as a Joomla menu item or URL.
