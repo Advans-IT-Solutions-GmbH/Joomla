@@ -11,7 +11,17 @@ defined('_JEXEC') or die;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
-?>
+
+if (!$this->legacy) : ?>
+<div class="alert alert-info" role="status">
+    <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_FEEDS_OFF'); ?></p>
+    <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_FEEDS_REPLACEMENT'); ?></p>
+</div>
+<?php return; endif; ?>
+<div class="alert alert-warning" role="alert">
+    <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_FEEDS_DEPRECATED'); ?></p>
+    <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_FEEDS_REPLACEMENT'); ?></p>
+</div>
 <div class="alert alert-warning" role="alert">
     <?php echo Text::_('COM_APPOINTMENTS_FEEDS_PASSWORD_WARNING'); ?>
 </div>

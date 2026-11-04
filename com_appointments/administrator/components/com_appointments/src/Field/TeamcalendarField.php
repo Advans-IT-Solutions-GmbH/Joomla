@@ -1,0 +1,66 @@
+<?php
+/**
+ * @package     Appointments Component
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+namespace Advans\Component\Appointments\Administrator\Field;
+
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Joomla\CMS\Form\Field\ListField;
+use Joomla\CMS\HTML\HTMLHelper;
+use Joomla\CMS\Language\Text;
+
+defined('_JEXEC') or die;
+
+/**
+ * Internet calendar picker of the event type form. Lists only calendars the
+ * event type's host has an effective access to: with `mode="write"` those the
+ * host can write (target calendar), otherwise every one (further busy
+ * calendars). A stored value the host no longer reaches stays visible and
+ * marked, so nothing is dropped without notice; the model accepts it only
+ * unchanged, and the booking page ignores it while the access is missing.
+ */
+class TeamcalendarField extends ListField
+{
+    protected $type = 'Teamcalendar';
+
+    protected function getOptions()
+    {
+        $options = parent::getOptions();
+        $seen = [];
+
+        try {
+            $team = TeamServices::fromApplication();
+            $host = (int) $this->form->getValue('host_user_id');
+
+            if ($team->enabled() && $host > 0) {
+                $write = (string) $this->element['mode'] === 'write';
+
+                foreach ($team->grants()->calendarsFor($host) as $access) {
+                    if ($write && !$access->role->canWrite()) {
+                        continue;
+                    }
+
+                    $options[] = HTMLHelper::_('select.option', (string) $access->calendarId, $access->title);
+                    $seen[$access->calendarId] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            // No calendar service: only the stored values below.
+        }
+
+        foreach ((array) $this->value as $value) {
+            $id = (int) $value;
+
+            if ($id > 0 && !isset($seen[$id])) {
+                $options[] = HTMLHelper::_('select.option', (string) $id, Text::sprintf('COM_APPOINTMENTS_TEAM_E_EVENTTYPE_NO_ACCESS', $id));
+                $seen[$id] = true;
+            }
+        }
+
+        return $options;
+    }
+}

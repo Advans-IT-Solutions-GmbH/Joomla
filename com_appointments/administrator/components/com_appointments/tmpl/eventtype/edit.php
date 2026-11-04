@@ -23,6 +23,12 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                 <?php echo $this->form->renderFieldset('display'); ?>
             </fieldset>
             <?php echo $this->form->renderFieldset('conference'); ?>
+            <?php if ($this->form->getFieldset('calendars') !== []) : ?>
+            <fieldset class="options-form" id="eventtype-calendars">
+                <legend><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_EVENTTYPE_FIELDSET'); ?></legend>
+                <?php echo $this->form->renderFieldset('calendars'); ?>
+            </fieldset>
+            <?php endif; ?>
         </div>
         <div class="col-lg-3"><?php echo $this->form->renderFieldset('state'); ?></div>
     </div>

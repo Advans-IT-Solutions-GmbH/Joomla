@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\FeedCalendar;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -27,6 +28,12 @@ class FeedController extends BaseController
         $this->app->setHeader('Cache-Control', 'private, no-store', true);
         $this->app->setHeader('Referrer-Policy', 'no-referrer', true);
         $this->app->setHeader('X-Content-Type-Options', 'nosniff', true);
+        // Token feeds switched off (default of new installations): no feed exists, so the
+        // answer is the same 404 as for an unknown one, before any token is looked at.
+        if (!FeedService::legacyEnabled(ComponentHelper::getParams('com_appointments'))) {
+            $this->respond(404, Text::_('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND'));
+            return;
+        }
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $keys = new KeyProvider((string) $this->app->get('secret'));

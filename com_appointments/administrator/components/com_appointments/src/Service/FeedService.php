@@ -12,13 +12,30 @@ use Advans\Component\Appointments\Administrator\Helper\FeedCalendar;
 use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Joomla\Database\DatabaseInterface;
+use Joomla\Registry\Registry;
 
 defined('_JEXEC') or die;
 
+/**
+ * The token feeds (deprecated since 1.4.0, removed in 2.0.0): a secret address
+ * per event type and per host. They are replaced by the internet calendars,
+ * which need a sign-in. Option `legacy_feeds` switches them; while it is off,
+ * no feed is served, listed or rotated. The single-booking export is not a
+ * token feed and stays.
+ */
 final class FeedService
 {
     public function __construct(private DatabaseInterface $db)
     {
+    }
+
+    /**
+     * Whether the token feeds are switched on. A missing value counts as off:
+     * the installer writes the option on installation and update.
+     */
+    public static function legacyEnabled(Registry $params): bool
+    {
+        return (string) $params->get('legacy_feeds', '0') === '1';
     }
 
     /** @return array{body: string, etag: string, filename: string}|null */

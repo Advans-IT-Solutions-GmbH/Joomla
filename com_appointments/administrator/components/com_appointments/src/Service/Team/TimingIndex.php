@@ -141,9 +141,15 @@ final class TimingIndex implements TimingIndexInterface
         }
 
         $windows = [];
+        $steps = 0;
         $reached = $fromUtc;
-        $previous = Settings::$maxRecurrences;
-        Settings::$maxRecurrences = self::MAX_STEPS;
+        // The library's own limit counts the same steps; ours below is the one that decides.
+        $limited = property_exists(Settings::class, 'maxRecurrences');
+        $previous = $limited ? Settings::$maxRecurrences : null;
+
+        if ($limited) {
+            Settings::$maxRecurrences = self::MAX_STEPS + 1;
+        }
 
         try {
             try {
@@ -175,13 +181,19 @@ final class TimingIndex implements TimingIndexInterface
                     }
                 }
 
+                if (++$steps > self::MAX_STEPS) {
+                    throw new \OverflowException('Too many recurrence steps.');
+                }
+
                 $iterator->next();
             }
         } catch (\Throwable $e) {
             // Too many recurrence steps or a rule the library cannot expand: fail closed.
             $windows[] = new AvailabilityWindow($reached, $toUtc);
         } finally {
-            Settings::$maxRecurrences = $previous;
+            if ($limited) {
+                Settings::$maxRecurrences = $previous;
+            }
         }
 
         return $windows;
@@ -478,8 +490,94 @@ final class TimingIndex implements TimingIndexInterface
         return $end > $start ? new AvailabilityWindow($start, $end) : null;
     }
 
+    /**
+     * Addresses from ORGANIZER and ATTENDEE (`mailto:`, percent-decoded, without
+     * a query) and every address found in SUMMARY, LOCATION and DESCRIPTION, in
+     * every component of the object (alarms included), sorted.
+     */
     public function emails(string $ics): array
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        if (\strlen($ics) > self::MAX_BYTES) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_E_TIMING_INVALID', 400);
+        }
+
+        $found = [];
+        $pending = [$this->read($ics, Reader::OPTION_FORGIVING)];
+
+        while ($pending !== []) {
+            $component = array_pop($pending);
+
+            foreach ($component->children() as $child) {
+                if ($child instanceof Component) {
+                    $pending[] = $child;
+
+                    continue;
+                }
+
+                if (!$child instanceof Property) {
+                    continue;
+                }
+
+                if (\in_array($child->name, ['ORGANIZER', 'ATTENDEE'], true)) {
+                    $value = trim((string) $child->getValue());
+
+                    if (stripos($value, 'mailto:') === 0) {
+                        $address = rawurldecode(explode('?', substr($value, 7), 2)[0]);
+
+                        if (self::looksLikeAddress($address)) {
+                            $found[self::normalise($address)] = true;
+                        }
+                    }
+                } elseif (\in_array($child->name, ['SUMMARY', 'LOCATION', 'DESCRIPTION'], true)) {
+                    foreach (self::addressesIn((string) $child->getValue()) as $address) {
+                        $found[$address] = true;
+                    }
+                }
+            }
+        }
+
+        $addresses = array_keys($found);
+        sort($addresses, SORT_STRING);
+
+        return $addresses;
+    }
+
+    /**
+     * Every address in a free text, normalised.
+     *
+     * @return  string[]
+     */
+    public static function addressesIn(string $text): array
+    {
+        if ($text === '' || preg_match('//u', $text) !== 1) {
+            return [];
+        }
+
+        preg_match_all('/[\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~-]{1,64}@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)+/u', $text, $matches);
+        $out = [];
+
+        foreach ($matches[0] as $match) {
+            $match = trim($match, '.');
+
+            if (self::looksLikeAddress($match)) {
+                $out[self::normalise($match)] = true;
+            }
+        }
+
+        return array_keys($out);
+    }
+
+    private static function looksLikeAddress(string $value): bool
+    {
+        $value = trim($value);
+
+        return $value !== '' && \strlen($value) <= 254 && preg_match('//u', $value) === 1
+            && preg_match('/^[^@\s<>()\[\],;:"\\\\]+@[^@\s<>()\[\],;:"\\\\]+\.[^@\s<>()\[\],;:"\\\\.]+$/u', $value) === 1;
+    }
+
+    /** The form the blind index hashes: trimmed, lower case. */
+    public static function normalise(string $address): string
+    {
+        return mb_strtolower(trim($address), 'UTF-8');
     }
 }

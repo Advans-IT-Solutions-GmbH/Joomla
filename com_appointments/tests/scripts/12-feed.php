@@ -116,8 +116,18 @@ $tokens = static function (int $event) use ($fixture): array {
 $noStore = static fn (array $headers): bool => str_contains($headers['cache-control'] ?? '', 'no-store')
     && str_contains($headers['cache-control'] ?? '', 'private')
     && str_contains($headers['x-robots-tag'] ?? '', 'noindex');
+// The token feeds are deprecated and off on a new installation (option legacy_feeds).
+// This suite tests them switched on and, at the end, switched off; it restores the option.
+$originalParams = (string) $fixture->db->query("SELECT params FROM {$fixture->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0];
+$legacy = static function (string $value) use ($fixture, $originalParams): void {
+    $params = json_decode($originalParams, true) ?: [];
+    $params['legacy_feeds'] = $value;
+    $fixture->db->query("UPDATE {$fixture->prefix}extensions SET params='" . $fixture->db->real_escape_string(json_encode($params))
+        . "' WHERE type='component' AND element='com_appointments'");
+};
 
 try {
+    $legacy('1');
     $event = $fixture->event();
     $otherEvent = $fixture->event();
     $editor = new AppointmentsHttp('http://localhost', 'feed-event-assets');
@@ -281,7 +291,30 @@ try {
     $low->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $token => 1]);
     $check($low->status === 403 && $tokens($event)[1] === $newHostToken,
         'Host rotation also requires access to every event in that combined feed');
+
+    // Switched on: the view says that the feeds are deprecated and what replaces them.
+    $page = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $check($admin->status === 200 && str_contains($page, 'deprecated') && str_contains($page, 'internet calendars')
+        && str_contains(html_entity_decode($page), $feedPath('event', $event, $newEventToken)), 'Switched on, the feeds stay as they are, with a deprecation notice');
+
+    // Switched off (the default of a new installation): no feed answers, none is listed or rotated.
+    $legacy('0');
+    $body = $http->request($feedPath('event', $event, $newEventToken));
+    $check($http->status === 404 && !str_contains($body, 'BEGIN:VCALENDAR'), 'Switched off, a valid event feed address answers 404');
+    $http->request($feedPath('host', $fixture->host, $newHostToken));
+    $check($http->status === 404, 'Switched off, a valid host feed address answers 404');
+    $page = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $check($admin->status === 200 && str_contains($page, 'switched off') && str_contains($page, 'internet calendars')
+        && !str_contains($page, $newEventToken) && !str_contains($page, $newHostToken) && !str_contains($page, 'feeds.rotate'),
+        'Switched off, the feeds view explains the replacement and shows no address');
+    $csrf = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
+    $check($admin->status === 404 && $tokens($event)[0] === $newEventToken, 'Switched off, no credential can be rotated');
+    $export = $admin->request($exportPath);
+    $check($admin->status === 200 && str_contains($export, 'UID:' . $booking['uid']), 'The single booking export is not a token feed and stays');
 } finally {
+    $fixture->db->query("UPDATE {$fixture->prefix}extensions SET params='" . $fixture->db->real_escape_string($originalParams)
+        . "' WHERE type='component' AND element='com_appointments'");
     if ($componentRules !== null) {
         $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='" . $fixture->db->real_escape_string($componentRules)
             . "' WHERE name='com_appointments'");

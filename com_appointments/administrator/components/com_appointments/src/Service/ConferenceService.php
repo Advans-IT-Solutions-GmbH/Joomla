@@ -17,6 +17,7 @@ use Advans\Component\Appointments\Administrator\Helper\Conference\JitsiProvider;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingRequest;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
@@ -148,6 +149,15 @@ final class ConferenceService
             $this->write((int) $current['id'], $fields);
             $refreshed = $this->booking((int) $current['id'], false);
             $this->db->transactionCommit();
+
+            if ($succeeded) {
+                try {
+                    // The internet calendar copy carries the new link too; the bridge never throws.
+                    TeamServices::fromApplication()->bookings()->onBookingSaved($refreshed ?? array_replace($current, $fields));
+                } catch (\Throwable $mirror) {
+                    // Without a Joomla runtime (unit tests) there is no calendar to mirror into.
+                }
+            }
 
             return $this->safe($refreshed ?? array_replace($current, $fields))
                 + ['_conference_changed' => $succeeded, '_conference_stale' => false];

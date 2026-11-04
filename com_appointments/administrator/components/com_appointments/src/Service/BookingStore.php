@@ -369,6 +369,9 @@ final class BookingStore
             throw $e;
         }
 
+        // The calendar copy lists the guests as attendees: rewrite it without the address.
+        $this->mirror('saved', ['id' => $bookingId]);
+
         return ['changed' => true, 'guest' => $address];
     }
 
