@@ -43,10 +43,22 @@ interface EpochAnchorInterface
     /** The newest verified log row (id 1, value last_id), recorded by work package F after an intact chain check and after pruning. */
     public const KIND_LOG = 'log';
 
+    /** The current key version of a calendar, so that deleting the newest calendar_keys row and lowering calendars.key_version is detected. */
+    public const KIND_CALENDAR_KEY = 'calendar_key';
+
     /**
      * Record a new epoch after the database change committed. Never lowers a value.
      */
     public function record(string $kind, int $id, int $epoch): void;
+
+    /**
+     * Record the committed value of a row once no transaction is open any more:
+     * immediately at transaction depth 0, otherwise queued and written at the
+     * end of the request after a fresh read of the committed value. Callers that
+     * may run inside somebody else's transaction use this instead of record(),
+     * so the anchor never stands above a database that rolled back.
+     */
+    public function recordAfterCommit(string $kind, int $id): void;
 
     /**
      * The anchored epoch, 0 when none is known (or the anchor is not writable).

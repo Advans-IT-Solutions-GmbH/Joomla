@@ -719,6 +719,10 @@ Round 7: `EpochAnchorInterface::KIND_LOG` (F anchors the newest verified log row
 (F; B skips login.failure), `TeamMailerInterface::accountLocked()` (D; F calls it), `AuditEvent::LOGIN_UNLOCKED`,
 libsodium required by the installer.
 
+Round 8: every transaction helper uses savepoints (`transactionStart(true)`); anchor entries from code that
+may run inside another transaction go through `EpochAnchorInterface::recordAfterCommit()`; the calendar key
+version is anchored as `KIND_CALENDAR_KEY`.
+
 Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every
 pending test into a failure before the pull request to `main`.

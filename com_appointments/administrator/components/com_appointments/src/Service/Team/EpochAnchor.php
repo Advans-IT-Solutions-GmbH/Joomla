@@ -31,6 +31,11 @@ final class EpochAnchor implements EpochAnchorInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function recordAfterCommit(string $kind, int $id): void
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function minimum(string $kind, int $id): int
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
