@@ -762,7 +762,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     private function booking(int $bookingId, bool $lock = false): ?array
     {
         $db = $this->services->db();
-        $query = $this->query()->select($db->quoteName(['id', 'eventtype_id', 'host_user_id', 'uid', 'sequence', 'state',
+        $query = $this->query()->select($db->quoteName(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc', 'sequence', 'state',
             'start_utc', 'end_utc', 'modified_utc', 'invitee_name', 'invitee_email', 'guest_emails', 'conference_url', 'anonymised_utc']))
             ->from($db->quoteName('#__appointments_bookings'))
             ->where($db->quoteName('id') . ' = ' . $bookingId);

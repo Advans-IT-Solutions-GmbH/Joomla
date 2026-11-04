@@ -46,16 +46,17 @@ final class NotificationService
      * finishes first (BookingStore::removeGuest locks the row FOR UPDATE). A removal that starts
      * afterwards waits for the caller's transaction, so a removed address never gets a later mail.
      */
-    private function currentGuests(int $id, string $uid, mixed $copy): ?string
+    private function currentGuests(int $id, mixed $copy): ?string
     {
         if ($id < 1) {
             return is_string($copy) ? $copy : null;
         }
 
-        $rows = $this->db->setQuery('SELECT ' . $this->db->quoteName('guest_emails') . ' FROM ' . $this->db->quoteName('#__appointments_bookings')
-            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadColumn();
+        $row = $this->db->setQuery('SELECT ' . $this->db->quoteName(['uid', 'created_utc', 'guest_emails']) . ' FROM '
+            . $this->db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadAssoc();
         // Stored encrypted; a list that cannot be opened has no guest to write to.
-        $guests = $this->data()->openLenient(['uid' => $uid, 'guest_emails' => $rows[0] ?? null])['guest_emails'];
+        $guests = $row ? $this->data()->openLenient($row)['guest_emails'] : null;
 
         return is_string($guests) ? $guests : null;
     }
@@ -106,7 +107,7 @@ final class NotificationService
         }
 
         try {
-            $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], (string) ($booking['uid'] ?? ''), $booking['guest_emails'] ?? null);
+            $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], $booking['guest_emails'] ?? null);
 
             if (!$hostOnly && !empty($booking['invitee_email'])) {
                 $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true, false];

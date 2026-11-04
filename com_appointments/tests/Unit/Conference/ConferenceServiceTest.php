@@ -32,7 +32,7 @@ final class ConferenceServiceTest extends TestCase
     protected function setUp(): void
     {
         $this->row = [
-            'id' => 7, 'eventtype_id' => 3, 'host_user_id' => 8, 'uid' => str_repeat('a', 64),
+            'id' => 7, 'eventtype_id' => 3, 'host_user_id' => 8, 'uid' => str_repeat('a', 64), 'created_utc' => '2026-10-30 09:00:00',
             'start_utc' => '2026-11-10 10:00:00', 'end_utc' => '2026-11-10 10:30:00',
             'state' => 1, 'anonymised_utc' => null, 'sequence' => 2, 'modified_utc' => '2026-11-01 10:00:00',
             'invitee_name' => 'Fixture Invitee', 'invitee_email' => 'invitee@example.test',
@@ -104,7 +104,7 @@ final class ConferenceServiceTest extends TestCase
         $clear = array_filter(array_intersect_key($row, array_flip(BookingData::COLUMNS)),
             static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
 
-        return array_replace($row, $data->seal((string) $row['uid'], $clear));
+        return array_replace($row, $data->seal((string) $row['uid'], (string) $row['created_utc'], $clear));
     }
 
     private function service(array $params = [], ?ConferenceManager $manager = null): ConferenceService

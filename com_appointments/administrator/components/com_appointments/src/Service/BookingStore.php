@@ -78,7 +78,7 @@ final class BookingStore
                 'created_utc' => $time, 'modified_utc' => $time,
             ]);
             // The personal fields are stored encrypted; the caller gets them in clear.
-            $row = (object) $this->data()->seal($clear['uid'], $clear);
+            $row = (object) $this->data()->seal($clear['uid'], $clear['created_utc'], $clear);
             $db->insertObject('#__appointments_bookings', $row, 'id');
             $clear['id'] = $row->id;
             $db->transactionCommit();
@@ -160,7 +160,7 @@ final class BookingStore
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
-            $row = (object) $this->data()->seal((string) $booking['uid'], ['id' => $bookingId, 'state' => $state,
+            $row = (object) $this->data()->seal((string) $booking['uid'], (string) $booking['created_utc'], ['id' => $bookingId, 'state' => $state,
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
@@ -304,7 +304,7 @@ final class BookingStore
             } else {
                 unset($erased['state_active']);
                 // Every personal field is null now; sealing keeps any other one encrypted.
-                $row = (object) $this->data()->seal((string) $erased['uid'], $erased);
+                $row = (object) $this->data()->seal((string) $erased['uid'], (string) $erased['created_utc'], $erased);
                 $db->updateObject('#__appointments_bookings', $row, 'id', true);
             }
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
@@ -368,7 +368,7 @@ final class BookingStore
 
                 return ['changed' => false, 'guest' => null];
             }
-            $row = (object) $this->data()->seal((string) $booking['uid'],
+            $row = (object) $this->data()->seal((string) $booking['uid'], (string) $booking['created_utc'],
                 ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $audit = (object) ['booking_id' => $bookingId, 'action' => 'remove_guest', 'path' => $path, 'actor_user_id' => null,

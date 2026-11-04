@@ -255,7 +255,7 @@ final class FeedService
     {
         $db = $this->db;
 
-        return $this->query()->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.uid', 'b.sequence', 'b.state',
+        return $this->query()->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.uid', 'b.created_utc', 'b.sequence', 'b.state',
             'b.start_utc', 'b.end_utc', 'b.modified_utc', 'b.invitee_name', 'b.invitee_email', 'b.guest_emails', 'b.conference_url']))
             ->from($db->quoteName('#__appointments_bookings', 'b'));
     }

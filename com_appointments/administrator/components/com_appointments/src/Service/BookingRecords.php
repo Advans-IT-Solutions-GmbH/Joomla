@@ -74,7 +74,7 @@ final class BookingRecords
         $data = new BookingData($keys, true);
         $columns = BookingData::COLUMNS;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(array_merge(['id', 'uid'], $columns)))->from($db->quoteName('#__appointments_bookings'))
+        $query->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))->from($db->quoteName('#__appointments_bookings'))
             ->where(self::clearCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
             ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
         $rows = $db->setQuery($query)->loadAssocList();
@@ -94,7 +94,7 @@ final class BookingRecords
                 continue;
             }
 
-            $sealed = $data->seal((string) $row['uid'], $clear);
+            $sealed = $data->seal((string) $row['uid'], (string) $row['created_utc'], $clear);
             $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $update->update($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . (int) $row['id']);
 
@@ -191,7 +191,7 @@ final class BookingRecords
 
         do {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName(['id', 'uid', 'invitee_email', 'guest_emails']))->from($db->quoteName('#__appointments_bookings'))
+            $query->select($db->quoteName(['id', 'uid', 'created_utc', 'invitee_email', 'guest_emails']))->from($db->quoteName('#__appointments_bookings'))
                 ->where($db->quoteName('id') . ' > ' . $last)
                 ->where($db->quoteName('anonymised_utc') . ' IS NULL')
                 ->where('(' . $db->quoteName('invitee_email') . ' IS NOT NULL OR ' . $db->quoteName('guest_emails') . ' IS NOT NULL)')
@@ -236,7 +236,7 @@ final class BookingRecords
         $needle = mb_strtolower(trim($needle), 'UTF-8');
         $query = clone $query;
         // A unique order, so paging the candidates neither skips nor repeats a row.
-        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.invitee_name', 'b.invitee_first_name',
+        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.invitee_name', 'b.invitee_first_name',
             'b.invitee_last_name', 'b.invitee_email']))->order($db->quoteName('b.id') . ' DESC');
         $ids = [];
         $offset = 0;
@@ -275,7 +275,7 @@ final class BookingRecords
     {
         $db = $this->db;
         $query = clone $query;
-        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_name']))
+        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_name']))
             ->order($db->quoteName('b.id') . ' DESC');
         $rows = [];
 

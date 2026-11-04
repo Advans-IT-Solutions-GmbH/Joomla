@@ -17,9 +17,11 @@ defined('_JEXEC') or die;
  * The personal fields of a booking at rest (team-calendars.md, section 5.10).
  *
  * Every value of {@see self::COLUMNS} is stored as `v1:` plus Base64 of
- * `CipherSuite::encrypt(key(PURPOSE_BOOKING_DATA), value, associatedData('booking', uid, column))`.
- * The booking's UID exists before the row is inserted and never changes, so a
- * value can be moved neither to another booking nor to another column.
+ * `CipherSuite::encrypt(key(PURPOSE_BOOKING_DATA), value, associatedData('booking', uid, created_utc, column))`.
+ * UID and creation time exist before the row is inserted and never change, so a
+ * value can be moved neither to another booking nor to another column, and
+ * copying UID and personal fields together into another row fails unless the
+ * creation time is copied too (which makes it that booking).
  *
  * This class is the only code that turns these columns into text and back.
  * Code that reads a booking row calls {@see self::open()} right after the read,
@@ -136,10 +138,10 @@ final class BookingData
      *
      * @throws  \InvalidArgumentException  Without a UID, or for a value that is no text.
      */
-    public function seal(string $uid, array $row): array
+    public function seal(string $uid, string $created, array $row): array
     {
-        if ($uid === '') {
-            throw new \InvalidArgumentException('A booking without UID cannot be sealed.');
+        if ($uid === '' || $created === '') {
+            throw new \InvalidArgumentException('A booking without UID or creation time cannot be sealed.');
         }
 
         unset($row[self::OPENED]);
@@ -159,7 +161,7 @@ final class BookingData
                 throw new \InvalidArgumentException('A booking field must be text.');
             }
 
-            $row[$column] = self::PREFIX . base64_encode(CipherSuite::encrypt($this->key, (string) $value, self::data($uid, $column)));
+            $row[$column] = self::PREFIX . base64_encode(CipherSuite::encrypt($this->key, (string) $value, self::data($uid, $created, $column)));
         }
 
         return $row;
@@ -168,7 +170,7 @@ final class BookingData
     /**
      * The row with every personal field in clear text.
      *
-     * @param   array<string, mixed>  $row  A booking row with its `uid`.
+     * @param   array<string, mixed>  $row  A booking row with its `uid` and `created_utc`.
      *
      * @return  array<string, mixed>
      *
@@ -204,6 +206,7 @@ final class BookingData
         }
 
         $uid = (string) ($row['uid'] ?? '');
+        $created = (string) ($row['created_utc'] ?? '');
 
         foreach (self::COLUMNS as $column) {
             if (!\array_key_exists($column, $row) || $row[$column] === null) {
@@ -219,8 +222,8 @@ final class BookingData
                 continue;
             }
 
-            $raw = $uid === '' ? false : base64_decode(substr($row[$column], \strlen(self::PREFIX)), true);
-            $plain = $raw === false ? null : CipherSuite::decrypt($this->key, $raw, self::data($uid, $column));
+            $raw = $uid === '' || $created === '' ? false : base64_decode(substr($row[$column], \strlen(self::PREFIX)), true);
+            $plain = $raw === false ? null : CipherSuite::decrypt($this->key, $raw, self::data($uid, $created, $column));
 
             if ($plain === null) {
                 $failed[] = $column;
@@ -249,8 +252,8 @@ final class BookingData
         return $row;
     }
 
-    private static function data(string $uid, string $column): string
+    private static function data(string $uid, string $created, string $column): string
     {
-        return CipherSuite::associatedData('booking', $uid, $column);
+        return CipherSuite::associatedData('booking', $uid, $created, $column);
     }
 }

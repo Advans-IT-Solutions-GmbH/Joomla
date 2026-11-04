@@ -18,7 +18,7 @@ final class BookingDataTest extends TestCase
 {
     private function row(): array
     {
-        return ['id' => 7, 'uid' => str_repeat('ab', 32), 'state' => 1, 'invitee_name' => 'Anna Muster', 'invitee_first_name' => 'Anna',
+        return ['id' => 7, 'uid' => str_repeat('ab', 32), 'created_utc' => '2026-11-04 09:00:00', 'state' => 1, 'invitee_name' => 'Anna Muster', 'invitee_first_name' => 'Anna',
             'invitee_last_name' => 'Muster', 'invitee_email' => 'anna@example.test', 'invitee_phone' => '+41 00 000 00 00',
             'guest_emails' => "one@example.test\ntwo@example.test", 'custom_fields' => '{"3":"Ja"}', 'cancel_reason' => null,
             'conference_url' => 'https://meet.example.test/room'];
@@ -33,7 +33,7 @@ final class BookingDataTest extends TestCase
     {
         $data = $this->data();
         $row = $this->row();
-        $sealed = $data->seal($row['uid'], $row);
+        $sealed = $data->seal($row['uid'], $row['created_utc'], $row);
 
         foreach (BookingData::COLUMNS as $column) {
             if ($row[$column] === null) {
@@ -51,9 +51,9 @@ final class BookingDataTest extends TestCase
         $opened = $data->open($sealed);
         self::assertSame($row + [BookingData::OPENED => true], $opened);
         self::assertSame($opened, $data->open($opened), 'Opening an opened row changes nothing');
-        self::assertArrayNotHasKey(BookingData::OPENED, $data->seal($row['uid'], $opened), 'The marker is never written');
-        self::assertNotSame($sealed['invitee_email'], $data->seal($row['uid'], $row)['invitee_email'], 'A fresh nonce every time');
-        self::assertSame('["a",1]', $data->open($data->seal($row['uid'], ['uid' => $row['uid'], 'custom_fields' => ['a', 1]]))['custom_fields']);
+        self::assertArrayNotHasKey(BookingData::OPENED, $data->seal($row['uid'], $row['created_utc'], $opened), 'The marker is never written');
+        self::assertNotSame($sealed['invitee_email'], $data->seal($row['uid'], $row['created_utc'], $row)['invitee_email'], 'A fresh nonce every time');
+        self::assertSame('["a",1]', $data->open($data->seal($row['uid'], $row['created_utc'], ['uid' => $row['uid'], 'created_utc' => $row['created_utc'], 'custom_fields' => ['a', 1]]))['custom_fields']);
     }
 
     public function testInputThatLooksSealedIsEncryptedLikeAnyOther(): void
@@ -61,7 +61,7 @@ final class BookingDataTest extends TestCase
         $data = $this->data();
         $uid = str_repeat('ab', 32);
         $lookalike = 'v1:' . str_repeat('A', 60);
-        $sealed = $data->seal($uid, ['uid' => $uid, 'invitee_name' => $lookalike]);
+        $sealed = $data->seal($uid, '2026-11-04 09:00:00', ['uid' => $uid, 'created_utc' => '2026-11-04 09:00:00', 'invitee_name' => $lookalike]);
 
         self::assertNotSame($lookalike, $sealed['invitee_name']);
         self::assertSame($lookalike, $data->open($sealed)['invitee_name']);
@@ -71,7 +71,7 @@ final class BookingDataTest extends TestCase
     {
         $data = $this->data();
         $row = $this->row();
-        $sealed = $data->seal($row['uid'], $row);
+        $sealed = $data->seal($row['uid'], $row['created_utc'], $row);
 
         $moved = $sealed;
         $moved['uid'] = str_repeat('cd', 32);
@@ -80,6 +80,12 @@ final class BookingDataTest extends TestCase
         self::assertSame(['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'guest_emails',
             'custom_fields', 'conference_url'], $failed);
         self::assertNull($opened['invitee_email']);
+
+        // UID and personal fields copied into another row with another creation time.
+        $copied = $sealed;
+        $copied['created_utc'] = '2026-11-05 09:00:00';
+        $data->openLenient($copied, $failed);
+        self::assertCount(8, $failed);
 
         $swapped = $sealed;
         $swapped['invitee_email'] = $sealed['invitee_name'];
@@ -125,6 +131,6 @@ final class BookingDataTest extends TestCase
     public function testNoUidNoSeal(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->data()->seal('', $this->row());
+        $this->data()->seal('', '2026-11-04 09:00:00', $this->row());
     }
 }
