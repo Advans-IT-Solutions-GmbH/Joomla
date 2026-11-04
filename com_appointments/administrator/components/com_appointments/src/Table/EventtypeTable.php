@@ -119,7 +119,7 @@ class EventtypeTable extends Table
             }
         }
 
-        if (!in_array($this->info_layout, ['logo', 'person'], true)) {
+        if (!in_array($this->info_layout, ['logo', 'person', 'event'], true)) {
             $this->setError(Text::_('COM_APPOINTMENTS_EVENTTYPE_ERROR_DISPLAY'));
 
             return false;

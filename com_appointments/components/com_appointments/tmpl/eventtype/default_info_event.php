@@ -13,9 +13,10 @@ use Joomla\Filter\InputFilter;
 defined('_JEXEC') or die;
 
 /*
- * The event details of the information column, shared by both column layouts: the title,
- * duration, location type, description and location text. On the details step it adds the
- * chosen date, time and time zone.
+ * The event details of the information column: the title, duration, location type,
+ * description and location text. On the details step it adds the chosen date, time and time
+ * zone. The layouts "logo" and "person" show it below their image; the layout "event"
+ * ("Appointment only") shows it alone, so it carries the page heading itself.
  */
 $icon = static fn (string $paths): string => '<svg class="com-appointments-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' . $paths . '</svg>';
 $locationTypes = [

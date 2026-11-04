@@ -81,7 +81,15 @@ try {
     $http->submit('eventtype', $event);
     $check($db->query("SELECT info_layout FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_layout'] === 'person',
         'An unknown layout of the information column is refused');
+    $event['info_layout'] = 'event';
+    $http->submit('eventtype', $event);
+    $saved = $db->query("SELECT info_layout, info_photo FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc();
+    $check($saved['info_layout'] === 'event' && $saved['info_photo'] === 'images/joomla_black.png',
+        'The layout without logo and photo is saved and keeps the stored photo');
     $event['info_layout'] = 'person';
+    $http->submit('eventtype', $event);
+    $check($db->query("SELECT info_layout FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['info_layout'] === 'person',
+        'The person layout can be chosen again');
     $event['duration_minutes'] = 0;
     $http->submit('eventtype', $event);
     $check((int) $db->query("SELECT duration_minutes FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc()['duration_minutes'] === 20, 'Invalid duration does not change event type');

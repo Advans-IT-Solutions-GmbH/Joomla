@@ -38,6 +38,7 @@
         <field name="info_layout" type="list" label="COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT" description="COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_DESC" default="logo" filter="cmd" validate="options">
             <option value="logo">COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_LOGO</option>
             <option value="person">COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_PERSON</option>
+            <option value="event">COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_EVENT</option>
         </field>
         <field name="info_logo" type="media" types="images" preview="tooltip" label="COM_APPOINTMENTS_EVENTTYPE_INFO_LOGO" description="COM_APPOINTMENTS_EVENTTYPE_INFO_LOGO_DESC" filter="string" showon="info_layout:logo" />
         <field name="info_photo" type="media" types="images" preview="tooltip" label="COM_APPOINTMENTS_EVENTTYPE_INFO_PHOTO" description="COM_APPOINTMENTS_EVENTTYPE_INFO_PHOTO_DESC" filter="string" showon="info_layout:person" />

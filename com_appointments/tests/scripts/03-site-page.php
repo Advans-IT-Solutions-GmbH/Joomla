@@ -345,6 +345,24 @@ class SitePageTest
                     && $xpath->query('//img[contains(@class, "com-appointments-logo")]')->length === 0;
             });
 
+            // The "Appointment only" layout: the event details with their heading, no logo and
+            // no photo, although both are still stored.
+            $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_layout='event' WHERE id={$event}");
+            $page = $this->request($base . '&start=' . urlencode($chosen));
+            $xpath = $this->dom($page['body']);
+            $this->test('steps: the event layout shows the event details alone, without logo or photo', function () use ($page, $xpath) {
+                $info = '//header[contains(@class, "com-appointments-info")]';
+
+                return $page['code'] === 200
+                    && $xpath->query('//*[contains(@class, "com-appointments-layout")][contains(@class, "com-appointments-info-event")]')->length === 1
+                    && $xpath->query($info . '//img')->length === 0
+                    && $xpath->query($info . '//*[contains(@class, "com-appointments-info-media")]')->length === 0
+                    && $xpath->query($info . '//h1[contains(@class, "com-appointments-heading")]')->length === 1
+                    && $xpath->query($info . '//li[contains(@class, "com-appointments-duration")]')->length === 1
+                    && $xpath->query($info . '//*[contains(@class, "com-appointments-selected-time")]')->length === 1
+                    && $xpath->query($info . '//a[contains(@class, "com-appointments-back")]')->length === 1;
+            });
+
             // An unknown layout value falls back to the company-logo layout; an empty logo shows no image.
             $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET info_layout='bogus', info_logo='' WHERE id={$event}");
             $page = $this->request($base . '&month=' . $month);

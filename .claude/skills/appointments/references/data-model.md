@@ -60,7 +60,7 @@ The bookable thing.
 | `requires_approval` | `TINYINT(1) NOT NULL DEFAULT 0` | |
 | `retention_days` | `SMALLINT UNSIGNED NULL` | null = use the component default |
 | `colour` | `VARCHAR(7)` | |
-| `info_layout` | `VARCHAR(16)` | Information column of the booking page: `logo` (default, also after the 1.3.0 migration) or `person`; any other value renders as `logo` |
+| `info_layout` | `VARCHAR(16)` | Information column of the booking page: `logo` (default, also after the 1.3.0 migration), `person` or `event` (event details only, no logo and no photo); any other value renders as `logo` |
 | `info_logo`, `info_photo` | `VARCHAR(2048)` | Media-field values of the logo and the person's photo; empty shows no image |
 | `info_name`, `info_role` | `VARCHAR(255)` | Person layout: name and optional role, escaped on output |
 | `access` | `INT UNSIGNED NOT NULL` | Joomla view level |

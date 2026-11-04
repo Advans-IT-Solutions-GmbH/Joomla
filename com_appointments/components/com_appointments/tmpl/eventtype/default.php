@@ -20,8 +20,9 @@ defined('_JEXEC') or die;
  *
  * Beside the step stands the information column of the event type, in the layout chosen in
  * its "Display" settings: default_info_logo.php or default_info_person.php, both with the
- * event details of default_info_event.php. Each file can be overridden on its own through a
- * template override (html/com_appointments/eventtype/).
+ * event details of default_info_event.php, or default_info_event.php alone ("Appointment
+ * only", for a site whose header already shows the logo). Each file can be overridden on its
+ * own through a template override (html/com_appointments/eventtype/).
  *
  * Every step is a normal address (month, day, start) and every change a link or a form, so
  * the page works without JavaScript and keeps its step on reload and with the back button.

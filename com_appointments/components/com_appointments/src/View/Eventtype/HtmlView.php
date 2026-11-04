@@ -165,7 +165,7 @@ class HtmlView extends BaseHtmlView
 
         $this->step = $this->selected !== null ? 'details' : 'time';
         $layout = (string) ($this->item->info_layout ?? '');
-        $this->infoLayout = in_array($layout, ['logo', 'person'], true) ? $layout : 'logo';
+        $this->infoLayout = in_array($layout, ['logo', 'person', 'event'], true) ? $layout : 'logo';
 
         // Iterate Gregorian dates independently of time-zone gaps.
         $calendar = new \DateTimeImmutable($date . '-01', new \DateTimeZone('UTC'));
