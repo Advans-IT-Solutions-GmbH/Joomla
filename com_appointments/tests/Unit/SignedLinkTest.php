@@ -103,13 +103,23 @@ final class SignedLinkTest extends TestCase
     {
         $links = new SignedLink(new KeyProvider('secret'));
 
+        // Each guard on its own: the signer refuses the input instead of signing it, so a removed
+        // guard makes this test fail. A malformed value therefore never verifies either.
         foreach ([[0, 'guest@example.test', '2026-10-14 10:00:00'], [1, '  ', '2026-10-14 10:00:00'],
-            [1, "guest@example.test\nother@example.test", '2026-10-14 10:00:00'], [1, 'guest@example.test', 'tomorrow']] as $arguments) {
+            [1, "guest@example.test\nother@example.test", '2026-10-14 10:00:00'], [1, "\xff", '2026-10-14 10:00:00'],
+            [1, 'guest@example.test', 'tomorrow']] as $arguments) {
+            try {
+                $links->signGuest(...$arguments);
+                self::fail('Signed malformed input: ' . json_encode($arguments, JSON_INVALID_UTF8_SUBSTITUTE));
+            } catch (\InvalidArgumentException $exception) {
+                self::assertStringStartsWith('Invalid', $exception->getMessage());
+            }
+
             self::assertFalse($links->verifyGuest(...[...$arguments, str_repeat('0', 64)]));
         }
 
-        $this->expectException(\InvalidArgumentException::class);
-        $links->signGuest(1, "\xff", '2026-10-14 10:00:00');
+        // The valid counterpart of every case is signed, so the refusals above come from the guards.
+        self::assertSame(64, strlen($links->signGuest(1, 'guest@example.test', '2026-10-14 10:00:00')));
     }
 
     public function testSignerRefusesInvalidAction(): void
