@@ -257,7 +257,7 @@ final class InvitationService implements InvitationServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
         }
 
-        if ($user->block || self::backendAccount($userId)) {
+        if ($user->block || self::backendAccount($userId, true)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ELIGIBLE', 409);
         }
 
@@ -584,7 +584,7 @@ final class InvitationService implements InvitationServiceInterface
         $userId = (int) $row->user_id;
         $user = GrantService::user($userId);
 
-        if ($user === null || $user->block || self::backendAccount($userId)
+        if ($user === null || $user->block || self::backendAccount($userId, true)
             || $this->services->grants()->audienceOf($userId) === GrantService::AUDIENCE_NONE
             || self::hasSignedIn($user)
             || !hash_equals((string) $row->email_hash, self::emailHash($this->key(), (string) $user->email))) {
@@ -667,9 +667,16 @@ final class InvitationService implements InvitationServiceInterface
 
     /**
      * Whether the account may sign in to the administrator (or is a Super User).
+     * With $fresh the permission caches of this request are dropped first, so a
+     * group change made by an administrator a moment ago counts (Joomla keeps
+     * groups and rules per request).
      */
-    private static function backendAccount(int $userId): bool
+    private static function backendAccount(int $userId, bool $fresh = false): bool
     {
+        if ($fresh) {
+            Access::clearStatics();
+        }
+
         return Access::check($userId, 'core.admin') === true || Access::check($userId, 'core.login.admin') === true;
     }
 
@@ -691,7 +698,7 @@ final class InvitationService implements InvitationServiceInterface
         // Team accounts and accounts with administrator sign-in: core.admin
         // only, as for sending their link. External accounts: also the right to
         // share externally (the recipients of the revoke mail).
-        if ($admin || self::backendAccount($userId)) {
+        if ($admin || self::backendAccount($userId, true)) {
             return $admin;
         }
 
