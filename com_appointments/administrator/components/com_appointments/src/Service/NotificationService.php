@@ -70,8 +70,11 @@ final class NotificationService
         }
         $event = $this->event((int) $booking['eventtype_id']);
         $hostParams = json_decode((string) $event['host_params'], true) ?: [];
-        $hostLanguage = (string) ($hostParams['language'] ?? 'en-GB');
-        $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage : 'en-GB';
+        // The host's profile language, else the site's default language, else English.
+        $siteLanguage = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        $hostLanguage = (string) (($hostParams['language'] ?? '') !== '' ? $hostParams['language'] : $siteLanguage);
+        $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage
+            : (in_array($siteLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $siteLanguage : 'en-GB');
         $inviteeLanguage = (string) ($booking['invitee_language'] ?? 'en-GB');
         $recipients = [];
         // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
@@ -110,6 +113,9 @@ final class NotificationService
                     $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
                     $language = new Language($tag);
                     $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
+                    // «Label:» before a link on its own line, «Label :» in French.
+                    $labelFormat = $language->_('COM_APPOINTMENTS_MAIL_LINK_LABEL');
+                    $labelFormat = str_contains($labelFormat, '%s') ? $labelFormat : '%s:';
                     $timezone = $isHost ? (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'))
                         : (string) $booking['invitee_timezone'];
                     $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);
@@ -131,17 +137,17 @@ final class NotificationService
                     // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
                     // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
                     if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
-                        $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ":\n" . $recipientBooking['conference_url'];
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_JOIN')) . "\n" . $recipientBooking['conference_url'];
                     }
 
                     if ($canManage) {
-                        $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ":\n" . $links['reschedule_url']
-                            . "\n" . $language->_('COM_APPOINTMENTS_MAIL_CANCEL') . ":\n" . $links['cancel_url']
-                            . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ":\n" . $links['erase_url'];
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE')) . "\n" . $links['reschedule_url']
+                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_CANCEL')) . "\n" . $links['cancel_url']
+                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_DELETE')) . "\n" . $links['erase_url'];
                     }
 
                     if ($isGuest) {
-                        $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_GUEST_REMOVE') . ":\n" . $links['guest_remove_url'];
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_GUEST_REMOVE')) . "\n" . $links['guest_remove_url'];
                     }
 
                     $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();

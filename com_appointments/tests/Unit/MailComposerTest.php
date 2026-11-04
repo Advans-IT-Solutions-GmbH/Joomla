@@ -43,6 +43,16 @@ final class MailComposerTest extends TestCase
         self::assertSame("Private Invitee: Answer {host_email} / ä,;\nhttps://example.test/erase?signature=example", $mail['body']);
     }
 
+    public function testDetailLinesWithAnEmptyValueAreLeftOut(): void
+    {
+        $body = "Guten Tag,\nOrt: {location}\nTelefon: {invitee_phone}\nE-Mail: {invitee_email}\nHinweis: {location} folgt\n{conference_url}\nEnde";
+        $placeholders = ['{location}' => '', '{invitee_phone}' => ' ', '{invitee_email}' => 'a@example.test', '{conference_url}' => ''];
+
+        self::assertSame("Guten Tag,\nE-Mail: {invitee_email}\nHinweis: {location} folgt\n{conference_url}\nEnde",
+            MailComposer::withoutEmptyDetails($body, $placeholders));
+        self::assertSame("Ort: {unknown}\n", MailComposer::withoutEmptyDetails("Ort: {unknown}\n", $placeholders), 'An unknown token is kept');
+    }
+
     public function testAllBookingFixedAndCustomFieldsHavePlaceholders(): void
     {
         $composer = new MailComposer(new IcsWriter());
