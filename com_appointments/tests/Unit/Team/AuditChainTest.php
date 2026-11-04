@@ -10,6 +10,8 @@ use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use PHPUnit\Framework\TestCase;
 
+require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team/LockoutServiceInterface.php';
+require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team/LockoutService.php';
 require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team/AuditServiceInterface.php';
 require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team/AuditService.php';
 

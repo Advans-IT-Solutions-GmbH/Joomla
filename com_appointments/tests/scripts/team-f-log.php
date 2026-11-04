@@ -261,13 +261,13 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
         });
 
         $fresh();
-        $suite->test('Pruning a log that is entirely older than twelve months keeps its newest row and still verifies', static function () use ($run, $verify, $ids) {
+        $suite->test('Pruning a log that is entirely older than twelve months removes every expired row and still verifies', static function () use ($run, $verify, $ids) {
             $run('foreach ([AuditEvent::LOGIN_SUCCESS, AuditEvent::LOGIN_FAILURE, AuditEvent::DEVICE_RENAMED] as $e) { $services->audit()->log($e, ["actor_user_id" => 42]); } return true;', '-14 months');
             $deleted = $run('return $services->audit()->prune($now);');
             $after = $verify();
             $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]); return true;');
 
-            return $deleted === 2 && $after['intact'] === true && count($ids()) === 3 && $verify()['intact'] === true;
+            return $deleted === 3 && $after['intact'] === true && count($ids()) === 2 && $verify()['intact'] === true;
         });
 
         $suite->test('Every MAC failure is written, also many within a day', static function () use ($run, $db, $p) {

@@ -183,11 +183,8 @@ final class AuditService implements AuditServiceInterface
 
             $firstYoung = $db->setQuery($this->query()->select('MIN(' . $db->quoteName('id') . ')')->from($table)
                 ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote($cutoff)))->loadResult();
-            // The newest row always stays, so the next row can link to it and
-            // the head's seal can be checked against it.
             $query = $this->query()->select('MAX(' . $db->quoteName('id') . ')')->from($table)
-                ->where($db->quoteName('id') . ' > ' . $prunedThrough)
-                ->where($db->quoteName('id') . ' < ' . (int) $head['last_id']);
+                ->where($db->quoteName('id') . ' > ' . $prunedThrough);
 
             if ($firstYoung !== null) {
                 $query->where($db->quoteName('id') . ' < ' . (int) $firstYoung);
@@ -211,11 +208,13 @@ final class AuditService implements AuditServiceInterface
                 ->set($db->quoteName('pruned_through_hash') . ' = ' . $this->binary($anchor))
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($this->time()))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->execute();
+            // When every row was expired, the newest went too: the prune row
+            // links to the anchor of the chain just verified.
             $this->append(AuditEvent::LOG_PRUNED, ['details' => [
                 'through_id' => $through,
                 'rows'       => $deleted,
                 'anchor'     => bin2hex($anchor),
-            ]]);
+            ]], $through === (int) $head['last_id'] ? $anchor : null);
             $lastId = (int) $db->setQuery($this->query()->select($db->quoteName('last_id'))
                 ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
             $db->transactionCommit(true);
@@ -488,7 +487,7 @@ final class AuditService implements AuditServiceInterface
      *
      * @param   array<string, mixed>  $context
      */
-    private function append(string $event, array $context): void
+    private function append(string $event, array $context, ?string $knownPredecessor = null): void
     {
         $db = $this->db();
         $key = $this->key();
@@ -524,7 +523,9 @@ final class AuditService implements AuditServiceInterface
                 return;
             }
 
-            $row['prev_hash'] = $this->predecessorLink($head, $key);
+            // Only prune() passes the link itself: it just deleted the newest
+            // row of an intact chain and knows its anchor.
+            $row['prev_hash'] = $knownPredecessor ?? $this->predecessorLink($head, $key);
             $rowHash = self::rowHash($key, $row);
             $columns = array_merge(self::HASHED_COLUMNS, ['row_hash']);
             $values = [];

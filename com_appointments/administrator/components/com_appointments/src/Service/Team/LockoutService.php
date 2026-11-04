@@ -271,14 +271,14 @@ final class LockoutService implements LockoutServiceInterface
             return;
         }
 
-        // A reservation (of this request, or found without the request's
-        // memory): a real lock is exactly last failure + delay(failures).
-        $db->setQuery($this->query()->update($table)
-            ->set($db->quoteName('locked_until_utc') . ' = NULL')
-            ->where($where)
-            ->where($db->quoteName('locked_until_utc') . ' IS NOT NULL')
-            ->where($db->quoteName('locked_until_utc') . ' <> DATE_ADD(' . $db->quoteName('last_failure_utc')
-                . ', INTERVAL ' . self::delaySql($db->quoteName('failures')) . ' MINUTE)'))->execute();
+        // Only the reservation this request took, and only while it is still
+        // the stored one: a later request's reservation stays untouched.
+        if ($taken !== null) {
+            $db->setQuery($this->query()->update($table)
+                ->set($db->quoteName('locked_until_utc') . ' = NULL')
+                ->where($where)
+                ->where($db->quoteName('locked_until_utc') . ' = ' . $db->quote($taken)))->execute();
+        }
     }
 
     public function purge(\DateTimeImmutable $nowUtc): int

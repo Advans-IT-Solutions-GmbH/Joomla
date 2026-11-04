@@ -77,7 +77,13 @@ final class TeamPrivacy
         try {
             $services = TeamServices::fromApplication();
 
-            return $services->enabled() ? new self($services, $app) : null;
+            if ($services->enabled()) {
+                return new self($services, $app);
+            }
+
+            // Switched on, but the cryptography is missing: the data exists and
+            // cannot be read, so the request is incomplete, not empty.
+            return (int) $services->params()->get('teamcal_enabled', 0) === 1 ? new self(null, $app) : null;
         } catch (\Throwable $e) {
             Log::add('Team calendars: the privacy request could not reach the internet calendars (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
 
@@ -121,12 +127,17 @@ final class TeamPrivacy
     private const KEPT = ['BEGIN', 'END', 'VERSION', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE',
         'RECURRENCE-ID', 'STATUS', 'TRANSP', 'TZID', 'TZOFFSETFROM', 'TZOFFSETTO', 'TZNAME', 'SUMMARY', 'LOCATION'];
 
+    /** The only parameters kept: time zone and value type of times, and the requester's own participation. */
+    private const KEPT_PARAMETERS = ['TZID', 'VALUE', 'RANGE', 'PARTSTAT', 'ROLE', 'CUTYPE', 'RSVP'];
+
     /**
-     * The requester's part of one entry, as a whitelist: the times, the title
-     * and the place (other addresses in them replaced), and the requester's own
-     * ATTENDEE or ORGANIZER line, compared exactly by its address. Everything
-     * else (description, notes, contacts, attachments, other attendees, UID,
-     * extensions) stays out, because it may be about other people.
+     * The requester's part of one entry, as a whitelist of properties and of
+     * their parameters: the times, the title and the place (other addresses in
+     * them replaced), and the requester's own ATTENDEE or ORGANIZER line,
+     * matched exactly by its decoded mailto address. Everything else
+     * (description, notes, contacts, attachments, other attendees, UID,
+     * extensions, every other parameter such as SENT-BY or X-*) stays out,
+     * because it may be about other people.
      */
     public static function redact(string $ics, string $email, string $otherPerson = 'other person'): string
     {
@@ -135,31 +146,57 @@ final class TeamPrivacy
         $lines = [];
 
         foreach (preg_split('/\r?\n/', $unfolded) ?: [] as $line) {
-            $name = strtoupper((string) preg_replace('/[;:].*$/s', '', $line));
+            // NAME *(;PARAM=value) : value, colons and semicolons inside quotes do not count.
+            if (preg_match('/^([A-Za-z0-9-]+)((?:;[A-Za-z0-9-]+=(?:"[^"]*"|[^;:"]*)(?:,(?:"[^"]*"|[^;:",]*))*)*):(.*)$/s', $line, $m) !== 1) {
+                continue;
+            }
+
+            $name = strtoupper($m[1]);
+            $value = $m[3];
+            preg_match_all('/;([A-Za-z0-9-]+)=((?:"[^"]*"|[^;:"]*)(?:,(?:"[^"]*"|[^;:",]*))*)/', $m[2], $params, PREG_SET_ORDER);
 
             if ($name === 'ATTENDEE' || $name === 'ORGANIZER') {
-                // The value follows the first colon outside quoted parameter values.
-                $value = preg_match('/^(?:[^:"]|"[^"]*")*:(.*)$/s', $line, $m) === 1 ? $m[1] : '';
-                $address = mb_strtolower(trim((string) preg_replace('/^mailto:/i', '', trim($value))), 'UTF-8');
-                if ($address !== $email) {
+                if (self::address($value) !== $email) {
                     $lines[] = $name . ':' . $otherPerson;
 
                     continue;
                 }
-
-                // The requester's own line: other addresses in its parameters
-                // (SENT-BY, DELEGATED-FROM/-TO, MEMBER) are replaced below.
-            }
-
-            if ($name !== 'ATTENDEE' && $name !== 'ORGANIZER' && !\in_array($name, self::KEPT, true)) {
+            } elseif (!\in_array($name, self::KEPT, true)) {
                 continue;
             }
 
-            $lines[] = preg_replace_callback('/[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}.\-]+\.\p{L}{2,}/u',
-                static fn (array $match): string => mb_strtolower($match[0], 'UTF-8') === $email ? $match[0] : '[redacted]', $line) ?? '';
+            $kept = '';
+
+            foreach ($params as [, $param, $paramValue]) {
+                if (\in_array(strtoupper($param), self::KEPT_PARAMETERS, true)) {
+                    $kept .= ';' . strtoupper($param) . '=' . $paramValue;
+                }
+            }
+
+            $value = preg_replace_callback('/[\p{L}\p{N}._%+\-]+(?:@|%40)[\p{L}\p{N}.\-]+\.\p{L}{2,}/iu',
+                static fn (array $match): string => self::address($match[0]) === $email ? $match[0] : '[redacted]', $value) ?? '';
+            $lines[] = $name . $kept . ':' . $value;
         }
 
         return implode("\r\n", $lines);
+    }
+
+    /**
+     * Calendar titles for a message, escaped: messages are rendered as HTML.
+     *
+     * @param   array<int, string>  $titles
+     */
+    private static function titles(array $titles): string
+    {
+        return implode(', ', array_map(static fn (string $title): string => htmlspecialchars($title, ENT_QUOTES, 'UTF-8'), $titles));
+    }
+
+    /**
+     * An address as compared: mailto: removed, percent-decoded, trimmed, lower case.
+     */
+    private static function address(string $value): string
+    {
+        return mb_strtolower(trim(rawurldecode((string) preg_replace('/^\s*mailto:/i', '', $value))), 'UTF-8');
     }
 
     /**
@@ -200,7 +237,7 @@ final class TeamPrivacy
                 // The export goes to the requester: a count, never the titles of
                 // team calendars. The administrator sees the titles.
                 $domains[] = $this->unsearchedDomain(\count($search['unsearched']));
-                $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_UNSEARCHED', implode(', ', $search['unsearched'])), 'warning');
+                $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_UNSEARCHED', self::titles($search['unsearched'])), 'warning');
             }
         } catch (\Throwable $e) {
             Log::add('Team calendars: the privacy export of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -290,7 +327,7 @@ final class TeamPrivacy
         }
 
         if ($unsearched !== []) {
-            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_UNSEARCHED', implode(', ', $unsearched)), 'warning');
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_UNSEARCHED', self::titles($unsearched)), 'warning');
         }
 
         if ($failed > 0) {

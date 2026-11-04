@@ -377,8 +377,29 @@ final class CleanupService implements CleanupServiceInterface
             return $session->isActive() ? TeamStates::DEVICE_ACTIVE : TeamStates::DEVICE_CLEANUP_EMPTY;
         }
 
+        // Phases that ran out while the Scheduler did not run move on here, on
+        // the device's own request: a device can never stay usable because
+        // nobody advanced it. The empty phase becomes hidden (in the view), a
+        // timed-out hidden phase is revoked at once.
         if ($state === TeamStates::DEVICE_CLEANUP_EMPTY && $this->timedOut($device)) {
-            return TeamStates::DEVICE_CLEANUP_HIDDEN;
+            $state = TeamStates::DEVICE_CLEANUP_HIDDEN;
+            $phaseEnd = (new \DateTimeImmutable((string) $device['cleanup_started_utc'], new \DateTimeZone('UTC')))
+                ->modify('+' . (2 * $this->days()) . ' days');
+
+            if ($phaseEnd > $this->services->now()) {
+                return $state;
+            }
+
+            $this->toHidden($session->deviceId, $session->userId, 'timeout');
+            $device = $this->device($session->deviceId) ?? $device;
+            // Its hidden phase ran out as well.
+            $device['cleanup_started_utc'] = $phaseEnd->modify('-' . $this->days() . ' days')->format('Y-m-d H:i:s');
+        }
+
+        if ($state === TeamStates::DEVICE_CLEANUP_HIDDEN && $this->timedOut($device)) {
+            $this->toRevoked($session->deviceId, $session->userId, 'timeout');
+
+            return TeamStates::DEVICE_REVOKED;
         }
 
         return \in_array($state, [TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN], true)

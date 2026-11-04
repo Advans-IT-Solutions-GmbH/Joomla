@@ -32,7 +32,7 @@ final class AuditPrivacyRedactTest extends TestCase
 
         self::assertStringContainsString('DTSTART:20261110T090000Z', $out);
         self::assertStringContainsString('LOCATION:Room 2', $out);
-        self::assertStringContainsString('ATTENDEE;CN="An Requester":mailto:an@example.test', $out);
+        self::assertStringContainsString('ATTENDEE:mailto:an@example.test', $out);
         self::assertStringContainsString('SUMMARY:Review with Joan ([redacted])', $out);
 
         foreach (['joan@', 'Joan Doe', 'boss@', 'Boss', 'salary', '079', 'secret', 'QUJD', 'UID', 'müller', 'Müller'] as $leak) {
@@ -58,6 +58,21 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertStringContainsString('mailto:an@example.test', $out);
         self::assertStringNotContainsString('boss@', $out);
         self::assertStringNotContainsString('joan@', $out);
+    }
+
+    public function testParametersAreWhitelistedAndEncodedAddressesRedacted(): void
+    {
+        $out = TeamPrivacy::redact("SUMMARY;X-PRIVATE-NOTE=\"Joan is ill\";LANGUAGE=de:Meeting\r\n"
+            . "DTSTART;TZID=Europe/Zurich:20261110T090000\r\n"
+            . "ATTENDEE;PARTSTAT=ACCEPTED;SENT-BY=\"mailto:boss%40example.test\":mailto:an%40example.test\r\n"
+            . "LOCATION:Call joan%40example.test\r\n", 'an@example.test');
+
+        self::assertStringContainsString('SUMMARY:Meeting', $out);
+        self::assertStringContainsString('DTSTART;TZID=Europe/Zurich:20261110T090000', $out);
+        self::assertStringContainsString('ATTENDEE;PARTSTAT=ACCEPTED:mailto:an%40example.test', $out);
+        self::assertStringContainsString('LOCATION:Call [redacted]', $out);
+        self::assertStringNotContainsString('ill', $out);
+        self::assertStringNotContainsString('boss', $out);
     }
 
     public function testFoldedLinesAreUnfoldedFirst(): void
