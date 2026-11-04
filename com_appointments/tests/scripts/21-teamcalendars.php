@@ -69,9 +69,24 @@ final class TeamSuite
      */
     public function isStub(string $class): bool
     {
-        $file = (new \ReflectionClass($class))->getFileName();
+        // The runner does not boot Joomla, so the class is found through the
+        // component's PSR-4 layout instead of reflection. A missing file counts
+        // as not delivered.
+        $map = [
+            'Advans\\Component\\Appointments\\Administrator\\' => '/var/www/html/administrator/components/com_appointments/src/',
+            'Advans\\Component\\Appointments\\Site\\'          => '/var/www/html/components/com_appointments/src/',
+        ];
+        $class = ltrim($class, '\\');
 
-        return $file !== false && str_contains((string) file_get_contents($file), 'COM_APPOINTMENTS_TEAM_NOT_READY');
+        foreach ($map as $prefix => $dir) {
+            if (str_starts_with($class, $prefix)) {
+                $file = $dir . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+
+                return !is_file($file) || str_contains((string) file_get_contents($file), 'COM_APPOINTMENTS_TEAM_NOT_READY');
+            }
+        }
+
+        throw new \InvalidArgumentException('isStub() knows only component classes.');
     }
 
     /**
