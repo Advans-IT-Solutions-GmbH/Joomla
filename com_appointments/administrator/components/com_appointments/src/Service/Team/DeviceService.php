@@ -163,11 +163,18 @@ final class DeviceService implements DeviceServiceInterface
             // A placeholder that can never verify, replaced in the same transaction once the id is known.
             $placeholder = random_bytes(32);
 
-            $db->transactionStart();
+            // A savepoint when a caller already runs a transaction, never an implicit commit of its work.
+            $db->transactionStart(true);
 
             try {
-                // The user key row is locked, so no revocation raises the epoch in between.
-                $epoch = $this->epochOf($userId, true);
+                // The user key row is locked, so no revocation raises the epoch in between, and
+                // only a verified, anchored epoch is ever signed into a device row.
+                $epoch = $this->trustedEpoch($this->lockUserKey($userId), $userId);
+
+                if ($epoch === null) {
+                    throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_ACCOUNT', 403);
+                }
+
                 $query = $this->query()
                     ->insert($db->quoteName('#__' . self::TABLE))
                     ->columns($db->quoteName([
@@ -211,9 +218,9 @@ final class DeviceService implements DeviceServiceInterface
                     'ip' => $this->ip(),
                 ]);
 
-                $db->transactionCommit();
+                $db->transactionCommit(true);
             } catch (\Throwable $e) {
-                $db->transactionRollback();
+                $db->transactionRollback(true);
 
                 throw $e;
             }
@@ -254,10 +261,8 @@ final class DeviceService implements DeviceServiceInterface
         $query = $this->query()
             ->select($db->quoteName(['d.id', 'd.user_id', 'd.secret_hash', 'd.kek_salt', 'd.usk_wrapped', 'd.user_key_version', 'd.state', 'd.row_mac']))
             ->select($db->quoteName(['u.username', 'u.block']))
-            ->select('COALESCE(' . $db->quoteName('k.device_epoch') . ', 0) AS ' . $db->quoteName('device_epoch'))
             ->from($db->quoteName('#__' . self::TABLE, 'd'))
             ->join('INNER', $db->quoteName('#__users', 'u'), $db->quoteName('u.id') . ' = ' . $db->quoteName('d.user_id'))
-            ->join('LEFT', $db->quoteName('#__appointments_user_keys', 'k'), $db->quoteName('k.user_id') . ' = ' . $db->quoteName('d.user_id'))
             ->where($db->quoteName('d.secret_hash') . ' = :hash')
             ->bind(':hash', $hash, ParameterType::LARGE_OBJECT);
         $row = $db->setQuery($query)->loadObject();
@@ -272,10 +277,12 @@ final class DeviceService implements DeviceServiceInterface
             return null;
         }
 
-        // A valid MAC proves the server wrote the row; the epoch against the anchor proves
-        // it is not an older row played back together with an older epoch (5.11).
-        $reason = !$this->verifies($row) ? 'device_auth'
-            : (!$this->services->anchor()->accepts(EpochAnchorInterface::KIND_USER, (int) $row->user_id, (int) $row->device_epoch) ? 'epoch' : '');
+        // A valid MAC proves the server wrote the row. The epoch comes from the verified user
+        // key row and must reach the anchor, so an older row played back together with an older
+        // epoch fails too (5.11). Without a trustworthy key row no device of the user signs in.
+        $epoch = $this->trustedEpoch($this->userKeyRow((int) $row->user_id), (int) $row->user_id);
+        $row->device_epoch = $epoch ?? 0;
+        $reason = $epoch === null ? 'user_key' : (!$this->verifies($row) ? 'device_auth' : '');
 
         if ($reason !== '') {
             $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
@@ -546,12 +553,15 @@ final class DeviceService implements DeviceServiceInterface
             return false;
         }
 
-        $db->transactionStart();
+        $db->transactionStart(true);
 
         try {
+            // Only a verified and anchored epoch is carried forward. Otherwise (no key row, a
+            // tampered key row, an epoch below the anchor) the target device is changed and left
+            // with its old MAC, so it is dead, and nothing else is signed: fail closed.
             $keyRow = $this->lockUserKey($owner);
-            $old = $keyRow !== null ? (int) $keyRow['device_epoch'] : 0;
-            $new = $keyRow !== null ? $old + 1 : 0;
+            $old = $this->trustedEpoch($keyRow, $owner);
+            $new = $old !== null ? $old + 1 : null;
             $revoked = TeamStates::DEVICE_REVOKED;
             $query = $this->query()
                 ->select($db->quoteName(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state', 'row_mac']))
@@ -565,19 +575,25 @@ final class DeviceService implements DeviceServiceInterface
             $target = $rows[$deviceId] ?? null;
 
             if ($target === null || (int) $target['state'] !== $fromState) {
-                $db->transactionRollback();
+                $db->transactionRollback(true);
 
                 return false;
             }
 
-            if ($keyRow !== null) {
+            if ($new !== null) {
                 $this->raiseEpoch($keyRow, $new);
+            } else {
+                $rows = [$deviceId => $target];
+                $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
+                    'subject_user_id' => $owner,
+                    'details' => ['table' => 'appointments_user_keys', 'reason' => 'device_epoch'],
+                ]);
             }
 
             foreach ($rows as $id => $row) {
-                $row['device_epoch'] = $old;
-                $intact = $this->verifies((object) $row);
-                $row['device_epoch'] = $new;
+                $row['device_epoch'] = $old ?? 0;
+                $intact = $old !== null && $this->verifies((object) $row);
+                $row['device_epoch'] = $new ?? 0;
                 $update = $this->query()->update($db->quoteName('#__' . self::TABLE))->where($db->quoteName('id') . ' = ' . (int) $id);
 
                 if ((int) $id === $deviceId) {
@@ -605,20 +621,15 @@ final class DeviceService implements DeviceServiceInterface
                 $db->setQuery($update)->execute();
             }
 
-            $db->transactionCommit();
+            $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback();
+            $db->transactionRollback(true);
 
             throw $e;
         }
 
-        if ($keyRow !== null) {
-            try {
-                $this->services->anchor()->record(EpochAnchorInterface::KIND_USER, $owner, $new);
-            } catch (\Throwable $e) {
-                // The change is committed; without the anchor only the rollback protection is weaker.
-                Log::add('Internet calendar device epoch not anchored: user ' . $owner, Log::WARNING, 'com_appointments');
-            }
+        if ($new !== null) {
+            $this->anchorEpoch($owner, $new);
         }
 
         return true;
@@ -642,60 +653,108 @@ final class DeviceService implements DeviceServiceInterface
     }
 
     /**
-     * The user's `device_epoch`, 0 without a key row. With $lock the row stays locked
-     * until the end of the transaction.
+     * The user key row without a lock, for a read-only check.
+     *
+     * @return  array<string, mixed>|null
      */
-    private function epochOf(int $userId, bool $lock): int
+    private function userKeyRow(int $userId): ?array
     {
-        if ($lock) {
-            $row = $this->lockUserKey($userId);
-
-            return $row !== null ? (int) $row['device_epoch'] : 0;
-        }
-
         $db = $this->services->db();
         $query = $this->query()
-            ->select($db->quoteName('device_epoch'))
+            ->select('*')
             ->from($db->quoteName('#__appointments_user_keys'))
             ->where($db->quoteName('user_id') . ' = :user')
             ->bind(':user', $userId, ParameterType::INTEGER);
 
-        return (int) $db->setQuery($query)->loadResult();
+        return $db->setQuery($query)->loadAssoc() ?: null;
     }
 
     /**
-     * Raise the epoch of a locked user key row and rewrite its MAC with the field list
-     * of the key service (work package B), only when the old MAC verified.
+     * The user's `device_epoch` when it can be trusted: the key row exists, its MAC
+     * (field list of the key service, which must cover the epoch) verifies, and the
+     * epoch reaches the anchor. Null otherwise. A later epoch than the anchored one is
+     * anchored on the way, so a failed record() catches up with the next request.
+     *
+     * @param   array<string, mixed>|null  $keyRow
+     */
+    private function trustedEpoch(?array $keyRow, int $userId): ?int
+    {
+        if ($keyRow === null) {
+            return null;
+        }
+
+        $mac = (string) ($keyRow['row_mac'] ?? '');
+
+        if (\strlen($mac) !== 32 || !$this->services->keys()->verifyRowMac('user_keys', self::userKeyFields($keyRow), $mac)) {
+            return null;
+        }
+
+        $epoch = (int) $keyRow['device_epoch'];
+        $anchor = $this->services->anchor();
+
+        if (!$anchor->accepts(EpochAnchorInterface::KIND_USER, $userId, $epoch)) {
+            return null;
+        }
+
+        if ($anchor->minimum(EpochAnchorInterface::KIND_USER, $userId) < $epoch) {
+            $this->anchorEpoch($userId, $epoch);
+        }
+
+        return $epoch;
+    }
+
+    /**
+     * The MAC fields of a user key row as the key service (work package B) lists them.
+     * The list must contain `device_epoch` (5.11), otherwise nothing is trusted.
+     *
+     * @param   array<string, mixed>  $keyRow
+     *
+     * @return  array<string, mixed>
+     */
+    private static function userKeyFields(array $keyRow): array
+    {
+        $names = method_exists(KeyService::class, 'macFields') ? KeyService::macFields('user_keys') : [];
+
+        if (!\in_array('device_epoch', $names, true)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        }
+
+        $fields = [];
+
+        foreach ($names as $name) {
+            $fields[$name] = $keyRow[$name] ?? null;
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Raise the epoch of a locked, verified user key row and rewrite its MAC.
      *
      * @param   array<string, mixed>  $keyRow
      */
     private function raiseEpoch(array $keyRow, int $epoch): void
     {
-        if (!method_exists(KeyService::class, 'macFields')) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-        }
-
-        $keys = $this->services->keys();
-        $fields = static function (array $row): array {
-            $out = [];
-
-            foreach (KeyService::macFields('user_keys') as $name) {
-                $out[$name] = $row[$name] ?? null;
-            }
-
-            return $out;
-        };
-        $intact = \strlen((string) $keyRow['row_mac']) === 32 && $keys->verifyRowMac('user_keys', $fields($keyRow), (string) $keyRow['row_mac']);
         $keyRow['device_epoch'] = $epoch;
         $db = $this->services->db();
         $db->setQuery(
             'UPDATE ' . $db->quoteName('#__appointments_user_keys')
             . ' SET ' . $db->quoteName('device_epoch') . ' = ' . $epoch
-            . ($intact ? ', ' . $db->quoteName('row_mac') . ' = ' . self::hex($keys->rowMac('user_keys', $fields($keyRow))) : '')
+            . ', ' . $db->quoteName('row_mac') . ' = ' . self::hex($this->services->keys()->rowMac('user_keys', self::userKeyFields($keyRow)))
             . ' WHERE ' . $db->quoteName('user_id') . ' = ' . (int) $keyRow['user_id']
         )->execute();
     }
 
+    private function anchorEpoch(int $userId, int $epoch): void
+    {
+        try {
+            $this->services->anchor()->record(EpochAnchorInterface::KIND_USER, $userId, $epoch);
+        } catch (\Throwable $e) {
+            // The change is committed; until the next successful record() the rollback
+            // protection lags one step behind. The system check reports an unwritable anchor.
+            Log::add('Internet calendar device epoch not anchored: user ' . $userId, Log::ERROR, 'com_appointments');
+        }
+    }
     private static function hex(string $bytes): string
     {
         return "X'" . bin2hex($bytes) . "'";

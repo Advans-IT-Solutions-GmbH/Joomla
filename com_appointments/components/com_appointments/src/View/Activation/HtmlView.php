@@ -17,6 +17,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Router\Route;
+use Joomla\CMS\Uri\Uri;
 
 defined('_JEXEC') or die;
 
@@ -64,17 +65,25 @@ class HtmlView extends BaseHtmlView
         MycalendarsView::privateHeaders();
         $services = TeamServices::fromApplication();
 
+        $token = (string) $app->getInput()->get->getString('token', '');
+
         if (!$services->enabled()) {
+            Uri::getInstance()->delVar('token');
+
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 
-        $token = (string) $app->getInput()->get->getString('token', '');
-
         if ($token !== '') {
+            // Whatever happens next, Joomla's 404 handling (e.g. «System - Redirect» collecting
+            // URLs) sees the address without the token.
+            Uri::getInstance()->delVar('token');
+
             if (!self::isToken($token) || self::inspect($services, $token) === null) {
                 throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
             }
 
+            // A new session id, so a session id planted beforehand cannot pick up the exchange.
+            $app->getSession()->fork(true);
             $app->getSession()->set(self::EXCHANGE, [
                 'token' => $token,
                 'nonce' => bin2hex(random_bytes(16)),
