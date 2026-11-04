@@ -503,9 +503,16 @@
 }
 
 /* One step at a time on a narrow column: the chosen day shows its times instead of the
-   calendar, with the way back; from 36rem both stand side by side and the way back goes. */
+   calendar, with the way back; from 36rem both stand side by side and the way back goes. The
+   times take the place of the calendar, which stays invisible in the same cell, so the card keeps
+   at least the height of the calendar when a day is chosen. */
+.com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-calendar,
+.com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-times {
+    grid-area: 1 / 1;
+}
+
 .com-appointments-picker-day .com-appointments-calendar {
-    display: none;
+    visibility: hidden;
 }
 
 .com-appointments-calendar {
@@ -1411,7 +1418,12 @@
     }
 
     .com-appointments-picker-day .com-appointments-calendar {
-        display: block;
+        visibility: visible;
+    }
+
+    .com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-calendar,
+    .com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-times {
+        grid-area: auto;
     }
 
     .com-appointments .com-appointments-times-back {
