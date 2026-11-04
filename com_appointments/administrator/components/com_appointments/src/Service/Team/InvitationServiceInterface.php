@@ -55,14 +55,16 @@ interface InvitationServiceInterface
 
     /**
      * Set the account's password (Joomla's password rules, at least the
-     * com_users minimum length, otherwise 12) and close the link. Mails the
+     * com_users minimum length, otherwise 12) and close the link. Only for an
+     * account that has never signed in (`lastvisitDate` empty), which also
+     * limits a link played back from an old database copy. Mails the
      * administrators with the revoke link. Logs `invitation.accepted`.
      *
      * @return  int  The user id.
      *
      * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  404 for an unusable token, 400 for a password the rules refuse.
      */
-    public function complete(string $token, string $password): int;
+    public function complete(string $token, #[\SensitiveParameter] string $password): int;
 
     /**
      * Before completion: close the link. After completion (the one-step revoke

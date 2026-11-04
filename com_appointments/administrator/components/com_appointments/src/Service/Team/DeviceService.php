@@ -33,7 +33,7 @@ final class DeviceService implements DeviceServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function authenticate(string $username, string $appPassword): ?DeviceSession
+    public function authenticate(string $username, #[\SensitiveParameter] string $appPassword): ?DeviceSession
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

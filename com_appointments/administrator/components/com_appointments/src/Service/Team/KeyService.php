@@ -35,7 +35,7 @@ final class KeyService implements KeyServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function rotateRecoveryKey(string $oldRecoverySecret, int $actorUserId): string
+    public function rotateRecoveryKey(#[\SensitiveParameter] string $oldRecoverySecret, int $actorUserId): string
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
@@ -55,17 +55,17 @@ final class KeyService implements KeyServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function createUserKey(int $userId, string $password): KeyContext
+    public function createUserKey(int $userId, #[\SensitiveParameter] string $password): KeyContext
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function unlockWithPassword(int $userId, string $password): ?KeyContext
+    public function unlockWithPassword(int $userId, #[\SensitiveParameter] string $password): ?KeyContext
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function rewrapForPassword(KeyContext $keys, string $newPassword): void
+    public function rewrapForPassword(KeyContext $keys, #[\SensitiveParameter] string $newPassword): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
@@ -75,12 +75,12 @@ final class KeyService implements KeyServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function wrapForDevice(KeyContext $keys, string $appPasswordRaw, string $kekSalt): string
+    public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function unlockWithDevice(int $userId, string $appPasswordRaw, string $kekSalt, string $uskWrapped): ?KeyContext
+    public function unlockWithDevice(int $userId, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt, string $uskWrapped): ?KeyContext
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
@@ -115,7 +115,7 @@ final class KeyService implements KeyServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function recoverKeyring(int $calendarId, string $recoverySecret): ?CalendarKeyring
+    public function recoverKeyring(int $calendarId, #[\SensitiveParameter] string $recoverySecret): ?CalendarKeyring
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

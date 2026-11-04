@@ -32,6 +32,16 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function lockForBooking(int $eventTypeId): void
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
+    public function removeOrphans(int $limit): int
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function onBookingSaved(array $booking): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

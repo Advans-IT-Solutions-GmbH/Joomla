@@ -44,7 +44,7 @@ interface DeviceServiceInterface
      * user's device, revoked device). The lock-out is the caller's job, before
      * and after. A device in clean-up is authenticated without keys.
      */
-    public function authenticate(string $username, string $appPassword): ?DeviceSession;
+    public function authenticate(string $username, #[\SensitiveParameter] string $appPassword): ?DeviceSession;
 
     /**
      * Record a synchronisation: `last_sync_utc` of the device and, when given,

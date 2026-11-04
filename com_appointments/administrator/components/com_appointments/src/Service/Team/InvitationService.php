@@ -36,7 +36,7 @@ final class InvitationService implements InvitationServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function complete(string $token, string $password): int
+    public function complete(string $token, #[\SensitiveParameter] string $password): int
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

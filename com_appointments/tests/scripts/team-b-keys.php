@@ -11,7 +11,7 @@ return static function (TeamSuite $suite): void {
     });
 
     $suite->test('User keys store only a public key and a wrapped secret', static function () use ($suite) {
-        return $suite->columns('appointments_user_keys') === ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'row_mac', 'created_utc', 'modified_utc'];
+        return $suite->columns('appointments_user_keys') === ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac', 'created_utc', 'modified_utc'];
     });
 
     $suite->test('libsodium is available on the test server', static function () {

@@ -51,7 +51,7 @@ interface KeyServiceInterface
      *
      * @return  string  The new printable recovery secret.
      */
-    public function rotateRecoveryKey(string $oldRecoverySecret, int $actorUserId): string;
+    public function rotateRecoveryKey(#[\SensitiveParameter] string $oldRecoverySecret, int $actorUserId): string;
 
     /**
      * @return  string|null  Fingerprint of the stored recovery public key, null when none exists.
@@ -70,17 +70,17 @@ interface KeyServiceInterface
      * First key pair of a user, wrapped with the password. Called at sign-in,
      * only after the second factor, only for users in a team or external group.
      */
-    public function createUserKey(int $userId, string $password): KeyContext;
+    public function createUserKey(int $userId, #[\SensitiveParameter] string $password): KeyContext;
 
     /**
      * @return  KeyContext|null  Null when the user has no key or the password does not unwrap it.
      */
-    public function unlockWithPassword(int $userId, string $password): ?KeyContext;
+    public function unlockWithPassword(int $userId, #[\SensitiveParameter] string $password): ?KeyContext;
 
     /**
      * Wrap the unlocked key for a new password (password change in an unlocked session).
      */
-    public function rewrapForPassword(KeyContext $keys, string $newPassword): void;
+    public function rewrapForPassword(KeyContext $keys, #[\SensitiveParameter] string $newPassword): void;
 
     /**
      * A password reset: a new key pair replaces the old one, every calendar key
@@ -92,9 +92,9 @@ interface KeyServiceInterface
     /**
      * @return  string  `usk_wrapped` for `#__appointments_devices`.
      */
-    public function wrapForDevice(KeyContext $keys, string $appPasswordRaw, string $kekSalt): string;
+    public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string;
 
-    public function unlockWithDevice(int $userId, string $appPasswordRaw, string $kekSalt, string $uskWrapped): ?KeyContext;
+    public function unlockWithDevice(int $userId, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt, string $uskWrapped): ?KeyContext;
 
     /**
      * Version 1 of a new calendar's keys: calendar key, sealing key pair, a wrap
@@ -138,7 +138,7 @@ interface KeyServiceInterface
     /**
      * Unseal the calendar's keys with the recovery secret (never stored).
      */
-    public function recoverKeyring(int $calendarId, string $recoverySecret): ?CalendarKeyring;
+    public function recoverKeyring(int $calendarId, #[\SensitiveParameter] string $recoverySecret): ?CalendarKeyring;
 
     /**
      * @return  string  `payload` for scheme 1 (calendar key).

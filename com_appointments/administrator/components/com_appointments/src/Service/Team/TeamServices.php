@@ -163,6 +163,12 @@ final class TeamServices
     }
 
     /** Work package B. */
+    public function anchor(): EpochAnchorInterface
+    {
+        return $this->instances[__FUNCTION__] ??= new EpochAnchor($this);
+    }
+
+    /** Work package B. */
     public function keySession(): KeySessionInterface
     {
         return $this->instances[__FUNCTION__] ??= new KeySession($this);

@@ -205,8 +205,11 @@ Formulas (normative):
 - Wraps of CK: `CipherSuite::seal(publicKey, CK)`; on open, the plaintext must be exactly 32 bytes.
 - Object (scheme 1): `encrypt(CK_v, ics, associatedData('object', calendarId, uri, v))`.
 - Object (scheme 2, booking flow): `seal(boxPublicKey_v, envelope)` where the envelope is
-  `"ACv1\n" . json_encode(['c' => calendarId, 'u' => uri]) . "\n" . ics`; on open the calendar id
-  and URI must match the row. Sealed objects are re-encrypted to scheme 1 by the next key holder's
+  `"ACv1\n" . json_encode(['c' => calendarId, 'u' => uri, 'm' => base64(hmac)]) . "\n" . ics` with
+  `hmac = hash_hmac('sha256', associatedData('envelope', calendarId, uri, ics), key(TEAM_ROW_MAC), true)`;
+  on open the calendar id and URI must match the row and `m` must verify, otherwise the object is
+  refused (anybody can seal to the public box key, only the server can produce `m`).
+  Sealed objects are re-encrypted to scheme 1 by the next key holder's
   request (`CalendarObjectStoreInterface::reencrypt()`), without changing ETag or sync token.
 - Time skeleton: `encrypt(key(TEAM_TIMING), skeleton, associatedData('timing', calendarId, uri))`.
 - Busy cache: `encrypt(key(TEAM_TIMING), json, associatedData('busy', calendarId, synctoken, window_start_utc, window_end_utc))`.
@@ -229,7 +232,8 @@ Formulas (normative):
   The key is kept in the Joomla session encrypted with a random 32-byte session key; the session key
   is in a separate cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, session lifetime, separate names
   for site and administrator). The key is released only after the session passed the second factor.
-  A sign-in without password (passkey, remember-me) leaves it locked: actions that need it answer 423
+  The key is unlocked only inside Joomla's own sign-in (`CMSApplication::login`); no page offers «enter
+  your password to unlock». A sign-in without password (passkey, remember-me) leaves it locked: actions that need it answer 423
   with «please sign in with your password».
 - **Nowhere else.** The booking flow, the Scheduler, the privacy plugin and the system check never
   hold a user or calendar key.
@@ -285,8 +289,12 @@ times of every object without a user key. Options:
 | Times under the calendar key | booking page cannot block calendar busy times while nobody is signed in, free/busy needs a key → **contradicts requirements** | — |
 
 What the server can read: per VEVENT exactly DTSTART, DTEND/DURATION, RRULE, RDATE, EXDATE,
-RECURRENCE-ID, STATUS, TRANSP, X-MICROSOFT-CDO-BUSYSTATUS and the referenced VTIMEZONE. Not the
-UID. The busy pattern within the booking horizon is public anyway (the booking page shows free
+RECURRENCE-ID and STATUS/TRANSP/X-MICROSOFT-CDO-BUSYSTATUS; every line rebuilt from a validated value,
+no group and no parameter except VALUE=DATE, TZID and RANGE, TZID replaced by the IANA identifier it
+safely resolves to (otherwise the time is floating), no VTIMEZONE of the client. Not the UID. An RRULE
+outside RFC 5545, or one that cannot be resolved finitely (BYYEARDAY with BYDAY, BYWEEKNO with an
+ordinal BYDAY), makes `extract()` fail with 400, and the PUT is refused with 400. `redacted()` writes
+its own VTIMEZONE from PHP's zone data (1970 to 2050). The busy pattern within the booking horizon is public anyway (the booking page shows free
 times); history and the time beyond the horizon are the additional exposure.
 
 ### 5.9 Conflicts of encryption B with other requirements (reported, not resolved silently)
@@ -299,6 +307,29 @@ times); history and the time beyond the horizon are the additional exposure.
 3. **Sign-in without password** (passkeys) cannot unlock keys; such users need a password sign-in
    for key operations (adding a device, granting). Normal CalDAV use is unaffected.
 4. **Free/busy and the booking page** need server-readable times: section 5.8.
+
+### 5.11 Replay protection
+
+A row MAC proves that the server wrote a row, not that it is the newest one: a database writer could
+play back an older, validly signed grant, calendar, device or invitation row.
+
+- `#__appointments_calendars.grant_epoch` is part of the calendar MAC and of every grant MAC of that
+  calendar (`GrantService::macFields()` takes it from the calendar row, together with the grantee's
+  `user_keys.key_version`). C raises it, under `SELECT … FOR UPDATE` on the calendar row, at every
+  revocation, downgrade, suspension, switch-off of `allow_external` and key rotation, and recomputes
+  the MACs of the remaining grants in the same transaction. A played-back grant no longer verifies.
+  B rotates and completes wraps only after locking the same calendar row, so a revocation and a
+  rotation never interleave.
+- `#__appointments_user_keys.device_epoch` is part of the user key MAC and of every device MAC of that
+  user. D raises it at every revocation and clean-up step of any of the user's devices and recomputes
+  the MACs of the remaining devices: a played-back device row with an old app password is invalid.
+- Against a rollback of the database **together** with these epochs, `EpochAnchorInterface` (B) keeps
+  the highest epoch per calendar and per user in a signed file below the Joomla directory; a row is
+  valid only when its epoch is at least the anchored one. Without a writable file the feature works
+  without this protection and the system check says so. Restoring files and database together is a
+  legitimate rollback.
+- Activation links cannot be anchored; `complete()` therefore works only for an account that has never
+  signed in, and every completion mails the administrators with the revoke link.
 
 ### 5.10 Booking rows at rest (work package E, second part)
 
@@ -341,7 +372,10 @@ times); history and the time beyond the horizon are the additional exposure.
   `mfaonsilent` (default off): a «remember me» or passkey sign-in skips the second factor in Joomla;
   such a session never unlocks keys (5.3), so it cannot add devices or grant.
 - **Second factor, checked by the component:** `GrantServiceInterface::hasSecondFactor()` reads Joomla's
-  MFA records (`#__user_mfa`, any method except backup codes). Grants are effective only with it.
+  MFA records (`#__user_mfa`): an enabled method other than backup codes and other than the e-mail
+  method (the e-mail method is the same channel as the password reset, so a reset by mail alone would
+  reach the calendars). An account that Joomla's own rules exclude from MFA (`neverMFAUserGroups`)
+  has no effective grant. Grants are effective only with it.
   «Add device» requires it at that moment, in a session that passed it. **Every CalDAV request** of an
   active device whose account has no active second factor is refused with 403 (logged
   `dav.auth_failure`, reason `no_mfa`) before any calendar is touched; devices in clean-up are not
@@ -350,7 +384,8 @@ times); history and the time beyond the horizon are the additional exposure.
   website the lock is checked **before** Joomla checks the password (`guardLogin()` from the system
   plugin in onAfterRoute, for site `com_users` `user.login` and administrator `com_login` `login`)
   and answered exactly like a wrong password, so the lock is no oracle and no password is tried while
-  locked; `onUserAuthorisation` stays as the second safeguard. `retryAfter()` is called before every
+  locked; `onUserAuthorisation` stays as a second safeguard only (Joomla then shows its own
+  JLIB_LOGIN_DENIED; that path is reached only if `guardLogin()` did not run). `retryAfter()` is called before every
   check of a secret, then exactly one `recordFailure()` or `recordSuccess()`. Counter buckets are
   keyed hashes (IPv6 per /64); no user name or address in clear.
 
@@ -542,7 +577,7 @@ them again; one-way «Outlook → server» would try to upload, which the refuse
 
 `TeamMailerInterface`: new device (always), activation link, activation completed (to the
 administrators, with the one-step revoke link), grant changed (to owner and managers), access
-suspended. They are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS), editable
+suspended, calendar deleted (to the former owner and managers, `calendarDeleted()`). They are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS), editable
 under Templates. Joomla mailer, recipient language, no secret except the activation link. Booking mails stay as they are, with content and ICS to the team.
 
 ## 13. Administrator views
@@ -561,7 +596,15 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
 
 ## 14. Booking page and calendars (work package E)
 
-- Event type form: target calendar (calendars the host can write) and further busy calendars.
+- Event type form: target calendar and further busy calendars. Only a calendar that the editing person
+  **and** the host reach effectively can be bound; for the target calendar both need write. A Super
+  User without a grant therefore binds nothing until a manager grants. Otherwise anybody with the
+  event type permission would get the free/busy view of any host's calendar.
+- Bookings of different hosts that share a calendar are serialised by
+  `BookingCalendarBridgeInterface::lockForBooking()` inside the booking transaction; `busyFor()` also
+  reads the bookings of other hosts whose event types write into one of the calendars.
+- `removeOrphans()` removes calendar copies of cancelled, anonymised or deleted bookings (no key
+  needed); the bridge calls it after each booking change and the Scheduler routine of F in batches.
 - `AvailabilityService` adds `BookingCalendarBridgeInterface::busyFor()` to the host's busy periods,
   also inside the locked booking transaction (`readOnly = true`, no cache write there). An object with
   a `booking_id` is skipped only when that booking has the same host as the asking event type; a
@@ -640,6 +683,11 @@ of `invitation`); E owns `TimingIndex::emails()` and, as its second part, the bo
 the booking record class and every reader of those columns); F owns `guardLogin()`, the Scheduler
 routine «calendar retention», the privacy requests of 9.1 and the system check of 8.3. The
 `onAfterRoute` handler of the system plugin is the coordinator's.
+
+Round 4: B owns `EpochAnchor` (5.11); C raises `grant_epoch`, D raises `device_epoch` and implements
+`calendarDeleted()`; E owns `lockForBooking()` and `removeOrphans()`, F calls `removeOrphans()` from the
+Scheduler. Every parameter that carries a password or secret is marked `#[\SensitiveParameter]` in the
+interface and in the implementation.
 
 Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every

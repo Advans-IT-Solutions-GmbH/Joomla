@@ -76,7 +76,7 @@
         </field>
         <field name="team_viewlevel" type="accesslevel" label="COM_APPOINTMENTS_CONFIG_TEAM_VIEWLEVEL" description="COM_APPOINTMENTS_CONFIG_TEAM_VIEWLEVEL_DESC" filter="integer" />
         <field name="team_cleanup_days" type="number" label="COM_APPOINTMENTS_CONFIG_CLEANUP_DAYS" description="COM_APPOINTMENTS_CONFIG_CLEANUP_DAYS_DESC" default="14" min="1" max="90" required="true" filter="raw" validate="range" />
-        <field name="legacy_feeds" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS" description="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS_DESC" default="1" filter="integer" validate="options">
+        <field name="legacy_feeds" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS" description="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS_DESC" default="0" filter="integer" validate="options">
             <option value="0">JNO</option><option value="1">JYES</option>
         </field>
     </fieldset>

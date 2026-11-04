@@ -31,11 +31,15 @@ defined('_JEXEC') or die;
 interface KeySessionInterface
 {
     /**
-     * After a successful password sign-in. Creates the user's key pair the first
+     * After a successful password sign-in, called only from the user plugin
+     * inside Joomla's own sign-in (CMSApplication::login, after the password
+     * check); no other page may offer «enter your password to unlock», because a
+     * remember-me session would then unlock keys without the second factor.
+     * Creates the user's key pair the first
      * time for an eligible user. Never throws into the sign-in: a failure leaves
      * the key locked and is logged.
      */
-    public function onLogin(int $userId, string $clearPassword): void;
+    public function onLogin(int $userId, #[\SensitiveParameter] string $clearPassword): void;
 
     public function onLogout(int $userId): void;
 
@@ -44,7 +48,7 @@ interface KeySessionInterface
      * Anything else (reset by e-mail, an administrator setting it): reset the
      * user key, suspend the grants, start the device clean-up, mail the user.
      */
-    public function onPasswordChanged(int $userId, string $clearPassword): void;
+    public function onPasswordChanged(int $userId, #[\SensitiveParameter] string $clearPassword): void;
 
     /**
      * The current user's key, or null when the session holds none, has not

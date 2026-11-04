@@ -60,6 +60,7 @@ final class KeyProvider
     public const PURPOSE_TEAM_LOG = 'team-log';
     public const PURPOSE_TEAM_AUTH_BUCKET = 'team-auth-bucket';
     public const PURPOSE_TEAM_INVITATION = 'team-invitation';
+    public const PURPOSE_TEAM_ANCHOR = 'team-anchor';
 
     /**
      * Personal data of bookings at rest (encryption), see team-calendars.md,

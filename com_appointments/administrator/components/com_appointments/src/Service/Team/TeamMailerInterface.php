@@ -47,4 +47,13 @@ interface TeamMailerInterface
      * To the user: access suspended after a password reset or a block; devices in clean-up.
      */
     public function accessSuspended(int $userId, string $reason): void;
+
+    /**
+     * To the former owner and managers of a deleted calendar: title, who deleted
+     * it, when. The calendar row no longer exists; the caller passes what the
+     * mail needs. No content of the calendar.
+     *
+     * @param   int[]  $recipientUserIds  Owner and managers at the time of the deletion.
+     */
+    public function calendarDeleted(string $calendarTitle, array $recipientUserIds, int $actorUserId, \DateTimeImmutable $deletedUtc): void;
 }

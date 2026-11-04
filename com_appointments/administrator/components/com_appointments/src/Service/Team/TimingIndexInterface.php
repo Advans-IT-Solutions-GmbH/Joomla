@@ -19,8 +19,13 @@ defined('_JEXEC') or die;
  * free/busy role work without anybody signed in.
  *
  * The skeleton is an iCalendar text that keeps, per VEVENT, exactly: DTSTART,
- * DTEND or DURATION, RRULE, RDATE, EXDATE, RECURRENCE-ID, STATUS, TRANSP,
- * X-MICROSOFT-CDO-BUSYSTATUS and the VTIMEZONE components these refer to.
+ * DTEND or DURATION, RRULE, RDATE, EXDATE, RECURRENCE-ID, STATUS, TRANSP and
+ * X-MICROSOFT-CDO-BUSYSTATUS. Every line is rebuilt from a validated value, with
+ * no group and no parameter except VALUE=DATE, TZID and RANGE; TZID is replaced
+ * by the IANA identifier it safely resolves to, otherwise the time is floating;
+ * no VTIMEZONE of the client is kept. An RRULE outside RFC 5545, or one that
+ * cannot be resolved finitely (BYYEARDAY with BYDAY, BYWEEKNO with an ordinal
+ * BYDAY), makes extract() fail with 400.
  * Nothing else: no UID, SUMMARY, DESCRIPTION, LOCATION, ATTENDEE, ORGANIZER,
  * ATTACH or X- property beyond the one named. Parsing uses the bundled
  * sabre/vobject (work package A provides the autoloader).
@@ -47,7 +52,8 @@ interface TimingIndexInterface
     /**
      * The calendar a free/busy grantee receives for one object: the same
      * times, SUMMARY set to `$summary`, a UID derived from `$uidSeed`, CLASS
-     * CONFIDENTIAL, nothing else.
+     * CONFIDENTIAL, its own VTIMEZONE from PHP's zone data (1970 to 2050),
+     * nothing else.
      */
     public function redacted(string $skeleton, string $uidSeed, string $summary): string;
 

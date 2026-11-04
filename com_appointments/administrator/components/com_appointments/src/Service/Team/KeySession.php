@@ -27,7 +27,7 @@ final class KeySession implements KeySessionInterface
     {
     }
 
-    public function onLogin(int $userId, string $clearPassword): void
+    public function onLogin(int $userId, #[\SensitiveParameter] string $clearPassword): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
@@ -37,7 +37,7 @@ final class KeySession implements KeySessionInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function onPasswordChanged(int $userId, string $clearPassword): void
+    public function onPasswordChanged(int $userId, #[\SensitiveParameter] string $clearPassword): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

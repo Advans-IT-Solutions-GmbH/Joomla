@@ -13,22 +13,25 @@ defined('_JEXEC') or die;
 
 /**
  * Base of every object that holds key material in memory for the length of one
- * request. It cannot be serialised (so it never reaches a session, a cache or a
- * log by accident), it hides its bytes from var_dump() and print_r(), and it
- * overwrites them when the request ends or wipe() is called.
+ * request. The bytes are not a property of the object: they live in a WeakMap
+ * outside it, so var_dump(), print_r(), var_export(), a debugger's property
+ * view and an exception's argument dump never show them. The object cannot be
+ * serialised or cloned, and the bytes are overwritten when the request ends or
+ * wipe() is called.
  *
  * @since  1.4.0
  */
 abstract class SecretValue
 {
     /**
-     * @var  string
+     * @var  \WeakMap<SecretValue, string>|null
      */
-    private $bytes;
+    private static $store;
 
-    protected function __construct(string $bytes)
+    protected function __construct(#[\SensitiveParameter] string $bytes)
     {
-        $this->bytes = $bytes;
+        self::$store ??= new \WeakMap();
+        self::$store[$this] = $bytes;
     }
 
     /**
@@ -38,20 +41,26 @@ abstract class SecretValue
      */
     protected function bytes(): string
     {
-        if ($this->bytes === '') {
+        $bytes = self::$store[$this] ?? '';
+
+        if ($bytes === '') {
             throw new \LogicException('The key material has been wiped.');
         }
 
-        return $this->bytes;
+        return $bytes;
     }
 
     public function wipe(): void
     {
-        if ($this->bytes !== '' && \function_exists('sodium_memzero')) {
-            sodium_memzero($this->bytes);
-        }
+        if (self::$store !== null && isset(self::$store[$this])) {
+            $bytes = self::$store[$this];
 
-        $this->bytes = '';
+            if ($bytes !== '' && \function_exists('sodium_memzero')) {
+                sodium_memzero($bytes);
+            }
+
+            unset(self::$store[$this]);
+        }
     }
 
     public function __destruct()
