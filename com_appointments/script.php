@@ -505,7 +505,11 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 throw new \RuntimeException('The appointment template language source is unreadable.');
             }
 
-            foreach (\Advans\Component\Appointments\Administrator\Helper\DefaultTemplates::KEYS as $purpose => [$subjectKey, $bodyKey]) {
+            $defaults = \Advans\Component\Appointments\Administrator\Helper\DefaultTemplates::class;
+            // all() adds the internet calendar mails (TEAM_KEYS) to the booking mails.
+            $purposes = method_exists($defaults, 'all') ? $defaults::all() : $defaults::KEYS;
+
+            foreach ($purposes as $purpose => [$subjectKey, $bodyKey]) {
                 if (!isset($strings[$subjectKey], $strings[$bodyKey])) {
                     throw new \RuntimeException('A required appointment template translation is missing.');
                 }

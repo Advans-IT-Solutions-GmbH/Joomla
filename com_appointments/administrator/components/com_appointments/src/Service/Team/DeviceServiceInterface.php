@@ -67,6 +67,15 @@ interface DeviceServiceInterface
     public function rename(int $actorUserId, int $deviceId, string $name): void;
 
     /**
+     * Compare-and-set of a device state; recomputes `row_mac`. Leaving
+     * DEVICE_ACTIVE clears `usk_wrapped`: a device in clean-up never gets keys
+     * again. Used by the clean-up (work package F).
+     *
+     * @return  bool  False when the device is not in `$fromState`.
+     */
+    public function changeState(int $deviceId, int $fromState, int $toState): bool;
+
+    /**
      * Final revocation (state 0, 401 from then on). The user's own «remove
      * device» and an administrator's «block device» start the clean-up instead
      * (work package F); this is its last step or an emergency stop.

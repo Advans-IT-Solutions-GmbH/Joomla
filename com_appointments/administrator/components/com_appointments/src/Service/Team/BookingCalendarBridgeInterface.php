@@ -18,8 +18,10 @@ defined('_JEXEC') or die;
  *
  * Busy times of the event type's target calendar (`#__appointments_eventtypes.calendar_id`)
  * and of its further busy calendars (`#__appointments_eventtype_calendars`)
- * block slots, like the host's own bookings and blocked periods. Objects the
- * booking flow wrote itself are skipped, because the booking already blocks.
+ * block slots, like the host's own bookings and blocked periods. An object the
+ * booking flow wrote for a booking of the same host is skipped, because that
+ * booking already blocks through the bookings table; a booking of another host
+ * in the same calendar blocks like any other object.
  * A booking is written into the target calendar, sealed to the calendar's
  * public key, and follows the booking through reschedule, cancellation and
  * anonymisation. Nothing here may fail a booking: a calendar error is logged
@@ -32,13 +34,18 @@ interface BookingCalendarBridgeInterface
     /**
      * Busy periods of the calendars linked to an event type (meeting and
      * occupied window identical), from the encrypted busy cache, rebuilt when
-     * its sync token is stale. Called inside the booking transaction too.
+     * its sync token is stale.
      *
-     * @param   object  $eventType  Row of `#__appointments_eventtypes` with at least id and calendar_id.
+     * Inside the locked booking transaction call it with `readOnly = true`: a
+     * stale cache is then recomputed in memory only and never written, because a
+     * cache write there can deadlock and roll back the host lock. BookingStore
+     * warms the cache with a normal call before it opens the transaction.
+     *
+     * @param   object  $eventType  Row of `#__appointments_eventtypes` with at least id, host_user_id and calendar_id.
      *
      * @return  BusyPeriod[]
      */
-    public function busyFor(object $eventType, \DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc, \DateTimeZone $scheduleZone): array;
+    public function busyFor(object $eventType, \DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc, \DateTimeZone $scheduleZone, bool $readOnly = false): array;
 
     /**
      * A booking was created, approved or rescheduled: write or replace its object.

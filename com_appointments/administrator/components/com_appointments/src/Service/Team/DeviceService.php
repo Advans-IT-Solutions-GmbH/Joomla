@@ -58,6 +58,11 @@ final class DeviceService implements DeviceServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function changeState(int $deviceId, int $fromState, int $toState): bool
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function revoke(?int $actorUserId, int $deviceId, string $reason): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

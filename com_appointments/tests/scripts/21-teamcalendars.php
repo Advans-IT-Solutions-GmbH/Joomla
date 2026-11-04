@@ -16,6 +16,7 @@ final class TeamSuite
     public string $base;
     private int $passed = 0;
     private int $failed = 0;
+    private int $pending = 0;
 
     public function __construct()
     {
@@ -40,6 +41,37 @@ final class TeamSuite
             echo "✗ {$name} - Error: " . get_class($e) . ': ' . $e->getMessage() . "\n";
             $this->failed++;
         }
+    }
+
+    /**
+     * A test that cannot run yet because another work package still ships its
+     * stub. It is reported on its own line, never as a pass. With
+     * TEAM_NO_PENDING=1 (the integration branch before the pull request to main)
+     * every pending test is a failure, so nothing stays pending by accident.
+     *
+     * @param  string  $packages  The work packages it waits for, e.g. "B, D, F".
+     */
+    public function pending(string $name, string $packages): void
+    {
+        if (getenv('TEAM_NO_PENDING') === '1') {
+            echo "✗ {$name} - PENDING {$packages} not allowed here\n";
+            $this->failed++;
+
+            return;
+        }
+
+        echo "… {$name} - PENDING {$packages}\n";
+        $this->pending++;
+    }
+
+    /**
+     * Whether a team service class is still the stub of its work package.
+     */
+    public function isStub(string $class): bool
+    {
+        $file = (new \ReflectionClass($class))->getFileName();
+
+        return $file !== false && str_contains((string) file_get_contents($file), 'COM_APPOINTMENTS_TEAM_NOT_READY');
     }
 
     /**
@@ -115,7 +147,7 @@ final class TeamSuite
         }
 
         echo "\n=== Team Calendar Test Summary ===\n";
-        echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
+        echo "Passed: {$this->passed}, Failed: {$this->failed}, Pending: {$this->pending}\n";
 
         return $this->failed === 0;
     }

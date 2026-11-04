@@ -181,9 +181,17 @@ Formulas (normative):
   and URI must match the row. Sealed objects are re-encrypted to scheme 1 by the next key holder's
   request (`CalendarObjectStoreInterface::reencrypt()`), without changing ETag or sync token.
 - Time skeleton: `encrypt(key(TEAM_TIMING), skeleton, associatedData('timing', calendarId, uri))`.
+- Busy cache: `encrypt(key(TEAM_TIMING), json, associatedData('busy', calendarId, synctoken, window_start_utc, window_end_utc))`.
 - UID hash: `hash_hmac('sha256', calendarId . "\0" . uid, key(TEAM_UID), true)`.
 - Row MAC: `hash_hmac('sha256', associatedData('row', table, field1, value1, …), key(TEAM_ROW_MAC), true)`
-  over the security-relevant columns, listed per table in the owning service's docblock.
+  over the security-relevant columns. The field lists come from one static method per owner and
+  are used by everybody: `GrantService::macFields()` (calendar_id, user_id, role, state, audience,
+  granted_by, confirmed_by), `CalendarService::macFields()` (id, uri, owner_user_id, allow_external,
+  state; deliberately not key_version, rotation_due, synctoken, which B and A change without a new MAC),
+  invitations (token_hash, email, calendar_id, role, state, invited_by, expires_utc, accepted_user_id),
+  and the key, device and keyring tables in `KeyService`/`DeviceService`. A grant in
+  `GRANT_PENDING_KEY` with a wrap of the current version counts as effective; nobody has to flip it to
+  active.
 
 ### 5.3 Where keys exist
 
@@ -450,7 +458,9 @@ except the invitation link. Booking mails stay as they are, with content and ICS
 
 - Event type form: target calendar (calendars the host can write) and further busy calendars.
 - `AvailabilityService` adds `BookingCalendarBridgeInterface::busyFor()` to the host's busy periods,
-  also inside the locked booking transaction. Objects with a `booking_id` are skipped.
+  also inside the locked booking transaction (`readOnly = true`, no cache write there). An object with
+  a `booking_id` is skipped only when that booking has the same host as the asking event type; a
+  booking of another host in the same calendar blocks.
 - A booking is written sealed into the target calendar on create/approve/reschedule (same UID as the
   mail ICS, so a team member's client does not show it twice when the mail ICS was accepted too),
   removed on cancellation and erasure. Calendar errors never fail a booking.
@@ -510,6 +520,16 @@ appearing by itself within the interval, a revoked grant disappearing, and the c
 | E Booking | `Service/Team/{TimingIndex,BookingCalendarBridge}.php`, `Service/{AvailabilityService,BookingStore,FeedService}.php`, `Controller/FeedsController.php`, site `FeedController.php`, eventtype form/model/table, Feeds view, `tests/scripts/team-e-booking.php`, `12-feed.php` |
 | F Log and clean-up | `Service/Team/{AuditService,LockoutService,CleanupService}.php`, admin `devices`, `teamlog`, System view/model, `plugins/privacy/appointments/**`, `plugins/task/appointments/**`, `tests/scripts/team-f-log.php` |
 | G Tests and docs | `tests/caldav/**`, `tests/manual/teamcalendars*.md`, `tests/Dockerfile*` (TLS), `.github/workflows/appointments.yml`, `README.md` section «Internet calendars» |
+
+Assigned later by the coordinator: E also owns `Field/TeamcalendarField.php` and the one call of the bridge in
+`ConferenceService::provision()`; D also owns `Helper/DefaultTemplates.php` (`TEAM_KEYS`, `all()`),
+`Table/TemplateTable.php`, `forms/template.xml`, `tmpl/templates/default.php`, `tests/scripts/09-mail.php`,
+the `mycalendars` view registration in the site `Router.php` and `media/com_appointments/{css,js}/mycalendars.*`.
+The internet calendar mails are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS)
+with the purposes `team_device_added`, `team_invitation`, `team_invitation_accepted`,
+`team_grant_changed`, `team_access_suspended`. Integration tests that need another package's
+service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every
+pending test into a failure before the pull request to `main`.
 
 Frozen for everybody (changes only through the coordinator): `Helper/Team/*` except the files named
 above, `Service/Team/*Interface.php`, `Service/Team/TeamServices.php`, the SQL files, `script.php`,
