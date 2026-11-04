@@ -25,6 +25,9 @@ class BookingsModel extends ListModel
     /** @var array<string, int[]|null> Ids found in memory for a search or a name order, per state. */
     private array $matched = [];
 
+    /** While the CSV export builds its query. */
+    private bool $exporting = false;
+
     public function __construct($config = [], $factory = null)
     {
         $config['filter_fields'] ??= ['b.id', 'b.start_utc', 'b.state', 'e.title', 'b.invitee_last_name', 'b.invitee_first_name'];
@@ -72,7 +75,8 @@ class BookingsModel extends ListModel
         $order = (string) $this->getState('list.ordering', 'b.start_utc');
         $order = in_array($order, $this->filter_fields, true) ? $order : 'b.start_utc';
         $direction = strtoupper((string) $this->getState('list.direction')) === 'ASC' ? 'ASC' : 'DESC';
-        $byName = in_array($order, ['b.invitee_last_name', 'b.invitee_first_name'], true);
+        // The CSV export pages by id: the name order of the page, which covers the newest bookings only, is left out.
+        $byName = !$this->exporting && in_array($order, ['b.invitee_last_name', 'b.invitee_first_name'], true);
         $query->order($db->quoteName($byName ? 'b.start_utc' : $order) . ' ' . $direction);
         $search = (string) $this->getState('filter.search', '');
 
@@ -84,7 +88,7 @@ class BookingsModel extends ListModel
         // name finds "first last", first and last name each one of them, the address a part of it)
         // and the sorting by name (last name, then first name) are done in memory on the candidates
         // of the other filters, and the page is then cut from that list of ids.
-        $key = $this->getStoreId('encrypted') . ':' . $order . ':' . $direction;
+        $key = $this->getStoreId('encrypted') . ':' . $order . ':' . $direction . ':' . (int) $byName;
 
         if (!isset($this->matched[$key])) {
             $records = new BookingRecords($db, new KeyProvider((string) Factory::getApplication()->get('secret', '')));
@@ -172,7 +176,15 @@ class BookingsModel extends ListModel
         $data = BookingData::fromApplication();
         $last = 0;
         do {
-            $query = $this->getListQuery()->clear('order')->order($db->quoteName('b.id') . ' ASC')
+            $this->exporting = true;
+
+            try {
+                $query = $this->getListQuery();
+            } finally {
+                $this->exporting = false;
+            }
+
+            $query = $query->clear('order')->order($db->quoteName('b.id') . ' ASC')
                 ->where($db->quoteName('b.id') . ' > ' . $last)->setLimit(200);
             $rows = $db->setQuery($query)->loadAssocList();
             foreach ($rows as $row) {

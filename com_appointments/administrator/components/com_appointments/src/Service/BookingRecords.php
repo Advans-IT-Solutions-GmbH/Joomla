@@ -62,7 +62,7 @@ final class BookingRecords
         }
 
         if (self::pending($db) > 0 && !self::anySealed($db) && BookingData::migrationCutoff($token, $keys, time()) === null) {
-            self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, time()));
+            self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, time()), $token);
         }
     }
 
@@ -90,7 +90,7 @@ final class BookingRecords
         if ($cutoff === null) {
             // A new installation, a database without clear rows or an expired token with none left: over.
             if (!BookingData::migrationDone($token, $keys) && self::pending($db) === 0) {
-                self::setToken($db, BookingData::migrationDoneMarker($keys));
+                self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
             }
 
             return 0;
@@ -106,7 +106,7 @@ final class BookingRecords
         $rows = $db->setQuery($query)->loadAssocList();
 
         if ($rows === []) {
-            self::setToken($db, BookingData::migrationDoneMarker($keys));
+            self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
 
             return 0;
         }
@@ -141,7 +141,7 @@ final class BookingRecords
 
         // Renewed, but never beyond the limit after the update.
         self::setToken($db, BookingData::migrationToken($keys,
-            min(time() + BookingData::MIGRATION_DAYS * 86400, $cutoff + BookingData::MIGRATION_LIMIT_DAYS * 86400), $cutoff));
+            min(time() + BookingData::MIGRATION_DAYS * 86400, $cutoff + BookingData::MIGRATION_LIMIT_DAYS * 86400), $cutoff), $token);
 
         return \count($rows);
     }
@@ -216,7 +216,7 @@ final class BookingRecords
      * property, in one statement: no other option an administrator saves at the
      * same moment is overwritten.
      */
-    private static function setToken(DatabaseInterface $db, string $value): void
+    private static function setToken(DatabaseInterface $db, string $value, string $expected): void
     {
         if (self::token($db) === $value) {
             return;
@@ -228,7 +228,11 @@ final class BookingRecords
             ->set($params . ' = JSON_SET(COALESCE(NULLIF(TRIM(' . $params . '), ' . $db->quote('') . '), ' . $db->quote('{}') . '), '
                 . $db->quote('$.' . BookingData::MIGRATION_OPTION) . ', ' . $db->quote($value) . ')')
             ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('com_appointments'));
+            ->where($db->quoteName('element') . ' = ' . $db->quote('com_appointments'))
+            // Only from the value this caller read: a concurrent run that already wrote the end marker
+            // (or a newer token) is never overwritten, so a finished migration stays finished.
+            ->where('COALESCE(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(NULLIF(TRIM(' . $params . '), ' . $db->quote('') . '), ' . $db->quote('{}') . '), '
+                . $db->quote('$.' . BookingData::MIGRATION_OPTION) . ')), ' . $db->quote('') . ') = ' . $db->quote($expected));
         $db->setQuery($update)->execute();
     }
     /**

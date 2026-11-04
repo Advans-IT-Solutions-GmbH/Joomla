@@ -30,6 +30,30 @@ class TeamcalendarField extends ListField
 {
     protected $type = 'Teamcalendar';
 
+    /** Whether the reload on a host change is already on the page (both pickers share it). */
+    private static bool $reloadScript = false;
+
+    /**
+     * The options depend on the host: when another host is chosen, the form is
+     * reloaded with the entered values (`eventtype.reload`, no validation), so
+     * both pickers list what the new host and the editing user reach, checked
+     * on the server as before.
+     */
+    protected function getInput()
+    {
+        if (!self::$reloadScript) {
+            self::$reloadScript = true;
+            Factory::getApplication()->getDocument()->getWebAssetManager()->useScript('core')->addInlineScript(
+                "(() => { const start = () => { const host = document.querySelector('input[name=\"jform[host_user_id]\"]');"
+                . " const form = host ? host.form : null; if (!host || !form) { return; } let last = host.value;"
+                . " host.addEventListener('change', () => { if (host.value !== last) { last = host.value; Joomla.submitform('eventtype.reload', form); } }); };"
+                . " if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', start); } else { start(); } })();"
+            );
+        }
+
+        return parent::getInput();
+    }
+
     protected function getOptions()
     {
         $options = parent::getOptions();
