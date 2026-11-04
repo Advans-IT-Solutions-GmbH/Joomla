@@ -62,7 +62,7 @@ final class KeySession implements KeySessionInterface
     /** The password signed in but no longer opens the stored key: reset and create at release. */
     private const MODE_REPLACE = 'replace';
 
-    /** MFA methods that do not count as a second factor for keys. */
+    /** MFA methods that do not count as a second factor for keys: backup codes, and e-mail codes (the channel of the password reset). */
     private const NOT_A_SECOND_FACTOR = ['backupcodes', 'email'];
 
     /** Joomla's response types of sign-ins without a password. */
@@ -307,7 +307,7 @@ final class KeySession implements KeySessionInterface
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
             || !$this->joomlaSecondFactor($userId)
-            || $this->hasSameChannelFactor($userId)
+            || !hash_equals((string) ($escrow['nc'] ?? ''), $this->factorSnapshot($userId))
             || !$this->services->grants()->hasSecondFactor($userId)) {
             return null;
         }
@@ -324,7 +324,7 @@ final class KeySession implements KeySessionInterface
         $payload = CipherSuite::decrypt(
             $sessionKey,
             (string) base64_decode((string) $escrow['box'], true),
-            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (int) ($escrow['at'] ?? 0))
+            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (string) ($escrow['nc'] ?? ''))
         );
 
         if ($payload === null || \strlen($payload) !== CipherSuite::KEY_BYTES) {
@@ -378,7 +378,7 @@ final class KeySession implements KeySessionInterface
 
             if ($escrow['mode'] !== self::MODE_KEY) {
                 // From now on the session holds the key itself, under the same cookie.
-                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (int) $escrow['at'], $context->secretKey());
+                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (string) $escrow['nc'], $context->secretKey());
             }
 
             return $context;
@@ -484,14 +484,14 @@ final class KeySession implements KeySessionInterface
         $sessionKey = random_bytes(CipherSuite::KEY_BYTES);
 
         try {
-            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, time(), $payload);
+            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $this->factorSnapshot($userId), $payload);
             $this->setCookie($app, $client, bin2hex($sessionKey), 0);
         } finally {
             CipherSuite::wipe($sessionKey);
         }
     }
 
-    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, int $signedInAt, #[\SensitiveParameter] string $payload): void
+    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, #[\SensitiveParameter] string $payload): void
     {
         $nonce = random_bytes(16);
         $session->set(self::SESSION_KEY . $client, [
@@ -501,49 +501,48 @@ final class KeySession implements KeySessionInterface
             'pub'     => base64_encode($publicKey),
             'salt'    => base64_encode($salt),
             'mfa'     => $secondFactor,
-            'at'      => $signedInAt,
+            'nc'      => $factorSnapshot,
             'nonce'   => base64_encode($nonce),
-            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $signedInAt))),
+            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $factorSnapshot))),
         ]);
     }
 
     /**
      * Associated data of the escrow: bound to user, client, mode, user key
      * version, a fresh nonce and every other field of the session entry
-     * (observed public key, salt, second factor at sign-in, time of the
-     * sign-in), so neither a box nor a field can be replayed or changed in the
-     * session table unnoticed.
+     * (observed public key, salt, second factor at sign-in, snapshot of the
+     * non-counting MFA records at sign-in), so neither a box nor a field can be
+     * replayed or changed in the session table unnoticed.
      */
-    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, int $signedInAt): string
+    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot): string
     {
-        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $signedInAt);
+        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $factorSnapshot);
     }
 
     /**
-     * Whether the account has an enabled e-mail code method. Joomla's captive
-     * page lets the user pick any configured method and records none of it in
-     * the session, so the factor used in this session cannot be told apart;
-     * `last_used` is shared by every session of the account. An e-mail code
-     * travels the same way as the password reset link, so an account with that
-     * method configured never unlocks keys, whichever factor it used.
+     * The state of the MFA records that do not count (backup codes, e-mail
+     * codes) as a hash: record id, method and `last_used`. Joomla records in no
+     * session which method passed its captive page, but it stamps the record it
+     * accepted with `last_used`. Taken at the sign-in, before the captive page,
+     * and required unchanged at the release, it proves by exclusion that this
+     * session passed with a counting method: had it used a backup or e-mail
+     * code, that record would have changed. A use of such a code in another
+     * session locks this one too, which fails closed.
      */
-    private function hasSameChannelFactor(int $userId): bool
+    private function factorSnapshot(int $userId): string
     {
-        $methods = [];
-
-        foreach (MfaHelper::getMfaMethods() as $method) {
-            $methods[] = (string) ($method['name'] ?? '');
-        }
+        $parts = [];
 
         foreach (MfaHelper::getUserMfaRecords($userId) as $record) {
-            if ($record->method === 'email' && \in_array('email', $methods, true)) {
-                return true;
+            if (\in_array($record->method, self::NOT_A_SECOND_FACTOR, true)) {
+                $parts[] = (int) $record->id . ':' . $record->method . ':' . (string) ($record->last_used ?? '');
             }
         }
 
-        return false;
-    }
-    private function forget(): void
+        sort($parts, SORT_STRING);
+
+        return hash('sha256', 'com_appointments/factor-snapshot/v1|' . implode('|', $parts));
+    }    private function forget(): void
     {
         $app = Factory::getApplication();
         $client = $this->client($app);

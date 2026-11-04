@@ -417,6 +417,22 @@ return static function (TeamSuite $suite): void {
             && ($https || ($pending->get('com_appointments.team_keys.site') === null && !$escrowCookie));
     });
 
+    $suite->test('B: a backup or e-mail code used after the sign-in changes the factor proof, a counting method does not', static function () use ($db, $p, $member, $services) {
+        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[]', UTC_TIMESTAMP())");
+        $session = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession($services);
+        $snapshot = new \ReflectionMethod($session, 'factorSnapshot');
+        $atSignIn = $snapshot->invoke($session, $member);
+        // This session passed with TOTP: the counting record is stamped.
+        $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE user_id = {$member} AND method = 'totp'");
+        $withTotp = $snapshot->invoke($session, $member);
+        // A backup code instead: the backup code record is stamped.
+        $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 2 SECOND) WHERE user_id = {$member} AND method = 'backupcodes'");
+        $withBackup = $snapshot->invoke($session, $member);
+        $db->query("DELETE FROM {$p}user_mfa WHERE user_id = {$member} AND method = 'backupcodes'");
+
+        return hash_equals($atSignIn, $withTotp) && !hash_equals($atSignIn, $withBackup);
+    });
+
     if (!str_starts_with($suite->base, 'https://')) {
         $suite->pending('B: escrow at a password sign-in over HTTPS (cookie attributes, session without key)', 'G');
     } elseif ($suite->isStub(GrantService::class)) {
