@@ -23,20 +23,24 @@ defined('_JEXEC') or die;
 /**
  * The hash-chained log of the internet calendars (work package F).
  *
- * Chain, normative:
- * - `row_hash = HMAC-SHA256(K, prev_hash || canonical(row))` with `K = key(TEAM_LOG)`; the canonical
- *   row is {@see self::canonical()} over every column except `id` and `row_hash`.
- * - `prev_hash` of a row is the seal of its predecessor, `seal(id, row_hash) = HMAC-SHA256(K,
- *   associatedData('teamlog-head', id, row_hash))`, so the predecessor's id is bound too. The first
- *   row of a fresh log links to `genesis = seal(0, 32 zero bytes)`.
- * - The head row keeps `last_id` and `last_hash = seal(last_id, row_hash of last_id)`. Somebody who
- *   can write the database but does not know the site secret can therefore neither cut rows off the
- *   end (the head seal would no longer match) nor insert, alter, reorder or remove a row inside.
- * - Pruning deletes a prefix of rows older than twelve months, stores `pruned_through_id` and
- *   `pruned_through_hash = seal(pruned_through_id, its row_hash)` in the head (the anchor the first
- *   remaining row links to), and appends a `log.pruned` row whose details repeat both. Verification
- *   requires the newest `log.pruned` row to name exactly the head's anchor, so a prefix removed
- *   without the key is detected as well.
+ * Chain, normative (K = key(TEAM_LOG), every HMAC-SHA256 over CipherSuite::associatedData()):
+ * - `row_hash = HMAC(K, prev_hash || canonical(row))`; the canonical row is {@see self::canonical()}
+ *   over every column except `id` and `row_hash`.
+ * - `prev_hash` of a row is the link of its predecessor, `link(id, row_hash) = HMAC(K, 'teamlog-link',
+ *   id, row_hash)`, so the predecessor's id is bound too. The first row of a fresh log links to
+ *   `genesis = link(0, 32 zero bytes)`.
+ * - The head keeps `last_id` and `last_hash = seal(last_id, row_hash)` with its own label
+ *   (`HMAC(K, 'teamlog-head', id, row_hash)`), so no stored link is ever a valid head: cutting rows off
+ *   the end and pointing the head at an earlier row needs the key. An empty head is `seal(0, zero)`.
+ * - Pruning deletes a prefix of rows older than twelve months, stores `pruned_through_id` and the
+ *   anchor `pruned_through_hash = link(pruned_through_id, its row_hash)` (what the first remaining row
+ *   links to), and appends a `log.pruned` row whose details repeat both. Verification requires the
+ *   newest `log.pruned` row to name exactly the head's anchor, so a prefix removed without the key is
+ *   detected as well.
+ * - The head is created with the first row. When it has to be created while log rows or internet
+ *   calendar data already exist (the head was deleted), it gets a restart marker in
+ *   `pruned_through_hash` (while `pruned_through_id` is 0), and the chain stays reported as broken.
+ *   An empty log is only intact while no internet calendar data exists.
  * - Not detectable without an outside reference: replacing the whole log and its head with an older
  *   copy of themselves. That is why the backend shows the checksum (`last_hash`): an operator who
  *   notes it can compare.
@@ -84,7 +88,29 @@ final class AuditService implements AuditServiceInterface
         } catch (\Throwable $e) {
             // No message text: a database error can quote the values.
             Log::add('Team calendars: a log row could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+
+            // A deadlock or lock wait timeout has rolled back the caller's
+            // whole transaction (or left it unusable): the caller must know,
+            // or it would report success for changes that are gone.
+            if (self::isLockConflict($e)) {
+                throw $e;
+            }
         }
+    }
+
+    /**
+     * Whether a database error is a deadlock (1213, SQLSTATE 40001) or a lock wait timeout (1205).
+     */
+    public static function isLockConflict(\Throwable $e): bool
+    {
+        for ($error = $e; $error !== null; $error = $error->getPrevious()) {
+            if (\in_array((int) $error->getCode(), [1205, 1213], true)
+                || preg_match('/deadlock|lock wait timeout|40001/i', $error->getMessage()) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function verify(): AuditVerification
@@ -98,7 +124,7 @@ final class AuditService implements AuditServiceInterface
         try {
             $head = $db->setQuery($this->query()->select('*')->from($db->quoteName('#__appointments_teamlog_head'))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadAssoc() ?: null;
-            $otherData = $head === null && $this->teamDataExists();
+            $otherData = $this->teamDataExists();
             $result = self::verifyChain($key, $head, $this->rows(), $otherData);
             $db->transactionCommit(true);
 
@@ -117,7 +143,7 @@ final class AuditService implements AuditServiceInterface
             ->from($db->quoteName('#__appointments_teamlog_head'))
             ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
 
-        return bin2hex(\is_string($hash) && \strlen($hash) === 32 ? $hash : self::genesis($this->key()));
+        return bin2hex(\is_string($hash) && \strlen($hash) === 32 ? $hash : self::emptyHead($this->key()));
     }
 
     public function prune(\DateTimeImmutable $nowUtc): int
@@ -151,7 +177,7 @@ final class AuditService implements AuditServiceInterface
 
             $rowHash = (string) $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($table)
                 ->where($db->quoteName('id') . ' = ' . $through))->loadResult();
-            $anchor = self::seal($key, $through, $rowHash);
+            $anchor = self::link($key, $through, $rowHash);
             $db->setQuery($this->query()->delete($table)->where($db->quoteName('id') . ' <= ' . $through))->execute();
             $deleted = (int) $db->getAffectedRows();
             $db->setQuery($this->query()->update($db->quoteName('#__appointments_teamlog_head'))
@@ -180,7 +206,7 @@ final class AuditService implements AuditServiceInterface
      * @param   string                               $key        key(TEAM_LOG).
      * @param   array<string, mixed>|null            $head       The head row, null when there is none.
      * @param   iterable<array<string, mixed>>       $rows       Every log row, ascending by id.
-     * @param   bool                                 $otherData  Whether internet calendar data exists (only used without a head).
+     * @param   bool                                 $otherData  Whether internet calendar data (calendars, devices, grants) exists.
      */
     public static function verifyChain(string $key, ?array $head, iterable $rows, bool $otherData = false): AuditVerification
     {
@@ -193,7 +219,7 @@ final class AuditService implements AuditServiceInterface
 
             // A log that was never written has no head. With calendars,
             // devices or grants present, it was written and then removed.
-            return $otherData ? new AuditVerification(false, 0, 0, '') : new AuditVerification(true, 0, null, bin2hex($genesis));
+            return $otherData ? new AuditVerification(false, 0, 0, '') : new AuditVerification(true, 0, null, bin2hex(self::emptyHead($key)));
         }
 
         $lastHash = (string) $head['last_hash'];
@@ -202,7 +228,8 @@ final class AuditService implements AuditServiceInterface
         $anchor = $head['pruned_through_hash'] ?? null;
         $broken = static fn (int $id): AuditVerification => new AuditVerification(false, 0, $id, bin2hex($lastHash));
 
-        if ($prunedThrough > 0 && (!\is_string($anchor) || \strlen($anchor) !== 32)) {
+        // A restart marker (the head was re-created) or a broken anchor.
+        if (($prunedThrough === 0 && $anchor !== null) || ($prunedThrough > 0 && (!\is_string($anchor) || \strlen($anchor) !== 32))) {
             return $broken(0);
         }
 
@@ -228,18 +255,19 @@ final class AuditService implements AuditServiceInterface
 
             $checked++;
             $previousId = $id;
-            $expected = self::seal($key, $id, $row['row_hash']);
+            $previousHash = $row['row_hash'];
+            $expected = self::link($key, $id, $row['row_hash']);
         }
 
         if ($checked === 0) {
             // Pruning always leaves its own row, so an empty log is only valid
-            // when it was never written.
-            $intact = $lastId === 0 && $prunedThrough === 0 && hash_equals($genesis, $lastHash);
+            // when it was never written: no head position and no calendar data.
+            $intact = $lastId === 0 && $prunedThrough === 0 && !$otherData && hash_equals(self::emptyHead($key), $lastHash);
 
             return new AuditVerification($intact, 0, $intact ? null : 0, bin2hex($lastHash));
         }
 
-        if ($lastId !== $previousId || !hash_equals($expected, $lastHash)) {
+        if ($lastId !== $previousId || !hash_equals(self::seal($key, $previousId, $previousHash), $lastHash)) {
             return $broken($previousId);
         }
 
@@ -290,9 +318,37 @@ final class AuditService implements AuditServiceInterface
         return hash_hmac('sha256', CipherSuite::associatedData('teamlog-head', $id, $rowHash), $key, true);
     }
 
+    /**
+     * What the next row stores as `prev_hash`. Another label than {@see self::seal()},
+     * so a `prev_hash` copied from a row is never a valid head.
+     */
+    public static function link(string $key, int $id, string $rowHash): string
+    {
+        return hash_hmac('sha256', CipherSuite::associatedData('teamlog-link', $id, $rowHash), $key, true);
+    }
+
+    /**
+     * The link of the first row of a log that was never pruned.
+     */
     public static function genesis(string $key): string
     {
+        return self::link($key, 0, str_repeat("\0", 32));
+    }
+
+    /**
+     * `last_hash` of a head without rows.
+     */
+    public static function emptyHead(string $key): string
+    {
         return self::seal($key, 0, str_repeat("\0", 32));
+    }
+
+    /**
+     * The marker of a head that had to be re-created although the log was in use.
+     */
+    public static function restartMarker(string $key): string
+    {
+        return hash_hmac('sha256', CipherSuite::associatedData('teamlog-restart'), $key, true);
     }
 
     /**
@@ -427,7 +483,7 @@ final class AuditService implements AuditServiceInterface
             // The time is taken under the lock, so ids and times ascend together
             // and pruning can remove an exact prefix.
             $row['occurred_utc'] = $this->time();
-            $row['prev_hash'] = (string) $head['last_hash'];
+            $row['prev_hash'] = $this->predecessorLink($head, $key);
             $rowHash = self::rowHash($key, $row);
             $columns = array_merge(self::HASHED_COLUMNS, ['row_hash']);
             $values = [];
@@ -459,7 +515,41 @@ final class AuditService implements AuditServiceInterface
     }
 
     /**
-     * The head row, locked FOR UPDATE; created with the genesis link the first time.
+     * The `prev_hash` of the next row: the link of the newest row, the prune
+     * anchor when every row was pruned, the genesis (or the restart marker) of
+     * a log without rows. A newest row that is missing although the head names
+     * it gets a link that can never verify, so the gap stays visible.
+     *
+     * @param   array<string, mixed>  $head
+     */
+    private function predecessorLink(array $head, string $key): string
+    {
+        $lastId = (int) $head['last_id'];
+        $prunedThrough = (int) $head['pruned_through_id'];
+        $anchor = $head['pruned_through_hash'] ?? null;
+
+        if ($lastId === 0) {
+            return \is_string($anchor) ? $anchor : self::genesis($key);
+        }
+
+        $db = $this->db();
+        $rowHash = $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($db->quoteName('#__appointments_teamlog'))
+            ->where($db->quoteName('id') . ' = ' . $lastId))->loadResult();
+
+        if (\is_string($rowHash) && \strlen($rowHash) === 32) {
+            return self::link($key, $lastId, $rowHash);
+        }
+
+        if ($lastId === $prunedThrough && \is_string($anchor)) {
+            return $anchor;
+        }
+
+        return hash_hmac('sha256', CipherSuite::associatedData('teamlog-gap', $lastId), $key, true);
+    }
+
+    /**
+     * The head row, locked FOR UPDATE. Created with the first row; created
+     * with the restart marker when log rows or calendar data exist already.
      *
      * @return  array<string, mixed>
      */
@@ -471,9 +561,18 @@ final class AuditService implements AuditServiceInterface
         $head = $db->setQuery($select)->loadAssoc();
 
         if (!$head) {
+            $key = $this->key();
+            $rows = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog')))->loadResult();
+            $restart = $rows > 0 || $this->teamDataExists();
+
+            if ($restart) {
+                Log::add('Team calendars: the log head was missing and was re-created; the chain is reported as broken.', Log::WARNING, 'com_appointments');
+            }
+
             $db->setQuery('INSERT IGNORE INTO ' . $table . ' ('
                 . implode(',', $db->quoteName(['id', 'last_id', 'last_hash', 'pruned_through_id', 'pruned_through_hash', 'modified_utc']))
-                . ') VALUES (' . self::HEAD_ID . ', 0, ' . $this->binary(self::genesis($this->key())) . ', 0, NULL, '
+                . ') VALUES (' . self::HEAD_ID . ', 0, ' . $this->binary(self::emptyHead($key)) . ', 0, '
+                . ($restart ? $this->binary(self::restartMarker($key)) : 'NULL') . ', '
                 . $db->quote($this->time()) . ')')->execute();
             $head = $db->setQuery($select)->loadAssoc();
         }

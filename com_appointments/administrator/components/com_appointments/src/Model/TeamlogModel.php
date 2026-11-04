@@ -77,6 +77,10 @@ class TeamlogModel extends ListModel
 
         if (($event !== '' && !\in_array($event, AuditEvent::all(), true))
             || ($user !== '' && (!ctype_digit($user) || \strlen($user) > 10 || (int) $user < 1))) {
+            // Not kept: a forged link must not leave the log stuck on an error.
+            $app->setUserState($this->context . '.filter.event', '');
+            $app->setUserState($this->context . '.filter.user_id', '');
+
             throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_TEAM_F_FILTER_INVALID'), 400);
         }
 

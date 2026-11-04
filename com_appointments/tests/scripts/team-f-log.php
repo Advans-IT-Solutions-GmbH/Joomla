@@ -38,7 +38,7 @@ $services = new TeamServices($joomlaDb, new KeyProvider((string) $application->g
     static function () use (&$now): DateTimeImmutable { return $now; });
 $forget = static function (): void {
     // A new request: the reservations of the previous one are gone.
-    foreach (['ownClaims', 'refused'] as $name) {
+    foreach (['attempts', 'refused'] as $name) {
         (new ReflectionProperty(LockoutService::class, $name))->setValue(null, []);
     }
 };
@@ -154,7 +154,8 @@ PHP;
             $db->query("CREATE TEMPORARY TABLE {$p}teamf_head AS SELECT * FROM {$p}appointments_teamlog_head");
             $db->query("DELETE FROM {$p}appointments_teamlog WHERE id={$last}");
             $plain = $verify();
-            $db->query("UPDATE {$p}appointments_teamlog_head h JOIN {$p}appointments_teamlog l ON l.id={$all[2]} SET h.last_id=l.id, h.last_hash=l.row_hash");
+            // The strongest copy without the key: the link the deleted row carried.
+            $db->query("UPDATE {$p}appointments_teamlog_head h JOIN {$p}teamf_one l SET h.last_id={$all[2]}, h.last_hash=l.prev_hash");
             $adjusted = $verify();
             $db->query("INSERT INTO {$p}appointments_teamlog SELECT * FROM {$p}teamf_one");
             $db->query("DELETE FROM {$p}appointments_teamlog_head");
@@ -218,6 +219,22 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
         });
 
         $fresh();
+        $suite->test('A log restarted after its head was deleted stays reported as broken', static function () use ($run, $verify, $db, $p, $tag, $fresh) {
+            $db->query("INSERT INTO {$p}appointments_calendars (uri, title, owner_user_id, row_mac, created_utc, modified_utc) VALUES ('" . md5($tag . 'x') . "', 'F restart', 0, REPEAT(CHAR(0), 32), UTC_TIMESTAMP(), UTC_TIMESTAMP())");
+            $calendar = (int) $db->insert_id;
+
+            try {
+                $run('$services->audit()->log(AuditEvent::LOGIN_FAILURE, ["subject_user_id" => 42]); return true;');
+                $restarted = $verify();
+                $marker = $db->query("SELECT pruned_through_hash IS NOT NULL FROM {$p}appointments_teamlog_head")->fetch_row()[0];
+            } finally {
+                $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
+                $fresh();
+            }
+
+            return $restarted['intact'] === false && (int) $marker === 1;
+        });
+
         $suite->test('An emptied log with its head removed is detected while calendar data exists', static function () use ($verify, $db, $p) {
             $empty = $verify();
             $hasData = (int) $db->query("SELECT (SELECT COUNT(*) FROM {$p}appointments_calendars) + (SELECT COUNT(*) FROM {$p}appointments_devices) + (SELECT COUNT(*) FROM {$p}appointments_calendar_grants)")->fetch_row()[0] > 0;
@@ -288,6 +305,9 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
             file_put_contents($script, '<?php
 require "/var/www/html/tests/scripts/appointments-joomla.php";
 echo Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication()->lockout()->retryAfter(' . var_export($name, true) . ', "");
+// Hold the reservation like a request that is still checking the password.
+flush();
+sleep(3);
 ');
             $procs = [];
             $pipes = [];
@@ -320,23 +340,23 @@ echo Advans\Component\Appointments\Administrator\Service\Team\TeamServices::from
             $r = $lock('$_SERVER["REQUEST_METHOD"] = "POST";
                 for ($i = 0; $i < 10; $i++) { $l->recordFailure($u, ""); }
                 $p = new ReflectionProperty(LockoutService::class, "refused");
-                $key = (new ReflectionMethod(LockoutService::class, "refusalKey"))->invoke(null, $u, "");
+                $key = (new ReflectionMethod(LockoutService::class, "refusalKey"))->invoke($l, $u, "");
                 $p->setValue(null, [$key => true]);
                 $l->recordFailure($u, "");
                 $forget();
-                $b = LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), $u, "")["user"];
+                $b = LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), LockoutService::identityFor(0, $u), "")["user"];
                 return $services->db()->setQuery("SELECT failures FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($b)) . ")")->loadResult();');
 
             return (int) $r === 10;
         });
     } finally {
         $lock('foreach ([$u, $o, $u . "-burst", ' . var_export($tag . '-burst', true) . '] as $name) {
-            foreach (LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), $name, "") as $b) {
+            foreach (LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), LockoutService::identityFor(0, $name), "") as $b) {
                 $services->db()->setQuery("DELETE FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($b)) . ")")->execute();
             }
         }
         foreach (["198.51.100.7", "203.0.113.50", "203.0.113.9", "2001:db8:7:7::1", "2001:db8:7:8::1"] as $ip) {
-            $b = LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), "x", $ip)["ip"];
+            $b = LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), "name:x", $ip)["ip"];
             $services->db()->setQuery("DELETE FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($b)) . ")")->execute();
         }
         return true;');

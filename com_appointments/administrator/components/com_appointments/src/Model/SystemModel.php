@@ -83,6 +83,11 @@ class SystemModel extends BaseDatabaseModel
      */
     public function teamChecks(): array
     {
+        // The state of keys, MFA enforcement and the log is for administrators only.
+        if (!Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
+            return [];
+        }
+
         $services = TeamServices::fromApplication();
         $params = $services->params();
         $enabled = $services->enabled();
@@ -104,6 +109,11 @@ class SystemModel extends BaseDatabaseModel
         $base = $this->siteUrl($params);
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS', str_starts_with($base, 'https://'),
             Text::_(str_starts_with($base, 'https://') ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS_FIX');
+        // Behind a load balancer Joomla takes the address from X-Forwarded-For,
+        // which a client can set unless the proxy overwrites it.
+        $proxy = (bool) Factory::getApplication()->get('behind_loadbalancer', false);
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROXY', !$proxy, Text::_($proxy ? 'JYES' : 'JNO'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_PROXY_FIX');
 
         foreach (['system' => 'appointmentsdav', 'user' => 'appointments'] as $folder => $element) {
             $query = $this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
@@ -195,6 +205,8 @@ class SystemModel extends BaseDatabaseModel
         $root = $this->request('GET', $base);
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_TLS', str_starts_with($base, 'https://') && $root['status'] > 0,
             $root['status'] > 0 ? (string) $root['status'] : Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_NO_ANSWER'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS_FIX');
+        $hsts = stripos($root['headers'], "\nstrict-transport-security:") !== false;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_HSTS', $hsts, Text::_($hsts ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HSTS_FIX');
 
         if (!$enabled) {
             return $checks;
@@ -288,7 +300,7 @@ class SystemModel extends BaseDatabaseModel
         $lastId = (int) $head['last_id'];
 
         if ($lastId === 0) {
-            return hash_equals(AuditService::genesis($key), (string) $head['last_hash']);
+            return hash_equals(AuditService::emptyHead($key), (string) $head['last_hash']);
         }
 
         $rowHash = $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($db->quoteName('#__appointments_teamlog'))
@@ -329,7 +341,11 @@ class SystemModel extends BaseDatabaseModel
     protected function populateState()
     {
         parent::populateState();
-        $this->setState('probe', Factory::getApplication()->getInput()->getInt('probe', 0) === 1);
+        // The probes send requests and hash with 64 MiB: only on the form's
+        // POST with its token, never from a link.
+        $input = Factory::getApplication()->getInput();
+        $this->setState('probe', $input->getMethod() === 'POST' && $input->post->getInt('probe', 0) === 1
+            && \Joomla\CMS\Session\Session::checkToken('post'));
     }
 
     private function query(): \Joomla\Database\QueryInterface

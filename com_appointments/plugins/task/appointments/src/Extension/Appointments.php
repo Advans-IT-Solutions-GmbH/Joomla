@@ -125,8 +125,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $deleted = 0;
 
             foreach ($calendars as $calendar) {
-                $deleted += $services->objects()->deleteEndedBefore((int) $calendar['id'],
-                    $now->modify('-' . (int) $calendar['retention_days'] . ' days'));
+                // The retention is taken from the calendar service, which checks the
+                // row MAC: a value written into the database alone deletes nothing.
+                $verified = $services->calendars()->get((int) $calendar['id']);
+                $days = $verified !== null ? (int) ($verified->retention_days ?? 0) : 0;
+
+                if ($days > 0) {
+                    $deleted += $services->objects()->deleteEndedBefore((int) $calendar['id'], $now->modify('-' . $days . ' days'));
+                }
             }
 
             return ['calendars' => \count($calendars), 'entries_deleted' => $deleted];

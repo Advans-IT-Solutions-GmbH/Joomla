@@ -32,9 +32,12 @@ final class AuditChainTest extends TestCase
      */
     private function chain(array $events, ?array $head = null, int $firstId = 1): array
     {
-        $head ??= ['last_id' => 0, 'last_hash' => AuditService::genesis(self::KEY), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
+        $head ??= ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
         $rows = [];
         $id = $firstId;
+        // What AuditService::predecessorLink() finds: the link of the newest row, else the anchor, else genesis.
+        $prev = $head['link'] ?? ($head['pruned_through_hash'] ?? AuditService::genesis(self::KEY));
+        unset($head['link']);
 
         foreach ($events as $event) {
             $details = isset($event[2]) ? AuditService::sanitiseDetails($event[2]) : null;
@@ -42,11 +45,12 @@ final class AuditChainTest extends TestCase
                 'id' => (string) $id, 'occurred_utc' => $event[1], 'event' => $event[0], 'actor_user_id' => '7',
                 'actor_device_id' => null, 'subject_user_id' => null, 'calendar_id' => '3', 'object_ref' => null,
                 'details' => $details === null ? null : AuditService::encodeDetails($details), 'ip_hash' => null,
-                'prev_hash' => $head['last_hash'],
+                'prev_hash' => $prev,
             ];
             $row['row_hash'] = AuditService::rowHash(self::KEY, $row);
             $head['last_id'] = $id;
             $head['last_hash'] = AuditService::seal(self::KEY, $id, $row['row_hash']);
+            $prev = AuditService::link(self::KEY, $id, $row['row_hash']);
             $rows[$id] = $row;
             // Ids may have gaps (a rolled back append), the chain must not care.
             $id += 2;
@@ -116,7 +120,7 @@ final class AuditChainTest extends TestCase
         $forged['id'] = '4';
         $forged['event'] = AuditEvent::GRANT_REVOKED;
         // Without the key the forger can only copy hashes from other rows.
-        $forged['prev_hash'] = $rows[3]['row_hash'];
+        $forged['prev_hash'] = $rows[5]['prev_hash'];
         $all = [$rows[1], $rows[3], $forged, $rows[5], $rows[7]];
 
         $result = AuditService::verifyChain(self::KEY, $head, $all);
@@ -135,15 +139,19 @@ final class AuditChainTest extends TestCase
 
     public function testCutOffEndIsDetected(): void
     {
-        [$head, $rows] = $this->sample();
-        unset($rows[7]);
-        // The forger points the head at the new last row, copying what is stored.
-        $head['last_id'] = 5;
-        $head['last_hash'] = $rows[5]['row_hash'];
+        // The forger points the head at the new last row with every value
+        // stored in the database: its row hash, or the link the deleted row
+        // carried (which was the head's value under the old scheme).
+        foreach (['row_hash', 'next_prev'] as $copy) {
+            [$head, $rows] = $this->sample();
+            $head['last_id'] = 5;
+            $head['last_hash'] = $copy === 'row_hash' ? $rows[5]['row_hash'] : $rows[7]['prev_hash'];
+            unset($rows[7]);
 
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
-        self::assertFalse($result->intact);
-        self::assertSame(5, $result->firstBrokenId);
+            $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+            self::assertFalse($result->intact, $copy);
+            self::assertSame(5, $result->firstBrokenId);
+        }
 
         [$head, $rows] = $this->sample();
         unset($rows[7]);
@@ -158,8 +166,35 @@ final class AuditChainTest extends TestCase
         self::assertFalse(AuditService::verifyChain(self::KEY, null, [], true)->intact, 'Rows and head deleted while calendars exist');
         self::assertTrue(AuditService::verifyChain(self::KEY, null, [], false)->intact, 'A log that was never written');
 
+        // The head reset to the empty state (readable once it was empty) while calendar data exists.
+        $empty = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
+        self::assertFalse(AuditService::verifyChain(self::KEY, $empty, [], true)->intact, 'Emptied with calendar data');
+        self::assertTrue(AuditService::verifyChain(self::KEY, $empty, [], false)->intact, 'Empty before any calendar');
+
         [, $rows] = $this->sample();
         self::assertFalse(AuditService::verifyChain(self::KEY, null, array_values($rows))->intact, 'Head deleted, rows kept');
+    }
+
+    public function testRestartedLogStaysBroken(): void
+    {
+        // Rows and head deleted, then a new event: the head is re-created with the restart marker.
+        $restart = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0,
+            'pruned_through_hash' => AuditService::restartMarker(self::KEY)];
+        [$head, $rows] = $this->chain([[AuditEvent::LOGIN_FAILURE, '2026-03-01 08:00:00']], $restart);
+
+        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows), true);
+        self::assertFalse($result->intact);
+
+        // Removing the marker does not help: the first row links to it, not to genesis.
+        $head['pruned_through_hash'] = null;
+        self::assertFalse(AuditService::verifyChain(self::KEY, $head, array_values($rows), true)->intact);
+    }
+
+    public function testDeadlockIsRecognised(): void
+    {
+        self::assertTrue(AuditService::isLockConflict(new \RuntimeException('Deadlock found when trying to get lock', 1213)));
+        self::assertTrue(AuditService::isLockConflict(new \RuntimeException('x', 0, new \RuntimeException('Lock wait timeout exceeded', 1205))));
+        self::assertFalse(AuditService::isLockConflict(new \RuntimeException('Duplicate entry', 1062)));
     }
 
     public function testWrongKeyIsDetected(): void
@@ -177,10 +212,11 @@ final class AuditChainTest extends TestCase
     {
         [$head, $rows] = $this->sample();
         $through = 3;
-        $anchor = AuditService::seal(self::KEY, $through, $rows[$through]['row_hash']);
+        $anchor = AuditService::link(self::KEY, $through, $rows[$through]['row_hash']);
         unset($rows[1], $rows[3]);
         $head['pruned_through_id'] = $through;
         $head['pruned_through_hash'] = $anchor;
+        $head['link'] = AuditService::link(self::KEY, 7, $rows[7]['row_hash']);
         [$head, $more] = $this->chain([[AuditEvent::LOG_PRUNED, '2027-02-01 00:00:00', ['through_id' => $through, 'rows' => 2, 'anchor' => bin2hex($anchor)]]], $head, 9);
 
         return [$head, $rows + $more];

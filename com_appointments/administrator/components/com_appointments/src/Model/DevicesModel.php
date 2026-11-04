@@ -86,6 +86,9 @@ class DevicesModel extends ListModel
             if (($key === 'state' && $value !== '' && !\array_key_exists((int) $value, self::STATES))
                 || ($key === 'state' && $value !== '' && !ctype_digit($value))
                 || ($key === 'search' && (preg_match('//u', $value) !== 1 || mb_strlen($value) > 100))) {
+                // Not kept: a forged link must not leave the list stuck on an error.
+                $app->setUserState($this->context . '.filter.' . $key, '');
+
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_TEAM_F_FILTER_INVALID'), 400);
             }
 

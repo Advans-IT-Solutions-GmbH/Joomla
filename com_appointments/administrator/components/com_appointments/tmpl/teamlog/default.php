@@ -10,6 +10,7 @@
 defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
+use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -68,7 +69,7 @@ use Joomla\CMS\Router\Route;
                     <td><?php echo $item->subject_user_id === null ? '' : $this->escape((string) ($item->subject_name ?? '') . ' #' . (int) $item->subject_user_id); ?></td>
                     <td><?php echo $item->calendar_id === null ? '' : $this->escape((string) ($item->calendar_title ?? '') . ' #' . (int) $item->calendar_id); ?></td>
                     <td><?php echo $this->escape((string) ($item->object_ref ?? '')); ?>
-                        <?php if ($item->details !== null) : ?><br><small><code class="text-break"><?php echo $this->escape((string) $item->details); ?></code></small><?php endif; ?></td>
+                        <?php if ($item->details !== null) : ?><br><small><code class="text-break"><?php echo $this->escape(AuditService::decodeDetails($item->details) === null ? (string) $item->details : AuditService::encodeDetails(AuditService::decodeDetails($item->details))); ?></code></small><?php endif; ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

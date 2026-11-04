@@ -6,13 +6,18 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 ?>
 <p><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_DESC'); ?></p>
-<p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=system&probe=1'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_RUN'); ?></a></p>
+<form action="<?php echo Route::_('index.php?option=com_appointments&view=system'); ?>" method="post">
+    <input type="hidden" name="probe" value="1">
+    <?php echo HTMLHelper::_('form.token'); ?>
+    <p><button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_RUN'); ?></button></p>
+</form>
 <table class="table">
     <caption><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_TITLE'); ?></caption>
     <thead><tr><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_CHECK'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_VALUE'); ?></th></tr></thead>

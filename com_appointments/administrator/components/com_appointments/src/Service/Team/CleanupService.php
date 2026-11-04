@@ -85,7 +85,10 @@ final class CleanupService implements CleanupServiceInterface
     {
         return match ($this->effectiveState($session)) {
             TeamStates::DEVICE_ACTIVE => self::VIEW_NORMAL,
-            TeamStates::DEVICE_CLEANUP_EMPTY => self::VIEW_EMPTY,
+            // Empty only for a calendar the device synchronised before: a
+            // blocked device cannot probe calendars it never had.
+            TeamStates::DEVICE_CLEANUP_EMPTY => \in_array($calendarId, $this->calendarsInCleanup($session), true)
+                ? self::VIEW_EMPTY : self::VIEW_HIDDEN,
             default => self::VIEW_HIDDEN,
         };
     }
@@ -119,18 +122,14 @@ final class CleanupService implements CleanupServiceInterface
             return;
         }
 
+        // Only a pair the device already has: it cannot add calendars to its
+        // clean-up view by asking for them.
         $db = $this->db();
-        $time = $db->quote($this->time());
-        $calendar = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_calendars'))
-            ->where($db->quoteName('id') . ' = ' . $calendarId))->loadResult();
-
-        if ($calendar === 1) {
-            $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_device_calendars') . ' ('
-                . implode(',', $db->quoteName(['device_id', 'calendar_id', 'last_sync_utc', 'cleanup_delivered_utc']))
-                . ') VALUES (' . $session->deviceId . ', ' . $calendarId . ', ' . $time . ', ' . $time . ')'
-                . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('cleanup_delivered_utc') . ' = COALESCE('
-                . $db->quoteName('cleanup_delivered_utc') . ', ' . $time . ')')->execute();
-        }
+        $db->setQuery($this->query()->update($db->quoteName('#__appointments_device_calendars'))
+            ->set($db->quoteName('cleanup_delivered_utc') . ' = ' . $db->quote($this->time()))
+            ->where($db->quoteName('device_id') . ' = ' . $session->deviceId)
+            ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            ->where($db->quoteName('cleanup_delivered_utc') . ' IS NULL'))->execute();
 
         if ($this->undelivered($session->deviceId) === 0) {
             $this->toHidden($session->deviceId, $session->userId, 'delivered');
@@ -164,7 +163,7 @@ final class CleanupService implements CleanupServiceInterface
         $devices = $db->setQuery($this->query()->select($db->quoteName(['id', 'user_id', 'state', 'cleanup_started_utc']))
             ->from($db->quoteName('#__appointments_devices'))
             ->where($db->quoteName('state') . ' IN (' . TeamStates::DEVICE_CLEANUP_EMPTY . ',' . TeamStates::DEVICE_CLEANUP_HIDDEN . ')')
-            ->order($db->quoteName('id') . ' ASC')->setLimit(self::BATCH))->loadAssocList();
+            ->order($db->quoteName('cleanup_started_utc') . ' ASC')->order($db->quoteName('id') . ' ASC')->setLimit(self::BATCH))->loadAssocList();
 
         foreach ($devices as $device) {
             $id = (int) $device['id'];
@@ -191,14 +190,16 @@ final class CleanupService implements CleanupServiceInterface
 
     public function onUserBlocked(int $userId, ?int $actorUserId): void
     {
-        $result = $this->blockUser($userId, 'account_blocked', $actorUserId);
+        // The mail's reasons: `blocked` (the Joomla account) or `admin` (calendar access blocked in the backend).
+        $reason = $actorUserId !== null ? 'admin' : 'blocked';
+        $result = $this->blockUser($userId, $reason, $actorUserId);
 
         if ($result['devices'] + $result['grants'] === 0) {
             return;
         }
 
         try {
-            $this->services->mailer()->accessSuspended($userId, 'account_blocked');
+            $this->services->mailer()->accessSuspended($userId, $reason);
         } catch (\Throwable $e) {
             Log::add('Team calendars: the suspension mail could not be sent (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
@@ -285,24 +286,38 @@ final class CleanupService implements CleanupServiceInterface
             ->where($db->quoteName('state') . ' = ' . TeamStates::DEVICE_ACTIVE)
             ->order($db->quoteName('id') . ' ASC'))->loadColumn() ?: [];
         $devices = 0;
+        $failure = null;
 
-        // Devices first: they are what reaches data. A failing grant service
-        // must not leave a device of a blocked user active.
+        // Devices first: they are what reaches data. One failing device, or a
+        // failing grant service, must not leave the others active.
         foreach ($ids as $id) {
-            $before = $this->device((int) $id);
-            $this->startForDevice((int) $id, $reason, $actorUserId);
-            $after = $this->device((int) $id);
-            $devices += $before !== null && $after !== null && (int) $after['state'] !== (int) $before['state'] ? 1 : 0;
+            try {
+                $this->startForDevice((int) $id, $reason, $actorUserId);
+                $after = $this->device((int) $id);
+                $devices += $after !== null && (int) $after['state'] !== TeamStates::DEVICE_ACTIVE ? 1 : 0;
+            } catch (\Throwable $e) {
+                $failure ??= $e;
+            }
         }
 
-        $grants = $this->services->grants()->suspendAllForUser($userId, self::reason($reason));
+        try {
+            $grants = $this->services->grants()->suspendAllForUser($userId, self::reason($reason));
+        } catch (\Throwable $e) {
+            $grants = 0;
+            $failure ??= $e;
+        }
 
         if ($devices + $grants > 0) {
             $this->services->audit()->log(AuditEvent::USER_CLEANUP_STARTED, [
                 'actor_user_id'   => $actorUserId,
                 'subject_user_id' => $userId,
-                'details'         => ['reason' => self::reason($reason), 'devices' => $devices, 'grants' => $grants],
+                'details'         => ['reason' => self::reason($reason), 'devices' => $devices, 'grants' => $grants,
+                    'complete' => $failure === null],
             ]);
+        }
+
+        if ($failure !== null) {
+            throw $failure;
         }
 
         return ['devices' => $devices, 'grants' => $grants];

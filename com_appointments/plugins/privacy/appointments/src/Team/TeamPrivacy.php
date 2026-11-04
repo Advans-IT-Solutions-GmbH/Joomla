@@ -8,7 +8,6 @@
 
 namespace Advans\Plugin\Privacy\Appointments\Team;
 
-use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
@@ -28,25 +27,25 @@ defined('_JEXEC') or die;
 /**
  * Joomla privacy requests for the internet calendars (work package F, specification 9.1).
  *
- * Calendar entries are found through the blind index of their e-mail addresses
- * (`#__appointments_calendar_object_emails`, key(PURPOSE_EMAIL_INDEX)), so no user key is needed
- * to find or delete them. The export contains an entry's content only when the person handling
- * the request holds an effective, key-holding access to its calendar and has unlocked their key
- * in this session; otherwise it lists the calendar and the start from the time skeleton, with a
- * note. Calendars that could not be searched completely (entries without an index) or not be
- * decrypted are named in their own domain: the result is never silently incomplete.
+ * There is no index of e-mail addresses. Calendar entries are searched only in the session of the
+ * person handling the request, and only in the calendars that person can unlock: an effective,
+ * key-holding access and a key unlocked in this session (password sign-in with the second
+ * factor). The entries are decrypted in memory, their addresses read with
+ * {@see \Advans\Component\Appointments\Administrator\Service\Team\TimingIndexInterface::emails()}
+ * and compared with the requested address; nothing of this is stored. Every calendar that could
+ * not be searched is named in the export and in the removal result: the result is never silently
+ * incomplete. Bookings are handled by the booking page's privacy part.
  *
- * Staff data of an account (devices, grants, activation links, log rows) is exported without any
- * hash, salt or key. Removal deletes the found entries and, for an account, its devices, keys,
- * grants and activation links like a deleted account; owned calendars keep their contents with
- * owner 0. Log rows stay for their retention of twelve months, because they are the evidence of
- * who did what; the export lists them.
+ * The export of an entry keeps the requester's own data: other attendees and other addresses in the
+ * text are replaced. Staff data of an account (devices, grants, activation links, log rows) is
+ * exported without any hash, salt, key or other person's id; log rows in which the person only
+ * acted show the event and the time. Removal deletes the matching entries as normal changes and,
+ * for an account, its devices, keys, grants and activation links like a deleted account; owned
+ * calendars keep their contents with owner 0. Log rows stay for their retention of twelve months,
+ * because they are the evidence of who did what.
  *
- * Both requests are logged (`privacy.export`, `privacy.delete`) with counts only; the address
- * appears there only as its keyed hash.
- *
- * The plugin's event handlers belong to the booking page's privacy part; they call
- * {@see self::export()} and {@see self::remove()}.
+ * Search, export and removal are logged (`privacy.search`, `privacy.export`, `privacy.delete`)
+ * with counts only, never the address, a hash of it, or content.
  *
  * @since  1.4.0
  */
@@ -85,12 +84,25 @@ final class TeamPrivacy
     }
 
     /**
-     * Keyed hash of an address in the blind index. The same normalisation as
-     * the store: trimmed, lower case.
+     * The requester's data in one entry: ATTENDEE and ORGANIZER of anybody
+     * else and every other e-mail address in the text are replaced.
      */
-    public static function emailHash(string $key, string $email): string
+    public static function redact(string $ics, string $email, string $otherPerson = 'other person'): string
     {
-        return hash_hmac('sha256', mb_strtolower(trim($email), 'UTF-8'), $key, true);
+        $email = mb_strtolower(trim($email), 'UTF-8');
+        $unfolded = preg_replace('/\r?\n[ \t]/', '', $ics) ?? '';
+        $lines = [];
+
+        foreach (preg_split('/\r?\n/', $unfolded) ?: [] as $line) {
+            if (preg_match('/^(ATTENDEE|ORGANIZER)[;:]/i', $line, $m) === 1 && !str_contains(mb_strtolower($line, 'UTF-8'), $email)) {
+                $line = strtoupper($m[1]) . ':' . $otherPerson;
+            }
+
+            $lines[] = preg_replace_callback('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i',
+                static fn (array $match): string => mb_strtolower($match[0], 'UTF-8') === $email ? $match[0] : '[redacted]', $line) ?? '';
+        }
+
+        return implode("\r\n", $lines);
     }
 
     /**
@@ -99,23 +111,34 @@ final class TeamPrivacy
     public function export(string $email, ?User $user): array
     {
         $domains = [];
-        $counts = ['entries' => 0, 'content' => 0, 'incomplete' => 0, 'staff' => 0];
+        $counts = ['entries' => 0, 'not_searched' => 0, 'staff' => 0];
 
         // Entries and staff data are independent: a failure in one never hides the other.
         try {
-            [$entries, $incomplete] = $this->entryDomains($email);
-            $domains[] = $entries;
-            $counts['entries'] = \count($entries->getItems());
-            $counts['content'] = \count(array_filter($entries->getItems(), static fn (Item $item): bool => self::hasField($item, 'content')));
+            $search = $this->search($email);
+            $entries = $this->domain('appointments_calendar_entries', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_ENTRIES');
+            $other = Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_OTHER_PERSON');
 
-            if ($incomplete !== null) {
-                $domains[] = $incomplete;
-                $counts['incomplete'] = \count($incomplete->getItems());
+            foreach ($search['matches'] as [$object, $ics, $title]) {
+                $item = new Item();
+                $item->id = $object->id;
+                $this->field($item, 'calendar', $title);
+                $this->field($item, 'modified_utc', $object->modifiedUtc->format('Y-m-d H:i:s'));
+                $this->field($item, 'content', self::redact($ics, $email, $other));
+                $entries->addItem($item);
+            }
+
+            $domains[] = $entries;
+            $counts['entries'] = \count($search['matches']);
+            $counts['not_searched'] = \count($search['unsearched']);
+
+            if ($search['unsearched'] !== []) {
+                $domains[] = $this->unsearchedDomain($search['unsearched']);
             }
         } catch (\Throwable $e) {
             Log::add('Team calendars: the privacy export of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
             $domains[] = $this->noteDomain('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED');
-            $counts['incomplete']++;
+            $counts['not_searched'] = -1;
         }
 
         $userId = $user !== null ? (int) $user->id : 0;
@@ -134,8 +157,8 @@ final class TeamPrivacy
 
         $this->services->audit()->log(AuditEvent::PRIVACY_EXPORT, [
             'actor_user_id'   => $this->actorId(),
-            'subject_user_id' => $user !== null ? (int) $user->id : null,
-            'details'         => $counts + ['email_hash' => $this->emailHashHex($email)],
+            'subject_user_id' => $userId > 0 ? $userId : null,
+            'details'         => $counts,
         ]);
 
         return $domains;
@@ -153,20 +176,17 @@ final class TeamPrivacy
         $staff = false;
 
         try {
-            $hash = $this->emailHashRaw($email);
+            $search = $this->search($email);
+            $unsearched = $search['unsearched'];
 
-            if ($hash !== null) {
-                foreach ($this->services->objects()->findByEmailHash($hash) as $object) {
-                    try {
-                        $this->services->objects()->delete($object->calendarId, $object->uri, null, null);
-                        $deleted++;
-                    } catch (\Throwable $e) {
-                        $failed++;
-                    }
+            foreach ($search['matches'] as [$object]) {
+                try {
+                    $this->services->objects()->delete($object->calendarId, $object->uri, null, null);
+                    $deleted++;
+                } catch (\Throwable $e) {
+                    $failed++;
                 }
             }
-
-            $unsearched = $this->calendarTitles($this->services->objects()->calendarsWithUnindexedObjects());
         } catch (\Throwable $e) {
             $failed++;
             Log::add('Team calendars: the privacy removal of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -203,75 +223,68 @@ final class TeamPrivacy
 
         $this->services->audit()->log(AuditEvent::PRIVACY_DELETE, [
             'actor_user_id'   => $this->actorId(),
-            'subject_user_id' => $user !== null ? (int) $user->id : null,
-            'details'         => [
-                'entries'    => $deleted,
-                'failed'     => $failed,
-                'unsearched' => \count($unsearched),
-                'staff'      => $staff,
-                'email_hash' => $this->emailHashHex($email),
-            ],
+            'subject_user_id' => $userId > 0 ? $userId : null,
+            'details'         => ['entries' => $deleted, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff],
         ]);
     }
 
     /**
-     * @return  array{0: Domain, 1: Domain|null}  The entries and, if any, the calendars that were not searched or not decrypted.
+     * Search every calendar the handling person can unlock in this session.
+     *
+     * @return  array{matches: array<int, array{0: StoredObject, 1: string, 2: string}>, unsearched: array<int, string>}
      */
-    private function entryDomains(string $email): array
+    private function search(string $email): array
     {
-        $entries = $this->domain('appointments_calendar_entries', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_ENTRIES');
-        $hash = $this->emailHashRaw($email);
-        $objects = $hash === null ? [] : $this->services->objects()->findByEmailHash($hash);
-        $titles = $this->calendarTitles(array_map(static fn (StoredObject $object): int => $object->calendarId, $objects));
-        $keyrings = [];
-        $undecrypted = [];
+        $address = mb_strtolower(trim($email), 'UTF-8');
+        $db = $this->services->db();
+        $calendars = $db->setQuery($this->query()->select($db->quoteName(['id', 'title']))
+            ->from($db->quoteName('#__appointments_calendars'))->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+        $matches = [];
+        $unsearched = [];
+        $searched = 0;
 
-        foreach ($objects as $object) {
-            $item = new Item();
-            $item->id = $object->id;
-            $this->field($item, 'calendar', $titles[$object->calendarId] ?? '#' . $object->calendarId);
-            $this->field($item, 'modified_utc', $object->modifiedUtc->format('Y-m-d H:i:s'));
-            $keyrings[$object->calendarId] ??= $this->keyring($object->calendarId);
-            $content = $keyrings[$object->calendarId] !== null
-                ? $this->services->keys()->decryptObject($keyrings[$object->calendarId], $object) : null;
+        foreach ($calendars as $calendar) {
+            $id = (int) $calendar['id'];
+            $title = (string) $calendar['title'] !== '' ? (string) $calendar['title'] : '#' . $id;
+            $keyring = $address === '' ? null : $this->keyring($id);
 
-            if ($content !== null) {
-                $this->field($item, 'content', $content);
-            } else {
-                $undecrypted[$object->calendarId] = true;
-                $this->field($item, 'start', $this->start($object));
-                $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_METADATA_ONLY'));
+            if ($keyring === null) {
+                $unsearched[$id] = $title;
+
+                continue;
             }
 
-            $entries->addItem($item);
-        }
+            try {
+                foreach ($this->services->objects()->all($id) as $object) {
+                    $ics = $this->services->keys()->decryptObject($keyring, $object);
 
-        foreach ($keyrings as $keyring) {
-            if ($keyring !== null) {
+                    if ($ics === null) {
+                        // One entry it cannot read: the calendar is not completely searched.
+                        $unsearched[$id] = $title;
+
+                        continue;
+                    }
+
+                    if (\in_array($address, $this->services->timing()->emails($ics), true)) {
+                        $matches[] = [$object, $ics, $title];
+                    }
+                }
+
+                $searched++;
+            } catch (\Throwable $e) {
+                $unsearched[$id] = $title;
+            } finally {
                 $keyring->wipe();
             }
         }
 
-        $unsearched = $this->calendarTitles($this->services->objects()->calendarsWithUnindexedObjects());
-        $undecrypted = array_intersect_key($titles, $undecrypted);
+        $this->services->audit()->log(AuditEvent::PRIVACY_SEARCH, [
+            'actor_user_id' => $this->actorId(),
+            'details'       => ['calendars' => \count($calendars), 'searched' => $searched, 'not_searched' => \count($unsearched),
+                'matches' => \count($matches)],
+        ]);
 
-        if ($unsearched === [] && $undecrypted === []) {
-            return [$entries, null];
-        }
-
-        $incomplete = $this->domain('appointments_calendar_entries_incomplete', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_INCOMPLETE');
-
-        foreach ([[$unsearched, 'COM_APPOINTMENTS_TEAM_F_PRIVACY_NOT_SEARCHED'], [$undecrypted, 'COM_APPOINTMENTS_TEAM_F_PRIVACY_NOT_DECRYPTED']] as [$calendars, $reason]) {
-            foreach ($calendars as $id => $title) {
-                $item = new Item();
-                $item->id = $id;
-                $this->field($item, 'calendar', $title);
-                $this->field($item, 'reason', Text::_($reason));
-                $incomplete->addItem($item);
-            }
-        }
-
-        return [$entries, $incomplete];
+        return ['matches' => $matches, 'unsearched' => $unsearched];
     }
 
     /**
@@ -281,20 +294,20 @@ final class TeamPrivacy
     {
         $db = $this->services->db();
         $sets = [
-            ['appointments_staff_devices', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_DEVICES', '#__appointments_devices', 'user_id',
+            ['appointments_staff_devices', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_DEVICES', '#__appointments_devices',
                 ['id', 'name', 'client', 'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'last_sync_utc',
                     'cleanup_started_utc', 'revoked_utc', 'revoke_reason']],
-            ['appointments_staff_grants', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_GRANTS', '#__appointments_calendar_grants', 'user_id',
-                ['id', 'calendar_id', 'role', 'state', 'audience', 'granted_by', 'created_utc', 'modified_utc']],
-            ['appointments_staff_activations', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_ACTIVATIONS', '#__appointments_invitations', 'user_id',
-                ['id', 'state', 'invited_by', 'created_utc', 'expires_utc', 'completed_utc']],
+            ['appointments_staff_grants', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_GRANTS', '#__appointments_calendar_grants',
+                ['id', 'calendar_id', 'role', 'state', 'audience', 'created_utc', 'modified_utc']],
+            ['appointments_staff_activations', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_ACTIVATIONS', '#__appointments_invitations',
+                ['id', 'state', 'created_utc', 'expires_utc', 'completed_utc']],
         ];
         $domains = [];
 
-        foreach ($sets as [$name, $label, $table, $column, $fields]) {
+        foreach ($sets as [$name, $label, $table, $fields]) {
             $domain = $this->domain($name, $label);
             $rows = $db->setQuery($this->query()->select($db->quoteName($fields))->from($db->quoteName($table))
-                ->where($db->quoteName($column) . ' = ' . $userId)->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+                ->where($db->quoteName('user_id') . ' = ' . $userId)->order($db->quoteName('id') . ' ASC'))->loadAssocList();
 
             foreach ($rows as $row) {
                 $domain->addItem($this->item($row));
@@ -303,16 +316,27 @@ final class TeamPrivacy
             $domains[] = $domain;
         }
 
-        // The log rows about this person, as actor or as subject: no address hash, no chain hashes.
+        // Log rows about this person: in full when the row concerns them (no
+        // address hash, no chain hashes); event and time only when they acted
+        // on somebody or something else.
         $domain = $this->domain('appointments_staff_log', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_LOG');
         $rows = $db->setQuery($this->query()->select($db->quoteName(['id', 'occurred_utc', 'event', 'actor_user_id',
             'actor_device_id', 'subject_user_id', 'calendar_id', 'object_ref', 'details']))
             ->from($db->quoteName('#__appointments_teamlog'))
             ->where('(' . $db->quoteName('actor_user_id') . ' = ' . $userId . ' OR ' . $db->quoteName('subject_user_id') . ' = ' . $userId . ')')
-            ->order($db->quoteName('id') . ' ASC')->setLimit(self::LOG_ROWS))->loadAssocList();
+            ->order($db->quoteName('id') . ' ASC')->setLimit(self::LOG_ROWS + 1))->loadAssocList();
 
-        foreach ($rows as $row) {
-            $domain->addItem($this->item($row));
+        foreach (\array_slice($rows, 0, self::LOG_ROWS) as $row) {
+            $own = (int) $row['subject_user_id'] === $userId
+                || ($row['subject_user_id'] === null && $row['calendar_id'] === null && $row['object_ref'] === null);
+            $domain->addItem($this->item($own ? $row : ['id' => $row['id'], 'occurred_utc' => $row['occurred_utc'], 'event' => $row['event']]));
+        }
+
+        if (\count($rows) > self::LOG_ROWS) {
+            $item = new Item();
+            $item->id = 0;
+            $this->field($item, 'note', Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_LOG_TRUNCATED', self::LOG_ROWS));
+            $domain->addItem($item);
         }
 
         $domains[] = $domain;
@@ -346,60 +370,22 @@ final class TeamPrivacy
         }
     }
 
-    private function start(StoredObject $object): string
-    {
-        try {
-            $skeleton = $this->services->keys()->openTiming($object->calendarId, $object->uri, $object->timing);
-        } catch (\Throwable $e) {
-            $skeleton = null;
-        }
-
-        if ($skeleton !== null && preg_match('/^DTSTART[^:\r\n]*:([0-9TZ]{8,16})\r?$/m', $skeleton, $m) === 1) {
-            return $m[1];
-        }
-
-        return '';
-    }
-
     /**
-     * @param   int[]  $ids
-     *
-     * @return  array<int, string>  Title by calendar id.
+     * @param   array<int, string>  $calendars  Title by id.
      */
-    private function calendarTitles(array $ids): array
+    private function unsearchedDomain(array $calendars): Domain
     {
-        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
+        $domain = $this->domain('appointments_calendar_entries_not_searched', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_INCOMPLETE');
 
-        if ($ids === []) {
-            return [];
+        foreach ($calendars as $id => $title) {
+            $item = new Item();
+            $item->id = $id;
+            $this->field($item, 'calendar', $title);
+            $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_NOT_SEARCHED'));
+            $domain->addItem($item);
         }
 
-        $db = $this->services->db();
-        $rows = $db->setQuery($this->query()->select($db->quoteName(['id', 'title']))->from($db->quoteName('#__appointments_calendars'))
-            ->where($db->quoteName('id') . ' IN (' . implode(',', $ids) . ')'))->loadAssocList('id');
-        $titles = [];
-
-        foreach ($ids as $id) {
-            $titles[$id] = isset($rows[$id]) && (string) $rows[$id]['title'] !== '' ? (string) $rows[$id]['title'] : '#' . $id;
-        }
-
-        return $titles;
-    }
-
-    private function emailHashRaw(string $email): ?string
-    {
-        if (trim($email) === '') {
-            return null;
-        }
-
-        return self::emailHash($this->services->keyProvider()->key(KeyProvider::PURPOSE_EMAIL_INDEX), $email);
-    }
-
-    private function emailHashHex(string $email): ?string
-    {
-        $hash = $this->emailHashRaw($email);
-
-        return $hash === null ? null : bin2hex($hash);
+        return $domain;
     }
 
     private function actorId(): ?int
@@ -420,7 +406,7 @@ final class TeamPrivacy
 
     private function noteDomain(string $label): Domain
     {
-        $domain = $this->domain('appointments_calendar_entries_incomplete', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_INCOMPLETE');
+        $domain = $this->domain('appointments_calendar_entries_not_searched', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_INCOMPLETE');
         $item = new Item();
         $item->id = 0;
         $this->field($item, 'note', Text::_($label));
@@ -450,17 +436,6 @@ final class TeamPrivacy
         $field->name = $name;
         $field->value = $value;
         $item->addField($field);
-    }
-
-    private static function hasField(Item $item, string $name): bool
-    {
-        foreach ($item->getFields() as $field) {
-            if ($field->name === $name) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function query(): QueryInterface
