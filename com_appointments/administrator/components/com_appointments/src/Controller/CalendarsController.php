@@ -371,7 +371,9 @@ class CalendarsController extends BaseController
             $this->app->setUserState(self::CONTEXT . '.data', null);
             $this->app->enqueueMessage(Text::_($id > 0 ? 'COM_APPOINTMENTS_TEAM_C_SAVED' : 'COM_APPOINTMENTS_TEAM_C_CREATED'), 'message');
 
-            if ($close) {
+            // Without core.edit the new calendar's edit page is closed to this
+            // user (its manager edits it), so «apply» ends in the list as well.
+            if ($close || !$this->app->getIdentity()->authorise('core.edit', 'com_appointments')) {
                 $this->releaseEditId(self::CONTEXT, $saved);
                 $this->setRedirect($this->listUrl());
             } else {
