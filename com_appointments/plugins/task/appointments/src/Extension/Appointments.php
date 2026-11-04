@@ -9,6 +9,7 @@
 namespace Advans\Plugin\Task\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Service\SchedulerService;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -38,6 +39,19 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             'form' => 'batch',
             'method' => 'retention',
         ],
+        // Internet calendars. Each does nothing while they are switched off.
+        'plg_task_appointments.teamcleanup' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMCLEANUP',
+            'method' => 'teamCleanup',
+        ],
+        'plg_task_appointments.teamlog' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMLOG',
+            'method' => 'teamLog',
+        ],
+        'plg_task_appointments.teaminvitations' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMINVITATIONS',
+            'method' => 'teamInvitations',
+        ],
     ];
 
     public static function getSubscribedEvents(): array
@@ -57,6 +71,66 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     protected function retention(ExecuteTaskEvent $event): int
     {
         return $this->execute('retention', $event);
+    }
+
+    /**
+     * Advance the clean-up of blocked devices by its timeouts and delete
+     * lock-out counters without a failure for 24 hours.
+     */
+    protected function teamCleanup(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamcleanup', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'devices_advanced' => $services->cleanup()->advance($now),
+            'counters_deleted' => $services->lockout()->purge($now),
+        ]);
+    }
+
+    /**
+     * Prune log rows older than twelve months; the chain stays verifiable.
+     */
+    protected function teamLog(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamlog', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'rows_pruned' => $services->audit()->prune($now),
+        ]);
+    }
+
+    /**
+     * Close expired invitations of external users and clear their addresses.
+     */
+    protected function teamInvitations(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teaminvitations', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'invitations_closed' => $services->invitations()->purgeExpired($now),
+        ]);
+    }
+
+    /**
+     * @param   callable(TeamServices, \DateTimeImmutable): array<string, int>  $routine
+     */
+    private function executeTeam(string $name, callable $routine): int
+    {
+        try {
+            $this->getApplication()->bootComponent('com_appointments');
+            $services = TeamServices::fromApplication();
+
+            if (!$services->enabled()) {
+                $this->logTask('Appointments ' . $name . ': internet calendars are switched off, nothing to do.');
+
+                return Status::OK;
+            }
+
+            $result = $routine($services, $services->now());
+            $this->logTask('Appointments ' . $name . ': ' . json_encode($result, JSON_THROW_ON_ERROR));
+
+            return Status::OK;
+        } catch (\Throwable $e) {
+            // Counts only; an exception text could name a user or a value.
+            $this->logTask('The appointments ' . $name . ' task failed. ' . get_class($e) . ', code ' . (int) $e->getCode()
+                . ', ' . basename($e->getFile()) . ':' . $e->getLine(), 'error');
+
+            return Status::KNOCKOUT;
+        }
     }
 
     private function execute(string $method, ExecuteTaskEvent $event): int
