@@ -57,7 +57,9 @@ trait AssetsTrait
             return '';
         }
 
-        $path = (string) HTMLHelper::_($type === 'style' ? 'stylesheet' : 'script', $uri, ['relative' => true, 'pathOnly' => true]);
+        // With pathOnly the helper returns one path as a string and several as an array.
+        $resolved = HTMLHelper::_($type === 'style' ? 'stylesheet' : 'script', $uri, ['relative' => true, 'pathOnly' => true]);
+        $path = is_array($resolved) ? (string) (reset($resolved) ?: '') : (string) $resolved;
         $base = Uri::root(true);
         $path = (string) preg_replace('/[?#].*$/s', '', $path);
 

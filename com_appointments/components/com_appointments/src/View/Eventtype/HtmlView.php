@@ -98,6 +98,8 @@ class HtmlView extends BaseHtmlView
     protected string $dialFlag = '';
     /** How the details step asks about the privacy notice: ConsentMode::NOTICE, ACKNOWLEDGE or CONSENT. */
     protected string $consentMode = 'notice';
+    /** Version of the checkbox label shown (ConsentMode::version), '' without a checkbox; the controller compares it. */
+    protected string $consentVersion = '';
 
     public function display($tpl = null)
     {
@@ -221,6 +223,13 @@ class HtmlView extends BaseHtmlView
 
         $this->maxGuests = BookingInput::maxGuests($this->params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS));
         $this->consentMode = ConsentMode::fromParams($this->params);
+
+        if (ConsentMode::requiresCheckbox($this->consentMode)) {
+            $this->consentVersion = ConsentMode::version($this->consentMode, $app->getLanguage()->getTag(), ConsentMode::labelText(
+                $this->consentMode, PrivacyLink::resolve($this->params) !== '',
+                static fn (string $key): string => Text::_($key), Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK')
+            ));
+        }
 
         // The clock of the language unless the visitor switched it; the addresses only carry a switched clock.
         $this->defaultClock = Text::_('COM_APPOINTMENTS_CLOCK_DEFAULT') === '12' ? '12' : '24';

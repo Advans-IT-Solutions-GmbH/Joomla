@@ -207,6 +207,10 @@ $textField = function (string $key, string $label, string $type, string $autocom
         <?php endif; ?>
         <input type="hidden" name="booking[start]" value="<?php echo $this->escape($this->selected->format('Y-m-d H:i:s')); ?>">
         <input type="hidden" name="booking[timezone]" value="<?php echo $this->escape($this->zone->getName()); ?>">
+        <input type="hidden" name="booking[clock]" value="<?php echo $this->escape($this->clock); ?>">
+        <?php if ($checkbox) : ?>
+            <input type="hidden" name="consent_version" value="<?php echo $this->escape($this->consentVersion); ?>">
+        <?php endif; ?>
         <input type="hidden" name="rendered_at" value="<?php echo $this->renderedAt; ?>">
         <input type="hidden" name="form_signature" value="<?php echo $this->formSignature; ?>">
         <?php echo HTMLHelper::_('form.token'); ?>

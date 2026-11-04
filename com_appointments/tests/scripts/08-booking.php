@@ -40,6 +40,7 @@ $prepare = static function (int $event, string $start) use ($check): array {
     $data = [
         $client->token($html) => 1, 'rendered_at' => $hidden['rendered_at'] ?? '',
         'form_signature' => $hidden['form_signature'] ?? '', 'website' => '', 'consent' => 1,
+        'consent_version' => $hidden['consent_version'] ?? '',
         'booking' => ['first_name' => 'Fixture', 'last_name' => 'Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start],
     ];
     return [$client, '/index.php?option=com_appointments&task=booking.submit&id=' . $event, $data];
@@ -184,6 +185,13 @@ try {
     $check($fieldError($dom($body), 'booking-consent', 'Please confirm your consent.')
         && !str_contains($body, 'The form has expired') && $bookings($eventIds[0]) === 1,
         'Missing consent gets its own message at the checkbox and never creates a booking');
+    // A tick given to another wording (the options changed while the form was open) counts as missing.
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['consent_version'] = str_repeat('0', 64);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $check($fieldError($dom($body), 'booking-consent', 'Please confirm your consent.') && $bookings($eventIds[0]) === 1,
+        'A consent to a label version other than the current one is refused at the checkbox and creates no booking');
     $request[2]['consent'] = 1;
     unset($request[2][$request[0]->token($body)]);
     $request[0]->request($request[1], $request[2]);

@@ -65,7 +65,8 @@ class GuestController extends BaseController
                 'title' => (string) $booking['title'], 'guest' => $guest, 'zone' => $zone,
                 'start' => UtcTimestamp::parse((string) $booking['start_utc'])->setTimezone($zone),
                 'end' => UtcTimestamp::parse((string) $booking['end_utc'])->setTimezone($zone),
-                'action' => Route::_('index.php?option=com_appointments&task=guest.remove'),
+                // Unescaped: the layout escapes the address once for the attribute.
+            'action' => Route::_('index.php?option=com_appointments&task=guest.remove', false),
             ];
         }
 

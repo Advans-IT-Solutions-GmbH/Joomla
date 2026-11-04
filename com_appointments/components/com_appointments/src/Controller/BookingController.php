@@ -71,17 +71,24 @@ class BookingController extends BaseController
         $consentMode = ConsentMode::fromParams($params);
         $proof = [];
 
-        if (ConsentMode::requiresCheckbox($consentMode) && $this->input->post->getInt('consent') !== 1) {
+        // The version names the exact label of the current options: the view derives it with the same
+        // helper and sends the version of the label it showed. A tick given to another mode or wording
+        // (the options changed while the form was open) counts as missing, so the visitor confirms the
+        // label now shown.
+        $version = '';
+
+        if (ConsentMode::requiresCheckbox($consentMode)) {
+            $label = ConsentMode::labelText($consentMode, PrivacyLink::resolve($params) !== '',
+                static fn (string $key): string => Text::_($key), Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK'));
+            $version = ConsentMode::version($consentMode, $this->app->getLanguage()->getTag(), $label);
+        }
+
+        if (ConsentMode::requiresCheckbox($consentMode) && ($this->input->post->getInt('consent') !== 1
+            || !hash_equals($version, $this->input->post->getString('consent_version', '')))) {
             $fieldErrors['consent'] = $consentMode === ConsentMode::ACKNOWLEDGE
                 ? 'COM_APPOINTMENTS_BOOKING_ERROR_ACKNOWLEDGE' : 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
         } elseif ($consentMode === ConsentMode::CONSENT) {
-            // The version names the exact label the page showed: the same helper derives it there.
-            $label = ConsentMode::labelText($consentMode, PrivacyLink::resolve($params) !== '',
-                static fn (string $key): string => Text::_($key), Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK'));
-            $proof = [
-                'consent_utc' => $now->format('Y-m-d H:i:s'),
-                'consent_version' => ConsentMode::version($consentMode, $this->app->getLanguage()->getTag(), $label),
-            ];
+            $proof = ['consent_utc' => $now->format('Y-m-d H:i:s'), 'consent_version' => $version];
         }
 
         if ($fieldErrors !== []) {
@@ -243,7 +250,9 @@ class BookingController extends BaseController
         if ($start !== null && in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $local = $start->setTimezone(new \DateTimeZone($zone));
             $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
-                . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '');
+                . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '')
+                // The clock the visitor switched to stays, like the zone.
+                . (in_array($data['clock'] ?? null, ['12', '24'], true) ? '&clock=' . $data['clock'] : '');
         } else {
             $details = false;
         }
