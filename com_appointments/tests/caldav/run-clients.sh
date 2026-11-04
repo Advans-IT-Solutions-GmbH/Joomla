@@ -67,6 +67,15 @@ summary() {
 CORE=(lib CalendarObjectStore:A KeyService:B CalendarService:C GrantService:C DeviceService:D TeamMailer:D AuditService:F LockoutService:F CleanupService:F)
 BOOKING=(BookingCalendarBridge:E TimingIndex:E)
 
+# The client image is built and its versions printed even while phases are
+# pending, so the image itself is always tested.
+if ! docker build -q -t "$IMAGE" "$HERE" >/dev/null; then
+    echo "✗ The client image does not build"
+    failed=$((failed + 1))
+    summary
+fi
+docker run --rm --entrypoint python "$IMAGE" -I -c 'import caldav, importlib.metadata as m; print("Clients: caldav", caldav.__version__, "vdirsyncer", m.version("vdirsyncer"))'
+
 if missing="$(stubbed "${CORE[@]}")"; then
     pending_line "CalDAV clients: discovery, sync, roles, vdirsyncer, revocation and clean-up" "$missing"
     summary
@@ -116,8 +125,6 @@ docker exec "$CONTAINER" mkdir -p /var/www/html/tests/scripts /var/www/html/test
 docker cp "$TESTS/scripts/." "$CONTAINER:/var/www/html/tests/scripts/" >/dev/null
 docker cp "$HERE/fixture.php" "$CONTAINER:/var/www/html/tests/caldav/fixture.php" >/dev/null
 docker cp "$CONTAINER:/etc/ssl/appointments-test/ca.pem" "$WORK/ca.pem" >/dev/null
-docker build -q -t "$IMAGE" "$HERE" >/dev/null || { echo "✗ client image did not build"; failed=$((failed + 1)); summary; }
-docker run --rm --entrypoint python "$IMAGE" -c 'import caldav, importlib.metadata as m; print("Clients: caldav", caldav.__version__, "vdirsyncer", m.version("vdirsyncer"))'
 
 step setup state.json || summary
 
