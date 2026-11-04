@@ -52,7 +52,7 @@ final class NotificationService
             return is_string($copy) ? $copy : null;
         }
 
-        $row = $this->db->setQuery('SELECT ' . $this->db->quoteName(['uid', 'created_utc', 'guest_emails']) . ' FROM '
+        $row = $this->db->setQuery('SELECT ' . implode(', ', $this->db->quoteName(['uid', 'created_utc', 'guest_emails'])) . ' FROM '
             . $this->db->quoteName('#__appointments_bookings')
             . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadAssoc();
         // Stored encrypted; a list that cannot be opened has no guest to write to.
