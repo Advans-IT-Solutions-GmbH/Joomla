@@ -66,6 +66,12 @@ PHP;
         return $suite->columns('appointments_auth_failures') === ['bucket', 'failures', 'locked_until_utc', 'last_failure_utc'];
     });
 
+    $suite->test('The log can tell whether a transaction is open (Joomla keeps its depth where the log reads it)', static function () use ($run) {
+        return $run('$d = new ReflectionProperty($joomlaDb, "transactionDepth"); $outside = $d->getValue($joomlaDb) === 0;
+            $joomlaDb->transactionStart(true); $inside = $d->getValue($joomlaDb) > 0; $joomlaDb->transactionRollback(true);
+            return $outside && $inside;') === true;
+    });
+
     $suite->test('User plugin installed and disabled after installation', static function () use ($suite) {
         return $suite->count("SELECT COUNT(*) FROM {$suite->prefix}extensions WHERE type='plugin' AND folder='user' AND element='appointments' AND enabled=0") === 1;
     });

@@ -121,6 +121,7 @@ final class AuditService implements AuditServiceInterface
         // The anchor first: it only ever holds a row id that was verified and
         // committed, so it can never be ahead of the snapshot read after it.
         $anchored = $this->anchoredLastId();
+        $outside = $this->outsideTransaction();
         // One read-only transaction: InnoDB gives every read the same snapshot,
         // so a row appended while the check runs cannot look like a broken head.
         $db->transactionStart(true);
@@ -139,7 +140,7 @@ final class AuditService implements AuditServiceInterface
 
         // An intact chain moves the file anchor up to its newest row, so a
         // later cut below it, or a database played back, is detected.
-        if ($result->intact && $head !== null) {
+        if ($result->intact && $head !== null && $outside) {
             $this->anchorLastId((int) $head['last_id']);
         }
 
@@ -165,6 +166,7 @@ final class AuditService implements AuditServiceInterface
         $cutoff = $nowUtc->setTimezone(new \DateTimeZone('UTC'))
             ->modify('-' . TeamStates::LOG_RETENTION_MONTHS . ' months')->format('Y-m-d H:i:s');
         $table = $db->quoteName('#__appointments_teamlog');
+        $outside = $this->outsideTransaction();
         $db->transactionStart(true);
 
         try {
@@ -219,7 +221,9 @@ final class AuditService implements AuditServiceInterface
                 ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
             $db->transactionCommit(true);
             // The chain was verified before and this prune wrote its newest row.
-            $this->anchorLastId($lastId);
+            if ($outside) {
+                $this->anchorLastId($lastId);
+            }
 
             return $deleted;
         } catch (\Throwable $e) {
@@ -719,6 +723,25 @@ final class AuditService implements AuditServiceInterface
             return $this->services->anchor()->minimum(EpochAnchorInterface::KIND_LOG, self::HEAD_ID);
         } catch (\Throwable $e) {
             return 0;
+        }
+    }
+
+    /**
+     * Whether no transaction is open on the connection, so what this service
+     * commits is really committed. Only then is the anchor raised: inside a
+     * caller's transaction a later rollback would leave it ahead of the log (a
+     * permanent false alarm). When the depth cannot be read, nothing is
+     * anchored, which costs protection, never a false alarm.
+     */
+    private function outsideTransaction(): bool
+    {
+        try {
+            $db = $this->db();
+            $depth = new \ReflectionProperty($db, 'transactionDepth');
+
+            return (int) $depth->getValue($db) === 0;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 
