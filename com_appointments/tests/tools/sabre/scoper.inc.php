@@ -105,6 +105,18 @@ return [
             );
         },
         /*
+         * php-scoper also prefixes string literals that merely look like a
+         * namespaced name, such as the date formats 'Ymd\THis\Z' of vObject.
+         * Only Sabre and Psr names are symbols of this bundle: the prefix comes
+         * off every other string again.
+         */
+        static function (string $filePath, string $prefix, string $contents): string {
+            $single = preg_quote($prefix . '\\', '/');
+            $double = preg_quote(str_replace('\\', '\\\\', $prefix) . '\\\\', '/');
+
+            return (string) preg_replace('/([\'"])(?:' . $double . '|' . $single . ')(?!Sabre\\\\|Psr\\\\)/', '$1', $contents);
+        },
+        /*
          * Joomla's guard against a direct call of a shipped PHP file through the
          * web server: right after the namespace (or the strict types
          * declaration, or the opening tag), so the file ends before it runs

@@ -14,8 +14,9 @@
  *   COMPOSER_BIN  Command that runs Composer (default: composer).
  *   PHP_BIN       PHP binary for php-scoper (default: the running PHP).
  *
- * Needs PHP 8.2 or newer for php-scoper; the generated code itself runs on
- * PHP 8.1, which composer.json pins as the platform.
+ * Needs PHP 8.3 or newer for php-scoper and its locked dependencies; the
+ * generated code itself runs on PHP 8.1, which composer.json pins as the
+ * platform.
  */
 
 declare(strict_types=1);

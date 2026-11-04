@@ -124,7 +124,7 @@ class InviteReply implements NotificationInterface
     {
         $cs = '{' . CalDAV\Plugin::NS_CALENDARSERVER . '}';
         $this->dtStamp->setTimezone(new \DateTimeZone('GMT'));
-        $writer->writeElement($cs . 'dtstamp', $this->dtStamp->format('Advans\Component\Appointments\Vendor\Ymd\THis\Z'));
+        $writer->writeElement($cs . 'dtstamp', $this->dtStamp->format('Ymd\THis\Z'));
         $writer->startElement($cs . 'invite-reply');
         $writer->writeElement($cs . 'uid', $this->id);
         $writer->writeElement($cs . 'in-reply-to', $this->inReplyTo);

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "79046cc64e3488a1297b81e4343fff0e",
+    "content-hash": "1028285ce99485b6c577316403b9707e",
     "packages": [
         {
             "name": "fidry/console",
@@ -1858,7 +1858,7 @@
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.2"
+        "php": "^8.3"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

@@ -178,7 +178,7 @@ class DateTime extends Property
             $isUtc = \false;
             foreach ($dt as $d) {
                 if ($isFloating) {
-                    $values[] = $d->format('Advans\Component\Appointments\Vendor\Ymd\THis');
+                    $values[] = $d->format('Ymd\THis');
                     continue;
                 }
                 if (is_null($tz)) {
@@ -191,9 +191,9 @@ class DateTime extends Property
                     $d = $d->setTimeZone($tz);
                 }
                 if ($isUtc) {
-                    $values[] = $d->format('Advans\Component\Appointments\Vendor\Ymd\THis\Z');
+                    $values[] = $d->format('Ymd\THis\Z');
                 } else {
-                    $values[] = $d->format('Advans\Component\Appointments\Vendor\Ymd\THis');
+                    $values[] = $d->format('Ymd\THis');
                 }
             }
             if ($isUtc || $isFloating) {

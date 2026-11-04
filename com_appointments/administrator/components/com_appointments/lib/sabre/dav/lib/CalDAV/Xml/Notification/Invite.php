@@ -169,7 +169,7 @@ class Invite implements NotificationInterface
     {
         $cs = '{' . CalDAV\Plugin::NS_CALENDARSERVER . '}';
         $this->dtStamp->setTimezone(new \DateTimeZone('GMT'));
-        $writer->writeElement($cs . 'dtstamp', $this->dtStamp->format('Advans\Component\Appointments\Vendor\Ymd\THis\Z'));
+        $writer->writeElement($cs . 'dtstamp', $this->dtStamp->format('Ymd\THis\Z'));
         $writer->startElement($cs . 'invite-notification');
         $writer->writeElement($cs . 'uid', $this->id);
         $writer->writeElement('{DAV:}href', $this->href);

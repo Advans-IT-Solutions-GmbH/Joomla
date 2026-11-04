@@ -175,8 +175,40 @@ final class DavVendorTest extends TestCase
         self::assertSame([], $found);
     }
 
-    public function testNoticesNameEveryBundledLibraryWithItsVersionAndLicence(): void
+    /**
+     * php-scoper takes strings like the date format 'Ymd\THis\Z' for names;
+     * none may carry the prefix, and dates must serialise as iCalendar.
+     */
+    public function testDateFormatsAreNotPrefixed(): void
     {
+        VendorAutoloader::register();
+        $found = [];
+
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(self::lib(), FilesystemIterator::SKIP_DOTS)) as $file) {
+            if (str_ends_with($file->getFilename(), '.php')
+                && preg_match_all('/[\'"]Advans\\\\{1,2}Component\\\\{1,2}Appointments\\\\{1,2}Vendor\\\\{1,2}(?!\\\\?(?:Sabre|Psr)\\\\)[^\'"]*/', (string) file_get_contents($file->getPathname()), $matches)) {
+                $found[] = $file->getFilename() . ': ' . implode(', ', $matches[0]);
+            }
+        }
+
+        self::assertSame([], $found);
+
+        $vcalendar = self::PREFIX . 'Sabre\\VObject\\Component\\VCalendar';
+        $calendar = new $vcalendar();
+        $event = $calendar->add('VEVENT', ['UID' => 'u', 'DTSTART' => new \DateTimeImmutable('2026-11-10 09:00:00', new \DateTimeZone('UTC'))]);
+        $event->add('DTEND', new \DateTimeImmutable('2026-11-10 10:00:00', new \DateTimeZone('Europe/Zurich')));
+        $text = $calendar->serialize();
+
+        self::assertStringContainsString("DTSTART:20261110T090000Z\r\n", $text);
+        self::assertStringContainsString("DTEND;TZID=Europe/Zurich:20261110T100000\r\n", $text);
+
+        $generator = self::PREFIX . 'Sabre\\VObject\\FreeBusyGenerator';
+        $freeBusy = (new $generator(new \DateTimeImmutable('2026-11-10 00:00:00', new \DateTimeZone('UTC')), new \DateTimeImmutable('2026-11-11 00:00:00', new \DateTimeZone('UTC')), $calendar))->getResult()->serialize();
+
+        self::assertMatchesRegularExpression('/FREEBUSY[^:]*:20261110T090000Z\//', str_replace("\r\n ", '', $freeBusy));
+    }
+
+    public function testNoticesNameEveryBundledLibraryWithItsVersionAndLicence(): void    {
         $notices = (string) file_get_contents(dirname(self::lib()) . '/THIRD-PARTY-NOTICES.txt');
         $packages = self::map()['packages'];
 

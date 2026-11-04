@@ -80,10 +80,10 @@ class DateAndOrTime extends Property
         $tz = $dt->getTimeZone();
         $isUtc = in_array($tz->getName(), ['UTC', 'GMT', 'Z']);
         if ($isUtc) {
-            $value = $dt->format('Advans\Component\Appointments\Vendor\Ymd\THis\Z');
+            $value = $dt->format('Ymd\THis\Z');
         } else {
             // Calculating the offset.
-            $value = $dt->format('Advans\Component\Appointments\Vendor\Ymd\THisO');
+            $value = $dt->format('Ymd\THisO');
         }
         $this->value = $value;
     }
