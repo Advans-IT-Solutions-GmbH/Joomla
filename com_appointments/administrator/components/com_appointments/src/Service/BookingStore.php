@@ -51,6 +51,7 @@ final class BookingStore
                 throw new SlotTakenException();
             }
 
+            $this->lockCalendars($eventId);
             $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), 0, true);
 
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
@@ -193,6 +194,7 @@ final class BookingStore
             if (!$event || (int) $event['host_user_id'] !== $host || (int) $event['published'] !== 1) {
                 throw new SlotTakenException();
             }
+            $this->lockCalendars((int) $booking['eventtype_id']);
             $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId, true);
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
@@ -398,7 +400,8 @@ final class BookingStore
         try {
             $team = TeamServices::fromApplication();
 
-            if (!$team->enabled()) {
+            // Removal needs no key and also runs while the feature is off.
+            if ($action === 'saved' && !$team->enabled()) {
                 return;
             }
 
@@ -410,6 +413,27 @@ final class BookingStore
             };
         } catch (\Throwable $e) {
             // The bridge logs its own failures; this only catches a missing runtime.
+        }
+    }
+
+    /**
+     * Inside the booking transaction, after the host lock and the event type row and
+     * before any plain read: lock the internet calendars of the event type, so bookings
+     * of other hosts that share one are serialised (BookingCalendarBridge::lockForBooking()).
+     * A database error of that lock ends the transaction like one of the host lock.
+     */
+    private function lockCalendars(int $eventId): void
+    {
+        try {
+            $team = TeamServices::fromApplication();
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        $bridge = $team->enabled() ? $team->bookings() : null;
+
+        if ($bridge !== null && method_exists($bridge, 'lockForBooking')) {
+            $bridge->lockForBooking($eventId);
         }
     }
 

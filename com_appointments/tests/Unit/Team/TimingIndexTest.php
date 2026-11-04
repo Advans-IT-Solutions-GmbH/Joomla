@@ -56,6 +56,12 @@ final class TimingIndexTest extends TestCase
                 class_alias($original, $class);
             }
         });
+
+        // `instanceof` and `catch` never autoload: alias the classes they name up front.
+        foreach (['Component', 'Property', 'Component\\VCalendar', 'Component\\VEvent', 'Recur\\NoInstancesException',
+            'Recur\\MaxInstancesExceededException'] as $name) {
+            class_exists(VendorAutoloader::PREFIX . 'Sabre\\VObject\\' . $name);
+        }
     }
 
     private static function calendar(string ...$components): string
@@ -124,13 +130,12 @@ final class TimingIndexTest extends TestCase
 
         foreach (['UID', 'secret-uid', 'DTSTAMP', 'SUMMARY', 'merger', 'DESCRIPTION', 'Confidential', 'LOCATION', 'Room 4',
             'ORGANIZER', 'ATTENDEE', 'example.test', 'CATEGORIES', 'private', 'X-CUSTOM', 'VALARM', 'X-NOTE', 'TZNAME',
-            'X-SECRET', 'hidden-zone-note'] as $forbidden) {
+            'X-SECRET', 'hidden-zone-note', 'VTIMEZONE'] as $forbidden) {
             self::assertStringNotContainsString($forbidden, $unfolded, $forbidden . ' must not reach the skeleton');
         }
 
         foreach (['DTSTART;TZID=Europe/Zurich:20270322T100000', 'DTEND;TZID=Europe/Zurich:20270322T110000',
-            'RRULE:FREQ=WEEKLY;COUNT=3', 'STATUS:CONFIRMED', 'TRANSP:OPAQUE', 'X-MICROSOFT-CDO-BUSYSTATUS:BUSY',
-            'BEGIN:VTIMEZONE', 'TZID:Europe/Zurich', 'X-LIC-LOCATION:Europe/Zurich', 'TZOFFSETTO:+0200'] as $kept) {
+            'RRULE:FREQ=WEEKLY;COUNT=3', 'STATUS:CONFIRMED', 'TRANSP:OPAQUE', 'X-MICROSOFT-CDO-BUSYSTATUS:BUSY'] as $kept) {
             self::assertStringContainsString($kept, $unfolded);
         }
 
@@ -141,6 +146,83 @@ final class TimingIndexTest extends TestCase
             self::assertContains($name, ['DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE', 'RECURRENCE-ID',
                 'STATUS', 'TRANSP', 'X-MICROSOFT-CDO-BUSYSTATUS'], $line);
         }
+    }
+
+    public function testClientTextNeverReachesTheSkeletonThroughZonesOrGroups(): void
+    {
+        $zone = implode("\r\n", ['BEGIN:VTIMEZONE', 'TZID:Lunch with lawyer', 'X-LIC-LOCATION:Europe/Zurich',
+            'BEGIN:STANDARD', 'DTSTART:19701025T030000', 'TZOFFSETFROM:Call Dr Meier', 'TZOFFSETTO:+0100', 'END:STANDARD', 'END:VTIMEZONE']);
+        $skeleton = (new TimingIndex())->extract(self::calendar($zone, self::event(
+            'SECRETGROUP.DTSTART;TZID=Lunch with lawyer:20270115T100000', 'DTEND;TZID=Lunch with lawyer:20270115T110000')));
+
+        foreach (['Lunch', 'lawyer', 'Meier', 'SECRETGROUP', 'VTIMEZONE'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $skeleton, $forbidden);
+        }
+
+        self::assertStringContainsString("DTSTART;TZID=Europe/Zurich:20270115T100000\r\n", $skeleton);
+        self::assertSame(['2027-01-15T09:00Z/2027-01-15T10:00Z'], $this->expand(self::calendar($zone, self::event(
+            'SECRETGROUP.DTSTART;TZID=Lunch with lawyer:20270115T100000', 'DTEND;TZID=Lunch with lawyer:20270115T110000')),
+            '2027-01-01 00:00:00', '2027-02-01 00:00:00', 'UTC'));
+    }
+
+    public function testRulesOutsideTheStandardOrTheLibraryAreRefused(): void
+    {
+        foreach (['FREQ=WEEKLY;BYHOUR=25', 'FREQ=YEARLY;BYYEARDAY=1;BYDAY=1MO', 'FREQ=YEARLY;BYYEARDAY=1;BYDAY=SU;INTERVAL=400',
+            'FREQ=YEARLY;BYWEEKNO=2;BYDAY=1MO', 'FREQ=WEEKLY;BYDAY=1MO', 'FREQ=DAILY;INTERVAL=0', 'FREQ=FORTNIGHTLY',
+            'FREQ=DAILY;X-NAME=1', 'FREQ=DAILY;COUNT=3;UNTIL=20270101', 'FREQ=MONTHLY;BYMONTHDAY=0', 'FREQ=DAILY;BYMINUTE=60',
+            'FREQ=DAILY;FREQ=WEEKLY', 'COUNT=3', 'FREQ=MONTHLY;BYDAY=MONDAY', 'FREQ=DAILY;UNTIL=20270231'] as $rule) {
+            try {
+                TimingIndex::rule($rule);
+                self::fail('Accepted: ' . $rule);
+            } catch (TeamException $e) {
+                self::assertSame(400, $e->getCode(), $rule);
+            }
+        }
+
+        self::assertSame('FREQ=MONTHLY;INTERVAL=2;BYDAY=-1FR', TimingIndex::rule('byday=-1FR;freq=monthly;interval=2'));
+        self::assertSame('FREQ=YEARLY;UNTIL=20301231T235959Z;BYMONTHDAY=-1;BYMONTH=3',TimingIndex::rule('FREQ=YEARLY;BYMONTHDAY=-1;BYMONTH=3;UNTIL=20301231T235959Z'));
+
+        try {
+            (new TimingIndex())->extract(self::calendar(self::event('DTSTART:20270101T090000Z', 'RRULE:FREQ=DAILY;BYHOUR=25')));
+            self::fail('An object with an endless rule was accepted.');
+        } catch (TeamException $e) {
+            self::assertSame(400, $e->getCode());
+        }
+    }
+
+    public function testRuleAndExtraDatesAreBothExpanded(): void
+    {
+        $ics = self::calendar(self::event('DTSTART:20270105T100000Z', 'DTEND:20270105T110000Z', 'RRULE:FREQ=DAILY;COUNT=2',
+            'RDATE:20270120T100000Z'));
+
+        self::assertSame(['2027-01-05T10:00Z/2027-01-05T11:00Z', '2027-01-06T10:00Z/2027-01-06T11:00Z', '2027-01-20T10:00Z/2027-01-20T11:00Z'],
+            $this->expand($ics, '2027-01-01 00:00:00', '2027-02-01 00:00:00'));
+    }
+
+    public function testASeriesWithoutInstancesIsNotBusy(): void
+    {
+        $ics = self::calendar(self::event('DTSTART:20270105T100000Z', 'DTEND:20270105T110000Z', 'EXDATE:20270105T100000Z'));
+
+        self::assertSame([], $this->expand($ics, '2027-01-01 00:00:00', '2027-02-01 00:00:00'));
+    }
+
+    public function testThisAndFutureOverrideFailsClosedFromItsInstance(): void
+    {
+        $ics = self::calendar(
+            self::event('DTSTART;TZID=Europe/Zurich:20270104T100000', 'DTEND;TZID=Europe/Zurich:20270104T110000', 'RRULE:FREQ=DAILY;COUNT=5'),
+            self::event('RECURRENCE-ID;RANGE=THISANDFUTURE;TZID=Europe/Zurich:20270106T100000',
+                'DTSTART;TZID=Europe/Zurich:20270106T140000', 'DTEND;TZID=Europe/Zurich:20270106T150000')
+        );
+
+        self::assertContains('2027-01-06T09:00Z/2027-01-31T00:00Z', $this->expand($ics, '2027-01-01 00:00:00', '2027-01-31 00:00:00'));
+    }
+
+    public function testAnOldDailySeriesStillExpandsExactly(): void
+    {
+        $ics = self::calendar(self::event('DTSTART:19900101T120000Z', 'DTEND:19900101T130000Z', 'RRULE:FREQ=DAILY'));
+
+        self::assertSame(['2027-01-10T12:00Z/2027-01-10T13:00Z', '2027-01-11T12:00Z/2027-01-11T13:00Z'],
+            $this->expand($ics, '2027-01-10 00:00:00', '2027-01-12 00:00:00'));
     }
 
     public function testInvalidInputIsRefusedWith400(): void
@@ -255,6 +337,16 @@ final class TimingIndexTest extends TestCase
         preg_match('/UID:(\S+)/', $copy, $uid);
         self::assertSame('busy-' . hash('sha256', 'com_appointments/redacted/v1|calendar-3/event.ics'), $uid[1]);
         self::assertSame($copy, $index->redacted($skeleton, 'calendar-3/event.ics', 'Busy'), 'A stable copy keeps its ETag');
+
+        // A zone of the skeleton gets a VTIMEZONE written from PHP's zone data, never the client's.
+        $zoned = $index->redacted($index->extract(self::calendar(self::zurich(), self::event('DTSTART;TZID=Europe/Zurich:20270615T090000',
+            'DTEND;TZID=Europe/Zurich:20270615T100000'))), 'x', 'Busy');
+        $unfolded = str_replace("\r\n ", '', $zoned);
+        self::assertStringContainsString("BEGIN:VTIMEZONE\r\nTZID:Europe/Zurich\r\n", $unfolded);
+        self::assertStringContainsString("TZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\n", $unfolded);
+        self::assertStringContainsString('20270328T020000', $unfolded);
+        self::assertStringNotContainsString('X-LIC-LOCATION', $unfolded);
+        self::assertStringContainsString("TZOFFSETFROM:+0000\r\nTZOFFSETTO:+0000\r\n", TimingIndex::vtimezone('UTC'));
     }
 
     public function testEmailsFromParticipantsAndFreeText(): void

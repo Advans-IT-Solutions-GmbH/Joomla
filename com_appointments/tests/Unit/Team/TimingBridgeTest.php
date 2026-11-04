@@ -44,11 +44,16 @@ final class TimingBridgeTest extends TestCase
     public function testCacheWindowCoversWholeDaysAndRefusesLongRequests(): void
     {
         $utc = new \DateTimeZone('UTC');
-        [$start, $end] = BookingCalendarBridge::cacheWindow(new \DateTimeImmutable('2027-03-10 12:00:00', $utc), new \DateTimeImmutable('2027-03-20 00:00:00', $utc));
+        $at = static fn (string $time): \DateTimeImmutable => new \DateTimeImmutable($time, $utc);
 
+        // From yesterday to a year and a month ahead, whatever month the visitor looks at.
+        [$start, $end] = BookingCalendarBridge::cacheWindow($at('2027-03-10 12:00:00'), $at('2027-03-20 00:00:00'), $at('2027-03-10 12:00:00'));
         self::assertSame('2027-03-09 00:00:00', $start->format('Y-m-d H:i:s'));
-        self::assertSame('2027-06-11 00:00:00', $end->format('Y-m-d H:i:s'));
-        self::assertNull(BookingCalendarBridge::cacheWindow(new \DateTimeImmutable('2027-01-01 00:00:00', $utc), new \DateTimeImmutable('2029-06-01 00:00:00', $utc)));
+        self::assertSame('2028-04-14 00:00:00', $end->format('Y-m-d H:i:s'));
+        [$start, $end] = BookingCalendarBridge::cacheWindow($at('2028-06-01 00:00:00'), $at('2028-07-01 00:00:00'), $at('2027-01-01 08:00:00'));
+        self::assertSame('2026-12-31 00:00:00', $start->format('Y-m-d H:i:s'));
+        self::assertSame('2028-07-02 00:00:00', $end->format('Y-m-d H:i:s'));
+        self::assertNull(BookingCalendarBridge::cacheWindow($at('2027-01-01 00:00:00'), $at('2029-06-01 00:00:00'), $at('2027-01-01 00:00:00')));
     }
 
     public function testCalendarCopyIsTheMailEntryWithoutMethod(): void

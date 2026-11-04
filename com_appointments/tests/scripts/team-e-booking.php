@@ -84,10 +84,15 @@ return static function (TeamSuite $suite): void {
         $suite->test('Switched on, a calendar error never fails a booking', static function () use ($suite, $fixture, $switch) {
             $switch(true);
             $event = $fixture->event();
-            // A target calendar that does not exist: every calendar step fails, the booking must not.
+            // A target calendar that does not exist: every calendar step fails or finds
+            // nothing; the locked booking transaction must still book, and nothing is written.
             $suite->db->query("UPDATE {$suite->prefix}appointments_eventtypes SET calendar_id=2147483647 WHERE id={$event}");
-            $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+3 days')->format('Y-m-d');
-            $booking = $fixture->booking($event, $day . ' 10:00:00')['booking'];
+            $row = $suite->db->query("SELECT * FROM {$suite->prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+            $start = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+3 days')->setTime(10, 0);
+            $booking = (new BookingStore(Factory::getContainer()->get(DatabaseInterface::class)))->create($row,
+                ['invitee_name' => 'Suite Invitee', 'invitee_first_name' => 'Suite', 'invitee_last_name' => 'Invitee',
+                    'invitee_email' => 'invitee@example.test', 'invitee_timezone' => 'UTC', 'invitee_language' => 'en-GB'],
+                $start, new DateTimeImmutable('now', new DateTimeZone('UTC')), [1], 'en-GB');
 
             return (int) $booking['id'] > 0
                 && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_objects WHERE booking_id=" . (int) $booking['id']) === 0;

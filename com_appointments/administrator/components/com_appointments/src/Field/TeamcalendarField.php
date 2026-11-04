@@ -8,7 +8,9 @@
 
 namespace Advans\Component\Appointments\Administrator\Field;
 
+use Advans\Component\Appointments\Administrator\Model\EventtypeModel;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Field\ListField;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
@@ -16,12 +18,13 @@ use Joomla\CMS\Language\Text;
 defined('_JEXEC') or die;
 
 /**
- * Internet calendar picker of the event type form. Lists only calendars the
- * event type's host has an effective access to: with `mode="write"` those the
- * host can write (target calendar), otherwise every one (further busy
- * calendars). A stored value the host no longer reaches stays visible and
- * marked, so nothing is dropped without notice; the model accepts it only
- * unchanged, and the booking page ignores it while the access is missing.
+ * Internet calendar picker of the event type form. Lists only calendars that
+ * both the event type's host and the editing user have an effective access to
+ * (EventtypeModel::reachable()): with `mode="write"` those both can write
+ * (target calendar), otherwise every one (further busy calendars). A stored
+ * value outside that set stays visible, marked with its id only, so nothing is
+ * dropped without notice; the model accepts it only unchanged, and the booking
+ * page ignores it while the host's access is missing.
  */
 class TeamcalendarField extends ListField
 {
@@ -33,19 +36,13 @@ class TeamcalendarField extends ListField
         $seen = [];
 
         try {
-            $team = TeamServices::fromApplication();
-            $host = (int) $this->form->getValue('host_user_id');
+            if (TeamServices::fromApplication()->enabled()) {
+                [$visible, $writable] = EventtypeModel::reachable((int) $this->form->getValue('host_user_id'),
+                    (int) Factory::getApplication()->getIdentity()->id);
 
-            if ($team->enabled() && $host > 0) {
-                $write = (string) $this->element['mode'] === 'write';
-
-                foreach ($team->grants()->calendarsFor($host) as $access) {
-                    if ($write && !$access->role->canWrite()) {
-                        continue;
-                    }
-
-                    $options[] = HTMLHelper::_('select.option', (string) $access->calendarId, $access->title);
-                    $seen[$access->calendarId] = true;
+                foreach ((string) $this->element['mode'] === 'write' ? $writable : $visible as $id => $title) {
+                    $options[] = HTMLHelper::_('select.option', (string) $id, $title);
+                    $seen[$id] = true;
                 }
             }
         } catch (\Throwable $e) {

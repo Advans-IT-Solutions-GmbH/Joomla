@@ -98,20 +98,7 @@ class EventtypeModel extends AdminModel
         }
 
         $keep = $id > 0 && $oldHost === $newHost;
-        $writable = [];
-        $visible = [];
-
-        try {
-            foreach (TeamServices::fromApplication()->grants()->calendarsFor($newHost) as $access) {
-                $visible[$access->calendarId] = true;
-
-                if ($access->role->canWrite()) {
-                    $writable[$access->calendarId] = true;
-                }
-            }
-        } catch (\Throwable $e) {
-            // Without the grant service no calendar is reachable; only unchanged values pass.
-        }
+        [$visible, $writable] = self::reachable($newHost, (int) Factory::getApplication()->getIdentity()->id);
 
         if ($target > 0 && !isset($writable[$target]) && !($keep && $target === $storedTarget)) {
             throw new \DomainException('The target calendar is not writable for the host.');
@@ -127,6 +114,54 @@ class EventtypeModel extends AdminModel
         $data['calendar_id'] = $target;
 
         return $busy;
+    }
+
+    /**
+     * Calendars that may be linked to an event type of `$host` by `$actor`: both
+     * must have an effective access (the target calendar: both can write). So
+     * nobody publishes the free times of a calendar they may not see
+     * themselves, and nobody links a calendar the host may not see. A user
+     * without a grant (also a Super User) links nothing until a manager grants.
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>} Visible and writable calendars, id => title.
+     */
+    public static function reachable(int $host, int $actor): array
+    {
+        $visible = [];
+        $writable = [];
+
+        if ($host < 1 || $actor < 1) {
+            return [$visible, $writable];
+        }
+
+        try {
+            $grants = TeamServices::fromApplication()->grants();
+            $index = static function (array $accesses): array {
+                $byId = [];
+
+                foreach ($accesses as $access) {
+                    $byId[$access->calendarId] = $access;
+                }
+
+                return $byId;
+            };
+            $hostAccess = $index($grants->calendarsFor($host));
+            $actorAccess = $actor === $host ? $hostAccess : $index($grants->calendarsFor($actor));
+
+            foreach ($hostAccess as $id => $access) {
+                if (isset($actorAccess[$id])) {
+                    $visible[$id] = $access->title;
+
+                    if ($access->role->canWrite() && $actorAccess[$id]->role->canWrite()) {
+                        $writable[$id] = $access->title;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Without the grant service no calendar is reachable; only unchanged values pass.
+        }
+
+        return [$visible, $writable];
     }
 
     /** @param int[] $calendars */
