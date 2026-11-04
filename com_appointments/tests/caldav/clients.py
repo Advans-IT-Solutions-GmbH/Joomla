@@ -487,6 +487,8 @@ def phase_booking() -> None:
     sync = vdirsyncer("sync")
     check("vdirsyncer fetches the booking", sync.returncode == 0 and any(booking["uid"] in p.read_text() for p in local_items()))
     busy = "\n".join(get(h, "busy").text for h in objects(calendar("busy", "T"), "busy"))
+    start = booking["start_utc"].replace("-", "").replace(":", "").replace(" ", "T")
+    check("BUSY sees a busy block at the booked time", f"DTSTART:{start}" in busy, start)
     check("The booking is a busy block for BUSY, without the invitee",
           "Guest" not in busy and "ci-guest@" not in busy and "ATTENDEE" not in busy)
     writer_text = get(found[booking["uid"]], "writer").text if booking["uid"] in found else ""
@@ -511,10 +513,19 @@ def phase_revoked() -> None:
           get(calendar("writer", "R") + seeds["EV-5"]["uid"] + ".ics", "writer").status_code == 404)
     check("The other calendar of WRITER is unaffected",
           propfind(calendar("writer", "T"), "writer", "0", "<d:displayname/>").status_code == 207)
+    # Baseline for the clean-up phases, taken before run-clients.sh starts the clean-up.
+    save({"owner_baseline": objects(calendar("owner", "T"), "owner")})
+
+
+def unchanged_for_owner(phase: str) -> None:
+    before = saved()["owner_baseline"]
+    after = objects(calendar("owner", "T"), "owner")
+    changed = {h for h in before.keys() | after.keys() if before.get(h) != after.get(h)}
+    check(f"Clean-up, {phase}: nothing deleted, changed or uploaded on the server since before the clean-up",
+          after == before and len(before) >= 3, f"{sorted(changed)}")
 
 
 def phase_cleanup_empty() -> None:
-    owner_before = objects(calendar("owner", "T"), "owner")
     path = calendar("vdir", "T")
     check("Clean-up, empty: the calendar is served without objects", objects(path, "vdir") == {})
     props = collection_props(path, "vdir")
@@ -530,16 +541,13 @@ def phase_cleanup_empty() -> None:
     check("vdirsyncer applies the empty calendar", forced.returncode == 0)
     check("The clean-up deleted vdirsyncer's local copy", local_items() == [], str(len(local_items())))
     check("vdirsyncer's status holds no object of CAL-T any more", status_items() == 0, str(status_items()))
-    owner_after = objects(calendar("owner", "T"), "owner")
-    changed = {h for h in owner_before.keys() | owner_after.keys() if owner_before.get(h) != owner_after.get(h)}
-    check("Nothing was deleted, changed or uploaded on the server (same hrefs and ETags)",
-          owner_after == owner_before, f"{sorted(changed)}")
+    unchanged_for_owner("empty")
 
 
 def phase_cleanup_hidden() -> None:
     listed = calendars_in_home("vdir")
     check("Clean-up, hidden: the calendar home lists no calendar", listed == set(), f"{sorted(listed)}")
-    check("Clean-up, hidden: OWNER still sees CAL-T", len(objects(calendar("owner", "T"), "owner")) >= 3)
+    unchanged_for_owner("hidden")
 
 
 def phase_cleanup_revoked() -> None:
