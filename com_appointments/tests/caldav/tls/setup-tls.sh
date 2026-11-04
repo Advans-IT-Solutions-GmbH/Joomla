@@ -56,6 +56,9 @@ update-ca-certificates >/dev/null
 cat > /etc/apache2/sites-available/appointments-test-ssl.conf <<EOF
 <IfModule mod_ssl.c>
     <VirtualHost _default_:443>
+        # The certificate names localhost; without this Apache takes the
+        # container address as server name and warns at start.
+        ServerName localhost
         DocumentRoot /var/www/html
         SSLEngine on
         SSLCertificateFile $TLS_DIR/server.pem
