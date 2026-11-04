@@ -99,7 +99,7 @@ final class CleanupService implements CleanupServiceInterface
      * synchronised and that still exist. Its grants are usually suspended by
      * then, so the grant service would list none of them.
      *
-     * @return  array<int, int>  Calendar id => CalendarRole value.
+     * @return  array<int, array{role: int, synctoken: int}>  Calendar id => role and last delivered sync token.
      */
     public function calendarsInCleanup(DeviceSession $session): array
     {
@@ -108,7 +108,7 @@ final class CleanupService implements CleanupServiceInterface
         }
 
         $db = $this->db();
-        $rows = $db->setQuery($this->query()->select($db->quoteName(['dc.calendar_id', 'dc.role']))
+        $rows = $db->setQuery($this->query()->select($db->quoteName(['dc.calendar_id', 'dc.role', 'dc.synctoken']))
             ->from($db->quoteName('#__appointments_device_calendars', 'dc'))
             ->join('INNER', $db->quoteName('#__appointments_calendars', 'c') . ' ON ' . $db->quoteName('c.id')
                 . ' = ' . $db->quoteName('dc.calendar_id'))
@@ -117,7 +117,7 @@ final class CleanupService implements CleanupServiceInterface
         $calendars = [];
 
         foreach ($rows as $row) {
-            $calendars[(int) $row['calendar_id']] = (int) $row['role'];
+            $calendars[(int) $row['calendar_id']] = ['role' => (int) $row['role'], 'synctoken' => (int) $row['synctoken']];
         }
 
         return $calendars;
@@ -167,10 +167,19 @@ final class CleanupService implements CleanupServiceInterface
         $db = $this->db();
         $limit = $nowUtc->setTimezone(new \DateTimeZone('UTC'))->modify('-' . $this->days() . ' days')->format('Y-m-d H:i:s');
         $advanced = 0;
-        $devices = $db->setQuery($this->query()->select($db->quoteName(['id', 'user_id', 'state', 'cleanup_started_utc']))
-            ->from($db->quoteName('#__appointments_devices'))
-            ->where($db->quoteName('state') . ' IN (' . TeamStates::DEVICE_CLEANUP_EMPTY . ',' . TeamStates::DEVICE_CLEANUP_HIDDEN . ')')
-            ->order($db->quoteName('cleanup_started_utc') . ' ASC')->order($db->quoteName('id') . ' ASC')->setLimit(self::BATCH))->loadAssocList();
+        $started = $db->quoteName('d.cleanup_started_utc');
+        $state = $db->quoteName('d.state');
+        // Only devices that can move now, so devices still waiting for their
+        // timeout never keep ready ones out of the batch.
+        $pending = 'NOT EXISTS (SELECT 1 FROM ' . $db->quoteName('#__appointments_device_calendars', 'dc')
+            . ' WHERE ' . $db->quoteName('dc.device_id') . ' = ' . $db->quoteName('d.id')
+            . ' AND ' . $db->quoteName('dc.cleanup_delivered_utc') . ' IS NULL)';
+        $devices = $db->setQuery($this->query()->select($db->quoteName(['d.id', 'd.user_id', 'd.state', 'd.cleanup_started_utc']))
+            ->from($db->quoteName('#__appointments_devices', 'd'))
+            ->where('((' . $state . ' = ' . TeamStates::DEVICE_CLEANUP_EMPTY . ' AND (' . $started . ' IS NULL OR ' . $started . ' <= '
+                . $db->quote($limit) . ' OR ' . $pending . ')) OR (' . $state . ' = ' . TeamStates::DEVICE_CLEANUP_HIDDEN . ' AND ('
+                . $started . ' IS NULL OR ' . $started . ' <= ' . $db->quote($limit) . ')))')
+            ->order($started . ' ASC')->order($db->quoteName('d.id') . ' ASC')->setLimit(self::BATCH))->loadAssocList();
 
         foreach ($devices as $device) {
             $id = (int) $device['id'];
@@ -221,6 +230,27 @@ final class CleanupService implements CleanupServiceInterface
         $db = $this->db();
         $in = static fn (array $ids): string => implode(',', array_map('intval', $ids));
         $released = 0;
+        $failure = null;
+
+        // First through the owning services, which raise the revocation
+        // epochs (device_epoch, grant_epoch) and the anchor: a database writer
+        // who plays the deleted rows back afterwards gets nothing that verifies.
+        foreach ($db->setQuery($this->query()->select($db->quoteName('id'))->from($db->quoteName('#__appointments_devices'))
+            ->where($db->quoteName('user_id') . ' = ' . $userId)
+            ->where($db->quoteName('state') . ' <> ' . TeamStates::DEVICE_REVOKED))->loadColumn() ?: [] as $deviceId) {
+            try {
+                $this->services->devices()->revoke(null, (int) $deviceId, 'account_deleted');
+            } catch (\Throwable $e) {
+                $failure ??= $e;
+            }
+        }
+
+        try {
+            $this->services->grants()->suspendAllForUser($userId, 'account_deleted');
+        } catch (\Throwable $e) {
+            $failure ??= $e;
+        }
+
         $db->transactionStart(true);
 
         try {
@@ -231,7 +261,8 @@ final class CleanupService implements CleanupServiceInterface
                 ->where($db->quoteName('user_id') . ' = ' . $userId))->loadColumn() ?: [];
 
             // Rows go; the device-calendar pairs follow by their foreign key.
-            foreach (['#__appointments_devices', '#__appointments_calendar_key_wraps', '#__appointments_calendar_grants', '#__appointments_user_keys'] as $table) {
+            foreach (['#__appointments_devices', '#__appointments_calendar_key_wraps', '#__appointments_calendar_grants',
+                '#__appointments_user_keys', '#__appointments_invitations'] as $table) {
                 $db->setQuery($this->query()->delete($db->quoteName($table))
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
             }
@@ -254,12 +285,10 @@ final class CleanupService implements CleanupServiceInterface
         // Access is gone at this point. Releasing the ownership changes the
         // calendars' row MAC and belongs to the calendar service; a failure
         // there is reported, but never brings a device or a grant back.
-        $failure = null;
-
         try {
             $released = $this->services->calendars()->releaseOwner($userId);
         } catch (\Throwable $e) {
-            $failure = $e;
+            $failure ??= $e;
         }
 
         $this->services->audit()->log(AuditEvent::USER_CLEANUP_STARTED, [
@@ -269,7 +298,7 @@ final class CleanupService implements CleanupServiceInterface
                 'devices'   => $devices,
                 'grants'    => $grants,
                 'calendars' => $released,
-                'owner_released' => $failure === null,
+                'complete'  => $failure === null,
             ],
         ]);
 

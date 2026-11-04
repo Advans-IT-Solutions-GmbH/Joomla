@@ -58,6 +58,10 @@ PHP;
         return json_decode(substr($text, $at + 9), true);
     };
 
+    // Whether a service class is still its work package's stub, read in a
+    // Joomla process (this process has no component autoloader).
+    $stub = static fn (string $class): bool => (bool) $run('return str_contains((string) file_get_contents((string) (new ReflectionClass('
+        . var_export($class, true) . '))->getFileName()), "COM_APPOINTMENTS_TEAM_NOT_READY");');
     $suite->test('The team calendar log has exactly the specified columns', static function () use ($suite) {
         return $suite->columns('appointments_teamlog') === ['id', 'occurred_utc', 'event', 'actor_user_id', 'actor_device_id', 'subject_user_id', 'calendar_id', 'object_ref', 'details', 'ip_hash', 'prev_hash', 'row_hash'];
     });
@@ -434,22 +438,22 @@ sleep(3);
     }
 
     // ---- Website and CalDAV sign-in over HTTP ---------------------------------
-    $grantsStub = $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\GrantService::class);
+    $grantsStub = $stub(\Advans\Component\Appointments\Administrator\Service\Team\GrantService::class);
 
-    if ($grantsStub || $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\KeySession::class)) {
+    if ($grantsStub || $stub(\Advans\Component\Appointments\Administrator\Service\Team\KeySession::class)) {
         $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password', 'B, C');
     } else {
         $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password (HTTP flow with MFA account)', 'B, C integration');
     }
 
-    if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
+    if ($stub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
         $suite->pending('CalDAV answers 429 with Retry-After while locked, also for a correct app password', 'A, D');
     } else {
         $suite->pending('CalDAV answers 429 with Retry-After while locked, also for a correct app password (HTTP flow)', 'A, D integration');
     }
 
     // ---- Clean-up phases ------------------------------------------------------
-    if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class)) {
+    if ($stub(\Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class)) {
         $suite->pending('Clean-up phases empty, hidden, revoked by delivery and by the Scheduler timeout', 'D');
     } else {
         $suite->test('Clean-up phases empty, hidden, revoked by delivery and by the Scheduler timeout', static function () use ($run, $db, $p, $tag) {
@@ -481,7 +485,7 @@ sleep(3);
                 $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
             }
 
-            return $r === [2, 'empty', [$calendar => 2], 3, 0, 3, 0];
+            return $r === [2, 'empty', [$calendar => ['role' => 2, 'synctoken' => 0]], 3, 0, 3, 0];
         });
     }
 
@@ -500,7 +504,7 @@ sleep(3);
     };
 
     try {
-        $bridgeStub = $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridge::class);
+        $bridgeStub = $stub(\Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridge::class);
         $suite->test('The internet calendar routines run and do nothing while the feature is off', static function () use ($routine) {
             foreach (['teamcleanup', 'teamlog', 'teaminvitations'] as $name) {
                 $r = $routine($name);
@@ -539,7 +543,7 @@ sleep(3);
             return true;
         });
 
-        if ($grantsStub || $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\InvitationService::class)) {
+        if ($grantsStub || $stub(\Advans\Component\Appointments\Administrator\Service\Team\InvitationService::class)) {
             $suite->pending('With the feature on, the expired invitation routine succeeds', 'C');
         } else {
             $suite->test('With the feature on, the expired invitation routine succeeds', static function () use ($routine) {
@@ -626,7 +630,7 @@ sleep(3);
             }
         });
 
-        if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
+        if ($stub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
             $suite->pending('Privacy export and removal find calendar entries by the address blind index', 'A, E');
         } else {
             $suite->pending('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', 'A, E integration');

@@ -53,33 +53,35 @@ final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
 
+    /**
+     * @param   TeamServices|null  $services  Null when the internet calendars could not be reached
+     *                                         although they are on: every request is then reported incomplete.
+     */
     public function __construct(
-        private readonly TeamServices $services,
+        private readonly ?TeamServices $services,
         private readonly CMSApplicationInterface $app
     ) {
     }
 
     /**
      * Null while the internet calendars are switched off, so the plugin
-     * behaves exactly as without them.
+     * behaves exactly as without them. When they are on but cannot be reached,
+     * an instance that reports every request as incomplete, never silently
+     * complete.
      */
     public static function forApplication(CMSApplicationInterface $app, ?DatabaseInterface $db = null): ?self
     {
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR)
+            || $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments');
+
         try {
             $services = TeamServices::fromApplication();
 
-            if (!$services->enabled()) {
-                return null;
-            }
-
-            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR)
-                || $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments');
-
-            return new self($services, $app);
+            return $services->enabled() ? new self($services, $app) : null;
         } catch (\Throwable $e) {
             Log::add('Team calendars: the privacy request could not reach the internet calendars (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
 
-            return null;
+            return new self(null, $app);
         }
     }
 
@@ -165,6 +167,12 @@ final class TeamPrivacy
      */
     public function export(string $email, ?User $user): array
     {
+        if ($this->services === null) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
+
+            return [$this->noteDomain('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED')];
+        }
+
         $domains = [];
         $counts = ['entries' => 0, 'not_searched' => 0, 'staff' => 0];
 
@@ -229,6 +237,12 @@ final class TeamPrivacy
      */
     public function remove(string $email, ?User $user): void
     {
+        if ($this->services === null) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
+
+            return;
+        }
+
         $deleted = 0;
         $failed = 0;
         $unsearched = [];
@@ -240,7 +254,10 @@ final class TeamPrivacy
 
             foreach ($search['matches'] as [$object]) {
                 try {
-                    $this->services->objects()->delete($object->calendarId, $object->uri, null, null);
+                    // Only the version that was searched: a client may have
+                    // replaced the entry since, which then fails instead of
+                    // being deleted without a match.
+                    $this->services->objects()->delete($object->calendarId, $object->uri, $object->etag, null);
                     $deleted++;
                 } catch (\Throwable $e) {
                     $failed++;
@@ -258,8 +275,8 @@ final class TeamPrivacy
                 $db = $this->services->db();
                 $db->setQuery($this->query()->delete($db->quoteName('#__appointments_invitations'))
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
-                $staff = true;
                 $this->services->cleanup()->onUserDeleted($userId);
+                $staff = true;
             } catch (\Throwable $e) {
                 $failed++;
                 Log::add('Team calendars: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');

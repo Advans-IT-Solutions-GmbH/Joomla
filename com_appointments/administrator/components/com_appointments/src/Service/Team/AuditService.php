@@ -118,6 +118,9 @@ final class AuditService implements AuditServiceInterface
     {
         $db = $this->db();
         $key = $this->key();
+        // The anchor first: it only ever holds a row id that was verified and
+        // committed, so it can never be ahead of the snapshot read after it.
+        $anchored = $this->anchoredLastId();
         // One read-only transaction: InnoDB gives every read the same snapshot,
         // so a row appended while the check runs cannot look like a broken head.
         $db->transactionStart(true);
@@ -126,7 +129,6 @@ final class AuditService implements AuditServiceInterface
             $head = $db->setQuery($this->query()->select('*')->from($db->quoteName('#__appointments_teamlog_head'))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadAssoc() ?: null;
             $otherData = $this->teamDataExists();
-            $anchored = $this->anchoredLastId();
             $result = self::verifyChain($key, $head, $this->rows(), $otherData, $anchored);
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
@@ -168,6 +170,17 @@ final class AuditService implements AuditServiceInterface
         try {
             $head = $this->lockHead();
             $prunedThrough = (int) $head['pruned_through_id'];
+
+            // Only an intact chain is pruned: otherwise rows that a database
+            // writer altered (or backdated) would be deleted and anchored anew,
+            // and the evidence with them.
+            if (!self::verifyChain($key, $head, $this->rows(), $this->teamDataExists(), $this->anchoredLastId())->intact) {
+                $db->transactionCommit(true);
+                Log::add('Team calendars: the log chain is broken, so it was not pruned.', Log::WARNING, 'com_appointments');
+
+                return 0;
+            }
+
             $firstYoung = $db->setQuery($this->query()->select('MIN(' . $db->quoteName('id') . ')')->from($table)
                 ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote($cutoff)))->loadResult();
             // The newest row always stays, so the next row can link to it and
@@ -203,9 +216,10 @@ final class AuditService implements AuditServiceInterface
                 'rows'       => $deleted,
                 'anchor'     => bin2hex($anchor),
             ]]);
-            $db->transactionCommit(true);
             $lastId = (int) $db->setQuery($this->query()->select($db->quoteName('last_id'))
                 ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult();
+            $db->transactionCommit(true);
+            // The chain was verified before and this prune wrote its newest row.
             $this->anchorLastId($lastId);
 
             return $deleted;
@@ -534,9 +548,6 @@ final class AuditService implements AuditServiceInterface
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($row['occurred_utc']))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->execute();
             $db->transactionCommit(true);
-            // Written by the anchor once no transaction is open, from the
-            // committed head, so a caller's rollback never leaves it ahead.
-            $this->anchorLastId($newId);
         } catch (\Throwable $e) {
             try {
                 // After a deadlock InnoDB has rolled back the whole transaction
@@ -711,12 +722,12 @@ final class AuditService implements AuditServiceInterface
     }
 
     /**
-     * Raise the file anchor to the committed newest row id: after an append,
-     * a verified chain and a prune. The anchor reads the
-     * committed head itself once no transaction is open any more
-     * (EpochAnchorInterface::recordAfterCommit()), so an append that a caller
-     * rolls back can never leave it ahead. A database restored without its
-     * files then shows as broken; deleting the anchor file
+     * Raise the file anchor to a verified newest row id: after an intact
+     * chain check and after a prune of an intact chain, outside any
+     * transaction. Never from the head alone: the head carries no MAC, and a
+     * database writer raising `last_id` must not move the anchor (that would
+     * be a permanent false alarm). A database restored without its files then
+     * shows as broken; deleting the anchor file
      * (`administrator/components/com_appointments/data/epochs.php`) after such
      * a deliberate restore resets it.
      */
@@ -727,7 +738,7 @@ final class AuditService implements AuditServiceInterface
         }
 
         try {
-            $this->services->anchor()->recordAfterCommit(EpochAnchorInterface::KIND_LOG, self::HEAD_ID);
+            $this->services->anchor()->record(EpochAnchorInterface::KIND_LOG, self::HEAD_ID, $lastId);
         } catch (\Throwable $e) {
             Log::add('Team calendars: the log anchor could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }

@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
@@ -151,6 +152,14 @@ class SystemModel extends BaseDatabaseModel
 
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR', $anchor, Text::_($anchor ? 'JYES' : 'JNO'),
             'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_FIX');
+
+        if ($anchor) {
+            // Anchored values below the database's: those rows are not anchored
+            // (rollback protection inactive for them).
+            $behind = $this->anchorsBehind($services);
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND', $behind === 0, (string) $behind,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND_FIX');
+        }
 
         $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
 
@@ -304,9 +313,43 @@ class SystemModel extends BaseDatabaseModel
     }
 
     /**
-     * Whether the log head still verifies with the current site secret: true, false, or null
-     * while nothing was logged yet. Every server key comes from the site secret, so a changed
-     * secret shows here first.
+     * Calendars (grant epoch, read through the calendar service, which checks the row MAC)
+     * and users (device epoch) whose anchored epoch is below the database value.
+     */
+    private function anchorsBehind(TeamServices $services): int
+    {
+        $db = $this->getDatabase();
+        $anchor = $services->anchor();
+        $behind = 0;
+
+        foreach ($db->setQuery($this->query()->select($db->quoteName('id'))->from($db->quoteName('#__appointments_calendars'))
+            ->setLimit(1000))->loadColumn() ?: [] as $id) {
+            try {
+                $row = $services->calendars()->get((int) $id);
+                $behind += $row !== null && isset($row->grant_epoch)
+                    && $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR, (int) $id) < (int) $row->grant_epoch ? 1 : 0;
+            } catch (\Throwable $e) {
+                // Unknown: not counted.
+            }
+        }
+
+        foreach ($db->setQuery($this->query()->select($db->quoteName(['user_id', 'device_epoch']))
+            ->from($db->quoteName('#__appointments_user_keys'))->setLimit(1000))->loadAssocList() ?: [] as $row) {
+            try {
+                $behind += $anchor->minimum(EpochAnchorInterface::KIND_USER, (int) $row['user_id']) < (int) $row['device_epoch'] ? 1 : 0;
+            } catch (\Throwable $e) {
+                // Unknown: not counted.
+            }
+        }
+
+        return $behind;
+    }
+
+    /**
+     * Whether the log still verifies with the current site secret, at both ends: the oldest
+     * remaining row (written with the secret of its time) and the head seal (rewritten with
+     * every append). True, false, or null while nothing was logged yet. Every server key comes
+     * from the site secret, so a changed secret shows here; the full chain check is in the log view.
      */
     private function secretUnchanged(TeamServices $services): ?bool
     {
@@ -328,7 +371,14 @@ class SystemModel extends BaseDatabaseModel
         $rowHash = $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($db->quoteName('#__appointments_teamlog'))
             ->where($db->quoteName('id') . ' = ' . $lastId))->loadResult();
 
-        return \is_string($rowHash) && hash_equals(AuditService::seal($key, $lastId, $rowHash), (string) $head['last_hash']);
+        if (!\is_string($rowHash) || !hash_equals(AuditService::seal($key, $lastId, $rowHash), (string) $head['last_hash'])) {
+            return false;
+        }
+
+        $oldest = $db->setQuery($this->query()->select('*')->from($db->quoteName('#__appointments_teamlog'))
+            ->order($db->quoteName('id') . ' ASC')->setLimit(1))->loadAssoc();
+
+        return \is_array($oldest) && \is_string($oldest['row_hash']) && hash_equals(AuditService::rowHash($key, $oldest), $oldest['row_hash']);
     }
 
     /**

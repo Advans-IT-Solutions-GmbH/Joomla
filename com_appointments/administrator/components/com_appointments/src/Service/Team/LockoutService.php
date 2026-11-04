@@ -563,11 +563,28 @@ final class LockoutService implements LockoutServiceInterface
      */
     private function announceLock(int $userId, string $ip, int $wait): void
     {
-        if ($userId <= 0 || $this->lockedLoggedRecently($userId)) {
+        if ($userId <= 0) {
             return;
         }
 
-        $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
+        // One request per account wins the window: a named database lock
+        // around the check and the log row, so parallel refusals send one mail.
+        $db = $this->db();
+        $name = $db->quote('com_appointments.lock.' . $userId);
+
+        if ((int) $db->setQuery('SELECT GET_LOCK(' . $name . ', 0)')->loadResult() !== 1) {
+            return;
+        }
+
+        try {
+            if ($this->lockedLoggedRecently($userId)) {
+                return;
+            }
+
+            $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
+        } finally {
+            $db->setQuery('SELECT RELEASE_LOCK(' . $name . ')')->loadResult();
+        }
 
         try {
             $this->services->mailer()->accountLocked($userId, $wait);
@@ -595,12 +612,16 @@ final class LockoutService implements LockoutServiceInterface
     private function identity(string $username): string
     {
         $username = trim($username);
+        $userId = $username === '' ? 0 : (int) UserHelper::getUserId($username);
 
-        if (str_starts_with($username, 'dav:')) {
+        // A website account always counts by its id, whatever it is called.
+        // Only a subject that is no account name and comes from CalDAV
+        // (`dav:<name>@<address>`) is used as it is.
+        if ($userId === 0 && str_starts_with($username, 'dav:')) {
             return $username;
         }
 
-        return self::identityFor($username === '' ? 0 : (int) UserHelper::getUserId($username), $username);
+        return self::identityFor($userId, $username);
     }
 
     /**
