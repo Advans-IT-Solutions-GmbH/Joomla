@@ -142,6 +142,11 @@ Run every case for every client of section 2.1, with the device of the user name
 procedure. «Within the interval» means within the client's configured refresh interval plus one
 minute; measure and record the actual time.
 
+**Before each client**, restore the initial state: the calendars and events of section 2.3 as listed
+there (`IC-12` changes the series, `IC-26` removes a grant), the grants of section 2.2 re-granted and
+active again (`IC-30` suspends them), and **fresh devices** for every user of that client (the
+clean-up cases revoke the old ones). The observer keeps its own device and stays untouched.
+
 ### 4.1 Account, discovery and sign-in
 
 | ID | Type | Procedure | Expected result |
@@ -200,7 +205,7 @@ fetched it, or after the configured days. Note the time of each phase in the bac
 | IC-28 | POS | Continue `IC-27` until the phase hidden is delivered. | The calendars are removed from the client, or the client reports them as gone. Record which. |
 | IC-29 | POS | Continue `IC-28` until the device is revoked. | Every request is refused; the client reports an authentication error. No event reappears. |
 | IC-30 | POS | Repeat `IC-27` to `IC-29` with a new device, triggered by `ADMIN` blocking the Joomla account of `WRITER`. | Same phases; the grants of `WRITER` are suspended and the access-suspended mail is sent. Unblock and re-grant afterwards. |
-| IC-31 | NEG | During phase empty, create an event in the client. | Refused by the server; the observer shows nothing; the client reports the error or discards the item. |
+| IC-31 | NEG | Add a separate device for `WRITER` in the client and let it sync once. Take the client offline, «Remove device» for it, create an event in the client, bring it back online. | The backend devices view shows the device in phase empty when the client syncs; the write is refused by the server (403), not by a revoked sign-in; the observer shows nothing; the client reports the error or discards the item. |
 | IC-32 | POS | After `IC-29`, add a new device for `WRITER` and set up the client again. | Works with the new app password; the old app password stays refused. |
 
 ## 5. Outlook with CalDav Synchronizer

@@ -478,8 +478,9 @@ possible with CalDAV clients.
 - **Not protected:** anybody who executes code on the server, which includes a compromised
   extension, the hosting provider and anybody with access to the files: while a key holder's request
   runs, the calendar key is in memory, and such an attacker can also capture app passwords. A copy
-  of database **and** files together reveals when events take place, never their content. Devices
-  that never connect again. Booking mails to the team, which carry content and ICS as before.
+  of database **and** files together (the site secret is in `configuration.php`) reveals when
+  events take place and decrypts the personal fields of bookings, because both use server keys;
+  the contents of calendar entries stay encrypted. Devices that never connect again. Booking mails to the team, which carry content and ICS as before.
 - **The site secret is recovery material.** Changing `$secret` in `configuration.php` invalidates
   every app password, every server-side key and every encrypted booking field, and the recovery key
   alone does not repair that; the way back is the old site secret. That is why it is printed with
