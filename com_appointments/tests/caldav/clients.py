@@ -190,12 +190,17 @@ def stamp(moment: datetime) -> str:
     return moment.strftime("%Y%m%dT%H%M%SZ")
 
 
+def escape_text(value: str) -> str:
+    """RFC 5545 TEXT escaping, as IcsWriter::escapeText() does."""
+    return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
 def ics(uid: str, summary: str, start: datetime, minutes: int = 60, extra: str = "") -> str:
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//com_appointments//caldav-clients//EN",
         "BEGIN:VEVENT", f"UID:{uid}", f"DTSTAMP:{stamp(datetime.now(timezone.utc))}",
         f"DTSTART:{stamp(start)}", f"DTEND:{stamp(start + timedelta(minutes=minutes))}",
-        f"SUMMARY:{summary}", "LOCATION:CI meeting room", "DESCRIPTION:Confidential CI description",
+        f"SUMMARY:{escape_text(summary)}", "LOCATION:CI meeting room", "DESCRIPTION:Confidential CI description",
     ]
     if extra:
         lines.extend(extra.split("\n"))
@@ -350,7 +355,7 @@ def phase_sync() -> None:
         event.data = ics(uid, "CI written by WRITER, changed", day(5, 11))
         event.save()
         text = get(owner_view[uid], "owner").text
-        check("An event changed with caldav reaches OWNER", "CI written by WRITER, changed" in text)
+        check("An event changed with caldav reaches OWNER", "SUMMARY:" + escape_text("CI written by WRITER, changed") in text)
         event.delete()
         check("An event deleted with caldav is gone for OWNER", uid not in uids_of(calendar("owner", "T"), "owner"))
         events = cal.events()
