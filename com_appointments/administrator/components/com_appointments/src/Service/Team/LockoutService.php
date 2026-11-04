@@ -124,6 +124,11 @@ final class LockoutService implements LockoutServiceInterface
                     $this->giveBack($own);
                 }
 
+                // The longest wait of all buckets, not only of the one that refused.
+                foreach ($buckets as $other) {
+                    $outcome = max($outcome, self::waitFor([$this->row(bin2hex($other))], $now));
+                }
+
                 return max(1, $outcome);
             }
 
@@ -422,11 +427,20 @@ final class LockoutService implements LockoutServiceInterface
                 return $until;
             }
 
-            $db->setQuery($this->query()->update($table)
+            // Counting an attempt does not move the time of the last failure
+            // (a success gives the attempt back, and old failures must still
+            // expire 24 hours after the last real one); only a counter that
+            // starts again gets a new time.
+            $query = $this->query()->update($table)
                 ->set($db->quoteName('failures') . ' = ' . ($failures + 1))
                 ->set($db->quoteName('locked_until_utc') . ' = NULL')
-                ->set($db->quoteName('last_failure_utc') . ' = ' . $db->quote($time))
-                ->where($where))->execute();
+                ->where($where);
+
+            if ($stale) {
+                $query->set($db->quoteName('last_failure_utc') . ' = ' . $db->quote($time));
+            }
+
+            $db->setQuery($query)->execute();
             $db->transactionCommit(true);
 
             return self::COUNTED;

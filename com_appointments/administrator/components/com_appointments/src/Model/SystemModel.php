@@ -381,6 +381,24 @@ class SystemModel extends BaseDatabaseModel
     private function secretUnchanged(TeamServices $services): ?bool
     {
         $db = $this->getDatabase();
+        // Head, newest and oldest row from one snapshot, so a prune running at
+        // the same time cannot look like a changed secret.
+        $db->transactionStart(true);
+
+        try {
+            $result = $this->secretUnchangedIn($services);
+            $db->transactionCommit(true);
+
+            return $result;
+        } catch (\Throwable $e) {
+            $db->transactionRollback(true);
+
+            throw $e;
+        }
+    }
+    private function secretUnchangedIn(TeamServices $services): ?bool
+    {
+        $db = $this->getDatabase();
         $head = $db->setQuery($this->query()->select($db->quoteName(['last_id', 'last_hash']))
             ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . AuditService::HEAD_ID))->loadAssoc();
 
