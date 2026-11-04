@@ -338,15 +338,21 @@ play back an older, validly signed grant, calendar, device or invitation row.
 
 - Encrypted with `key(PURPOSE_BOOKING_DATA)`: `invitee_name`, `invitee_first_name`, `invitee_last_name`,
   `invitee_email`, `invitee_phone`, `guest_emails`, `custom_fields`, `cancel_reason`, `conference_url`.
-  Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, column))`;
-  the booking `uid` exists before the insert, so the row id is not needed. Readers accept a value without
-  the prefix as clear text during the migration only.
+  Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, created_utc, column))`;
+  `uid` and `created_utc` exist before the insert, so the row id is not needed, and the fields of one booking
+  cannot be copied to another. Readers accept a value without the prefix as clear text only while the
+  keyed migration token written by the update (`booking_data_migration`, expiry plus HMAC with the booking
+  key, 30 days at most) is valid; without it a clear value counts as unreadable and is never encrypted by
+  the migration, so clear text planted by a database writer is not laundered.
 - **No blind index** (maintainer's decision): a keyed hash of an address could be tested against known
   addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)
   decrypts the candidate rows on the server in batches and compares in memory. Free-text search over
   names in the booking list works the same way, paged.
 - libsodium is therefore required for **every** installation of the component (preflight refuses
   without it); the README and the system check say so.
+- Known residual risk, accepted: a forged POST for a time the page did not offer goes through while a
+  linked calendar is entirely unreadable, like the PUT race, because a calendar error must never break a
+  booking.
 - One place reads and writes these columns (a booking record class of E); no other code selects them
   directly. CSV export, mails, reminders, signed links, the privacy plugin and the anonymiser use it.
 - Migration in 1.4.0: column types become TEXT/MEDIUMTEXT (`custom_fields` no longer JSON), the

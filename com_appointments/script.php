@@ -114,7 +114,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
-        $this->encryptExistingBookings();
+        $this->encryptExistingBookings($type);
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -269,7 +269,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
      * in batches for at most 20 seconds; the Scheduler finishes what is left.
      * Idempotent, and a no-op until the booking record class exists.
      */
-    private function encryptExistingBookings(): void
+    private function encryptExistingBookings(string $type): void
     {
         $class = '\\Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
 
@@ -282,6 +282,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $until = microtime(true) + 20;
 
         try {
+            // An update starts the time-limited migration window: only while its
+            // keyed token is valid may clear text be read and encrypted.
+            if ($type === 'update' && method_exists($class, 'begin')) {
+                $class::begin($db, $keys);
+            }
+
             while (microtime(true) < $until && $class::migrate($db, $keys, 200) > 0) {
                 // Next batch.
             }
