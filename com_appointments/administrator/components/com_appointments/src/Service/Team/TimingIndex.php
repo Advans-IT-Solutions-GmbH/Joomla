@@ -41,4 +41,9 @@ final class TimingIndex implements TimingIndexInterface
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
+
+    public function emails(string $ics): array
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
 }

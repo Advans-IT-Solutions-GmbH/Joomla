@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
@@ -74,12 +75,12 @@ final class GrantService implements GrantServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function setClientProps(int $userId, int $calendarId, array $props): void
+    public function grantWithRecovery(int $actorUserId, CalendarKeyring $keyring, int $granteeUserId, CalendarRole $role, bool $makeOwner = false): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function confirmExternal(int $actorUserId, int $calendarId, int $granteeUserId): void
+    public function setClientProps(int $userId, int $calendarId, array $props): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

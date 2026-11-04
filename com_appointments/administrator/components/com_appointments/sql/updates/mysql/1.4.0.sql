@@ -112,8 +112,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_keys` (
 --
 -- Who may do what with a calendar. No row, no access. `role`: 1 free/busy,
 -- 2 read, 3 write, 4 manage. `state`: 1 active, 2 active but waiting for the key
--- wrap, 3 suspended (password reset or user blocked), 4 waiting for an
--- administrator's confirmation (external invitation).
+-- wrap, 3 suspended (password reset or user blocked).
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_calendar_grants` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -123,7 +122,6 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_grants` (
     `state` TINYINT UNSIGNED NOT NULL,
     `audience` VARCHAR(8) NOT NULL,
     `granted_by` INT UNSIGNED NOT NULL,
-    `confirmed_by` INT UNSIGNED DEFAULT NULL,
     `client_props` JSON DEFAULT NULL,
     `row_mac` BINARY(32) NOT NULL,
     `created_utc` DATETIME NOT NULL,
@@ -169,6 +167,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_objects` (
     `payload` MEDIUMBLOB NOT NULL,
     `timing` BLOB NOT NULL,
     `booking_id` INT UNSIGNED DEFAULT NULL,
+    `emails_indexed` TINYINT(1) NOT NULL DEFAULT 1,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     PRIMARY KEY (`id`),
@@ -178,6 +177,18 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_objects` (
     FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Blind index of the e-mail addresses in a calendar object (organizer,
+-- attendees, free text): keyed hashes only, never the addresses. It lets the
+-- privacy plugin find and delete objects without any user key.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_calendar_object_emails` (
+    `object_id` BIGINT UNSIGNED NOT NULL,
+    `email_hash` BINARY(32) NOT NULL,
+    PRIMARY KEY (`object_id`, `email_hash`),
+    KEY `idx_object_email_hash` (`email_hash`),
+    FOREIGN KEY (`object_id`) REFERENCES `#__appointments_calendar_objects` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 --
 -- Change journal for WebDAV sync (RFC 6578) and the CTag. `operation`: 1 added,
 -- 2 modified, 3 deleted.
@@ -254,29 +265,27 @@ CREATE TABLE IF NOT EXISTS `#__appointments_device_calendars` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- One-time invitations of external users, valid 72 hours. Only a hash of the
--- token is stored. `email` is cleared once the invitation is closed. `state`:
--- 1 open, 2 accepted, 3 confirmed, 0 revoked or expired.
+-- One-time activation links of accounts that an administrator created (team or
+-- external), valid 72 hours. Only a keyed hash of the token is stored; the link
+-- is bound to the account and to a keyed hash of the address it was sent to.
+-- `state`: 1 open, 2 completed, 0 closed (revoked or expired).
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_invitations` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `token_hash` BINARY(32) NOT NULL,
-    `email` VARCHAR(255) DEFAULT NULL,
-    `calendar_id` INT UNSIGNED NOT NULL,
-    `role` TINYINT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `email_hash` BINARY(32) NOT NULL,
     `state` TINYINT UNSIGNED NOT NULL DEFAULT 1,
     `invited_by` INT UNSIGNED NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `expires_utc` DATETIME NOT NULL,
-    `accepted_utc` DATETIME DEFAULT NULL,
-    `accepted_user_id` INT UNSIGNED DEFAULT NULL,
-    `confirmed_by` INT UNSIGNED DEFAULT NULL,
-    `confirmed_utc` DATETIME DEFAULT NULL,
+    `completed_utc` DATETIME DEFAULT NULL,
+    `revoked_by` INT UNSIGNED DEFAULT NULL,
     `row_mac` BINARY(32) NOT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_invitation_token` (`token_hash`),
-    KEY `idx_invitation_expires` (`state`, `expires_utc`),
-    FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
+    KEY `idx_invitation_user` (`user_id`),
+    KEY `idx_invitation_expires` (`state`, `expires_utc`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --

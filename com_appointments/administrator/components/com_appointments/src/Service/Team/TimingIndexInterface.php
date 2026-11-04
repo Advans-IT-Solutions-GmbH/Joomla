@@ -50,4 +50,13 @@ interface TimingIndexInterface
      * CONFIDENTIAL, nothing else.
      */
     public function redacted(string $skeleton, string $uidSeed, string $summary): string;
+
+    /**
+     * Every e-mail address in the object: ORGANIZER and ATTENDEE (mailto:), and
+     * addresses in SUMMARY, LOCATION and DESCRIPTION. Lower case, trimmed,
+     * unique. Only their keyed hashes are stored (blind index), never the addresses.
+     *
+     * @return  string[]
+     */
+    public function emails(string $ics): array;
 }

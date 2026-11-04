@@ -46,7 +46,6 @@ final class AuditEvent
 
     public const INVITATION_CREATED = 'invitation.created';
     public const INVITATION_ACCEPTED = 'invitation.accepted';
-    public const INVITATION_CONFIRMED = 'invitation.confirmed';
     public const INVITATION_REVOKED = 'invitation.revoked';
 
     public const OBJECT_CREATED = 'object.created';
@@ -54,6 +53,11 @@ final class AuditEvent
     public const OBJECT_DELETED = 'object.deleted';
     public const BOOKING_WRITTEN = 'booking.written';
     public const BOOKING_REMOVED = 'booking.removed';
+    public const OBJECT_RETENTION = 'object.retention';
+
+    public const PRIVACY_SEARCH = 'privacy.search';
+    public const PRIVACY_EXPORT = 'privacy.export';
+    public const PRIVACY_DELETE = 'privacy.delete';
 
     public const USER_KEY_CREATED = 'key.user_created';
     public const USER_KEY_RESET = 'key.user_reset';
@@ -61,6 +65,7 @@ final class AuditEvent
     public const RECOVERY_KEY_CREATED = 'key.recovery_created';
     public const RECOVERY_KEY_ROTATED = 'key.recovery_rotated';
     public const RECOVERY_USED = 'key.recovery_used';
+    public const ROW_MAC_FAILURE = 'key.mac_failure';
 
     public const USER_CLEANUP_STARTED = 'user.cleanup_started';
     public const LOG_PRUNED = 'log.pruned';

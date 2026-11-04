@@ -9,6 +9,8 @@
 
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
+use Joomla\CMS\Application\CMSApplicationInterface;
+
 defined('_JEXEC') or die;
 
 /**
@@ -29,6 +31,16 @@ interface LockoutServiceInterface
      * @return  int  Seconds until the next attempt is allowed, 0 when allowed now.
      */
     public function retryAfter(string $username, string $ip): int;
+
+    /**
+     * Before Joomla checks a password. When the request is a sign-in (site:
+     * com_users task user.login; administrator: com_login task login) and the
+     * user name or the address is locked, the sign-in is answered exactly like a
+     * wrong password (same message, same redirect) without checking the
+     * password, and `login.locked` is logged. Called by the system plugin in
+     * onAfterRoute; `onUserAuthorisation` stays as the second safeguard.
+     */
+    public function guardLogin(CMSApplicationInterface $app): void;
 
     public function recordFailure(string $username, string $ip): void;
 

@@ -9,7 +9,6 @@
 
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
-use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 
 defined('_JEXEC') or die;
@@ -27,7 +26,7 @@ final class InvitationService implements InvitationServiceInterface
     {
     }
 
-    public function invite(int $actorUserId, string $email, int $calendarId, CalendarRole $role): int
+    public function invite(int $actorUserId, int $userId): int
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
@@ -37,17 +36,7 @@ final class InvitationService implements InvitationServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function acceptWithNewAccount(string $token, string $name, string $username, string $password): int
-    {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-
-    public function acceptForUser(string $token, int $userId): void
-    {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-
-    public function confirm(int $actorUserId, int $invitationId): void
+    public function complete(string $token, string $password): int
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

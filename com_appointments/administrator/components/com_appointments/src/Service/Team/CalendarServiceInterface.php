@@ -46,4 +46,14 @@ interface CalendarServiceInterface
     public function get(int $calendarId): ?object;
 
     public function getByUri(string $uri): ?object;
+
+    /**
+     * The account was deleted: every calendar it owned gets owner 0, with a new
+     * row MAC, and is logged as calendar.updated with reason owner_deleted. The
+     * contents stay; a recovery grant (GrantServiceInterface::grantWithRecovery())
+     * names a new owner.
+     *
+     * @return  int  Calendars released.
+     */
+    public function releaseOwner(int $userId): int;
 }

@@ -31,12 +31,12 @@ final class TeamMailer implements TeamMailerInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function invitation(string $email, string $link, string $calendarTitle, string $roleLabelKey, \DateTimeImmutable $expiresUtc): void
+    public function invitation(string $email, string $link, \DateTimeImmutable $expiresUtc): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function invitationAccepted(int $invitationId, string $calendarTitle): void
+    public function activationCompleted(int $invitationId, int $userId, string $revokeUrl): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

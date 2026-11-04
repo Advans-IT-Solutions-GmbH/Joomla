@@ -47,6 +47,11 @@ final class CleanupService implements CleanupServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function calendarsInCleanup(DeviceSession $session): array
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function markHomeSeen(DeviceSession $session): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

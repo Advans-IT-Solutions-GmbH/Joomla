@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 
@@ -89,10 +90,19 @@ interface GrantServiceInterface
     public function suspendAllForUser(int $userId, string $reason): int;
 
     /**
-     * An administrator confirms an external user's accepted invitation: the
-     * grant becomes active (pending its key wrap).
+     * Grant with the recovery key (an administrator with core.admin on the
+     * component, holding the offline secret): the keyring comes from
+     * KeyServiceInterface::recoverKeyring(). Bypasses the manager rule, not the
+     * audience rules (team up to manage, external only with allow_external, up
+     * to write, actor with appointments.team.external). Wraps the current
+     * version for the grantee at once. With $makeOwner and role manage, and only
+     * when the calendar has no owner (owner_user_id 0) or the owner holds no
+     * effective grant, the grantee becomes the owner. Logs key.recovery_used and
+     * grant.created or grant.changed, mails the owner and managers.
+     *
+     * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  403 when not allowed, 404 for an unknown calendar or grantee.
      */
-    public function confirmExternal(int $actorUserId, int $calendarId, int $granteeUserId): void;
+    public function grantWithRecovery(int $actorUserId, CalendarKeyring $keyring, int $granteeUserId, CalendarRole $role, bool $makeOwner = false): void;
 
     /**
      * Per-user display properties of one calendar, for CalDAV PROPPATCH. Only an

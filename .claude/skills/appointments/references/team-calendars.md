@@ -30,19 +30,35 @@ package; a deviation is a change to this file in the same pull request, agreed w
   for CalDAV (it would bypass the second factor).
 - **Automatic refresh:** CTag and sync token (RFC 6578) correct, instructions per client with the
   refresh interval. Clients: classic Outlook (Office LTSC 2024) with the CalDav Synchronizer
-  add-in (highest priority), Apple Calendar, DAVx⁵, Thunderbird, eM Client. `/.well-known/caldav`
-  works.
+  add-in (highest priority), the iOS calendar, Android with DAVx⁵, Thunderbird, eM Client.
+  `/.well-known/caldav` works. The new Outlook for Windows and the Outlook mobile apps are not
+  supported (they speak no CalDAV); the documentation says so.
 - **Roles per calendar:** free/busy, read, write (view, create, change and delete), manage.
-  Managers share with the team; only administrators share with externals. External grants have no expiry. An invitation link for an
-  external user is valid once, for 72 hours.
+  Managers share with the team; only administrators share with externals. External grants have no
+  expiry.
+- **Every account is created by an administrator**, internal and external; Joomla's registration
+  stays off. A one-time activation link, valid 72 hours and bound to the account's address, lets the
+  person set the password; the second factor follows at the first sign-in. On completion the
+  administrators get a mail with a one-step revoke. No administrator confirmation.
 - **Log:** sign-ins and changes only (no read access), 12 months, hash chain, checksum visible in
   the administrator only.
 - **Failed sign-ins:** temporary lock after 10 failures with a growing delay, never permanent.
 - **Blocking a user:** clean-up mode. The device sees the calendar as deleted on its next
   synchronisation and removes its local copy; after that it is blocked completely. Tested per client.
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
-  decrypt them. A recovery key is kept offline by the owner. After a password reset a manager grants
-  again, or the recovery key is used.
+  decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
+  separate places. After a password reset a manager grants again, or the recovery key is used.
+- **Retention per calendar:** entries older than the calendar's retention are deleted by the
+  Scheduler; the log records the count, never content.
+- **Privacy requests through Joomla's own privacy component** (com_privacy, export and removal
+  requests) via `plg_privacy_appointments`: a blind index of every e-mail address in calendar entries
+  finds them without a key (section 9.1). No separate search in the administrator.
+- **Booking rows at rest:** the personal fields of bookings (names, e-mail, phone, guests, answers)
+  are encrypted with a server key like the times; reminders, links, exports keep working; a blind
+  index finds bookings by e-mail address (section 5.10).
+- **Any host:** the component runs wherever Joomla 5.4 or 6 runs, at any hosting provider, without
+  provider-specific code. Everything a host can block is checked by the system check and reported with
+  a remedy; the README lists the prerequisites (section 8.3).
 - **Private smartphones are allowed** for internet calendars. No device management is required; the
   usage rule (lock code, no forwarding, report a loss) and the clean-up are the safeguards.
 - **Mails as today:** content and ICS of booking mails also go to the team; they are outside the
@@ -65,16 +81,18 @@ Protected:
   A Super User can still grant themselves access; every grant is logged and mailed to the calendar's
   owner and managers, so it cannot happen silently.
 
-Not protected, stated plainly:
+Not protected, stated plainly. **In one sentence: the encryption protects when the database or a
+backup leaks, not when somebody executes code on the server.** End-to-end encryption was considered
+and rejected by the maintainer: whoever controls the server controls everything it serves.
 
-- **A compromised running server** (attacker executes PHP or reads memory): while a key holder's
-  request runs, the server holds the calendar key in memory. Encryption B is encryption at rest, not
-  end-to-end encryption; CalDAV clients cannot do end-to-end encryption.
+- **Code execution on the server** (a compromised extension, the hosting provider, an attacker with
+  file access): while a key holder's request runs, the server holds the calendar key in memory, and
+  such an attacker can also capture app passwords. CalDAV clients cannot do end-to-end encryption.
 - **Database and files together** (a full hosting backup): the times of all objects become readable
   (server key), contents stay encrypted.
 - **Devices that never connect again** keep their local copy. The clean-up only reaches devices that
   synchronise. This is why the usage rule requires a device lock code.
-- **Booking data outside the calendar**: see section 5.9.
+- **Booking mails** to the team carry content and ICS in clear, as decided (outside the encryption).
 
 ## 3. Architecture
 
@@ -147,8 +165,12 @@ directly, except `SecretValue::wipe()`.
 Derived by `KeyProvider` from the site secret, one per purpose (`PURPOSE_TEAM_*`): app password
 hash, device key derivation, password key derivation, timing, row MAC, UID hash, log chain, lock-out
 buckets, invitation token hash. **Changing the site secret invalidates all of them**: every app
-password, every time skeleton, every MAC. Recovery then requires the recovery key (which does not
-depend on the site secret) and new devices. The README says so; the system check warns.
+password, every time skeleton, every MAC, every encrypted booking field. The recovery key alone does
+not repair that: `recoverKeyring()` trusts a calendar key row only with a valid MAC, otherwise a
+database writer could slip in a calendar key of their own (anybody can seal to the public recovery key).
+The way back is the old site secret. The site secret is therefore part of the recovery material and is
+printed with the recovery key (section 5.6). The README says so; the system check warns when the
+secret's fingerprint changed.
 
 ### 5.2 Key hierarchy
 
@@ -172,8 +194,14 @@ Formulas (normative):
 - Device key: `AppPassword::wrappingKey()` (implemented). App password hash: `AppPassword::hash()`.
 - Wraps of secret keys (user secret under password or device key; sealing secret under CK):
   `CipherSuite::encrypt(K, secret, associatedData(<purpose>, <ids…>))` with purposes
-  `user-key/password` (user id, key version), `user-key/device` (device id, user id, key version),
-  `calendar-box` (calendar id, version).
+  `user-key/password` (user id, key version), `user-key/device` (user id, key version,
+  `bin2hex(kek_salt)`: the salt is unique per device and covered by the device MAC, so no device id
+  is needed), `calendar-box` (calendar id, version).
+- Row MAC encoding (only `KeyService::rowMac()` computes it; nobody builds an HMAC of their own): the
+  table name is normalised (`#__appointments_x`, `appointments_x` and `x` are the same; an unknown table
+  throws), fields sorted by name, `null` as `N`, any other value as `V` plus the string value, booleans
+  as 0/1. A mismatch means «no key» and is logged as `key.mac_failure` (table without prefix, reason
+  code, never values).
 - Wraps of CK: `CipherSuite::seal(publicKey, CK)`; on open, the plaintext must be exactly 32 bytes.
 - Object (scheme 1): `encrypt(CK_v, ics, associatedData('object', calendarId, uri, v))`.
 - Object (scheme 2, booking flow): `seal(boxPublicKey_v, envelope)` where the envelope is
@@ -186,9 +214,9 @@ Formulas (normative):
 - Row MAC: `hash_hmac('sha256', associatedData('row', table, field1, value1, …), key(TEAM_ROW_MAC), true)`
   over the security-relevant columns. The field lists come from one static method per owner and
   are used by everybody: `GrantService::macFields()` (calendar_id, user_id, role, state, audience,
-  granted_by, confirmed_by), `CalendarService::macFields()` (id, uri, owner_user_id, allow_external,
+  granted_by), `CalendarService::macFields()` (id, uri, owner_user_id, allow_external,
   state; deliberately not key_version, rotation_due, synctoken, which B and A change without a new MAC),
-  invitations (token_hash, email, calendar_id, role, state, invited_by, expires_utc, accepted_user_id),
+  invitations (token_hash, user_id, email_hash, state, invited_by, expires_utc, completed_utc),
   and the key, device and keyring tables in `KeyService`/`DeviceService`. A grant in
   `GRANT_PENDING_KEY` with a wrap of the current version counts as effective; nobody has to flip it to
   active.
@@ -226,8 +254,10 @@ password.
 
 ### 5.6 Recovery key
 
-Created once by a user with `core.admin` (backend, unlocked session): X25519 pair, the secret shown
-once as Base32 groups with a fingerprint, to print and keep offline; only the public key is stored.
+One for the whole site. Created once by a user with `core.admin` (backend, unlocked session):
+X25519 pair, the secret shown once as Base32 groups with a fingerprint, printed **twice, together with
+the site secret** (5.1), and the two printouts kept offline in separate places; only the public key is
+stored.
 Calendars cannot be created before it exists. Use: an administrator enters the secret in a POST form
 (never stored, never logged); the server unseals the chosen calendars' keys and wraps them for the
 chosen users. Rotation needs the old secret. Losing the recovery key and every key holder of a
@@ -261,18 +291,32 @@ times); history and the time beyond the horizon are the additional exposure.
 
 ### 5.9 Conflicts of encryption B with other requirements (reported, not resolved silently)
 
-1. **Bookings table.** `#__appointments_bookings` keeps invitee name, e-mail, phone and answers in
-   clear, as today: reminders (CLI), signed reschedule/cancel/erase links (no account), the privacy
-   workflow and retention all need them without a key. The calendar copy of a booking is encrypted,
-   the booking row is not. Same category as the booking mails to the team, which the maintainer
-   already accepted. **Open question 1.**
-2. **Privacy requests of invitees.** The privacy plugin cannot search encrypted calendar contents.
-   Objects written by the booking flow are linked by `booking_id` and removed with the booking.
-   Personal data that team members type into their own events is not findable by the operator;
-   only whole calendars or time ranges can be deleted (calendar `retention_days`). **Open question 2.**
+1. **Bookings table.** Resolved by the maintainer: the personal fields are encrypted with a server key
+   (5.10), so reminders, links, the privacy workflow and retention keep working without a user key.
+2. **Privacy requests of invitees.** Resolved by the maintainer: Joomla's privacy workflow finds
+   bookings through the blind index, and calendar entries through the blind index of their e-mail
+   addresses (section 9.1); old entries go by the per-calendar retention.
 3. **Sign-in without password** (passkeys) cannot unlock keys; such users need a password sign-in
    for key operations (adding a device, granting). Normal CalDAV use is unaffected.
 4. **Free/busy and the booking page** need server-readable times: section 5.8.
+
+### 5.10 Booking rows at rest (work package E, second part)
+
+- Encrypted with `key(PURPOSE_BOOKING_DATA)`: `invitee_name`, `invitee_first_name`, `invitee_last_name`,
+  `invitee_email`, `invitee_phone`, `guest_emails`, `custom_fields`, `cancel_reason`, `conference_url`.
+  Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, column))`;
+  the booking `uid` exists before the insert, so the row id is not needed. Readers accept a value without
+  the prefix as clear text during the migration only.
+- Blind index: table `#__appointments_booking_emails` (booking_id, email_hash, role 1 invitee / 2 guest),
+  `email_hash = hash_hmac('sha256', mb_strtolower(trim(email)), key(PURPOSE_BOOKING_EMAIL_INDEX), true)`.
+  Every lookup by address (privacy plugin, booking list filter, guest removal) goes through it.
+  Free-text search over names in the booking list is replaced by an exact address search.
+- One place reads and writes these columns (a booking record class of E); no other code selects them
+  directly. CSV export, mails, reminders, signed links, the privacy plugin and the anonymiser use it.
+- Migration in 1.4.0: column types become TEXT/MEDIUMTEXT (`custom_fields` no longer JSON), the
+  e-mail index on `invitee_email` is dropped, the index table is created; then `script.php` encrypts
+  the existing rows in batches (idempotent, rows with `v1:` are skipped) through E's helper. The SQL
+  is written by the coordinator from E's exact proposal, after the booking page branch is final.
 
 ## 6. Authentication
 
@@ -300,9 +344,13 @@ times); history and the time beyond the horizon are the additional exposure.
   active device whose account has no active second factor is refused with 403 (logged
   `dav.auth_failure`, reason `no_mfa`) before any calendar is touched; devices in clean-up are not
   affected, because they receive no data.
-- **Lock-out** (section 6 of `LockoutServiceInterface`): CalDAV and website sign-ins of calendar
-  users; website lock-out via `onUserAuthorisation` (before the session starts). Counter buckets are
-  keyed hashes; no user name or address in clear.
+- **Lock-out** (`LockoutServiceInterface`): CalDAV and website sign-ins of calendar users. On the
+  website the lock is checked **before** Joomla checks the password (`guardLogin()` from the system
+  plugin in onAfterRoute, for site `com_users` `user.login` and administrator `com_login` `login`)
+  and answered exactly like a wrong password, so the lock is no oracle and no password is tried while
+  locked; `onUserAuthorisation` stays as the second safeguard. `retryAfter()` is called before every
+  check of a secret, then exactly one `recordFailure()` or `recordSuccess()`. Counter buckets are
+  keyed hashes (IPv6 per /64); no user name or address in clear.
 
 ## 7. Roles and grants
 
@@ -318,12 +366,14 @@ times); history and the time beyond the horizon are the additional exposure.
 - Externals: only users with the component permission `appointments.team.external` grant (section
   7.1), only on calendars with `allow_external = 1`, at most write.
   A user in the external group is external even if also in a team group.
-- Invitation (section `InvitationServiceInterface`): a user with `appointments.team.external` invites an address with calendar
-  and role; the mail holds the only copy of the 32-byte token; 72 hours, once. Acceptance creates the
-  account in the external group only (or accepts for an existing signed-in account with that
-  address); the user must set up a second factor; then an administrator **confirms** (state
-  `GRANT_PENDING_CONFIRMATION` → `GRANT_PENDING_KEY`). The confirmation step is the defence against
-  an intercepted invitation mail. **Open question 3.**
+- Accounts and activation (`InvitationServiceInterface`): an administrator creates every account in
+  Joomla's user management (team group or external group; Joomla's registration stays off), grants
+  calendars, and sends the activation link: one-time, 72 hours, bound to the account and to a keyed
+  hash of its address; only a keyed hash of the 32-byte token is stored. The site page
+  (`view=activation`, work package D) only sets the password; Joomla enforces the second factor at
+  the first sign-in. On completion every user with `appointments.team.external` gets a mail with a
+  link to the backend page that revokes the access in one step (all grants removed, account blocked,
+  device clean-up). There is no administrator confirmation and no self-registration.
 - No sharing over CalDAV (no `share`/`invite` POST, no `MKCALENDAR`, no `ACL`). PROPPATCH changes only
   per-user display properties (colour, order), stored in `client_props`; anything else 403.
 
@@ -334,7 +384,7 @@ times); history and the time beyond the horizon are the additional exposure.
 | Group «Internet calendars internal» (de-DE «Internetkalender intern») | below the registration group (`com_users` `new_usertype`, normally «Registered»), no permission of its own | may receive team grants; second factor enforced |
 | Group «Internet calendars external» (de-DE «Internetkalender extern») | same | may receive grants from administrators only, at most write; second factor enforced |
 | Access level «Internet calendars» | holds both groups | access of the «My calendars» menu item, so the item is shown to these accounts only |
-| Component permission `appointments.team.external` «Share with external users» | in `access.xml`, granted to nobody by default (Super Users have it implicitly) | invite external users, confirm their acceptance, grant to them |
+| Component permission `appointments.team.external` «Share with external users» | in `access.xml`, granted to nobody by default (Super Users have it implicitly) | send activation links to external accounts, receive the revoke mail, grant to external users |
 
 - A group is **eligibility, not access**: it says that the account may hold calendar grants and must
   use a second factor. What it may do with which calendar is only in `#__appointments_calendar_grants`.
@@ -368,7 +418,7 @@ times); history and the time beyond the horizon are the additional exposure.
 - Responses: `Cache-Control: private, no-store`, `X-Robots-Tag: noindex, nofollow`, no Joomla session
   cookie. Site offline mode does not stop CalDAV (team synchronisation continues).
 
-### 8.1 Hosting (Apache, shared hosting such as cyon)
+### 8.1 Hosting (Apache, shared hosting)
 
 To verify on the dev installation before anything else (curl, in this order): `OPTIONS`, `PROPFIND`
 (Depth 0 and 1), `REPORT`, `PUT`, `DELETE`, `MKCALENDAR` (must reach PHP and get 403 from sabre, not
@@ -379,6 +429,25 @@ blocks unknown methods. Clients can always be configured with the full `/dav/` a
 non-working well-known address degrades discovery only. No change to the operator's `.htaccess` is
 required if it is Joomla's `htaccess.txt`.
 
+### 8.3 Runs on any Joomla host
+
+No code for a particular provider, no provider name in code or documentation. What a host can block
+is checked by the system check (F) and reported in plain language with the remedy; the README lists
+the prerequisites:
+
+| Check | How | Remedy shown |
+|---|---|---|
+| HTTPS | the site's own URL and a loopback request | enable TLS for the site |
+| WebDAV methods reach PHP | the system check sends OPTIONS, PROPFIND, REPORT, PUT, DELETE, MKCALENDAR to the DAV address of the site itself and expects sabre's answers (MKCALENDAR 403 from sabre, not 405 from the web server) | allow the methods in the web server or firewall rules (ModSecurity/WAF) |
+| `Authorization` header reaches PHP | loopback request with a test header | Joomla's `htaccess.txt` rule `E=HTTP_AUTHORIZATION`, or the host's setting |
+| `/.well-known/caldav` reaches Joomla | loopback request | rewrite rule, or configure clients with the full DAV address |
+| libsodium with Argon2id | `CipherSuite::available()` and a test `sodium_crypto_pwhash` | PHP with the sodium extension |
+| Memory for Argon2id INTERACTIVE (64 MiB) | `memory_limit` | raise `memory_limit` to at least 128M |
+
+The CalDAV base address is a setting of the system plugin (default: the site URL plus `/dav/`); the
+well-known redirect, the client instructions and mails use it. Calendar data is reached only through
+the `Service/Team` interfaces; the booking page reads busy times only through
+`BookingCalendarBridgeInterface::busyFor()`.
 ### 8.2 Bundling sabre/dav
 
 - sabre/dav **4.7.1** (BSD-3-Clause; needs sabre/vobject 4, sabre/event 5, sabre/xml 2,
@@ -409,6 +478,22 @@ by the Scheduler; the head row keeps the hash of the last pruned row so the rema
 verifies. The backend log view shows the events, a «verify chain» button and the head hash
 (checksum). The checksum is never shown on the site.
 
+### 9.1 Privacy requests (work package F, with the booking page's privacy part)
+
+- On every write of a calendar object (CalDAV PUT, booking flow) the store extracts every e-mail
+  address (`TimingIndexInterface::emails()`: organizer, attendees, free text) and stores only its
+  keyed hash in `#__appointments_calendar_object_emails` (`key(PURPOSE_EMAIL_INDEX)`, the same key as the
+  booking blind index). An object whose addresses could not be extracted gets `emails_indexed = 0`.
+- `plg_privacy_appointments` answers Joomla's export and removal requests for these entries:
+  removal deletes the found objects (no key needed, a normal change with sync token); export includes
+  the content only of objects whose calendar the person handling the request can unlock in their
+  session, and otherwise metadata (calendar title, date from the time skeleton) with a clear note.
+  It names explicitly every calendar it could not search completely
+  (`calendarsWithUnindexedObjects()`) or could not decrypt: never silently incomplete.
+- Staff data (devices, grants, log rows of a staff member) is exported and removed by the same plugin.
+- The plugin's event handlers belong to the booking page's privacy part; F adds its calls there in
+  agreement with that work.
+
 ## 10. Devices and «My calendars» (work package D)
 
 Site view `mycalendars` (signed in, feature on; otherwise 404): calendars with role, devices with
@@ -426,6 +511,10 @@ States in `TeamStates`: active → clean-up empty → clean-up hidden → revoke
    device may know (current objects and deletions since its token) as deleted; the CTag changes
    (`<token>-c`); writes are refused with 403. Delivered when the device fetched the collection
    (`markDelivered`).
+   The calendars listed are `CleanupServiceInterface::calendarsInCleanup()`: every calendar the device
+   synchronised before (`#__appointments_device_calendars`, written by `DeviceService::touch()` at the
+   first synchronisation of each calendar, without throttling) that still exists, even when the grant is
+   already suspended.
 2. **Hidden:** the calendar home lists nothing, so the client removes the calendars.
 3. **Revoked:** 401 for every request.
 
@@ -438,9 +527,10 @@ them again; one-way «Outlook → server» would try to upload, which the refuse
 
 ## 12. Mails (work package D)
 
-`TeamMailerInterface`: new device (always), invitation, invitation accepted (to administrators),
-grant changed (to owner and managers), access suspended. Joomla mailer, recipient language, no secret
-except the invitation link. Booking mails stay as they are, with content and ICS to the team.
+`TeamMailerInterface`: new device (always), activation link, activation completed (to the
+administrators, with the one-step revoke link), grant changed (to owner and managers), access
+suspended. They are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS), editable
+under Templates. Joomla mailer, recipient language, no secret except the activation link. Booking mails stay as they are, with content and ICS to the team.
 
 ## 13. Administrator views
 
@@ -448,7 +538,9 @@ except the invitation link. Booking mails stay as they are, with content and ICS
 - `calendars` (C): list, edit (title, description, colour, owner, allow externals, blocks
   availability, retention), grants, rotate key, recovery key setup and use. Navigation links on the
   dashboard (C).
-- `invitations` (C, `appointments.team.external`), `devices` (F: all devices, «last synchronised», block with clean-up, revoke),
+- Retention per calendar (F): Scheduler routine «calendar retention» calls
+  `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`.
+- `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», block with clean-up, revoke),
   `teamlog` (F: events, verify, checksum).
 - System view (F): libsodium, HTTPS, Authorization header, well-known reachability, plugins enabled,
   MFA enforcement, recovery key present, site secret fingerprint changed.
@@ -485,11 +577,13 @@ except the invitation link. Booking mails stay as they are, with content and ICS
 | Client | Address | Refresh setting to document |
 |---|---|---|
 | Outlook (LTSC 2024) + CalDav Synchronizer | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, «Discover resources and assign to Outlook folders» | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
-| Apple Calendar (iOS) | Other → CalDAV account, server `<site>` (well-known) | Settings → Calendar → Accounts → Fetch New Data → every 15 minutes |
-| Apple Calendar (macOS) | Other CalDAV account, manual, `https://<site>/dav/` | account → refresh every 5 minutes |
+| iOS calendar | Other → CalDAV account, server `<site>` (well-known) | Settings → Calendar → Accounts → Fetch New Data → every 15 minutes |
 | DAVx⁵ | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (Android minimum) |
 | Thunderbird | New calendar → on the network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
 | eM Client | account → CalDAV, `https://<site>/dav/` | account → synchronisation every 5 minutes |
+
+Not supported, and documented as such: the new Outlook for Windows and the Outlook apps on phones (no
+CalDAV). macOS Calendar works with the same settings as iOS but is not part of the tested set.
 
 Every client must pass: discovery, initial sync, create/change/delete in both directions, a booking
 appearing by itself within the interval, a revoked grant disappearing, and the clean-up.
@@ -527,7 +621,15 @@ Assigned later by the coordinator: E also owns `Field/TeamcalendarField.php` and
 the `mycalendars` view registration in the site `Router.php` and `media/com_appointments/{css,js}/mycalendars.*`.
 The internet calendar mails are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS)
 with the purposes `team_device_added`, `team_invitation`, `team_invitation_accepted`,
-`team_grant_changed`, `team_access_suspended`. Integration tests that need another package's
+`team_grant_changed`, `team_access_suspended`. Round 2 (04.11.2026): A also writes the e-mail blind index, `findByEmailHash()`,
+`calendarsWithUnindexedObjects()`, `deleteEndedBefore()` and the DAV base address setting; C turns
+invitations into account activation with the revoke page; D owns the site view `activation` (instead
+of `invitation`); E owns `TimingIndex::emails()` and, as its second part, the booking rows at rest (5.10:
+the booking record class and every reader of those columns); F owns `guardLogin()`, the Scheduler
+routine «calendar retention», the privacy requests of 9.1 and the system check of 8.3. The
+`onAfterRoute` handler of the system plugin is the coordinator's.
+
+Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every
 pending test into a failure before the pull request to `main`.
 
@@ -538,11 +640,9 @@ files: each package adds keys only inside its own `[team-x]` block.
 
 ## 19. Open questions for the maintainer
 
-1. Booking rows keep invitee data in clear (5.9.1). Accept as today, or encrypt the booking's
-   personal fields to the calendar's public key (then the reminders, signed links, privacy export and
-   retention need a redesign)?
-2. Privacy requests cannot find personal data that team members type into their own events (5.9.2).
-   Accept with a README note and per-calendar retention?
-3. External invitation: keep the administrator confirmation after acceptance (specified, recommended),
-   or activate immediately once the second factor is set?
-4. Recovery key: one per site (specified), or one per calendar owner?
+Decided on 04.11.2026: encryption at rest stays (no end-to-end), booking rows encrypted with a server
+key (5.10), privacy requests through com_privacy with a blind index (9.1), per-calendar retention,
+accounts only by administrators with an activation link and no confirmation step, one recovery key
+per site in two printouts, the new Outlook is not supported, runs on any Joomla host (8.3).
+
+Open: none.

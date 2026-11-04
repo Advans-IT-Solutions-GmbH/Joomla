@@ -50,4 +50,9 @@ final class CalendarService implements CalendarServiceInterface
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
+
+    public function releaseOwner(int $userId): int
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
 }

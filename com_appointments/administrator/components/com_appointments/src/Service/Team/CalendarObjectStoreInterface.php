@@ -21,7 +21,13 @@ defined('_JEXEC') or die;
  * grant service first and only then calls it. Every write runs in one
  * transaction that also raises `#__appointments_calendars.synctoken`, appends
  * to `#__appointments_calendar_changes` and stores the time skeleton
- * ({@see TimingIndexInterface::extract()}) encrypted with the server key.
+ * ({@see TimingIndexInterface::extract()}) encrypted with the server key, and
+ * the blind index of its e-mail addresses ({@see TimingIndexInterface::emails()},
+ * `hash_hmac('sha256', address, key(PURPOSE_EMAIL_INDEX), true)`) in
+ * `#__appointments_calendar_object_emails`. When the index cannot be built, the
+ * object is stored with `emails_indexed = 0` and the privacy plugin lists it.
+ *
+ * The blind index lets the privacy plugin find and delete objects without a user key.
  *
  * Limits: an object is one VCALENDAR with VEVENT components of one UID, at
  * most 1 MiB; a URI is 1 to 255 characters of `[A-Za-z0-9._@+=-]` and ends in
@@ -82,6 +88,32 @@ interface CalendarObjectStoreInterface
      * @return  int  Objects re-encrypted.
      */
     public function reencrypt(CalendarKeyring $keyring, int $limit): int;
+
+    /**
+     * Retention of one calendar (`retention_days`): delete every object whose
+     * last occurrence ended before the given instant, read from the time
+     * skeleton; an open-ended series is never deleted. Each deletion is a
+     * normal change (sync token, journal). Logged once per run as
+     * `object.retention` with the count, never with content.
+     *
+     * @return  int  Objects deleted.
+     */
+    public function deleteEndedBefore(int $calendarId, \DateTimeImmutable $beforeUtc): int;
+
+    /**
+     * Objects in any calendar whose blind index holds this address hash.
+     *
+     * @return  StoredObject[]
+     */
+    public function findByEmailHash(string $emailHash): array;
+
+    /**
+     * Calendars that hold objects without a usable e-mail index (`emails_indexed = 0`),
+     * so a privacy request can name them instead of being silently incomplete.
+     *
+     * @return  int[]  Calendar ids.
+     */
+    public function calendarsWithUnindexedObjects(): array;
 
     public function syncToken(int $calendarId): int;
 

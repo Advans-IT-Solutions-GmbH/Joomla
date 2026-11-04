@@ -54,6 +54,16 @@ interface CleanupServiceInterface
     public function markDelivered(DeviceSession $session, int $calendarId): void;
 
     /**
+     * The calendars the empty view lists for a device in clean-up: every
+     * calendar it synchronised before (`#__appointments_device_calendars`) that
+     * still exists, although its grant may already be suspended. The CalDAV
+     * handler lists exactly these, without objects, read-only, CTag `<token>-c`.
+     *
+     * @return  int[]  Calendar ids.
+     */
+    public function calendarsInCleanup(DeviceSession $session): array;
+
+    /**
      * The device listed its calendar home while hidden.
      */
     public function markHomeSeen(DeviceSession $session): void;

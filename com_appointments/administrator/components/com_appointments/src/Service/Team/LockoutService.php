@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
+use Joomla\CMS\Application\CMSApplicationInterface;
 
 defined('_JEXEC') or die;
 
@@ -27,6 +28,11 @@ final class LockoutService implements LockoutServiceInterface
     }
 
     public function retryAfter(string $username, string $ip): int
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
+    public function guardLogin(CMSApplicationInterface $app): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }

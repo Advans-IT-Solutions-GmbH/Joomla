@@ -69,6 +69,21 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function deleteEndedBefore(int $calendarId, \DateTimeImmutable $beforeUtc): int
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
+    public function findByEmailHash(string $emailHash): array
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
+    public function calendarsWithUnindexedObjects(): array
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function syncToken(int $calendarId): int
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

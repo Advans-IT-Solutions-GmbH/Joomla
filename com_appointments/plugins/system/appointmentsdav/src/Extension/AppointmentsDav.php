@@ -22,7 +22,8 @@ defined('_JEXEC') or die;
  *
  * The request is taken over in onAfterInitialise, before routing, the session
  * cookie and any page rendering, and the application is closed afterwards.
- * Work package A owns this plugin.
+ * In onAfterRoute it also runs the sign-in lock-out before any password check.
+ * Work package A owns this plugin; onAfterRoute is the coordinator's.
  *
  * @since  1.4.0
  */
@@ -30,7 +31,10 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
 {
     public static function getSubscribedEvents(): array
     {
-        return ['onAfterInitialise' => 'onAfterInitialise'];
+        return [
+            'onAfterInitialise' => 'onAfterInitialise',
+            'onAfterRoute'      => 'onAfterRoute',
+        ];
     }
 
     public function onAfterInitialise(): void
@@ -55,5 +59,23 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
 
         $handler->handle();
         $app->close();
+    }
+
+    /**
+     * The sign-in lock-out before Joomla checks a password, on the site and in
+     * the administrator (work package F implements guardLogin()). A failure here
+     * never breaks a sign-in.
+     */
+    public function onAfterRoute(): void
+    {
+        try {
+            $services = TeamServices::fromApplication();
+
+            if ($services->enabled()) {
+                $services->lockout()->guardLogin($this->getApplication());
+            }
+        } catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
+            // A stub of a work package that is not delivered yet.
+        }
     }
 }

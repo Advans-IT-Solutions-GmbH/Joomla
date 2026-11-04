@@ -28,9 +28,6 @@ final class TeamStates
     /** Suspended by a password reset or a blocked account; only a manager or the recovery key reactivates it. */
     public const GRANT_SUSPENDED = 3;
 
-    /** An external user accepted an invitation; an administrator still has to confirm. */
-    public const GRANT_PENDING_CONFIRMATION = 4;
-
     /** `#__appointments_devices.state`: normal access. */
     public const DEVICE_ACTIVE = 1;
 
@@ -43,10 +40,9 @@ final class TeamStates
     /** Revoked: every request is refused with 401. */
     public const DEVICE_REVOKED = 0;
 
-    /** `#__appointments_invitations.state`. */
+    /** `#__appointments_invitations.state` (account activation links). */
     public const INVITATION_OPEN = 1;
-    public const INVITATION_ACCEPTED = 2;
-    public const INVITATION_CONFIRMED = 3;
+    public const INVITATION_COMPLETED = 2;
     public const INVITATION_CLOSED = 0;
 
     /** `#__appointments_calendar_objects.enc_scheme`: XChaCha20-Poly1305 under the calendar key. */
@@ -67,7 +63,7 @@ final class TeamStates
     /** Version of the device usage rule the user confirms; raise it when the rule text changes. */
     public const DEVICE_RULE_VERSION = '1';
 
-    /** Lifetime of an invitation of an external user, in hours. */
+    /** Lifetime of an account activation link, in hours. */
     public const INVITATION_HOURS = 72;
 
     /** Retention of the team calendar log, in months. */

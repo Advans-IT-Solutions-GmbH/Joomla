@@ -28,14 +28,15 @@ interface TeamMailerInterface
     public function deviceAdded(int $userId, string $deviceName, string $client, \DateTimeImmutable $createdUtc): void;
 
     /**
-     * To the invited address: calendar title, role, expiry and the one-time link.
+     * To the account's address: the one-time activation link and its expiry.
      */
-    public function invitation(string $email, string $link, string $calendarTitle, string $roleLabelKey, \DateTimeImmutable $expiresUtc): void;
+    public function invitation(string $email, string $link, \DateTimeImmutable $expiresUtc): void;
 
     /**
-     * To every user with `appointments.team.external`: an invitation was accepted and waits for confirmation.
+     * To every user with `appointments.team.external`: an account completed its
+     * activation, with the link to revoke its access in one step.
      */
-    public function invitationAccepted(int $invitationId, string $calendarTitle): void;
+    public function activationCompleted(int $invitationId, int $userId, string $revokeUrl): void;
 
     /**
      * To the calendar's owner and managers: a grant was created or changed.
