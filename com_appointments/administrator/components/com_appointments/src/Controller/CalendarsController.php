@@ -36,6 +36,15 @@ class CalendarsController extends BaseController
 {
     private const CONTEXT = 'com_appointments.edit.calendar';
 
+    /**
+     * No views through this controller: they go through DisplayController and
+     * its edit-view checks only.
+     */
+    public function display($cachable = false, $urlparams = [])
+    {
+        throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+    }
+
     public function add(): bool
     {
         $this->guard(false);
@@ -113,6 +122,41 @@ class CalendarsController extends BaseController
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_DELETED'), 'message');
             $this->setRedirect($this->listUrl());
         }, $this->editUrl($id));
+    }
+
+    /**
+     * Delete a calendar whose row no longer verifies (for example after the
+     * site secret changed): core.admin and core.delete, confirmed. Such a
+     * calendar cannot be edited, so it has no edit id; this path accepts only
+     * calendars that fail their check, every other deletion goes through the
+     * edit page.
+     */
+    public function deleteInvalid(): bool
+    {
+        $services = $this->guard(true);
+        $this->requireAdmin();
+        $id = $this->input->post->getInt('id', 0);
+
+        if (!$this->app->getIdentity()->authorise('core.delete', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        if ($this->input->post->getInt('confirm', 0) !== 1 || $id <= 0) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_DELETE_CONFIRM_MISSING'), 'warning');
+            $this->setRedirect($this->listUrl());
+
+            return false;
+        }
+
+        return $this->attempt(function () use ($services, $id): void {
+            if ($services->calendars()->get($id) !== null) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+            }
+
+            $services->calendars()->delete($this->actor(), $id);
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_DELETED'), 'message');
+            $this->setRedirect($this->listUrl());
+        }, $this->listUrl());
     }
 
     public function grant(): bool

@@ -162,7 +162,7 @@ final class InvitationService implements InvitationServiceInterface
      *
      * @return  object[]
      */
-    public static function listing(TeamServices $services): array
+    public static function listing(TeamServices $services, int $invitationId = 0): array
     {
         $db = $services->db();
         $rows = $db->setQuery(
@@ -171,7 +171,8 @@ final class InvitationService implements InvitationServiceInterface
             . ' FROM ' . $db->quoteName('#__' . self::TABLE) . ' AS i'
             . ' LEFT JOIN ' . $db->quoteName('#__users') . ' AS u ON u.id = i.user_id'
             . ' LEFT JOIN ' . $db->quoteName('#__users') . ' AS b ON b.id = i.invited_by'
-            . ' ORDER BY i.id DESC'
+            . ($invitationId > 0 ? ' WHERE i.id = ' . $invitationId : '')
+            . ' ORDER BY i.id DESC LIMIT 500'
         )->loadObjectList() ?: [];
 
         foreach ($rows as $row) {
@@ -190,13 +191,7 @@ final class InvitationService implements InvitationServiceInterface
      */
     public static function find(TeamServices $services, int $invitationId): ?object
     {
-        foreach (self::listing($services) as $row) {
-            if ((int) $row->id === $invitationId) {
-                return $row;
-            }
-        }
-
-        return null;
+        return $invitationId > 0 ? (self::listing($services, $invitationId)[0] ?? null) : null;
     }
 
     /**
@@ -390,21 +385,38 @@ final class InvitationService implements InvitationServiceInterface
             return $row;
         });
 
-        $user = GrantService::user((int) $row->user_id);
-        $before = $this->storedPasswordHash((int) $row->user_id);
-        $saved = false;
+        // Under the account lock that revoke() holds as well: a revoke cannot
+        // block the account between the reload below and the save, and a link
+        // closed meanwhile is not completed.
+        $outcome = $this->withAccountLock((int) $row->user_id, function () use ($row, $password): string {
+            $current = $this->rows('id = ' . (int) $row->id, false)[0] ?? null;
+            $user = GrantService::user((int) $row->user_id);
 
-        try {
-            $saved = $user !== null && !$user->block
-                && $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
-                && $user->save(true);
-        } catch (\Throwable) {
-            // A plugin may throw after Joomla stored the password: then the
-            // activation did happen and must be logged and mailed.
-            $saved = $this->storedPasswordHash((int) $row->user_id) !== $before;
+            if ($current === null || !$this->macValid($current) || (int) $current->state !== TeamStates::INVITATION_COMPLETED
+                || (string) $current->completed_utc !== (string) $row->completed_utc || $user === null || $user->block) {
+                // Revoked or blocked meanwhile: the link is gone for good.
+                return 'gone';
+            }
+
+            $before = $this->storedPasswordHash((int) $row->user_id);
+
+            try {
+                $saved = $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
+                    && $user->save(true);
+            } catch (\Throwable) {
+                // A plugin may throw after Joomla stored the password: then the
+                // activation did happen and must be logged and mailed.
+                $saved = $this->storedPasswordHash((int) $row->user_id) !== $before;
+            }
+
+            return $saved ? 'saved' : 'refused';
+        });
+
+        if ($outcome === 'gone') {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
         }
 
-        if (!$saved) {
+        if ($outcome !== 'saved') {
             // Joomla refused the password: the link is given back unchanged
             // (still bound to the account and its address), so the person can
             // try again until it expires.
@@ -450,13 +462,20 @@ final class InvitationService implements InvitationServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
         }
 
-        if ((int) $peek->state === TeamStates::INVITATION_COMPLETED) {
-            // Block first, outside every transaction (Joomla's user plugins
-            // react with transactions of their own). When Joomla refuses,
-            // nothing has changed; when a later step fails, the account stays
-            // blocked and the link «completed», so the revoke can be repeated.
-            $this->block($userId);
-        }
+        // Block first, outside every transaction (Joomla's user plugins react
+        // with transactions of their own), and under the account lock that
+        // complete() holds while it saves the password, so a stale save can
+        // never undo the block. When Joomla refuses, nothing has changed; when
+        // a later step fails, the account stays blocked and the link
+        // «completed», so the revoke can be repeated.
+        $this->withAccountLock($userId, function () use ($peek, $userId, $invitationId): void {
+            $current = $this->rows('id = ' . $invitationId, false)[0] ?? null;
+
+            if ($current !== null && $this->macValid($current) && (int) $current->state === TeamStates::INVITATION_COMPLETED) {
+                $this->block($userId);
+                $peek->state = TeamStates::INVITATION_COMPLETED;
+            }
+        });
 
         $result = $this->atomic(function () use ($actorUserId, $invitationId, $peek, $userId): array {
             $row = $this->rows('id = ' . $invitationId, true)[0] ?? null;
@@ -545,6 +564,32 @@ final class InvitationService implements InvitationServiceInterface
     }
 
     /**
+     * Run work while holding a database-wide named lock for one account, so a
+     * completion and a revoke of the same account never interleave. The lock
+     * belongs to the connection, not to a transaction, so it also covers
+     * Joomla's own saves with their plugins.
+     *
+     * @template T
+     * @param   callable():T  $work
+     * @return  T
+     */
+    private function withAccountLock(int $userId, callable $work): mixed
+    {
+        $db = $this->services->db();
+        $name = $db->quote('com_appointments.activation.' . $userId);
+
+        if ((int) $db->setQuery('SELECT GET_LOCK(' . $name . ', 10)')->loadResult() !== 1) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_UNAVAILABLE', 503);
+        }
+
+        try {
+            return $work();
+        } finally {
+            $db->setQuery('SELECT RELEASE_LOCK(' . $name . ')')->loadResult();
+        }
+    }
+
+    /**
      * The stored password hash, compared only, never shown or logged.
      */
     private function storedPasswordHash(int $userId): string
@@ -580,10 +625,12 @@ final class InvitationService implements InvitationServiceInterface
             return false;
         }
 
-        if ($actor->authorise('core.admin', 'com_appointments') && $this->services->grants()->hasSecondFactor($actorUserId)) {
-            return $audience !== GrantService::AUDIENCE_NONE;
+        if ($audience === TeamStates::AUDIENCE_TEAM) {
+            return $actor->authorise('core.admin', 'com_appointments') && $this->services->grants()->hasSecondFactor($actorUserId);
         }
 
+        // External accounts only with the right to share externally, also for
+        // an administrator: core.admin alone does not include it.
         return $audience === TeamStates::AUDIENCE_EXTERNAL && GrantService::sharesExternally($this->services, $actorUserId);
     }
 

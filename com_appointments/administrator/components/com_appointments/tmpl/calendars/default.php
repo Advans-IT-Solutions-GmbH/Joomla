@@ -62,6 +62,9 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
                             <?php endif; ?>
                             <?php if (!$item->mac_valid) : ?>
                                 <span class="badge bg-danger"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_INTEGRITY_FAILED'); ?></span>
+                                <?php if ($this->canDeleteInvalid) : ?>
+                                    <a class="btn btn-danger btn-sm" href="#delete-invalid-<?php echo (int) $item->id; ?>"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_DELETE_BUTTON'); ?></a>
+                                <?php endif; ?>
                             <?php endif; ?>
                             <?php if ((int) $item->rotation_due === 1) : ?>
                                 <span class="badge bg-warning text-dark"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_ROTATION_DUE'); ?></span>
@@ -79,6 +82,26 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
         <input type="hidden" name="task" value="">
         <?php echo HTMLHelper::_('form.token'); ?>
     </form>
+
+    <?php foreach ($this->canDeleteInvalid ? $this->items : [] as $item) : ?>
+        <?php if (!$item->mac_valid) : ?>
+            <section class="card mt-3 border-danger" id="delete-invalid-<?php echo (int) $item->id; ?>" aria-labelledby="delete-invalid-heading-<?php echo (int) $item->id; ?>">
+                <div class="card-body">
+                    <h2 class="h5" id="delete-invalid-heading-<?php echo (int) $item->id; ?>"><?php echo $this->escape($item->title); ?></h2>
+                    <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_DELETE_INVALID_DESC'); ?></p>
+                    <form action="<?php echo $action; ?>" method="post">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="delete-invalid-confirm-<?php echo (int) $item->id; ?>" name="confirm" value="1" required>
+                            <label class="form-check-label" for="delete-invalid-confirm-<?php echo (int) $item->id; ?>"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_DELETE_CONFIRM'); ?></label>
+                        </div>
+                        <input type="hidden" name="id" value="<?php echo (int) $item->id; ?>">
+                        <button type="submit" class="btn btn-danger" name="task" value="calendars.deleteInvalid"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_DELETE_BUTTON'); ?></button>
+                        <?php echo HTMLHelper::_('form.token'); ?>
+                    </form>
+                </div>
+            </section>
+        <?php endif; ?>
+    <?php endforeach; ?>
 
     <?php if ($this->canAdmin) : ?>
         <section class="card mt-4" aria-labelledby="recovery-heading">

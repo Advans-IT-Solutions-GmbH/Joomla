@@ -50,6 +50,8 @@ final class CalendarActivationRulesTest extends TestCase
             [['allow_external' => '2'], true],
             [['allow_external' => ''], true],
             [['retention_days' => '-1'], true],
+            [['retention_days' => -1], true],
+            [['title' => 'a', 'owner_user_id' => -5], false],
             [['retention_days' => '65536'], true],
             [['retention_days' => '1e3'], true],
             [['title' => ['array']], true],

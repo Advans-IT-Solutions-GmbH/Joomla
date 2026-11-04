@@ -136,6 +136,14 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                                         <?php echo HTMLHelper::_('form.token'); ?>
                                     </form>
                                 <?php endif; ?>
+                                <?php if ($grant->is_owner && $manager && !$grant->effective && (int) $grant->user_id !== $me) : ?>
+                                    <form action="<?php echo $action; ?>" method="post" class="mb-2">
+                                        <input type="hidden" name="user_id" value="<?php echo (int) $grant->user_id; ?>">
+                                        <input type="hidden" name="role" value="<?php echo CalendarRole::Manage->value; ?>">
+                                        <button type="submit" class="btn btn-secondary btn-sm" name="task" value="calendars.grant"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_OWNER_RESTORE'); ?></button>
+                                        <?php echo HTMLHelper::_('form.token'); ?>
+                                    </form>
+                                <?php endif; ?>
                                 <?php if ($mayRemove) : ?>
                                     <form action="<?php echo $action; ?>" method="post">
                                         <input type="hidden" name="user_id" value="<?php echo (int) $grant->user_id; ?>">

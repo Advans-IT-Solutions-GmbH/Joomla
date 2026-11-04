@@ -67,6 +67,9 @@ class HtmlView extends BaseHtmlView
     /** @var bool */
     protected $canEdit = false;
 
+    /** @var bool  core.admin and core.delete: may delete a calendar that fails its check. */
+    protected $canDeleteInvalid = false;
+
     /** @var bool */
     protected $canInvite = false;
 
@@ -96,6 +99,7 @@ class HtmlView extends BaseHtmlView
         $this->canCreate = $user->authorise('core.create', 'com_appointments');
         $this->canEdit = $user->authorise('core.edit', 'com_appointments');
         $this->canAdmin = $user->authorise('core.admin', 'com_appointments');
+        $this->canDeleteInvalid = $this->canAdmin && $user->authorise('core.delete', 'com_appointments');
         $this->canInvite = $this->canAdmin || $user->authorise('appointments.team.external', 'com_appointments');
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'), 'calendar');
 

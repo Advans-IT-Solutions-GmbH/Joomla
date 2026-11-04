@@ -29,6 +29,14 @@ defined('_JEXEC') or die;
  */
 class InvitationsController extends BaseController
 {
+    /**
+     * No views through this controller: they go through DisplayController.
+     */
+    public function display($cachable = false, $urlparams = [])
+    {
+        throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+    }
+
     public function invite(): bool
     {
         $services = $this->guard();

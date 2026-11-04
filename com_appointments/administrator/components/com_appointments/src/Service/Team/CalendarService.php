@@ -197,7 +197,7 @@ final class CalendarService implements CalendarServiceInterface
         if (\array_key_exists('retention_days', $data)) {
             $days = $data['retention_days'];
 
-            if (!(\is_int($days) || (\is_string($days) && preg_match('/^\d{1,5}$/D', $days))) || (int) $days > 65535) {
+            if (!((\is_int($days) && $days >= 0) || (\is_string($days) && preg_match('/^\d{1,5}$/D', $days))) || (int) $days > 65535) {
                 throw new \InvalidArgumentException('retention_days');
             }
 
@@ -207,7 +207,7 @@ final class CalendarService implements CalendarServiceInterface
         if (!$partial) {
             $owner = $data['owner_user_id'] ?? 0;
 
-            if (!(\is_int($owner) || (\is_string($owner) && preg_match('/^\d{1,10}$/D', $owner))) || (int) $owner <= 0) {
+            if (!((\is_int($owner) && $owner > 0) || (\is_string($owner) && preg_match('/^\d{1,10}$/D', $owner))) || (int) $owner <= 0) {
                 throw new \InvalidArgumentException('owner_user_id');
             }
 

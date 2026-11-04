@@ -79,6 +79,17 @@ class HtmlView extends BaseHtmlView
         $id = $app->getInput()->getInt('id', 0);
         $this->setLayout('edit');
 
+        // The same checks as DisplayController::EDIT_VIEWS, here as well, so no
+        // other route (for example another controller's display task) reaches
+        // the stored settings: an existing calendar needs core.edit and its
+        // edit id held, a new one core.create.
+        $held = array_map('intval', (array) $app->getUserState('com_appointments.edit.calendar.id', []));
+
+        if ($id > 0 ? (!$user->authorise('core.edit', 'com_appointments') || !\in_array($id, $held, true))
+            : !$user->authorise('core.create', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
         if (!$this->enabled) {
             ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'), 'calendar');
 
