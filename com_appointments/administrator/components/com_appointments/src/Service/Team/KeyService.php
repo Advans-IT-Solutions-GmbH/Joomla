@@ -631,9 +631,10 @@ final class KeyService implements KeyServiceInterface
         try {
             $rotated = $this->rotate($keyring, $keys->userId());
         } catch (TeamException $e) {
-            if ($e->getMessage() !== 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED') {
-                // Postponed (no holder can be judged now, no recovery key): the
-                // keyring is still the current one.
+            if ($e->getMessage() !== 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED'
+                && $this->currentVersion($calendarId, true) === $keyring->current()->version()) {
+                // Postponed (no holder can be judged now, no recovery key) and,
+                // read under a lock, still the current version.
                 $this->warn('a due key rotation was postponed', $e);
 
                 return $keyring;
@@ -813,7 +814,7 @@ final class KeyService implements KeyServiceInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
             }
 
-            $current = $this->currentVersion($calendarId);
+            $current = $this->currentVersion($calendarId, true);
 
             if ($current === null || $current !== $keyring->current()->version()) {
                 // Somebody rotated in the meantime: a conflict, never the old ring.
@@ -1670,30 +1671,33 @@ final class KeyService implements KeyServiceInterface
      * The newest key version of a calendar whose `calendar_keys` row verifies,
      * null when there is none.
      */
-    private function currentVersion(int $calendarId): ?int
+    /**
+     * @param   bool  $locking  Locking reads that bypass the row cache: the newest
+     *                          committed state also inside an older transaction snapshot.
+     */
+    private function currentVersion(int $calendarId, bool $locking = false): ?int
     {
         $db = $this->services->db();
-        $versions = $db->setQuery(
-            $this->query()
-                ->select($db->quoteName('key_version'))
-                ->from($db->quoteName('#__appointments_calendar_keys'))
-                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-                ->order($db->quoteName('key_version') . ' DESC')
-        )->loadColumn() ?: [];
+        $lock = $locking ? ' FOR UPDATE' : '';
+        $versionQuery = $this->query()
+            ->select($db->quoteName('key_version'))
+            ->from($db->quoteName('#__appointments_calendar_keys'))
+            ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            ->order($db->quoteName('key_version') . ' DESC');
+        $versions = $db->setQuery((string) $versionQuery . $lock)->loadColumn() ?: [];
 
         // Only the newest row counts. If it fails its MAC the calendar fails
         // closed instead of silently falling back to an older version, which a
         // database writer could otherwise force by damaging or deleting rows.
         $newest = $versions === [] ? null : (int) $versions[0];
 
-        if ($newest === null || $this->calendarKeyRow($calendarId, $newest) === null) {
+        if ($newest === null || $this->calendarKeyRow($calendarId, $newest, $locking) === null) {
             return null;
         }
 
-        $stored = (int) $db->setQuery(
-            $this->query()->select($db->quoteName('key_version'))->from($db->quoteName('#__appointments_calendars'))
-                ->where($db->quoteName('id') . ' = ' . $calendarId)
-        )->loadResult();
+        $storedQuery = $this->query()->select($db->quoteName('key_version'))->from($db->quoteName('#__appointments_calendars'))
+            ->where($db->quoteName('id') . ' = ' . $calendarId);
+        $stored = (int) $db->setQuery((string) $storedQuery . $lock)->loadResult();
 
         // A newest row below the version the calendar row names, or below the
         // version anchored outside the database, means key rows were removed
@@ -1749,19 +1753,18 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  array<string, mixed>|null  The verified `calendar_keys` row.
      */
-    private function calendarKeyRow(int $calendarId, int $version): ?array
+    private function calendarKeyRow(int $calendarId, int $version, bool $locking = false): ?array
     {
         $cacheKey = $calendarId . ':' . $version;
 
-        if (!\array_key_exists($cacheKey, $this->calendarKeyRows)) {
+        if ($locking || !\array_key_exists($cacheKey, $this->calendarKeyRows)) {
             $db = $this->services->db();
-            $row = $db->setQuery(
-                $this->query()
-                    ->select($db->quoteName(['calendar_id', 'key_version', 'box_public_key', 'box_secret_wrapped', 'recovery_wrapped', 'recovery_fingerprint', 'row_mac']))
-                    ->from($db->quoteName('#__appointments_calendar_keys'))
-                    ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-                    ->where($db->quoteName('key_version') . ' = ' . $version)
-            )->loadAssoc();
+            $query = $this->query()
+                ->select($db->quoteName(['calendar_id', 'key_version', 'box_public_key', 'box_secret_wrapped', 'recovery_wrapped', 'recovery_fingerprint', 'row_mac']))
+                ->from($db->quoteName('#__appointments_calendar_keys'))
+                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+                ->where($db->quoteName('key_version') . ' = ' . $version);
+            $row = $db->setQuery((string) $query . ($locking ? ' FOR UPDATE' : ''))->loadAssoc();
 
             if ($row && (!$this->verifyStoredRow('calendar_keys', $row) || \strlen((string) $row['box_public_key']) !== CipherSuite::KEY_BYTES)) {
                 $this->macFailure('calendar_keys', 'mismatch', ['calendar_id' => $calendarId]);
@@ -2007,7 +2010,7 @@ final class KeyService implements KeyServiceInterface
                 continue;
             }
 
-            $effective = $this->accountEffective($userId);
+            $effective = $this->accountEffective($userId, $locking);
 
             if ($effective === null && $strict) {
                 return null;
@@ -2023,14 +2026,15 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  bool|null  Null when it cannot be judged now.
      */
-    private function accountEffective(int $userId): ?bool
+    private function accountEffective(int $userId, bool $locking = false): ?bool
     {
         try {
             $db = $this->services->db();
-            $block = $db->setQuery(
-                $this->query()->select($db->quoteName('block'))->from($db->quoteName('#__users'))
-                    ->where($db->quoteName('id') . ' = ' . $userId)
-            )->loadResult();
+            $query = $this->query()->select($db->quoteName('block'))->from($db->quoteName('#__users'))
+                ->where($db->quoteName('id') . ' = ' . $userId);
+            // A shared lock: current like the other reads under the calendar
+            // lock, without blocking sign-ins that update the account row.
+            $block = $db->setQuery((string) $query . ($locking ? ' LOCK IN SHARE MODE' : ''))->loadResult();
 
             return $block !== null && (int) $block === 0
                 && $this->services->grants()->audienceOf($userId) !== 'none'

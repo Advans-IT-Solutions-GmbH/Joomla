@@ -307,7 +307,7 @@ final class KeySession implements KeySessionInterface
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
             || !$this->joomlaSecondFactor($userId)
-            || !$this->secondFactorUsedSince($userId, (int) ($escrow['at'] ?? 0))
+            || $this->hasSameChannelFactor($userId)
             || !$this->services->grants()->hasSecondFactor($userId)) {
             return null;
         }
@@ -420,6 +420,13 @@ final class KeySession implements KeySessionInterface
             }
 
             $this->warn('a key reset was refused', $e);
+
+            // The observed key is no longer the stored one: another session
+            // created a newer key. Nothing of this stale reset may touch it.
+            if ($e instanceof TeamException && $e->getMessage() === 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED') {
+                return false;
+            }
+
             $done = false;
 
             // Written after the rollback, which would otherwise take the log row
@@ -513,41 +520,29 @@ final class KeySession implements KeySessionInterface
     }
 
     /**
-     * Whether the factor that passed Joomla's captive page after this sign-in
-     * is one that counts. Joomla sets `mfa_checked` for any method, also for
-     * an e-mail code or a backup code, and stamps the record it accepted with
-     * `last_used`: the most recently used record must be an enabled, counting
-     * method and must have been used at or after the sign-in.
+     * Whether the account has an enabled e-mail code method. Joomla's captive
+     * page lets the user pick any configured method and records none of it in
+     * the session, so the factor used in this session cannot be told apart;
+     * `last_used` is shared by every session of the account. An e-mail code
+     * travels the same way as the password reset link, so an account with that
+     * method configured never unlocks keys, whichever factor it used.
      */
-    private function secondFactorUsedSince(int $userId, int $signedInAt): bool
+    private function hasSameChannelFactor(int $userId): bool
     {
-        if ($signedInAt <= 0) {
-            return false;
-        }
-
         $methods = [];
 
         foreach (MfaHelper::getMfaMethods() as $method) {
             $methods[] = (string) ($method['name'] ?? '');
         }
 
-        $latest = null;
-        $latestAt = 0;
-
         foreach (MfaHelper::getUserMfaRecords($userId) as $record) {
-            $used = empty($record->last_used) ? 0 : (new \DateTimeImmutable((string) $record->last_used, new \DateTimeZone('UTC')))->getTimestamp();
-
-            if ($used > $latestAt) {
-                $latest = $record;
-                $latestAt = $used;
+            if ($record->method === 'email' && \in_array('email', $methods, true)) {
+                return true;
             }
         }
 
-        return $latest !== null && $latestAt >= $signedInAt
-            && !\in_array($latest->method, self::NOT_A_SECOND_FACTOR, true)
-            && \in_array($latest->method, $methods, true);
+        return false;
     }
-
     private function forget(): void
     {
         $app = Factory::getApplication();
