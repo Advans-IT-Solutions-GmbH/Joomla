@@ -468,6 +468,18 @@ final class DavServerTest extends TestCase
         self::assertSame(403, $this->sync($this->teamUri, 'urn:other:1')->getStatus());
     }
 
+    public function testNothingIsDeliveredWhenTheSynchronisationCannotBeRecorded(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $this->world->touchFails = true;
+
+        $response = $this->propfind('/dav/calendars/u5/' . $this->teamUri . '/', '1');
+
+        self::assertSame(503, $response->getStatus());
+        self::assertSame('', self::body($response));
+    }
+
     public function testARoleChangeForcesAFullResynchronisation(): void
     {
         $this->world->grant(5, 1, CalendarRole::Read);

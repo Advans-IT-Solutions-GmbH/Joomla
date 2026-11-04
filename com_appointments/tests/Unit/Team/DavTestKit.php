@@ -376,6 +376,8 @@ final class DavWorld
 
     public bool $notReady = false;
 
+    public bool $touchFails = false;
+
     public function __construct(private readonly \PHPUnit\Framework\TestCase $test)
     {
         $this->store = new DavMemoryStore();
@@ -432,6 +434,10 @@ final class DavWorld
             return $device !== null && hash_equals($device['password'], $password) ? $device['session'] : null;
         });
         $devices->method('touch')->willReturnCallback(function (DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null) use ($world): void {
+            if ($world->touchFails) {
+                throw new \RuntimeException('pair row not written');
+            }
+
             $world->touched[] = $calendarId;
             $world->touchedRoles[] = $role;
             $world->touchedTokens[] = $syncToken;

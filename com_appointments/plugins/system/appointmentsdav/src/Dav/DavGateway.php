@@ -40,8 +40,9 @@ defined('_JEXEC') or die;
  *    sabre/dav; MKCALENDAR, MKCOL, ACL, POST (sharing), COPY, MOVE, LOCK and
  *    everything else get 403. XML bodies other than plain UTF-8, or with a
  *    DOCTYPE or an entity: 400.
- * 7. The sabre/dav server ({@see DavServerFactory}); afterwards the throttled
- *    «last synchronised» and the clean-up delivery marks.
+ * 7. The sabre/dav server ({@see DavServerFactory}); afterwards «last
+ *    synchronised» with the role and the delivered sync token (when that cannot
+ *    be recorded, 503 instead of the answer) and the clean-up delivery marks.
  *
  * Every response carries `Cache-Control: private, no-store` and
  * `X-Robots-Tag: noindex, nofollow`. An error never shows an internal message.
@@ -147,7 +148,13 @@ final class DavGateway
             $response = $this->run($server, $request);
 
             if ($response->getStatus() < 400) {
-                $this->afterSuccess($context, $request);
+                try {
+                    $this->afterSuccess($context, $request);
+                } catch (\Throwable $e) {
+                    // What the device saw could not be recorded: nothing is delivered (fail-closed).
+                    $this->report($e);
+                    $response = new Response(503);
+                }
             }
         } finally {
             $context->wipe();
@@ -290,7 +297,8 @@ final class DavGateway
             $delivered = $context->delivered($calendar->id) ?? ($method === 'PROPFIND' ? $calendar->synctoken : null);
         }
 
-        $context->quietly(fn () => $this->services->devices->touch($session, $calendar?->id, $calendar?->role?->value, $delivered));
+        // Not quietly: a clean-up that does not know what the device saw cannot work.
+        $this->services->devices->touch($session, $calendar?->id, $calendar?->role?->value, $delivered);
 
         if ($listing) {
             foreach ($context->emptyServed() as $calendarId) {
