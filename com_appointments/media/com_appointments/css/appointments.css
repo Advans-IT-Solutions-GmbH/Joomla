@@ -777,10 +777,10 @@
     margin: 0;
 }
 
-.com-appointments-zone-row .form-select {
+.com-appointments .com-appointments-zone-row .form-select {
     flex: 1 1 14rem;
     width: auto;
-    max-width: 20rem;
+    max-width: min(100%, 320px);
 }
 
 /* With the booking script a new zone applies on selection, without it the button does. */
