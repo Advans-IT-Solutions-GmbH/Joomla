@@ -139,7 +139,9 @@ final class BookingRecords
             $db->setQuery($update)->execute();
         }
 
-        self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, $cutoff));
+        // Renewed, but never beyond the limit after the update.
+        self::setToken($db, BookingData::migrationToken($keys,
+            min(time() + BookingData::MIGRATION_DAYS * 86400, $cutoff + BookingData::MIGRATION_LIMIT_DAYS * 86400), $cutoff));
 
         return \count($rows);
     }

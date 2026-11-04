@@ -168,6 +168,11 @@ final class BookingDataTest extends TestCase
         self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 30 * 86400, $now), $keys, $now), 'Longer than allowed');
         self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 86400, $now + 60), $keys, $now), 'Update in the future');
         self::assertNull(BookingData::migrationCutoff('', $keys, $now));
+        self::assertNull(BookingData::authenticCutoff($token, $keys, $now - 60 + BookingData::MIGRATION_LIMIT_DAYS * 86400),
+            'A kept token written back after the limit revives nothing');
+        self::assertSame($now - 60, BookingData::authenticCutoff($token, $keys, $now - 61 + BookingData::MIGRATION_LIMIT_DAYS * 86400));
+        $late = BookingData::migrationToken($keys, $now + BookingData::MIGRATION_LIMIT_DAYS * 86400, $now - 60);
+        self::assertNull(BookingData::migrationCutoff($late, $keys, $now - 60 + BookingData::MIGRATION_LIMIT_DAYS * 86400), 'Not even unexpired');
 
         $done = BookingData::migrationDoneMarker($keys);
         self::assertTrue(BookingData::migrationDone($done, $keys));

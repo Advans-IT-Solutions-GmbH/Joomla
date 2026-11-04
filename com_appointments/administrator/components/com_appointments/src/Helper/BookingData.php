@@ -72,6 +72,12 @@ final class BookingData
     /** How long a migration token is valid; the migration renews it while old rows are left. */
     public const MIGRATION_DAYS = 7;
 
+    /**
+     * How long after the update a migration may run or resume at all: a token
+     * (also one kept from a backup and written back later) is void after that.
+     */
+    public const MIGRATION_LIMIT_DAYS = 90;
+
     private const PREFIX = 'v1:';
 
     /** `v1:` and Base64 of at least nonce and tag (40 bytes). */
@@ -141,11 +147,15 @@ final class BookingData
     /**
      * The update time of a token made with this site's key, expired or not: the
      * migration may resume from it (only rows created before that time), while
-     * reading clear text needs an unexpired token.
+     * reading clear text needs an unexpired token. Null from
+     * {@see self::MIGRATION_LIMIT_DAYS} after the update on: the update time is
+     * inside the keyed hash, so a database write can neither move that limit nor
+     * revive an old token.
      */
     public static function authenticCutoff(string $token, KeyProvider $keys, int $now): ?int
     {
-        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[2] > $now) {
+        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[2] > $now
+            || $now >= (int) $match[2] + self::MIGRATION_LIMIT_DAYS * 86400) {
             return null;
         }
 

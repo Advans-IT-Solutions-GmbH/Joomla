@@ -120,7 +120,9 @@ final class PrivacyService
             ->order($db->quoteName('b.id') . ' ASC');
         $data = BookingData::fromApplication();
 
-        return array_map(static fn (array $row): array => $data->openLenient($row), $db->setQuery($query)->loadAssocList());
+        // The markers of an opened row are no booking data: they never reach the export.
+        return array_map(static fn (array $row): array => array_diff_key($data->openLenient($row), [BookingData::OPENED => true, BookingData::CLEAR => true]),
+            $db->setQuery($query)->loadAssocList());
     }
 
     /**
