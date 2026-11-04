@@ -72,6 +72,7 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertStringContainsString('ATTENDEE;PARTSTAT=ACCEPTED:mailto:an%40example.test', $out);
         self::assertStringContainsString('LOCATION:Call [redacted]', $out);
         self::assertStringNotContainsString('ill', $out);
+        self::assertStringContainsString('DTSTART;TZID=[redacted]:x', TeamPrivacy::redact('DTSTART;TZID=staff@example.test:x', 'an@example.test'));
         self::assertStringNotContainsString('boss', $out);
     }
 

@@ -165,17 +165,18 @@ final class TeamPrivacy
                 continue;
             }
 
+            $redact = static fn (string $text): string => preg_replace_callback('/[\p{L}\p{N}._%+\-]+(?:@|%40)[\p{L}\p{N}.\-]+\.\p{L}{2,}/iu',
+                static fn (array $match): string => self::address($match[0]) === $email ? $match[0] : '[redacted]', $text) ?? '';
             $kept = '';
 
             foreach ($params as [, $param, $paramValue]) {
+                // A whitelisted name does not make its value safe (TZID=someone@...).
                 if (\in_array(strtoupper($param), self::KEPT_PARAMETERS, true)) {
-                    $kept .= ';' . strtoupper($param) . '=' . $paramValue;
+                    $kept .= ';' . strtoupper($param) . '=' . $redact($paramValue);
                 }
             }
 
-            $value = preg_replace_callback('/[\p{L}\p{N}._%+\-]+(?:@|%40)[\p{L}\p{N}.\-]+\.\p{L}{2,}/iu',
-                static fn (array $match): string => self::address($match[0]) === $email ? $match[0] : '[redacted]', $value) ?? '';
-            $lines[] = $name . $kept . ':' . $value;
+            $lines[] = $name . $kept . ':' . $redact($value);
         }
 
         return implode("\r\n", $lines);
