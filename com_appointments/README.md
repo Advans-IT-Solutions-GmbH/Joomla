@@ -25,7 +25,8 @@ blocked.
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
-- PHP 8.1 or later
+- PHP 8.1 or later with the sodium extension (libsodium). The installer refuses without it, because
+  bookings are stored encrypted.
 - MySQL or MariaDB only. The component ships its schema only for these servers; the installer
   refuses other database servers. The booking table uses a generated column to guarantee that one
   time slot can be held by exactly one booking. PostgreSQL is not supported by this component,
@@ -360,10 +361,19 @@ and names the remedy.
 | The WebDAV methods `OPTIONS`, `PROPFIND`, `REPORT`, `PUT`, `DELETE` and `MKCALENDAR` reach PHP. | Allow them in the web server or firewall rules (ModSecurity or another web application firewall). |
 | The `Authorization` header reaches PHP. | Keep the rule `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` from Joomla's `htaccess.txt`, or use the host's equivalent setting. |
 | `/.well-known/caldav` reaches Joomla. | Add the rewrite, or configure clients with the full CalDAV address; only automatic discovery is lost. |
-| PHP with libsodium, including Argon2id (`sodium_crypto_pwhash`). | Enable the sodium extension. Without it the feature stays off. |
+| PHP with libsodium, including Argon2id (`sodium_crypto_pwhash`). Required for the whole component, not only for the internet calendars: the installer refuses without it, because bookings are stored encrypted. | Enable the sodium extension. |
 | `memory_limit` of at least 128M (Argon2id uses 64 MiB per sign-in). | Raise `memory_limit`. |
 
-Every calendar user also needs a second factor (Joomla's multi-factor authentication).
+Every calendar user also needs a second factor (Joomla's multi-factor authentication) other than
+codes by e-mail and backup codes: e-mail is the same channel as a password reset, so it would let a
+reset by mail alone reach the calendars. An account in a group that Joomla exempts from MFA holds no
+effective grant.
+
+Keep Joomla's **API Authentication - Basic Auth** plugin disabled, as Joomla ships it. The lock-out
+after failed sign-ins guards Joomla's sign-in forms before the password is checked. Sign-ins
+without a form (that plugin, AJAX or JSON logins of other extensions) are still refused while an
+account is locked, but Joomla's answer there shows that the password was right. Administrators get
+a mail when an account with a calendar right is locked and can lift the lock in the devices view.
 
 #### Setting up
 
@@ -498,6 +508,18 @@ possible with CalDAV clients.
   administrator uses the recovery key. A password reset alone never gives anybody calendar access.
 - **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
   design.
+
+#### Restoring a backup
+
+Grants, calendars and devices carry counters (epochs) that every revocation raises. A signed anchor
+file below the Joomla directory keeps the highest value, so a row from an older database copy no
+longer counts.
+
+- **Database only restored** (or an older row written back into it): detected; revoked grants and
+  devices stay revoked. If the anchor file cannot be written, this protection is off and the system
+  check says so.
+- **Files and database restored together** is a legitimate rollback, and the anchor goes back too.
+  Revoke again every device and grant that was revoked after the backup was taken.
 
 #### Privacy requests and retention
 
