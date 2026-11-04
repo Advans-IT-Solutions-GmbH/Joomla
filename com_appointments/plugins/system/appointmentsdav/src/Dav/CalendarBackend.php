@@ -15,6 +15,7 @@ use Advans\Component\Appointments\Vendor\Sabre\CalDAV\Backend\AbstractBackend;
 use Advans\Component\Appointments\Vendor\Sabre\CalDAV\Backend\SyncSupport;
 use Advans\Component\Appointments\Vendor\Sabre\CalDAV\Xml\Property\SupportedCalendarComponentSet;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\Forbidden;
+use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\InvalidSyncToken;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\NotFound;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\PropPatch;
 
@@ -153,11 +154,6 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             return [];
         }
 
-        // A calendar-query lists the calendar as it is now: the device has seen this token.
-        if ($this->context->wantsData()) {
-            $this->context->recordDelivered($calendar->id, $calendar->synctoken);
-        }
-
         $rows = [];
 
         if ($calendar->isFreeBusy()) {
@@ -168,6 +164,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $rows[] = $row;
                 }
             }
+
+            $this->recordListing($calendar);
 
             return $rows;
         }
@@ -185,7 +183,19 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
         }
 
+        $this->recordListing($calendar);
+
         return $rows;
+    }
+
+    /**
+     * A listing shows the calendar as it is now. Its token is read after the
+     * objects, so nothing the device received is newer than what is recorded as
+     * seen; a write in between makes it at most one change too new.
+     */
+    private function recordListing(DavCalendar $calendar): void
+    {
+        $this->context->quietly(fn () => $this->context->recordDelivered($calendar->id, $this->context->services->objects->syncToken($calendar->id)));
     }
 
     public function getCalendarObject($calendarId, $objectUri)
@@ -309,6 +319,16 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $token = '';
         }
 
+        // A token of the other view (the role changed between free/busy and a key-holding
+        // role) is invalid, so the client drops its copies and synchronises in full.
+        if ($token !== '') {
+            if ($calendar->isFreeBusy() !== str_starts_with($token, 'fb')) {
+                throw new InvalidSyncToken('Invalid or unknown sync token.');
+            }
+
+            $token = $calendar->isFreeBusy() ? substr($token, 2) : $token;
+        }
+
         try {
             $changes = $this->context->services->objects->changesSince($calendar->id, $token === '' ? null : $token, $limit)->toSabre();
         } catch (TeamException $e) {
@@ -321,6 +341,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         }
 
         $this->context->recordDelivered($calendar->id, (int) $changes['syncToken']);
+        $changes['syncToken'] = DavCalendar::tokenFor($calendar->isFreeBusy(), (int) $changes['syncToken']);
 
         if ($calendar->isFreeBusy()) {
             foreach (['added', 'modified', 'deleted'] as $key) {
@@ -354,7 +375,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
 
         // Never beyond what the device had: the last token delivered before the clean-up
         // wins over whatever the client sends, so it learns nothing created since.
-        $since = $calendar->cleanupToken !== null ? (string) $calendar->cleanupToken : (string) preg_replace('/-c$/', '', $token);
+        $since = $calendar->cleanupToken !== null ? (string) $calendar->cleanupToken : (string) preg_replace('/^fb|-c$/', '', $token);
         $known = $current;
 
         if (preg_match('/^\d{1,19}$/', $since) === 1) {

@@ -468,6 +468,33 @@ final class DavServerTest extends TestCase
         self::assertSame(403, $this->sync($this->teamUri, 'urn:other:1')->getStatus());
     }
 
+    public function testARoleChangeForcesAFullResynchronisation(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->world->store->seed(1, 'plain.ics', self::ics('plain', 'Board meeting'));
+
+        $first = self::body($this->sync($this->teamUri));
+        self::assertStringContainsString('http://sabre.io/ns/sync/2<', $first);
+
+        // Downgraded to free/busy: CTag and token change, the old token is refused.
+        $this->world->grant(5, 1, CalendarRole::FreeBusy);
+        $home = self::body($this->propfind('/dav/calendars/u5/', '1', '<cs:getctag/>'));
+        self::assertStringContainsString('<cs:getctag>fb2</cs:getctag>', $home);
+
+        $old = $this->sync($this->teamUri, 'http://sabre.io/ns/sync/2');
+        self::assertSame(403, $old->getStatus());
+        self::assertStringContainsString('valid-sync-token', self::body($old));
+
+        $fresh = self::body($this->sync($this->teamUri));
+        self::assertStringContainsString('http://sabre.io/ns/sync/fb2', $fresh);
+        self::assertStringNotContainsString('plain.ics', $fresh);
+        self::assertSame(207, $this->sync($this->teamUri, 'http://sabre.io/ns/sync/fb2')->getStatus());
+
+        // Back to read: the free/busy token is refused in turn.
+        $this->world->grant(5, 1, CalendarRole::Read);
+        self::assertSame(403, $this->sync($this->teamUri, 'http://sabre.io/ns/sync/fb2')->getStatus());
+    }
+
     public function testASuccessfulRequestTouchesTheDeviceAndCalendar(): void
     {
         $this->world->grant(5, 1, CalendarRole::Read);

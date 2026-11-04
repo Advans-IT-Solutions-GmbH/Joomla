@@ -286,6 +286,7 @@ final class DavGateway
         $delivered = null;
 
         if ($calendar !== null && !$calendar->isEmptyView()) {
+            // A listing recorded its token; a PROPFIND of the collection alone handed out the CTag.
             $delivered = $context->delivered($calendar->id) ?? ($method === 'PROPFIND' ? $calendar->synctoken : null);
         }
 

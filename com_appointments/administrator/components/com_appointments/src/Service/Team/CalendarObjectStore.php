@@ -421,16 +421,28 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         $db = $this->db();
         $calendarId = $keyring->calendarId();
         $current = $keyring->current();
-        $query = $this->select()
+        // The ids in random order first (no payload in the sort): rows that can never be
+        // opened must not fill every batch and starve the rest.
+        $ids = $this->query()
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__appointments_calendar_objects'))
             ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
             ->where('(' . $db->quoteName('enc_scheme') . ' <> ' . TeamStates::SCHEME_CALENDAR_KEY
                 . ' OR ' . $db->quoteName('key_version') . ' <> ' . (int) $current->version() . ')')
-            // In random order: rows that can never be opened must not fill every batch and starve the rest.
             ->order('RAND()');
+        $ids = array_map('intval', $db->setQuery($ids->setLimit($limit))->loadColumn() ?: []);
+
+        if ($ids === []) {
+            return 0;
+        }
+
+        $query = $this->select()
+            ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
+            ->whereIn($db->quoteName('id'), $ids);
         $done = 0;
         $refused = 0;
 
-        foreach ($db->setQuery($query->setLimit($limit))->loadAssocList() ?: [] as $row) {
+        foreach ($db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $object = $this->toObject($row);
             $ics = $this->services->keys()->decryptObject($keyring, $object);
 

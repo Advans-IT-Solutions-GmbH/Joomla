@@ -65,11 +65,23 @@ final class DavCalendar
     }
 
     /**
-     * CTag and sync token. The empty view of the clean-up has its own value, so
-     * every client notices the change and fetches the (empty) collection.
+     * CTag and sync token. The empty view of the clean-up and the free/busy view
+     * have values of their own, so every client notices a change of view or
+     * role and synchronises the collection again in full: a reader turned
+     * free/busy loses its plain copies, a free/busy grantee turned reader its
+     * redacted ones.
      */
     public function token(): string
     {
-        return $this->isEmptyView() ? $this->synctoken . '-c' : (string) $this->synctoken;
+        if ($this->isEmptyView()) {
+            return $this->synctoken . '-c';
+        }
+
+        return self::tokenFor($this->isFreeBusy(), $this->synctoken);
+    }
+
+    public static function tokenFor(bool $freeBusy, int $synctoken): string
+    {
+        return ($freeBusy ? 'fb' : '') . $synctoken;
     }
 }
