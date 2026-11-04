@@ -324,10 +324,11 @@ final class CalendarService implements CalendarServiceInterface
             $keys->createCalendarKeys($id, $ownerId);
             GrantService::write($this->services, $id, $ownerId, CalendarRole::Manage, TeamStates::GRANT_ACTIVE, TeamStates::AUDIENCE_TEAM, $actorUserId);
 
+            GrantService::queueEpoch($id, 1);
+
             return $id;
         });
 
-        self::anchor($this->services, [$id => 1]);
         $this->log(AuditEvent::CALENDAR_CREATED, [
             'actor_user_id' => $actorUserId, 'subject_user_id' => $ownerId, 'calendar_id' => $id,
             'details' => ['allow_external' => (int) !empty($clean['allow_external'])],
@@ -350,8 +351,7 @@ final class CalendarService implements CalendarServiceInterface
         $this->assertEnabled();
         $clean = $this->validated($data, true);
         $externalAfter = null;
-        $epoch = null;
-        $removed = $this->atomic(function () use ($actorUserId, $calendarId, $clean, &$externalAfter, &$epoch): array {
+        $removed = $this->atomic(function () use ($actorUserId, $calendarId, $clean, &$externalAfter): array {
             $db = $this->services->db();
             $row = $db->setQuery(
                 'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId . ' FOR UPDATE'
@@ -391,14 +391,11 @@ final class CalendarService implements CalendarServiceInterface
             }
 
             $removed = $this->removeExternalGrants($calendarId);
-            $epoch = CalendarService::bumpEpoch($this->services, $calendarId);
+            GrantService::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
 
             return $removed;
         });
 
-        if ($epoch !== null) {
-            self::anchor($this->services, [$calendarId => $epoch]);
-        }
 
         $this->log(AuditEvent::CALENDAR_UPDATED, [
             'actor_user_id' => $actorUserId, 'calendar_id' => $calendarId,
@@ -427,55 +424,69 @@ final class CalendarService implements CalendarServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
         }
 
-        $calendar = $this->get($calendarId);
-        $recipients = [];
-
-        if ($calendar !== null) {
-            $allowed = $this->services->grants()->accessFor($actorUserId, $calendarId)?->role === CalendarRole::Manage;
-
-            // Owner and effective managers, collected before the rows are gone.
-            foreach ($this->services->grants()->grantsOf($calendarId) as $grant) {
-                if ($grant->is_owner || ($grant->effective && $grant->role === CalendarRole::Manage->value)) {
-                    $recipients[] = (int) $grant->user_id;
-                }
-            }
-
-            if ((int) $calendar->owner_user_id > 0) {
-                $recipients[] = (int) $calendar->owner_user_id;
-            }
-        } else {
+        $deleted = $this->atomic(function () use ($actor, $actorUserId, $calendarId): array {
             $db = $this->services->db();
-            $exists = (int) $db->setQuery(
-                'SELECT COUNT(*) FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId
-            )->loadResult() === 1;
+            $row = $db->setQuery(
+                'SELECT * FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId . ' FOR UPDATE'
+            )->loadObject();
 
-            if (!$exists) {
+            if (!$row) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
             }
 
-            $allowed = $actor->authorise('core.admin', 'com_appointments');
-        }
+            // Decided under the row lock. A verified calendar: its manager. A
+            // calendar that no longer verifies: an administrator (deleting
+            // never grants).
+            $valid = $this->macValid($row);
+            $allowed = $valid
+                ? $this->services->grants()->accessFor($actorUserId, $calendarId)?->role === CalendarRole::Manage
+                : $actor->authorise('core.admin', 'com_appointments');
 
-        if (!$allowed) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
-        }
+            if (!$allowed) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+            }
 
-        $this->atomic(function () use ($calendarId): void {
-            $db = $this->services->db();
+            $recipients = [];
+
+            if ($valid) {
+                // Owner and effective managers, collected before the rows are gone.
+                foreach ($this->services->grants()->grantsOf($calendarId) as $grant) {
+                    if ($grant->is_owner || ($grant->effective && $grant->role === CalendarRole::Manage->value)) {
+                        $recipients[] = (int) $grant->user_id;
+                    }
+                }
+
+                if ((int) $row->owner_user_id > 0) {
+                    $recipients[] = (int) $row->owner_user_id;
+                }
+            }
+
             $db->setQuery(
                 'UPDATE ' . $db->quoteName('#__appointments_eventtypes') . ' SET calendar_id = NULL WHERE calendar_id = ' . $calendarId
             )->execute();
             // Objects, grants, wraps, keys, changes, the busy cache, device
             // rows, invitations and event type links go with the foreign keys.
             $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE id = ' . $calendarId)->execute();
+
+            // A tombstone in the anchor: the calendar restored from an older
+            // copy of the database carries a lower epoch and is refused.
+            $minimum = 0;
+
+            try {
+                $minimum = $this->services->anchor()->minimum(EpochAnchorInterface::KIND_CALENDAR, $calendarId);
+            } catch (\Throwable) {
+            }
+
+            GrantService::queueEpoch($calendarId, max((int) $row->grant_epoch, $minimum) + 1);
+
+            return ['title' => $valid ? (string) $row->title : null, 'recipients' => array_values(array_unique($recipients))];
         });
 
         $this->log(AuditEvent::CALENDAR_DELETED, ['actor_user_id' => $actorUserId, 'calendar_id' => $calendarId]);
-        $recipients = array_values(array_unique($recipients));
 
-        if ($calendar !== null && $recipients !== []) {
+        if ($deleted['title'] !== null && $deleted['recipients'] !== []) {
             try {
-                $this->services->mailer()->calendarDeleted((string) $calendar->title, $recipients, $actorUserId, $this->services->now());
+                $this->services->mailer()->calendarDeleted($deleted['title'], $deleted['recipients'], $actorUserId, $this->services->now());
             } catch (\Throwable) {
                 // A mail failure never undoes the deletion; the log holds it.
             }
@@ -534,6 +545,8 @@ final class CalendarService implements CalendarServiceInterface
                     'UPDATE ' . $db->quoteName('#__' . self::TABLE) . ' SET owner_user_id = 0, modified_utc = '
                     . $db->quote($this->services->now()->format('Y-m-d H:i:s')) . ' WHERE id = ' . (int) $row->id
                 )->execute();
+                // A new epoch, so the row with the former owner cannot be played back.
+                GrantService::queueEpoch((int) $row->id, self::bumpEpoch($this->services, (int) $row->id));
                 $ids[] = (int) $row->id;
             }
 
@@ -652,19 +665,7 @@ final class CalendarService implements CalendarServiceInterface
      */
     private function atomic(callable $work): mixed
     {
-        $db = $this->services->db();
-        $db->transactionStart();
-
-        try {
-            $result = $work();
-            $db->transactionCommit();
-
-            return $result;
-        } catch (\Throwable $e) {
-            $db->transactionRollback();
-
-            throw $e;
-        }
+        return GrantService::transaction($this->services, $work);
     }
 
     private function log(string $event, array $context): void

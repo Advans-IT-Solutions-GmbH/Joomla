@@ -273,6 +273,12 @@ class CalendarsController extends BaseController
         }
 
         return $this->attempt(function () use ($services, $userId): void {
+            // Destructive (grants suspended, devices cleaned up): only an
+            // administrator who has a second factor set up.
+            if (!$services->grants()->hasSecondFactor($this->actor())) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+            }
+
             $services->keys()->discardUserKey($this->actor(), $userId);
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARDED'), 'message');
             $this->setRedirect($this->listUrl());

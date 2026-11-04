@@ -293,7 +293,9 @@ return static function (TeamSuite $suite): void {
         $restore = static function (string $table, array $row) use ($db, $p): void {
             $values = array_map(static fn (string $column, $value): string => $value === null ? 'NULL'
                 : ($column === 'row_mac' ? "UNHEX('" . bin2hex($value) . "')" : "'" . $db->real_escape_string((string) $value) . "'"), array_keys($row), $row);
-            $db->query("REPLACE INTO {$p}{$table} (`" . implode('`,`', array_keys($row)) . '`) VALUES (' . implode(',', $values) . ')');
+            // Not REPLACE: its delete would cascade to the keys, wraps and grants.
+            $updates = implode(',', array_map(static fn (string $column): string => "`{$column}`=VALUES(`{$column}`)", array_keys($row)));
+            $db->query("INSERT INTO {$p}{$table} (`" . implode('`,`', array_keys($row)) . '`) VALUES (' . implode(',', $values) . ") ON DUPLICATE KEY UPDATE {$updates}");
         };
 
         $super = $user('super', [8], true);

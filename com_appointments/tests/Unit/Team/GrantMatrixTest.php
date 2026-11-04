@@ -223,6 +223,15 @@ final class GrantMatrixTest extends TestCase
         }
     }
 
+    public function testOnlyRealSecondFactorsCount(): void
+    {
+        self::assertSame(['totp', 'webauthn', 'yubikey'], GrantService::SECOND_FACTOR_METHODS);
+
+        foreach (['backupcodes', 'email', 'fixed'] as $weak) {
+            self::assertNotContains($weak, GrantService::SECOND_FACTOR_METHODS);
+        }
+    }
+
     public function testEveryRoleHasItsOwnLabel(): void
     {
         $labels = array_map(static fn (?CalendarRole $role): string => GrantService::roleLabelKey($role), array_merge([null], CalendarRole::cases()));

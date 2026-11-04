@@ -371,26 +371,53 @@ final class InvitationService implements InvitationServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_PASSWORD', 400);
         }
 
-        $row = $this->atomic(function () use ($token, $password): object {
+        // First the link is used up, in its own committed transaction: two
+        // requests with the same token can never both get past this point.
+        // The password is set afterwards, outside every transaction, because
+        // Joomla's user plugins react to it with transactions of their own.
+        $row = $this->atomic(function () use ($token): object {
             $open = $this->openRow($token, true);
 
             if ($open === null) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
             }
 
-            [$row, $user] = $open;
-            $bound = $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => '']);
-
-            if (!$bound || !$user->save(true)) {
-                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_PASSWORD', 400);
-            }
-
+            [$row] = $open;
             $row->state = TeamStates::INVITATION_COMPLETED;
             $row->completed_utc = $this->services->now()->format('Y-m-d H:i:s');
             $this->store($row, []);
 
             return $row;
         });
+
+        $user = GrantService::user((int) $row->user_id);
+        $saved = false;
+
+        try {
+            $saved = $user !== null && !$user->block
+                && $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
+                && $user->save(true);
+        } catch (\Throwable) {
+            $saved = false;
+        }
+
+        if (!$saved) {
+            // Joomla refused the password: the link is given back unchanged
+            // (still bound to the account and its address), so the person can
+            // try again until it expires.
+            $this->atomic(function () use ($row): void {
+                $current = $this->rows('id = ' . (int) $row->id, true)[0] ?? null;
+
+                if ($current !== null && $this->macValid($current) && (int) $current->state === TeamStates::INVITATION_COMPLETED
+                    && (string) $current->completed_utc === (string) $row->completed_utc) {
+                    $current->state = TeamStates::INVITATION_OPEN;
+                    $current->completed_utc = null;
+                    $this->store($current, []);
+                }
+            });
+
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_PASSWORD', 400);
+        }
 
         $userId = (int) $row->user_id;
         $this->log(AuditEvent::INVITATION_ACCEPTED, ['subject_user_id' => $userId, 'object_ref' => 'invitation:' . (int) $row->id]);
@@ -407,37 +434,42 @@ final class InvitationService implements InvitationServiceInterface
     public function revoke(int $actorUserId, int $invitationId): void
     {
         $this->assertEnabled();
-        $result = $this->atomic(function () use ($actorUserId, $invitationId): array {
+        $peek = $this->rows('id = ' . $invitationId, false)[0] ?? null;
+
+        if ($peek === null || !$this->macValid($peek)
+            || !\in_array((int) $peek->state, [TeamStates::INVITATION_OPEN, TeamStates::INVITATION_COMPLETED], true)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
+        }
+
+        $userId = (int) $peek->user_id;
+
+        if ($actorUserId === $userId || !$this->mayRevoke($actorUserId, $userId)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+        }
+
+        if ((int) $peek->state === TeamStates::INVITATION_COMPLETED) {
+            // Block first, outside every transaction (Joomla's user plugins
+            // react with transactions of their own). When Joomla refuses,
+            // nothing has changed; when a later step fails, the account stays
+            // blocked and the link «completed», so the revoke can be repeated.
+            $this->block($userId);
+        }
+
+        $result = $this->atomic(function () use ($actorUserId, $invitationId, $peek, $userId): array {
             $row = $this->rows('id = ' . $invitationId, true)[0] ?? null;
 
-            if ($row === null || !$this->macValid($row)
-                || !\in_array((int) $row->state, [TeamStates::INVITATION_OPEN, TeamStates::INVITATION_COMPLETED], true)) {
+            if ($row === null || !$this->macValid($row) || (int) $row->state !== (int) $peek->state || (int) $row->user_id !== $userId) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
             }
 
-            $userId = (int) $row->user_id;
-
-            if ($actorUserId === $userId || !$this->mayRevoke($actorUserId, $userId)) {
-                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
-            }
-
             $completed = (int) $row->state === TeamStates::INVITATION_COMPLETED;
-            $calendars = [];
-
-            if ($completed) {
-                // Block first: when Joomla refuses, nothing else changes and
-                // the link stays «completed», so the revoke can be repeated.
-                $this->block($userId);
-                $calendars = GrantService::removeAllForUser($this->services, $userId);
-            }
-
+            $calendars = $completed ? GrantService::removeAllForUser($this->services, $userId) : [];
             $this->close($row, $actorUserId);
 
             return ['completed' => $completed, 'calendars' => $calendars, 'user' => $userId];
         });
 
         if ($result['completed']) {
-            CalendarService::anchor($this->services, array_filter($result['calendars']));
             $this->endAccess($result['user'], $actorUserId);
 
             foreach (array_keys($result['calendars']) as $calendarId) {
@@ -549,10 +581,9 @@ final class InvitationService implements InvitationServiceInterface
     }
 
     /**
-     * Who may revoke: removing access is open to every recipient of the revoke
-     * mail (`appointments.team.external`) and to `core.admin`, both with a
-     * second factor; an account that may sign in to the administrator only by
-     * `core.admin`.
+     * Who may revoke (both with a second factor): `core.admin` every account;
+     * the right to share externally only external accounts without
+     * administrator sign-in.
      */
     private function mayRevoke(int $actorUserId, int $userId): bool
     {
@@ -564,11 +595,15 @@ final class InvitationService implements InvitationServiceInterface
 
         $admin = $actor->authorise('core.admin', 'com_appointments');
 
-        if (self::backendAccount($userId)) {
+        // Team accounts and accounts with administrator sign-in: core.admin
+        // only, as for sending their link. External accounts: also the right to
+        // share externally (the recipients of the revoke mail).
+        if ($admin || self::backendAccount($userId)) {
             return $admin;
         }
 
-        return $admin || $actor->authorise('appointments.team.external', 'com_appointments');
+        return $this->services->grants()->audienceOf($userId) === TeamStates::AUDIENCE_EXTERNAL
+            && $actor->authorise('appointments.team.external', 'com_appointments');
     }
 
     /**
@@ -700,19 +735,7 @@ final class InvitationService implements InvitationServiceInterface
      */
     private function atomic(callable $work): mixed
     {
-        $db = $this->services->db();
-        $db->transactionStart();
-
-        try {
-            $result = $work();
-            $db->transactionCommit();
-
-            return $result;
-        } catch (\Throwable $e) {
-            $db->transactionRollback();
-
-            throw $e;
-        }
+        return GrantService::transaction($this->services, $work);
     }
 
     private function log(string $event, array $context): void
