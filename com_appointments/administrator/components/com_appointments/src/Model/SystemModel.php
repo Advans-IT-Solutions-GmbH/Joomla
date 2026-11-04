@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
@@ -169,6 +170,13 @@ class SystemModel extends BaseDatabaseModel
             $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
                 'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
         }
+
+        // The sign-in lock failed and the website sign-in went on without it
+        // (fail-open by decision): visible here for 24 hours.
+        $guard = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog'))
+            ->where($db->quoteName('event') . ' = ' . $db->quote(AuditEvent::LOGIN_GUARD_FAILED))
+            ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote(gmdate('Y-m-d H:i:s', time() - 86400))))->loadResult();
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_GUARD', $guard === 0, (string) $guard, 'COM_APPOINTMENTS_TEAM_F_SYSTEM_GUARD_FIX');
 
         $secret = $this->secretUnchanged($services);
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET', $secret !== false,

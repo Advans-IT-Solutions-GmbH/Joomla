@@ -413,13 +413,15 @@ final class CleanupService implements CleanupServiceInterface
         // change does not happen, the old start is put back.
         $before = $this->device($deviceId);
 
-        // Only a device that is still in the empty phase gets the new start: a
-        // stale run that read the empty state never moves a hidden device's
-        // start (and with it its revocation) further out.
-        if ($before === null || (int) $before['state'] !== TeamStates::DEVICE_CLEANUP_EMPTY
-            || !$this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY)) {
+        if ($before === null || (int) $before['state'] !== TeamStates::DEVICE_CLEANUP_EMPTY) {
             return false;
         }
+
+        // Written only while the device is still in the empty phase, so a stale
+        // run never moves a hidden device's start (and its revocation) further
+        // out. An unchanged row (same second) is no failure: the device
+        // service's compare-and-set below decides.
+        $this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY);
 
         try {
             $changed = $this->services->devices()->changeState($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN);
