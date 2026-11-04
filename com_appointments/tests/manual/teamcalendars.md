@@ -2,8 +2,7 @@
 
 This plan covers the **internet calendars** of `com_appointments` (CalDAV, release 1.4.0) with the
 calendar clients the component documents: classic Outlook (Office LTSC 2024) with the CalDav
-Synchronizer add-in, Apple Calendar on iOS and macOS, DAVx⁵ on Android, Thunderbird and eM Client.
-It complements the [main manual plan](README.md), whose rules for publishing, evidence and results
+Synchronizer add-in, the iOS calendar, DAVx⁵ on Android, Thunderbird and eM Client. It complements the [main manual plan](README.md), whose rules for publishing, evidence and results
 apply here unchanged.
 
 The binding behaviour is in the specification
@@ -42,7 +41,7 @@ certificates» keeps it off; a case that only works with it on is a **FAIL**.
 ### 1.3 Secrets and reports
 
 - Use synthetic users and controlled test mailboxes only (main plan section 1.1).
-- App passwords, recovery keys and invitation links are passwords. They never appear in a report,
+- App passwords, recovery keys, the site secret and activation links are passwords. They never appear in a report,
   a screenshot, an issue or a chat. Blur them before taking any screenshot.
 - Reports contain **no host names, IP addresses, user names or app passwords**. Write
   `<test-site>` for the address.
@@ -68,16 +67,20 @@ Record every version before the run. A version change during the run restarts th
 | OL | Outlook (Office LTSC 2024) with CalDav Synchronizer | Windows 11 test VM | Outlook build, add-in version, .NET version |
 | TB | Thunderbird | Windows 11 test VM | Thunderbird version |
 | EM | eM Client | Windows 11 test VM | eM Client version, licence type |
-| IO | Apple Calendar | iOS or iPadOS test device | iOS version |
-| MA | Apple Calendar | macOS test machine | macOS version |
+| IO | iOS calendar | iOS or iPadOS test device | iOS version |
 | DX | DAVx⁵ with the device's calendar app | Android test device | DAVx⁵ version, calendar app and version |
+
+Not in the set: the new Outlook for Windows and the Outlook apps on phones are **not supported**
+(they speak no CalDAV); the macOS calendar works with the iOS settings but is not tested here.
 
 Install CalDav Synchronizer only from the project's official release page, and record the version
 and the checksum of the downloaded installer.
 
 ### 2.2 Users
 
-Every user is a synthetic Joomla account with a second factor (TOTP) set up and a password sign-in.
+Every user is a synthetic Joomla account that `ADMIN` created in the user management and activated
+through the activation link (Joomla's registration stays off), with a second factor (TOTP) set up at
+the first sign-in and a password sign-in.
 
 | Identifier | Group | Grants |
 |---|---|---|
@@ -87,7 +90,7 @@ Every user is a synthetic Joomla account with a second factor (TOTP) set up and 
 | `READER` | Internet calendars internal | read on `CAL-T` |
 | `BUSY` | Internet calendars internal | free/busy on `CAL-T` |
 | `NOGRANT` | Internet calendars internal | none |
-| `EXT` | Internet calendars external | write on `CAL-X` (invited, accepted, confirmed) |
+| `EXT` | Internet calendars external | write on `CAL-X` |
 
 ### 2.3 Calendars and booking
 
@@ -121,7 +124,6 @@ specification, section 16.
 |---|---|---|
 | OL | CalDav Synchronizer profile «Generic CalDAV/CardDAV», DAV URL `https://<test-site>/dav/`, then «Discover resources and assign to Outlook folders» | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
 | IO | Settings → Calendar → Accounts → Add Account → Other → CalDAV account; server `<test-site>` only (discovery through `/.well-known/caldav`) | Fetch New Data → every 15 minutes |
-| MA | Calendar → Add Account → Other CalDAV Account, account type manual, `https://<test-site>/dav/` | account → refresh every 5 minutes |
 | DX | «Login with URL and user name», `https://<test-site>/` | calendar sync interval 15 minutes (the Android minimum); battery optimisation off for DAVx⁵ |
 | TB | New Calendar → On the Network, location `https://<test-site>/dav/`, «Find calendars» | calendar properties → refresh every 5 minutes |
 | EM | Add account → CalDAV, `https://<test-site>/dav/` | account → synchronisation every 5 minutes |
@@ -147,7 +149,7 @@ minute; measure and record the actual time.
 | IC-01 | POS | Set up the client for `WRITER` as in section 3. | Exactly `CAL-T` and `CAL-R` appear, with title and colour; no other calendar, no principal or address book of another user. |
 | IC-02 | NEG | Set up the client for `WRITER` with the Joomla password instead of the app password. | Sign-in refused; the client reports an authentication error; nothing is synchronised. |
 | IC-03 | NEG | Change one character of the app password. | Same refusal as `IC-02`; the client asks for the password again or reports an error. |
-| IC-04 | NEG | Set up the client with `http://` instead of `https://` (where the client allows it). | Refused; no redirect to HTTPS is followed into a sign-in; no data. |
+| IC-04 | NEG | Set up the client with the plain HTTP address of the same installation (where the client allows it): `http://<test-site>/dav/`, for the test stack `http://localhost:8081/dav/`, because port 8444 speaks TLS only. | Refused; no redirect to HTTPS is followed into a sign-in; no data. |
 | IC-05 | POS | Open «My calendars» as `WRITER` after the first synchronisation; as `ADMIN`, open the backend devices view. | The device shows the client, state active and «last synchronised» from the first sync. |
 | IC-06 | POS | Check the mailbox of `WRITER` after adding the device. | One mail about the new device, without the app password. |
 
@@ -213,11 +215,11 @@ Additional cases for the client with the highest priority. Run them after sectio
 | OL-04 | NEG | Without the test CA in the trusted root store (test stack only), run «Test or discover settings». | Refused with a certificate error; no data. With the CA imported, it works. |
 | OL-05 | POS | Read the add-in log after two scheduled syncs without changes, then after one change on the observer. | The syncs use `sync-collection` with a sync token; an unchanged calendar transfers no events; one change transfers that event only. |
 | OL-06 | KON | Conflict case: change the same event in Outlook and on the observer within one interval, with conflict resolution «Automatic»; repeat with «Outlook wins» and «Server wins». | Each outcome matches the setting; no duplicate; the server holds one version. |
-| OL-07 | POS | Clean-up (`IC-27`) with the two-way profile: watch the Outlook folder and the add-in log. | The Outlook items are **deleted**, not uploaded again; the log shows no PUT after the clean-up started; the observer still shows every event. |
-| OL-08 | NEG | A second profile in mode «Outlook → Server (Replicate)» on a test folder with one event, then start the clean-up of its device. | The upload attempts are refused (403); the server is unchanged; record what the add-in reports. |
-| OL-09 | POS | After phase hidden, read the profile's status. | The profile reports the missing calendar; the Outlook folder stays empty. Delete the profile and the folder by hand; record the steps. |
-| OL-10 | INT | Create a meeting with an attendee in an internet calendar folder. | The event reaches the server; the server sends no invitation mail of its own (no scheduling). Record what Outlook sends. |
-| OL-11 | POS | Mark an Outlook item private and give it a category. | Record how the add-in maps privacy and categories; the observer shows the same classification. |
+| OL-07 | INT | Create a meeting with an attendee in an internet calendar folder. | The event reaches the server; the server sends no invitation mail of its own (no scheduling). Record what Outlook sends. |
+| OL-08 | POS | Mark an Outlook item private and give it a category. | Record how the add-in maps privacy and categories; the observer shows the same classification. |
+| OL-09 | POS | Clean-up (`IC-27`) with the two-way profile: watch the Outlook folder and the add-in log. | The Outlook items are **deleted**, not uploaded again; the log shows no PUT after the clean-up started; the observer still shows every event. |
+| OL-10 | NEG | A second profile in mode «Outlook → Server (Replicate)» on a test folder with one event, then start the clean-up of its device. | The upload attempts are refused (403); the server is unchanged; record what the add-in reports. |
+| OL-11 | POS | After phase hidden, read the profile's status. | The profile reports the missing calendar; the Outlook folder stays empty. Delete the profile and the folder by hand; record the steps. |
 
 ## 6. Server checks with the client set-up
 
@@ -238,7 +240,7 @@ same points in the CI; this confirms them on the installation the clients use.
 - Every case of section 4 for every client of section 2.1, every case of section 5 and every case
   of section 6 is **PASS**.
 - **BLOCKED** or **NOT RUN** blocks acceptance. A missing device or licence is not a pass.
-- A behaviour that the specification leaves to the client (`IC-23`, `IC-26`, `IC-28`, `OL-09`,
+- A behaviour that the specification leaves to the client (`IC-23`, `IC-26`, `IC-28`, `OL-08`,
   `OL-11`) is recorded as observed. It is a **FAIL** only when data is lost on the server, data
   stays visible to a user without a grant, or deleted events come back.
 - Record per client the measured refresh time (`IC-11`, `IC-22`) next to the configured interval.

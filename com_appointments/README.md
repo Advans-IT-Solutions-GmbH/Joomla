@@ -347,18 +347,22 @@ there are no secret addresses. Bookings of an event type land in its target cale
 times in a calendar block the booking page's slots. The binding specification is
 [`team-calendars.md`](../.claude/skills/appointments/references/team-calendars.md).
 
-#### Requirements
+#### Requirements a host can block
 
-- HTTPS. CalDAV answers over HTTPS only; plain HTTP gets `403`.
-- PHP with libsodium (bundled with PHP since 7.2). Without it the feature stays off.
-- The `Authorization` header must reach PHP. Joomla's `htaccess.txt` passes it on with
-  `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`; keep that line.
-- `/.well-known/caldav` must reach Joomla. If the host serves `/.well-known/` itself, clients still
-  work with the full address `https://<site>/dav/`; only automatic discovery is lost.
-- Some hosts' web application firewalls block WebDAV methods (`PROPFIND`, `REPORT`, `MKCALENDAR`)
-  or XML bodies. The system check reports what it can test; ask the host to allow the methods for
-  the CalDAV path.
-- A second factor for every calendar user (Joomla's multi-factor authentication).
+The component runs on any host that runs Joomla 5.4 or 6. The following can still be blocked by a
+host's configuration. **Components → Appointments → System checks** tests each point on the site itself
+and names the remedy.
+
+| Requirement | Remedy when the system check fails |
+|---|---|
+| HTTPS. CalDAV answers over HTTPS only; plain HTTP gets `403`. | Enable TLS for the site. |
+| The WebDAV methods `OPTIONS`, `PROPFIND`, `REPORT`, `PUT`, `DELETE` and `MKCALENDAR` reach PHP. | Allow them in the web server or firewall rules (ModSecurity or another web application firewall). |
+| The `Authorization` header reaches PHP. | Keep the rule `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` from Joomla's `htaccess.txt`, or use the host's equivalent setting. |
+| `/.well-known/caldav` reaches Joomla. | Add the rewrite, or configure clients with the full CalDAV address; only automatic discovery is lost. |
+| PHP with libsodium, including Argon2id (`sodium_crypto_pwhash`). | Enable the sodium extension. Without it the feature stays off. |
+| `memory_limit` of at least 128M (Argon2id uses 64 MiB per sign-in). | Raise `memory_limit`. |
+
+Every calendar user also needs a second factor (Joomla's multi-factor authentication).
 
 #### Setting up
 
@@ -371,14 +375,26 @@ times in a calendar block the booking page's slots. The binding specification is
    the access level «Internet calendars», and add both groups to **Users → Options →
    Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
    groups that skip MFA; the system check reports that as an error.
-4. As a Super User, create the **recovery key** in **Internet calendars**. Its secret is shown once:
-   print it and keep it offline. It is never stored, and without it no calendar can be created.
+4. As a Super User, create the **recovery key** in **Internet calendars**. Its secret is shown once.
+   Print it **twice together with the site secret** (`$secret` in `configuration.php`) and keep the
+   two printouts offline in separate places. The recovery key is never stored, and without it no
+   calendar can be created.
 5. Create a calendar, name its owner (the owner gets the manage role) and grant access to users.
 6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
    adds one device per client and receives the app password and the instructions for that client.
 
-Every calendar user signs in on the site once with password and second factor before a grant
-becomes usable: that sign-in creates the user's key pair.
+#### Accounts
+
+**Only an administrator creates accounts**, for team members and external users alike, in Joomla's
+user management, in the team group or the external group. Joomla's own registration stays off;
+there is no self-registration. The administrator grants the calendars and sends the activation
+link: valid once, for 72 hours, bound to the account and its address. The person sets the password
+with it; Joomla enforces the second factor at the first sign-in. When the activation is completed,
+every user with the permission «Share with external users» receives a mail with a link that
+revokes the access in one step (all grants removed, account blocked, devices cleaned up).
+
+That first password sign-in also creates the user's key pair; a grant becomes usable only after
+it.
 
 #### Options
 
@@ -386,15 +402,16 @@ becomes usable: that sign-in creates the user's key pair.
 |---|---|---|
 | Internet calendars | off | The single switch of the feature. |
 | Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
-| Group of external users | the group created by the installer | Invited external users are created here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
+| Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
 | Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
 | Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
-The CalDAV plugin has one parameter, the **path** of the CalDAV address (default `dav`, so
-`https://<site>/dav/`). The permission **Share with external users** (`appointments.team.external`)
-is granted to nobody by default; Super Users have it implicitly.
+The CalDAV plugin holds the **CalDAV base address** (default: the site address plus `/dav/`). The
+well-known redirect, the client instructions and the mails use it. The permission **Share with
+external users** (`appointments.team.external`) is granted to nobody by default; Super Users have
+it implicitly.
 
 #### Roles
 
@@ -416,16 +433,21 @@ never works for CalDAV. **Remove device** starts the clean-up.
 
 #### Client instructions
 
-The user name is the Joomla user name, the password is the device's app password.
+The user name is the Joomla user name, the password is the device's app password. `<site>` stands
+for your site's address; the CalDAV address below assumes the default base address.
 
 | Client | Address | Refresh |
 |---|---|---|
-| Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
-| Apple Calendar (iOS, iPadOS) | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
-| Apple Calendar (macOS) | Other CalDAV account, account type manual, `https://<site>/dav/` | account → refresh every 5 minutes |
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
 | DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
 | Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
 | eM Client | account → CalDAV, `https://<site>/dav/` | account → synchronisation every 5 minutes |
+
+**Not supported:** the new Outlook for Windows and the Outlook apps on phones, because they do not
+speak CalDAV. Use classic Outlook with CalDav Synchronizer on Windows and the phone's own calendar
+(iOS) or DAVx⁵ (Android). The macOS calendar works with the iOS settings, but it is not part of the
+tested set.
 
 Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
 refresh without changes transfers no events. Menu paths can differ between client versions.
@@ -442,25 +464,37 @@ copy; that is why the usage rule asks for a lock code.
 
 #### What the encryption protects, and what not
 
-Calendar contents are encrypted on the server so that only users with a grant can decrypt them.
+**In one sentence: the encryption protects when the database or a backup of it leaks, not when
+somebody executes code on the server.** It is encryption at rest; end-to-end encryption is not
+possible with CalDAV clients.
 
-- **Protected:** a copy of the database alone (dump, backup, SQL injection in any extension)
-  shows no content, no times, no app password and no key. A row added or changed in the database
-  without the site secret grants nothing. A Super User without a grant sees calendar lists and the
-  log, never contents; granting oneself access is possible, but it is logged and mailed to the
-  calendar's owner and managers.
-- **Not protected:** a compromised running server, because the calendar key is in memory while a
-  key holder's request runs (this is encryption at rest, not end-to-end encryption; CalDAV clients
-  cannot do end-to-end encryption). A copy of database **and** files together reveals when events
-  take place, never their content. Devices that never connect again. Bookings, booking mails and
-  their ICS, which stay as before, outside the calendar encryption.
-- **Changing the site secret** in `configuration.php` invalidates every app password and every
-  server-side key. Recovery then needs the recovery key and new devices.
+- **Protected:** a copy of the database alone (dump, database backup, SQL injection in any
+  extension) shows no calendar content, no times, no app password and no key, and the personal
+  fields of bookings are encrypted as well. A row added or changed in the database without the site
+  secret grants nothing. A Super User without a grant sees calendar lists and the log, never
+  contents; granting oneself access is possible, but it is logged and mailed to the calendar's
+  owner and managers.
+- **Not protected:** anybody who executes code on the server, which includes a compromised
+  extension, the hosting provider and anybody with access to the files: while a key holder's request
+  runs, the calendar key is in memory, and such an attacker can also capture app passwords. A copy
+  of database **and** files together reveals when events take place, never their content. Devices
+  that never connect again. Booking mails to the team, which carry content and ICS as before.
+- **The site secret is recovery material.** Changing `$secret` in `configuration.php` invalidates
+  every app password, every server-side key and every encrypted booking field, and the recovery key
+  alone does not repair that; the way back is the old site secret. That is why it is printed with
+  the recovery key.
 - **Password reset:** a reset by mail or a password set by an administrator gives a new key pair;
   the user's grants are suspended and the devices go into clean-up. A manager grants again, or an
   administrator uses the recovery key. A password reset alone never gives anybody calendar access.
 - **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
   design.
+
+#### Privacy requests and retention
+
+Joomla's privacy component (**Users → Privacy**) handles export and removal requests for calendar
+entries too: a keyed index of the e-mail addresses in every entry finds them without a calendar
+key. The result names every calendar it could not search completely or could not decrypt. Each
+calendar has its own **retention**; the Scheduler deletes older entries and logs only their number.
 
 #### Replacing the token feeds
 
@@ -473,8 +507,8 @@ before that.
 
 #### Testing with real clients
 
-The [manual test plan for internet calendars](tests/manual/teamcalendars.md) checks every client
-above, including the clean-up and the refresh interval. It runs only against a test installation.
+The [manual test plan for internet calendars](tests/manual/teamcalendars.md) checks every supported
+client, including the clean-up and the refresh interval. It runs only against a test installation.
 
 ### Calendar subscriptions
 
