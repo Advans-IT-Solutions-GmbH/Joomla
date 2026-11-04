@@ -64,7 +64,8 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
     /**
      * The sign-in lock-out before Joomla checks a password, on the site and in
      * the administrator (work package F implements guardLogin()). A failure here
-     * never breaks a sign-in.
+     * fails open for the website (logged, warned by the system check); CalDAV and
+     * «Add device» fail closed in their own code.
      */
     public function onAfterRoute(): void
     {
@@ -79,6 +80,13 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
             // second safeguard in the user plugin still applies. No detail is
             // logged: the request carries a password.
             \Joomla\CMS\Log\Log::add('Internet calendars: the sign-in lock-out check failed (' . \get_class($e) . ').', \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
+
+            // Fail open for the website, but leave a trace the system check reads.
+            try {
+                TeamServices::fromApplication()->audit()->log(\Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent::LOGIN_GUARD_FAILED, ['details' => ['reason' => 'exception']]);
+            } catch (\Throwable $ignored) {
+                // The log may be unavailable for the same reason.
+            }
         }
     }
 }
