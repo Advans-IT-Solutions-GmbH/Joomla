@@ -48,7 +48,8 @@ defined('_JEXEC') or die;
  * failure away from a lock, and between two locks, the attempt is reserved for
  * {@see self::CLAIM_SECONDS} seconds and requests in parallel are refused. A burst therefore tests
  * at most nine guesses before the first lock and one per lock window after it. A reservation ends
- * with the failure (which sets the real lock), the success, the end of the request, or by itself.
+ * with the failure (which sets the real lock), the success, or, without a result, at the end of the
+ * request as a failure.
  *
  * Subjects (`$username`) are opaque: the website passes the sign-in name, which is mapped to the
  * user id; CalDAV passes `dav:<name>@<address>`, used as it is, so CalDAV and website lock
@@ -194,37 +195,24 @@ final class LockoutService implements LockoutServiceInterface
 
         // Logged, and the administrators mailed, at most once per account in
         // LOCKED_LOG_MINUTES, so a lock by somebody else is visible but no flood.
-        if (!$this->lockedLoggedRecently($userId)) {
-            $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
-
-            try {
-                $this->services->mailer()->accountLocked($userId, $wait);
-            } catch (\Throwable $e) {
-                Log::add('Team calendars: the lock mail could not be sent (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
-            }
-        }
+        $this->announceLock($userId, $ip, $wait);
     }
 
     public function recordFailure(string $username, string $ip): void
     {
-        $buckets = self::buckets($this->key(), $this->identity($username), $ip);
-        $refusal = $this->refusalKey($username, $ip);
+        $identity = $this->identity($username);
+        $buckets = self::buckets($this->key(), $identity, $ip);
 
         // A sign-in that guardLogin() refused was never checked: it is no
         // further failure, and the lock does not grow by retrying while locked.
-        if (isset(self::$refused[$refusal])) {
-            unset(self::$refused[$refusal]);
-
+        // The mark stays until the end of the request, so wasRefused() answers
+        // the same before and after this call.
+        if (isset(self::$refused[$this->refusalKey($username, $ip)])) {
             return;
         }
 
         $db = $this->db();
         $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));
-        $time = $db->quote($now->format('Y-m-d H:i:s'));
-        $stale = $db->quote($now->modify('-' . self::RESET_HOURS . ' hours')->format('Y-m-d H:i:s'));
-        $failures = $db->quoteName('failures');
-        $last = $db->quoteName('last_failure_utc');
-        $locked = $db->quoteName('locked_until_utc');
 
         foreach ($buckets as $bucket) {
             $hex = bin2hex($bucket);
@@ -234,23 +222,24 @@ final class LockoutService implements LockoutServiceInterface
             if ($taken === self::COUNTED) {
                 // Counted when the attempt was taken, below the threshold.
                 $db->setQuery($this->query()->update($db->quoteName('#__appointments_auth_failures'))
-                    ->set($last . ' = ' . $time)->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote($hex) . ')'))->execute();
+                    ->set($db->quoteName('last_failure_utc') . ' = ' . $db->quote($now->format('Y-m-d H:i:s')))
+                    ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote($hex) . ')'))->execute();
 
                 continue;
             }
 
-            // One statement: concurrent failures can neither be lost nor
-            // computed from the same old count. The assignments run left to
-            // right, so the lock is computed from the new count and the reset
-            // from the old time.
-            $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_auth_failures')
-                . ' (' . implode(',', $db->quoteName(['bucket', 'failures', 'locked_until_utc', 'last_failure_utc'])) . ')'
-                . ' VALUES (UNHEX(' . $db->quote($hex) . '), 1, NULL, ' . $time . ')'
-                . ' ON DUPLICATE KEY UPDATE '
-                . $failures . ' = IF(' . $last . ' < ' . $stale . ', 1, ' . $failures . ' + 1), '
-                . $locked . ' = IF(' . $failures . ' >= ' . TeamStates::LOCK_THRESHOLD
-                . ', DATE_ADD(' . $time . ', INTERVAL ' . self::delaySql($failures) . ' MINUTE), NULL), '
-                . $last . ' = ' . $time)->execute();
+            $this->addFailure($hex, $now);
+        }
+
+        // A lock that just started on an account is logged and mailed to the
+        // administrators (at most every LOCKED_LOG_MINUTES per account), also
+        // when nobody is refused yet, so a lock by somebody else is visible.
+        if (str_starts_with($identity, 'uid:')) {
+            $wait = self::waitFor([$this->row(bin2hex($buckets['user']))], $now);
+
+            if ($wait > 0) {
+                $this->announceLock((int) substr($identity, 4), $ip, $wait);
+            }
         }
     }
 
@@ -473,13 +462,13 @@ final class LockoutService implements LockoutServiceInterface
     }
 
     /**
-     * A request that ends without a result gives back its reservations, so
-     * nobody can keep a bucket reserved by starting attempts that never
-     * finish. Counted attempts stay counted: when the password was compared
-     * but no result was recorded (an error in a listener, an aborted request),
-     * giving them back would be a free guess. The price, accepted: a form that
-     * only looks like a sign-in (top-level user name and password, valid
-     * token) counts an attempt for that account without comparing anything.
+     * A request that ends without a recorded result books what it took as a
+     * failure: a counted attempt stays counted, a reservation becomes a
+     * failure (and so the next lock). An error between the password check and
+     * the result is therefore never a free guess, and nobody can hold a
+     * reservation without paying a failure for it. The price, accepted: a
+     * form that only looks like a sign-in (top-level user name and password,
+     * valid token) counts as an attempt for that account.
      */
     private function releaseAtShutdown(): void
     {
@@ -490,19 +479,81 @@ final class LockoutService implements LockoutServiceInterface
         self::$shutdown = true;
         register_shutdown_function(function (): void {
             try {
+                $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));
+
                 foreach (self::$attempts as $hex => $taken) {
+                    // The secret was compared, but no result was recorded (an
+                    // error in a listener, an aborted request): a counted
+                    // attempt stays counted and a reservation becomes a
+                    // failure, so an error is never a free guess.
                     if ($taken !== self::COUNTED) {
-                        $this->giveBack((string) $hex);
+                        $this->addFailure((string) $hex, $now);
                     }
                 }
-
-                self::$attempts = [];
-
-                self::$refused = [];
             } catch (\Throwable $e) {
                 // The reservation lapses by itself after CLAIM_SECONDS.
             }
+
+            self::$attempts = [];
+            self::$refused = [];
+            self::$shutdown = false;
         });
+    }
+
+    /**
+     * One more failure in a bucket, in one statement: concurrent failures can
+     * neither be lost nor computed from the same old count. The assignments
+     * run left to right, so the lock is computed from the new count and the
+     * reset from the old time.
+     */
+    private function addFailure(string $hex, \DateTimeImmutable $now): void
+    {
+        $db = $this->db();
+        $time = $db->quote($now->format('Y-m-d H:i:s'));
+        $stale = $db->quote($now->modify('-' . self::RESET_HOURS . ' hours')->format('Y-m-d H:i:s'));
+        $failures = $db->quoteName('failures');
+        $last = $db->quoteName('last_failure_utc');
+        $locked = $db->quoteName('locked_until_utc');
+        $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_auth_failures')
+            . ' (' . implode(',', $db->quoteName(['bucket', 'failures', 'locked_until_utc', 'last_failure_utc'])) . ')'
+            . ' VALUES (UNHEX(' . $db->quote($hex) . '), 1, NULL, ' . $time . ')'
+            . ' ON DUPLICATE KEY UPDATE '
+            . $failures . ' = IF(' . $last . ' < ' . $stale . ', 1, ' . $failures . ' + 1), '
+            . $locked . ' = IF(' . $failures . ' >= ' . TeamStates::LOCK_THRESHOLD
+            . ', DATE_ADD(' . $time . ', INTERVAL ' . self::delaySql($failures) . ' MINUTE), NULL), '
+            . $last . ' = ' . $time)->execute();
+    }
+
+    /**
+     * @return  array<string, mixed>  The counter row of a bucket, or a row without a lock.
+     */
+    private function row(string $hex): array
+    {
+        $db = $this->db();
+
+        return $db->setQuery($this->query()->select($db->quoteName(['failures', 'locked_until_utc', 'last_failure_utc']))
+            ->from($db->quoteName('#__appointments_auth_failures'))
+            ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote($hex) . ')'))->loadAssoc()
+            ?: ['failures' => 0, 'locked_until_utc' => null, 'last_failure_utc' => '1970-01-01 00:00:00'];
+    }
+
+    /**
+     * Log `login.locked` and mail the administrators, at most once per account
+     * in LOCKED_LOG_MINUTES.
+     */
+    private function announceLock(int $userId, string $ip, int $wait): void
+    {
+        if ($userId <= 0 || $this->lockedLoggedRecently($userId)) {
+            return;
+        }
+
+        $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
+
+        try {
+            $this->services->mailer()->accountLocked($userId, $wait);
+        } catch (\Throwable $e) {
+            Log::add('Team calendars: the lock mail could not be sent (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+        }
     }
 
     private function lockedLoggedRecently(int $userId): bool

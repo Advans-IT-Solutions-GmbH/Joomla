@@ -195,6 +195,7 @@ final class AuditChainTest extends TestCase
         self::assertTrue(AuditService::isLockConflict(new \RuntimeException('Deadlock found when trying to get lock', 1213)));
         self::assertTrue(AuditService::isLockConflict(new \RuntimeException('x', 0, new \RuntimeException('Lock wait timeout exceeded', 1205))));
         self::assertFalse(AuditService::isLockConflict(new \RuntimeException('Duplicate entry', 1062)));
+        self::assertFalse(AuditService::isLockConflict(new \RuntimeException("Duplicate entry '1213' for key", 1062)), 'Numbers in the text do not count');
     }
 
     public function testWrongKeyIsDetected(): void

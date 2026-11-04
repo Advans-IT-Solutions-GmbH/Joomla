@@ -71,11 +71,6 @@ final class AuditService implements AuditServiceInterface
 
     private const BATCH = 1000;
 
-    /**
-     * @var  bool
-     */
-    private static $anchorPending = false;
-
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -109,8 +104,9 @@ final class AuditService implements AuditServiceInterface
     public static function isLockConflict(\Throwable $e): bool
     {
         for ($error = $e; $error !== null; $error = $error->getPrevious()) {
-            if (\in_array((int) $error->getCode(), [1205, 1213], true)
-                || preg_match('/\b(1205|1213|40001)\b|deadlock found|lock wait timeout exceeded/i', $error->getMessage()) === 1) {
+            // Error codes only (mysqli errno, PDO SQLSTATE), never the message
+            // text, which can quote any value.
+            if (\in_array((string) $error->getCode(), ['1205', '1213', '40001'], true)) {
                 return true;
             }
         }
@@ -538,7 +534,9 @@ final class AuditService implements AuditServiceInterface
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($row['occurred_utc']))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->execute();
             $db->transactionCommit(true);
-            $this->anchorAtShutdown();
+            // Written by the anchor once no transaction is open, from the
+            // committed head, so a caller's rollback never leaves it ahead.
+            $this->anchorLastId($newId);
         } catch (\Throwable $e) {
             try {
                 // After a deadlock InnoDB has rolled back the whole transaction
@@ -551,37 +549,6 @@ final class AuditService implements AuditServiceInterface
 
             throw $e;
         }
-    }
-
-    /**
-     * At the end of the request the appended rows are committed (or rolled
-     * back with their caller): raise the anchor to what is in the database
-     * then, unless a transaction is still open.
-     */
-    private function anchorAtShutdown(): void
-    {
-        if (self::$anchorPending) {
-            return;
-        }
-
-        self::$anchorPending = true;
-        register_shutdown_function(function (): void {
-            self::$anchorPending = false;
-
-            try {
-                $db = $this->db();
-                $depth = new \ReflectionProperty($db, 'transactionDepth');
-
-                if ((int) $depth->getValue($db) > 0) {
-                    return;
-                }
-
-                $this->anchorLastId((int) $db->setQuery($this->query()->select($db->quoteName('last_id'))
-                    ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult());
-            } catch (\Throwable $e) {
-                // The anchor is raised by the next verify or request.
-            }
-        });
     }
 
     /**
@@ -744,10 +711,11 @@ final class AuditService implements AuditServiceInterface
     }
 
     /**
-     * Raise the file anchor to a committed newest row id: after a verified
-     * chain, after a prune, and at the end of every request that appended,
-     * when no transaction is open any more, so an append that a caller rolls
-     * back can never leave the anchor ahead. A database restored without its
+     * Raise the file anchor to the committed newest row id: after an append,
+     * a verified chain and a prune. The anchor reads the
+     * committed head itself once no transaction is open any more
+     * (EpochAnchorInterface::recordAfterCommit()), so an append that a caller
+     * rolls back can never leave it ahead. A database restored without its
      * files then shows as broken; deleting the anchor file
      * (`administrator/components/com_appointments/data/epochs.php`) after such
      * a deliberate restore resets it.
@@ -759,7 +727,7 @@ final class AuditService implements AuditServiceInterface
         }
 
         try {
-            $this->services->anchor()->record(EpochAnchorInterface::KIND_LOG, self::HEAD_ID, $lastId);
+            $this->services->anchor()->recordAfterCommit(EpochAnchorInterface::KIND_LOG, self::HEAD_ID);
         } catch (\Throwable $e) {
             Log::add('Team calendars: the log anchor could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
