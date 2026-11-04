@@ -194,10 +194,10 @@ return static function (TeamSuite $suite): void {
         return true;
     });
 
-    $suite->test('The six internet calendar mails are site-wide DB templates in all three languages', static function () use ($suite, $p) {
-        $purposes = "'team_device_added','team_invitation','team_invitation_accepted','team_grant_changed','team_access_suspended','team_calendar_deleted'";
+    $suite->test('The seven internet calendar mails are site-wide DB templates in all three languages', static function () use ($suite, $p) {
+        $purposes = "'team_device_added','team_invitation','team_invitation_accepted','team_grant_changed','team_access_suspended','team_calendar_deleted','team_account_locked'";
 
-        return $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id = 0 AND published = 1 AND purpose IN ({$purposes}) AND language IN ('en-GB','de-DE','fr-FR')") === 18
+        return $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id = 0 AND published = 1 AND purpose IN ({$purposes}) AND language IN ('en-GB','de-DE','fr-FR')") === 21
             && $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id <> 0 AND purpose IN ({$purposes})") === 0
             && $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE purpose = 'team_device_added' AND body LIKE '%{device_name}%' AND body NOT LIKE '%password}%'") === 3;
     });

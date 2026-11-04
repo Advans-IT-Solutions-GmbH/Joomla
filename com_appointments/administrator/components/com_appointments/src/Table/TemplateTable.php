@@ -20,10 +20,10 @@ class TemplateTable extends Table
     public const PURPOSES = ['confirmation', 'pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice',
         'guest_confirmation', 'guest_pending', 'guest_approved', 'guest_reschedule', 'guest_cancellation', 'guest_reminder',
         'host_approved', 'host_reschedule', 'host_cancellation', 'host_reminder',
-        'team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted'];
+        'team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted', 'team_account_locked'];
 
     /** Mails of the internet calendars: site-wide only, an event type has no say in them. */
-    public const SITE_WIDE_PURPOSES = ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted'];
+    public const SITE_WIDE_PURPOSES = ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted', 'team_account_locked'];
 
     /** The link each of these mails must carry, alone on its line. */
     private const LINK_PLACEHOLDERS = ['team_invitation' => '{activation_url}', 'team_invitation_accepted' => '{revoke_url}'];

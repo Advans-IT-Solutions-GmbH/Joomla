@@ -26,7 +26,7 @@ final class DeviceMailTest extends TestCase
     public function testTeamPurposesAreSeededButNeverSentAsBookingMails(): void
     {
         self::assertSame(
-            ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted'],
+            ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted', 'team_account_locked'],
             array_keys(TeamMailer::purposes())
         );
 

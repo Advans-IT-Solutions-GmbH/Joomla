@@ -112,7 +112,7 @@ final class TeamMailer implements TeamMailerInterface
 
         $username = $this->username($userId);
 
-        $this->deliver('team_invitation_accepted', $this->externalManagers(), static fn (): array => [
+        $this->deliver('team_invitation_accepted', $this->usersWith('appointments.team.external'), static fn (): array => [
             '{account_name}' => (string) $account->name,
             '{account_username}' => $username,
             '{revoke_url}' => $revokeUrl,
@@ -405,12 +405,12 @@ final class TeamMailer implements TeamMailerInterface
     }
 
     /**
-     * Every active account with the permission to share with external users
-     * (Super Users included), each once.
+     * Every active account with a permission on the component (Super Users
+     * included), each once.
      *
      * @return  object[]
      */
-    private function externalManagers(): array
+    private function usersWith(string $action): array
     {
         $db = $this->services->db();
         $query = $this->query()->select($db->quoteName('id'))->from($db->quoteName('#__usergroups'));
@@ -419,7 +419,7 @@ final class TeamMailer implements TeamMailerInterface
         foreach ($db->setQuery($query)->loadColumn() as $groupId) {
             $groupId = (int) $groupId;
 
-            if (Access::checkGroup($groupId, 'core.admin') || Access::checkGroup($groupId, 'appointments.team.external', 'com_appointments')) {
+            if (Access::checkGroup($groupId, 'core.admin') || Access::checkGroup($groupId, $action, 'com_appointments')) {
                 foreach (Access::getUsersByGroup($groupId) as $userId) {
                     $candidates[(int) $userId] = true;
                 }
@@ -433,7 +433,7 @@ final class TeamMailer implements TeamMailerInterface
             $account = $users->loadUserById($userId);
 
             if ((int) $account->id === $userId && (int) $account->block === 0
-                && $account->authorise('appointments.team.external', 'com_appointments')
+                && $account->authorise($action, 'com_appointments')
                 && ($row = $this->user($userId)) !== null
             ) {
                 $recipients[] = $row;
@@ -476,9 +476,25 @@ final class TeamMailer implements TeamMailerInterface
 
     public function accountLocked(int $userId, int $retryAfterSeconds): void
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
+        $account = $this->user($userId);
 
+        if ($account === null) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+        }
+
+        // To the administrators, so that a lock caused by somebody else's attempts is seen.
+        // Account and duration only: no address, no attempt detail.
+        $username = $this->username($userId);
+        $minutes = (string) max(1, (int) ceil($retryAfterSeconds / 60));
+        $url = $this->siteUrl('administrator/index.php?option=com_appointments&view=devices');
+
+        $this->deliver('team_account_locked', $this->usersWith('core.admin'), static fn (): array => [
+            '{account_name}' => (string) $account->name,
+            '{account_username}' => $username,
+            '{minutes}' => $minutes,
+            '{devices_url}' => $url,
+        ], [$url => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_DEVICES']);
+    }
     public function calendarDeleted(string $calendarTitle, array $recipientUserIds, int $actorUserId, \DateTimeImmutable $deletedUtc): void
     {
         $recipients = [];
