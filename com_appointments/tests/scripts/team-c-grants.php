@@ -176,7 +176,7 @@ return static function (TeamSuite $suite): void {
         });
 
         foreach (['grant', 'revoke', 'rotate', 'delete', 'apply'] as $task) {
-            $suite->test("calendars.{$task} for a calendar whose edit id is not held is refused", static function () use ($admin, $base, $task, $foreign, $countGrants) {
+            $suite->test("calendars.{$task} for a calendar whose edit id is not held is refused", static function () use ($suite, $admin, $base, $task, $foreign, $countGrants) {
                 $token = $admin->token($admin->request($base . '&view=calendars'));
                 $before = $countGrants();
                 $admin->request($base . '&id=' . $foreign, [
@@ -218,7 +218,8 @@ return static function (TeamSuite $suite): void {
         $suite->test('An activation link is never sent without token, nor to an account outside the calendar groups', static function () use ($admin, $base, $outsider, $suite, $p) {
             $admin->request($base, ['task' => 'invitations.invite', 'user_id' => $outsider]);
             $tokenless = $admin->status === 403;
-            $token = $admin->token($admin->request($base . '&view=invitations'));
+            // The invitations view renders no form while no account qualifies.
+            $token = $admin->token($admin->request($base . '&view=fields'));
             $html = $admin->request($base, ['task' => 'invitations.invite', 'user_id' => $outsider, $token => 1]);
 
             return $tokenless && str_contains($html, 'You are not allowed to do this.')
