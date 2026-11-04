@@ -295,6 +295,24 @@ return static function (TeamSuite $suite): void {
             return \in_array($code, [403, 501], true) && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$id}") === 0;
         });
 
+        $suite->test('«Add device» fails closed when a security check cannot be made', static function () use ($enabled, $user, $suite, $db, $p) {
+            $id = $user('broken', 'Broken-' . bin2hex(random_bytes(6)) . '!', [2]);
+            $keys = KeyContext::create($id, 1, random_bytes(32), random_bytes(32));
+            // The second-factor check cannot read its table: an infrastructure error, not a refusal.
+            $db->query("RENAME TABLE {$p}user_mfa TO {$p}user_mfa_teamd");
+
+            try {
+                $enabled->devices()->create($keys, 'Phone', 'davx5', true);
+                $thrown = false;
+            } catch (\Throwable $e) {
+                $thrown = true;
+            } finally {
+                $db->query("RENAME TABLE {$p}user_mfa_teamd TO {$p}user_mfa");
+            }
+
+            return $thrown && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$id}") === 0;
+        });
+
         $suite->test('The device list shows no revoked device and no hash, salt or wrapped key', static function () use ($enabled, $user, $device) {
             $id = $user('list', 'List-' . bin2hex(random_bytes(6)) . '!', [2]);
             $active = $device($id, 'Active phone', TeamStates::DEVICE_ACTIVE);
@@ -360,6 +378,7 @@ return static function (TeamSuite $suite): void {
             'D: The app password authenticates the device, the Joomla password never does',
             'D: Without the key in the session «Add device» answers 423',
             'D: «Remove device» starts the clean-up and raises the device epoch',
+            'D: A failing security check during «Add device» creates no device and shows only a general message',
         ];
 
         if ($stubs !== []) {
@@ -553,6 +572,33 @@ return static function (TeamSuite $suite): void {
             // The clean-up step raised the user's device epoch (replay protection, 5.11).
             return $suite->count("SELECT state FROM {$p}appointments_devices WHERE id = {$id}") === TeamStates::DEVICE_CLEANUP_EMPTY
                 && $suite->count("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}") > $epoch;
+        });
+
+        $suite->test($flow[9], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page, $db) {
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
+            $form = TeamDBrowser::form($page($browser), 'devices.create');
+
+            if ($form === null) {
+                return false;
+            }
+
+            $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+            $db->query("RENAME TABLE {$p}user_mfa TO {$p}user_mfa_teamd");
+
+            try {
+                $html = $browser->request($form['action'], $form['fields'] + ['name' => 'Broken phone', 'client' => 'davx5', 'rule' => 1], 0);
+                $status = $browser->status;
+            } finally {
+                $db->query("RENAME TABLE {$p}user_mfa_teamd TO {$p}user_mfa");
+            }
+
+            // The answer is a redirect back to the page, which shows the general message.
+            $html .= $status >= 300 && $status < 400 ? $browser->request($browser->header('Location')) : '';
+
+            return $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before
+                && !preg_match('/id="appointments-app-password"/', $html)
+                && !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
         });
     } finally {
         // Own rows only; the log keeps its rows so that the chain of part F still verifies.

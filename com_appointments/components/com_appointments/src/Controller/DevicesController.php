@@ -15,6 +15,7 @@ use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Advans\Component\Appointments\Site\View\Mycalendars\HtmlView;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
@@ -86,6 +87,8 @@ class DevicesController extends BaseController
             $keys = $services->keySession()->requireUnlocked();
         } catch (TeamException $e) {
             return $e->getCode() === 423 ? $this->locked() : $this->back('COM_APPOINTMENTS_MYCALENDARS_NOT_READY');
+        } catch (\Throwable $e) {
+            return $this->failed($e);
         }
 
         if ($keys->userId() !== (int) $user->id) {
@@ -102,6 +105,8 @@ class DevicesController extends BaseController
             }
 
             return $this->back($key, ['name' => $name, 'client' => $client]);
+        } catch (\Throwable $e) {
+            return $this->failed($e);
         }
 
         $view = $this->getView('Mycalendars', 'html', 'Site');
@@ -172,6 +177,18 @@ class DevicesController extends BaseController
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=mycalendars', false), Text::_('COM_APPOINTMENTS_TEAM_D_REMOVED'));
 
         return true;
+    }
+
+    /**
+     * Fail closed: a security check that could not be made (lock-out, second factor, key
+     * session, database) creates no device. The user sees a general message, the log only
+     * the class of the error, never its message, which may carry data.
+     */
+    private function failed(\Throwable $e): bool
+    {
+        Log::add('Internet calendar device not added: ' . \get_class($e), Log::ERROR, 'com_appointments');
+
+        return $this->back('COM_APPOINTMENTS_TEAM_D_ERROR_GENERAL');
     }
 
     /**
