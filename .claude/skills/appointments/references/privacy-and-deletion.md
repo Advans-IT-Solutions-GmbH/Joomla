@@ -197,6 +197,6 @@ component gives the operator the mechanism; the legal text is theirs.
   `admin` path only; see "What the audit table is, and what it is not".
 - Audit rows older than the audit retention period are deleted by the retention task.
 - A guest link removes only its own address, keeps the booking and the other links valid, and a
-  tampered, foreign or used guest link answers 404.
+  tampered or foreign guest link answers 404, a used one too, except in the browser session that removed the address, which sees its receipt again (HTTP 200).
 - The privacy sub-plugin exports and removes an address that is a guest of another person's
   booking as a guest only, and never matches an address that merely contains it.
