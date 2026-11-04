@@ -444,8 +444,12 @@ the prerequisites:
 | libsodium with Argon2id | `CipherSuite::available()` and a test `sodium_crypto_pwhash` | PHP with the sodium extension |
 | Memory for Argon2id INTERACTIVE (64 MiB) | `memory_limit` | raise `memory_limit` to at least 128M |
 
-The CalDAV base address is a setting of the system plugin (default: the site URL plus `/dav/`); the
-well-known redirect, the client instructions and mails use it. Calendar data is reached only through
+The CalDAV base address is the system plugin's parameter `dav_base_url` (absolute https URL; default:
+the site root plus `/dav/`), read by everybody only through `TeamServices::davBaseUrl()`, which always
+ends in `/`; the routing path, the well-known redirect, the client instructions, mails and the system
+check derive from it. There is no separate path parameter. A 401 of the CalDAV handler carries
+`X-Appointments-Authorization: received` when an `Authorization` header reached PHP, so the system
+check can test the header path anonymously; every method authenticates first. Calendar data is reached only through
 the `Service/Team` interfaces; the booking page reads busy times only through
 `BookingCalendarBridgeInterface::busyFor()`.
 ### 8.2 Bundling sabre/dav

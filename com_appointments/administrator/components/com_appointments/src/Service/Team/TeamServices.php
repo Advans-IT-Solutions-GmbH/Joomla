@@ -13,6 +13,8 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
@@ -80,6 +82,25 @@ final class TeamServices
     public function params(): Registry
     {
         return $this->params;
+    }
+
+    /**
+     * The CalDAV base address, absolute, always ending in "/": the system plugin's
+     * parameter `dav_base_url` when it is a valid https URL, otherwise the site
+     * root plus "dav/". The routing path, the well-known redirect, the client
+     * instructions and the system check all derive from this one value.
+     */
+    public function davBaseUrl(): string
+    {
+        $plugin = PluginHelper::getPlugin('system', 'appointmentsdav');
+        $params = new Registry(\is_object($plugin) ? ($plugin->params ?? '') : '');
+        $url = trim((string) $params->get('dav_base_url', ''));
+
+        if ($url !== '' && filter_var($url, FILTER_VALIDATE_URL) && str_starts_with(strtolower($url), 'https://')) {
+            return rtrim($url, '/') . '/';
+        }
+
+        return rtrim(Uri::root(), '/') . '/dav/';
     }
 
     public function now(): \DateTimeImmutable

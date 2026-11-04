@@ -114,8 +114,8 @@ final class TeamSuite
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_TIMEOUT        => 30,
             CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
+            // The test image trusts its own test CA; certificates are verified.
+            CURLOPT_CAINFO         => '/etc/ssl/appointments-test/ca.pem',
         ]);
 
         if ($body !== null) {
