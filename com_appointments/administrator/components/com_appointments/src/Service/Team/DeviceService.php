@@ -122,22 +122,7 @@ final class DeviceService implements DeviceServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_CLIENT', 400);
         }
 
-        $account = $this->account($userId);
-
-        if ($account === null || (int) $account->block !== 0) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_ACCOUNT', 403);
-        }
-
-        $grants = $this->services->grants();
-
-        if (!$grants->hasSecondFactor($userId)) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MFA', 403);
-        }
-
-        if ($grants->calendarsFor($userId) === []) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NO_GRANT', 403);
-        }
-
+        $this->requireEligible($userId);
         $db = $this->services->db();
         $lock = $db->getPrefix() . 'com_appointments.device.' . $userId;
 
@@ -176,6 +161,11 @@ final class DeviceService implements DeviceServiceInterface
                 if ($epoch === null) {
                     throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_ACCOUNT', 403);
                 }
+
+                // Again under the locks: the account, its second factor or its last grant may have
+                // gone while this request waited. (A grant revoked after this point still leaves the
+                // device without data: every CalDAV request checks the effective grants anew.)
+                $this->requireEligible($userId);
 
                 $query = $this->query()
                     ->insert($db->quoteName('#__' . self::TABLE))
@@ -246,6 +236,30 @@ final class DeviceService implements DeviceServiceInterface
         }
 
         return ['device_id' => $deviceId, 'app_password' => $password['display'], 'mail_sent' => $mailed];
+    }
+
+    /**
+     * The account may add a device now: not blocked, an active second factor, an effective grant.
+     *
+     * @throws  TeamException  403 otherwise.
+     */
+    private function requireEligible(int $userId): void
+    {
+        $account = $this->account($userId);
+
+        if ($account === null || (int) $account->block !== 0) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_ACCOUNT', 403);
+        }
+
+        $grants = $this->services->grants();
+
+        if (!$grants->hasSecondFactor($userId)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MFA', 403);
+        }
+
+        if ($grants->calendarsFor($userId) === []) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NO_GRANT', 403);
+        }
     }
 
     public function authenticate(string $username, #[\SensitiveParameter] string $appPassword): ?DeviceSession

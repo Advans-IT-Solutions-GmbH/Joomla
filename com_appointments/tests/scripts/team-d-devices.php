@@ -386,6 +386,9 @@ return static function (TeamSuite $suite): void {
             'D: The activation refuses a password that breaks the rules or does not match',
             'D: The activation sets the password and continues at the sign-in',
             'D: A used activation link answers 404',
+            'D: A revoked device row played back into the database does not authenticate',
+            'D: A device row and user key row rolled back together are refused by the anchor',
+            'D: A revocation inside a transaction that rolls back leaves the anchor below the database',
         ];
 
         if ($stubs !== []) {
@@ -560,6 +563,79 @@ return static function (TeamSuite $suite): void {
             return $session !== null && $session->isActive() && $session->userId === $member
                 && $services->devices()->authenticate($tag . 'member', $password) === null
                 && $services->devices()->authenticate($tag . 'other', $created) === null;
+        });
+
+        // Replay protection (5.11): the device epoch and its anchor.
+        $rowOf = static fn (string $table, string $where): ?array => $db->query("SELECT * FROM {$p}{$table} WHERE {$where}")->fetch_assoc() ?: null;
+        $restore = static function (string $table, array $row, string $key) use ($db, $p): void {
+            $sets = [];
+
+            foreach ($row as $column => $value) {
+                $sets[] = '`' . $column . '` = ' . ($value === null ? 'NULL' : "'" . $db->real_escape_string((string) $value) . "'");
+            }
+
+            $db->query("UPDATE {$p}{$table} SET " . implode(', ', $sets) . " WHERE `{$key}` = '" . $db->real_escape_string((string) $row[$key]) . "'");
+        };
+        $probe = static function (string $name) use ($services, $member, $password): array {
+            $keys = $services->keys()->unlockWithPassword($member, $password);
+
+            return $keys === null ? [] : $services->devices()->create($keys, $name, 'other', true);
+        };
+
+        $suite->test($flow[15], static function () use ($services, $probe, $rowOf, $restore, $tag) {
+            $made = $probe($tag . ' replay');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $saved = $rowOf('appointments_devices', 'id = ' . (int) $made['device_id']);
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+            $restore('appointments_devices', $saved, 'id');
+
+            return $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+        });
+
+        $suite->test($flow[16], static function () use ($services, $probe, $rowOf, $restore, $tag, $member, &$created) {
+            $made = $probe($tag . ' rollback');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $device = $rowOf('appointments_devices', 'id = ' . (int) $made['device_id']);
+            $key = $rowOf('appointments_user_keys', 'user_id = ' . $member);
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+            $after = $rowOf('appointments_user_keys', 'user_id = ' . $member);
+            // A database rolled back as a whole: the old key row with its older epoch and the active device.
+            $restore('appointments_user_keys', $key, 'user_id');
+            $restore('appointments_devices', $device, 'id');
+            $refused = $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            $restore('appointments_user_keys', $after, 'user_id');
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+
+            return $refused && $services->devices()->authenticate($tag . 'member', $created) !== null;
+        });
+
+        $suite->test($flow[17], static function () use ($services, $probe, $joomla, $tag, $member, &$created, $suite, $p) {
+            $made = $probe($tag . ' outer');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $before = $suite->count("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}");
+            $joomla->transactionStart();
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+            $joomla->transactionRollback();
+
+            // The epoch is back where it was, the anchor did not run ahead, the devices still work.
+            $ok = $suite->count("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}") === $before
+                && $services->anchor()->minimum(\Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface::KIND_USER, $member) <= $before
+                && $services->devices()->authenticate($tag . 'member', $created) !== null;
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+
+            return $ok;
         });
 
         $suite->test($flow[7], static function () use ($browser, $page, $suite, $p, $member) {
