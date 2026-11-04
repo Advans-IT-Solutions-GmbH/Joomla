@@ -64,15 +64,19 @@ final class CleanupService implements CleanupServiceInterface
             return;
         }
 
+        // Earlier deliveries are cleared while the device is still active
+        // (nothing marks a delivery then), so a fetch right after the state
+        // change can never have its acknowledgement erased.
+        $db = $this->db();
+        $db->setQuery($this->query()->update($db->quoteName('#__appointments_device_calendars'))
+            ->set($db->quoteName('cleanup_delivered_utc') . ' = NULL')
+            ->where($db->quoteName('device_id') . ' = ' . $deviceId))->execute();
+
         if (!$this->services->devices()->changeState($deviceId, TeamStates::DEVICE_ACTIVE, TeamStates::DEVICE_CLEANUP_EMPTY)) {
             return;
         }
 
-        $db = $this->db();
-        $this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY);
-        $db->setQuery($this->query()->update($db->quoteName('#__appointments_device_calendars'))
-            ->set($db->quoteName('cleanup_delivered_utc') . ' = NULL')
-            ->where($db->quoteName('device_id') . ' = ' . $deviceId))->execute();
+        $this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY, true);
         $this->services->audit()->log(AuditEvent::DEVICE_CLEANUP_STARTED, [
             'actor_user_id'   => $actorUserId,
             'subject_user_id' => (int) $device['user_id'],
