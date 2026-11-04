@@ -375,7 +375,10 @@ Every calendar user also needs a second factor (Joomla's multi-factor authentica
    the access level «Internet calendars», and add both groups to **Users → Options →
    Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
    groups that skip MFA; the system check reports that as an error.
-4. As a Super User, create the **recovery key** in **Internet calendars**. Its secret is shown once.
+4. Create the **recovery key** in **Internet calendars** as a Super User who is also a member of
+   «Internet calendars internal» (that membership gives the account a key pair; it needs no calendar
+   grant). Sign out and in again with password and second factor first: the key operations need a
+   session unlocked by the password. Its secret is shown once.
    Print it **twice together with the site secret** (`$secret` in `configuration.php`) and keep the
    two printouts offline in separate places. The recovery key is never stored, and without it no
    calendar can be created.

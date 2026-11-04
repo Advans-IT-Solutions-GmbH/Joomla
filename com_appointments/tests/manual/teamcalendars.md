@@ -78,13 +78,14 @@ and the checksum of the downloaded installer.
 
 ### 2.2 Users
 
-Every user is a synthetic Joomla account that `ADMIN` created in the user management and activated
-through the activation link (Joomla's registration stays off), with a second factor (TOTP) set up at
-the first sign-in and a password sign-in.
+Every user except `ADMIN` is a synthetic Joomla account that `ADMIN` created in the user management
+and activated through the activation link (Joomla's registration stays off), with a second factor
+(TOTP) set up at the first sign-in and a password sign-in. `ADMIN` signs in with password and second
+factor before the recovery key and the grants are set up, so its session holds its key.
 
 | Identifier | Group | Grants |
 |---|---|---|
-| `ADMIN` | Super User | none on the calendars (sees lists and the log only) |
+| `ADMIN` | Super User and Internet calendars internal (for its key pair) | none on the calendars (sees lists and the log only) |
 | `OWNER` | Internet calendars internal | owner and manager of `CAL-T`, `CAL-R`, `CAL-X` |
 | `WRITER` | Internet calendars internal | write on `CAL-T` and `CAL-R` |
 | `READER` | Internet calendars internal | read on `CAL-T` |
@@ -111,9 +112,17 @@ Each tested user adds **one device per client** in «My calendars» → «Add de
 selected and the usage rule confirmed. The app password is copied straight into the client and
 nowhere else.
 
-The **observer** is a second, already tested client of `OWNER` (for example Thunderbird in the VM
-once `TB` has passed `IC-01` to `IC-08`). It is used to create changes on the server and to check
+The **observer** is a second client of `OWNER`, used to create changes on the server and to check
 what the client under test sent. Record which client served as observer.
+
+**Bootstrap before the first client.** No client is tested yet, so the observer is validated
+against the fixtures alone: set it up for `OWNER` and check that it shows exactly `CAL-T`, `CAL-R`,
+`CAL-X` and `CAL-F` with the events of section 2.3 (the read half of `IC-01` and `IC-07`). From then
+on the observer counts as trusted for reading. Its writes are trusted only after the first client
+under test has passed `IC-07` to `IC-11`: a change that the observer makes and the client then
+shows, and the reverse, confirms both sides. If a two-way case fails before that, check the object
+on the server directly (`curl` GET of the object with `OWNER`'s device, as in section 6) to tell
+which side is wrong.
 
 ## 3. Client set-up
 
