@@ -408,9 +408,12 @@ final class LockoutService implements LockoutServiceInterface
                 throw new \RuntimeException('The sign-in counter could not be locked.');
             }
 
+            // A lock or another request's reservation that is still running
+            // always counts, also on a counter that is about to start again.
+            $until = empty($row['locked_until_utc']) ? null : new \DateTimeImmutable((string) $row['locked_until_utc'], new \DateTimeZone('UTC'));
+            $wait = $until === null ? 0 : max(0, $until->getTimestamp() - $now->getTimestamp());
             $stale = self::isStale($row, $now);
             $failures = $stale ? 0 : (int) $row['failures'];
-            $wait = $stale ? 0 : self::waitFor(['x' => $row], $now);
 
             if ($wait > 0) {
                 $db->transactionCommit(true);
