@@ -8,7 +8,10 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
+use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
@@ -20,76 +23,51 @@ final class PrivacyService
     {
     }
 
+    /**
+     * The bookings of an invitee address, opened. The personal fields are
+     * encrypted at rest, so the candidates are found by BookingRecords in
+     * memory (exact address after trimming and Unicode lower case), never by
+     * a SQL condition on the address.
+     *
+     * @return \Generator<array<string, mixed>>
+     */
     public function bookings(string $address): \Generator
     {
-        $normalised = PrivacyAddress::normalise($address);
-        $db = $this->db;
-        $last = 0;
-        $column = $db->quoteName('b.invitee_email');
-        $value = 'TRIM(' . $column . ')';
-        // Like the shop privacy plugin, SQL only supplies a lossless candidate
-        // set; accent-insensitive collations must never decide ownership.
-        $candidates = ['LENGTH(' . $value . ') <> CHAR_LENGTH(' . $value . ')',
-            $value . " REGEXP '[[:cntrl:]]'"];
-        if (preg_match('/[^\x00-\x7F]/', $normalised) !== 1) {
-            $candidates[] = 'LOWER(CONVERT(' . $value . ' USING utf8mb4) COLLATE utf8mb4_bin) = ' . $db->quote($normalised);
+        $ids = [];
+
+        foreach ($this->records()->findByEmail($address, 200) as $match) {
+            if ($match['role'] === 1) {
+                $ids[] = $match['id'];
+            }
         }
 
-        do {
-            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName('b') . '.*')->select($db->quoteName('e.title', 'event_title'))
-                ->from($db->quoteName('#__appointments_bookings', 'b'))
-                ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '
-                    . $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
-                ->where($db->quoteName('b.id') . ' > ' . $last)
-                ->where($column . ' IS NOT NULL')
-                ->where('(' . implode(' OR ', $candidates) . ')')
-                ->order($db->quoteName('b.id') . ' ASC')->setLimit(200);
-            $rows = $db->setQuery($query)->loadAssocList();
-            foreach ($rows as $row) {
-                $last = (int) $row['id'];
-                if (PrivacyAddress::matches($row['invitee_email'], $normalised)) {
-                    yield $row;
-                }
+        foreach (array_chunk($ids, 200) as $chunk) {
+            foreach ($this->rows($chunk, ['b.*']) as $row) {
+                yield $row;
             }
-        } while (count($rows) === 200);
+        }
     }
 
     /**
      * Bookings in which the address is one of the additional guests. Only what concerns the
      * guest is returned: the booking id, the event type, the time, the state and the guest's
      * address as stored. Neither the invitee's data, nor the other guests, nor the answers.
-     * SQL only narrows the candidates losslessly; ownership is decided per line in PHP.
      *
      * @return \Generator<array{id: int, eventtype_id: int, event_title: string, start_utc: string, end_utc: string, state: int, guest_email: string}>
      */
     public function guestBookings(string $address): \Generator
     {
         $normalised = PrivacyAddress::normalise($address);
-        $db = $this->db;
-        $last = 0;
-        $column = $db->quoteName('b.guest_emails');
-        $candidates = ['LENGTH(' . $column . ') <> CHAR_LENGTH(' . $column . ')'];
-        if (preg_match('/[^\x00-\x7F]/', $normalised) !== 1) {
-            $candidates[] = 'LOWER(CONVERT(' . $column . ' USING utf8mb4) COLLATE utf8mb4_bin) LIKE '
-                . $db->quote('%' . $db->escape($normalised, true) . '%', false);
+        $ids = [];
+
+        foreach ($this->records()->findByEmail($address, 200) as $match) {
+            if ($match['role'] === 2) {
+                $ids[] = $match['id'];
+            }
         }
 
-        do {
-            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.guest_emails']))
-                ->select($db->quoteName('e.title', 'event_title'))
-                ->from($db->quoteName('#__appointments_bookings', 'b'))
-                ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '
-                    . $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
-                ->where($db->quoteName('b.id') . ' > ' . $last)
-                ->where($column . ' IS NOT NULL')
-                ->where($db->quoteName('b.anonymised_utc') . ' IS NULL')
-                ->where('(' . implode(' OR ', $candidates) . ')')
-                ->order($db->quoteName('b.id') . ' ASC')->setLimit(200);
-            $rows = $db->setQuery($query)->loadAssocList();
-            foreach ($rows as $row) {
-                $last = (int) $row['id'];
+        foreach (array_chunk($ids, 200) as $chunk) {
+            foreach ($this->rows($chunk, ['b.id', 'b.uid', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.guest_emails']) as $row) {
                 foreach (PrivacyAddress::guestList($row['guest_emails']) as $guest) {
                     if (PrivacyAddress::isGuest($guest, $normalised)) {
                         yield ['id' => (int) $row['id'], 'eventtype_id' => (int) $row['eventtype_id'],
@@ -99,7 +77,41 @@ final class PrivacyService
                     }
                 }
             }
-        } while (count($rows) === 200);
+        }
+    }
+
+    /**
+     * Rows of the given bookings with their event title, personal fields opened
+     * (a field that cannot be opened is blank).
+     *
+     * @param int[]    $ids
+     * @param string[] $columns
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function rows(array $ids, array $columns): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $db = $this->db;
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($columns === ['b.*'] ? $db->quoteName('b') . '.*' : $db->quoteName($columns))
+            ->select($db->quoteName('e.title', 'event_title'))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '
+                . $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')')
+            ->order($db->quoteName('b.id') . ' ASC');
+        $data = BookingData::fromApplication();
+
+        return array_map(static fn (array $row): array => $data->openLenient($row), $db->setQuery($query)->loadAssocList());
+    }
+
+    private function records(): BookingRecords
+    {
+        return new BookingRecords($this->db, new KeyProvider((string) Factory::getApplication()->get('secret', '')));
     }
 
     /** Whether the address has any booking, as invitee or as additional guest. */

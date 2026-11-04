@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\AvailabilityWindow;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\BusyPeriod;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
@@ -733,8 +734,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             'start_utc', 'end_utc', 'modified_utc', 'invitee_name', 'invitee_email', 'guest_emails', 'conference_url', 'anonymised_utc']))
             ->from($db->quoteName('#__appointments_bookings'))
             ->where($db->quoteName('id') . ' = ' . $bookingId);
+        $row = $db->setQuery($query)->loadAssoc() ?: null;
 
-        return $db->setQuery($query)->loadAssoc() ?: null;
+        // Personal fields are encrypted at rest; one that cannot be decrypted is left out of the copy.
+        return $row === null ? null : (new BookingData($this->services->keyProvider()))->openLenient($row);
     }
 
     /**

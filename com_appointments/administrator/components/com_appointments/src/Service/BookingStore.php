@@ -15,15 +15,19 @@ use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Log\Log;
 
 defined('_JEXEC') or die;
 
 final class BookingStore
 {
+    private ?BookingData $data = null;
+
     public function __construct(private DatabaseInterface $db)
     {
     }
@@ -66,18 +70,21 @@ final class BookingStore
                 throw new SlotTakenException();
             }
 
-            $row = (object) array_merge($invitee, [
+            $clear = array_merge($invitee, [
                 'uid' => bin2hex(random_bytes(32)), 'sequence' => 0, 'eventtype_id' => $eventId, 'host_user_id' => $host,
                 'start_utc' => $start->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
                 'end_utc' => $end->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
                 'state' => (int) $event['requires_approval'] === 1 ? 0 : 1,
                 'created_utc' => $time, 'modified_utc' => $time,
             ]);
+            // The personal fields are stored encrypted; the caller gets them in clear.
+            $row = (object) $this->data()->seal($clear['uid'], $clear);
             $db->insertObject('#__appointments_bookings', $row, 'id');
+            $clear['id'] = $row->id;
             $db->transactionCommit();
-            $this->mirror('saved', (array) $row);
+            $this->mirror('saved', $clear);
 
-            return (array) $row;
+            return $clear;
         } catch (\Throwable $e) {
             $db->transactionRollback();
 
@@ -132,7 +139,7 @@ final class BookingStore
             $this->lockHost($host);
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
-            $booking = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc();
+            $booking = $this->open($db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null);
 
             if ($links !== null && (!$booking || !$links->verify($bookingId, 'cancel', $booking['modified_utc'], $signature))) {
                 throw new InvalidBookingLinkException();
@@ -153,8 +160,8 @@ final class BookingStore
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
-            $row = (object) ['id' => $bookingId, 'state' => $state, 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'],
-                'cancel_reason' => $booking['cancel_reason']];
+            $row = (object) $this->data()->seal((string) $booking['uid'], ['id' => $bookingId, 'state' => $state,
+                'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
 
@@ -296,7 +303,8 @@ final class BookingStore
                     ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
             } else {
                 unset($erased['state_active']);
-                $row = (object) $erased;
+                // Every personal field is null now; sealing keeps any other one encrypted.
+                $row = (object) $this->data()->seal((string) $erased['uid'], $erased);
                 $db->updateObject('#__appointments_bookings', $row, 'id', true);
             }
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
@@ -360,7 +368,8 @@ final class BookingStore
 
                 return ['changed' => false, 'guest' => null];
             }
-            $row = (object) ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)];
+            $row = (object) $this->data()->seal((string) $booking['uid'],
+                ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $audit = (object) ['booking_id' => $bookingId, 'action' => 'remove_guest', 'path' => $path, 'actor_user_id' => null,
                 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
@@ -465,7 +474,35 @@ final class BookingStore
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
 
-        return $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+        return $this->open($db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null);
+    }
+
+    private function data(): BookingData
+    {
+        return $this->data ??= BookingData::fromApplication();
+    }
+
+    /**
+     * A booking row with its personal fields in clear. A field that cannot be
+     * decrypted (another site secret, a changed byte) is blank, and only its
+     * column name is logged: a state change, a reschedule or an erasure still
+     * works on such a row, and erasure removes it.
+     */
+    private function open(?array $row): ?array
+    {
+        if ($row === null) {
+            return null;
+        }
+
+        $failed = [];
+        $row = $this->data()->openLenient($row, $failed);
+
+        if ($failed !== []) {
+            Log::add('Appointment booking ' . (int) ($row['id'] ?? 0) . ': fields could not be decrypted (' . implode(', ', $failed) . ').',
+                Log::WARNING, 'com_appointments');
+        }
+
+        return $row;
     }
 
     public function lockedEvent(int $eventId): ?array

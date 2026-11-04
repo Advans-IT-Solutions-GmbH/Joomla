@@ -241,6 +241,101 @@ final class TimingIndex implements TimingIndexInterface
     }
 
     /**
+     * The end of the object's last instance, for the retention of a calendar:
+     * DTEND (or DTSTART plus DURATION, an all-day date one day) of the master
+     * and every override, extended by UNTIL, COUNT and RDATE. UNTIL is taken as
+     * the last possible start (an upper bound, so an entry is kept rather than
+     * deleted too early); COUNT is counted through the recurrence library, at
+     * most {@see self::MAX_SKIP_STEPS} steps. Null for an open series, one
+     * whose COUNT is beyond that limit, or a skeleton without a readable event:
+     * such an object is never old.
+     */
+    public function lastEnd(string $skeleton, \DateTimeZone $floatingZone): ?\DateTimeImmutable
+    {
+        $utc = new \DateTimeZone('UTC');
+        $events = $this->read($skeleton, 0)->select('VEVENT');
+        $latest = null;
+
+        if ($events === []) {
+            return null;
+        }
+
+        $limited = property_exists(Settings::class, 'maxRecurrences');
+        $previous = $limited ? Settings::$maxRecurrences : null;
+
+        if ($limited) {
+            Settings::$maxRecurrences = self::MAX_SKIP_STEPS + 1;
+        }
+
+        try {
+            foreach ($events as $event) {
+                $start = \DateTimeImmutable::createFromInterface($event->DTSTART->getDateTime($floatingZone));
+                $duration = $this->duration($event, $start, $floatingZone);
+                $end = $start->modify('+' . $duration . ' seconds');
+
+                if (!isset($event->{'RECURRENCE-ID'}) && isset($event->RRULE)) {
+                    $parts = array_change_key_case($event->RRULE->getParts(), CASE_UPPER);
+
+                    if (isset($parts['UNTIL'])) {
+                        $until = (string) (\is_array($parts['UNTIL']) ? $parts['UNTIL'][0] : $parts['UNTIL']);
+                        $last = \strlen($until) === 8
+                            ? new \DateTimeImmutable(substr($until, 0, 4) . '-' . substr($until, 4, 2) . '-' . substr($until, 6, 2) . ' 23:59:59', $floatingZone)
+                            : new \DateTimeImmutable(str_replace('T', ' ', rtrim($until, 'Z')), str_ends_with($until, 'Z') ? $utc : $start->getTimezone());
+                        $end = max($end, $last->modify('+' . $duration . ' seconds'));
+                    } elseif (isset($parts['COUNT'])) {
+                        $single = clone $event;
+                        $single->remove('RDATE');
+                        $iterator = new EventIterator([$single], null, $floatingZone);
+                        $steps = 0;
+
+                        while ($iterator->valid()) {
+                            if (++$steps > self::MAX_SKIP_STEPS) {
+                                return null;
+                            }
+
+                            $end = max($end, \DateTimeImmutable::createFromInterface($iterator->getDtEnd()));
+                            $iterator->next();
+                        }
+                    } else {
+                        return null;
+                    }
+                }
+
+                foreach ($event->select('RDATE') as $rdate) {
+                    foreach ($rdate->getDateTimes($floatingZone) as $date) {
+                        $end = max($end, \DateTimeImmutable::createFromInterface($date)->modify('+' . $duration . ' seconds'));
+                    }
+                }
+
+                $latest = $latest === null ? $end : max($latest, $end);
+            }
+        } catch (\Throwable $e) {
+            // Unknown how long it runs: never old.
+            return null;
+        } finally {
+            if ($limited) {
+                Settings::$maxRecurrences = $previous;
+            }
+        }
+
+        return $latest?->setTimezone($utc);
+    }
+
+    /** Seconds an instance of the event lasts: DTEND, DURATION, one day for a date, or none. */
+    private function duration(Component $event, \DateTimeImmutable $start, \DateTimeZone $floatingZone): int
+    {
+        if (isset($event->DTEND)) {
+            return max(0, $event->DTEND->getDateTime($floatingZone)->getTimestamp() - $start->getTimestamp());
+        }
+
+        if (isset($event->DURATION)) {
+            return max(0, $start->add($event->DURATION->getDateInterval())->getTimestamp() - $start->getTimestamp());
+        }
+
+        return $event->DTSTART->hasTime() ? 0 : 86400;
+    }
+
+    /**
      * Addresses from ORGANIZER and ATTENDEE (`mailto:`, percent-decoded, without
      * a query) and every address found in SUMMARY, LOCATION and DESCRIPTION, in
      * every component of the object (alarms included), sorted.

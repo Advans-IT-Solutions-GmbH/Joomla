@@ -11,13 +11,20 @@ namespace Advans\Component\Appointments\Administrator\Model;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\ListModel;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\EventScope;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Service\BookingRecords;
 
 defined('_JEXEC') or die;
 
 class BookingsModel extends ListModel
 {
+    /** @var array<string, int[]|null> Ids found in memory for a search or a name order, per state. */
+    private array $matched = [];
+
     public function __construct($config = [], $factory = null)
     {
         $config['filter_fields'] ??= ['b.id', 'b.start_utc', 'b.state', 'e.title', 'b.invitee_last_name', 'b.invitee_first_name'];
@@ -33,7 +40,7 @@ class BookingsModel extends ListModel
     {
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state',
+        $query->select($db->quoteName(['b.id', 'b.uid', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state',
             'b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email', 'b.invitee_phone', 'b.guest_emails', 'b.custom_fields',
             'b.consent_utc', 'b.consent_version',
             'b.sequence', 'b.conference_state', 'b.conference_error', 'b.anonymised_utc']))
@@ -62,26 +69,65 @@ class BookingsModel extends ListModel
                     . $db->quote($day . ($key === 'from' ? ' 00:00:00' : ' 23:59:59')));
             }
         }
-        $search = (string) $this->getState('filter.search', '');
-        if ($search !== '') {
-            $value = $db->quote('%' . $db->escape($search, true) . '%', false);
-            // The full name finds "first last"; first and last name each find a search for one of
-            // them, also on rows whose full name was entered differently.
-            $query->where('(' . implode(' OR ', array_map(static fn (string $column): string => $db->quoteName($column) . ' LIKE ' . $value,
-                ['b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email'])) . ')');
-        }
-
         $order = (string) $this->getState('list.ordering', 'b.start_utc');
         $order = in_array($order, $this->filter_fields, true) ? $order : 'b.start_utc';
         $direction = strtoupper((string) $this->getState('list.direction')) === 'ASC' ? 'ASC' : 'DESC';
-        $query->order($db->quoteName($order) . ' ' . $direction);
+        $byName = in_array($order, ['b.invitee_last_name', 'b.invitee_first_name'], true);
+        $query->order($db->quoteName($byName ? 'b.start_utc' : $order) . ' ' . $direction);
+        $search = (string) $this->getState('filter.search', '');
 
-        // Sorting by last name keeps people with the same last name in first-name order.
-        if ($order === 'b.invitee_last_name') {
-            $query->order($db->quoteName('b.invitee_first_name') . ' ' . $direction);
+        if ($search === '' && !$byName) {
+            return $query;
+        }
+
+        // Names and addresses are encrypted at rest (team-calendars.md, 5.10): the search (the full
+        // name finds "first last", first and last name each one of them, the address a part of it)
+        // and the sorting by name (last name, then first name) are done in memory on the candidates
+        // of the other filters, and the page is then cut from that list of ids.
+        $key = $this->getStoreId('encrypted') . ':' . $order . ':' . $direction;
+
+        if (!isset($this->matched[$key])) {
+            $records = new BookingRecords($db, new KeyProvider((string) Factory::getApplication()->get('secret', '')));
+            $ids = $search === '' ? null : $records->search($query, $search)['ids'];
+            $candidates = clone $query;
+
+            if ($ids !== null) {
+                $candidates->where($ids === [] ? '1 = 0' : $db->quoteName('b.id') . ' IN (' . implode(',', $ids) . ')');
+            }
+
+            $this->matched[$key] = $byName ? $records->orderedByName($candidates, $direction === 'DESC') : $ids;
+        }
+
+        $ids = $this->matched[$key];
+        $query->where($ids === [] ? '1 = 0' : $db->quoteName('b.id') . ' IN (' . implode(',', $ids) . ')');
+
+        if ($byName && $ids !== []) {
+            $query->clear('order')->order('FIELD(' . $db->quoteName('b.id') . ', ' . implode(',', $ids) . ')');
         }
 
         return $query;
+    }
+
+    /**
+     * Items with their personal fields opened (a field that cannot be decrypted is blank).
+     */
+    public function getItems()
+    {
+        $items = parent::getItems();
+
+        if (!is_array($items)) {
+            return $items;
+        }
+
+        $data = BookingData::fromApplication();
+
+        foreach ($items as $item) {
+            foreach ($data->openLenient((array) $item) as $field => $value) {
+                $item->$field = $value;
+            }
+        }
+
+        return $items;
     }
 
     protected function populateState($ordering = 'b.start_utc', $direction = 'DESC')
@@ -117,6 +163,7 @@ class BookingsModel extends ListModel
     public function exportRows(): \Generator
     {
         $db = $this->getDatabase();
+        $data = BookingData::fromApplication();
         $last = 0;
         do {
             $query = $this->getListQuery()->clear('order')->order($db->quoteName('b.id') . ' ASC')
@@ -124,6 +171,14 @@ class BookingsModel extends ListModel
             $rows = $db->setQuery($query)->loadAssocList();
             foreach ($rows as $row) {
                 $last = (int) $row['id'];
+                // Opened right before the output; a field that cannot be decrypted is exported empty.
+                $failed = [];
+                $row = $data->openLenient($row, $failed);
+
+                if ($failed !== []) {
+                    Log::add('Appointment export: booking ' . $last . ' has fields that could not be decrypted (' . implode(', ', $failed) . ').', Log::WARNING, 'com_appointments');
+                }
+
                 yield $row;
             }
         } while (count($rows) === 200);

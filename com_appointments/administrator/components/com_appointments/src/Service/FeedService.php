@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\FeedCalendar;
 use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
@@ -168,6 +169,7 @@ final class FeedService
         $db = $this->db;
         $query = $this->bookingQuery()->where($db->quoteName('b.id') . ' = ' . $id);
         $row = $db->setQuery($query)->loadAssoc();
+        $row = $row ? $this->open($row) : null;
         if (!$row) {
             throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND', 404);
         }
@@ -231,7 +233,7 @@ final class FeedService
                 . $db->quoteName('b.modified_utc') . ' >= ' . $db->quote($now->modify('-30 days')->format('Y-m-d H:i:s')) . '))');
         $rows = $db->setQuery($query)->loadAssocList();
         $entries = [];
-        foreach ($rows as $row) {
+        foreach (array_map([$this, 'open'], $rows) as $row) {
             if ($row['start_utc'] >= $horizons[$row['eventtype_id']]) {
                 continue;
             }
@@ -241,6 +243,12 @@ final class FeedService
         }
 
         return $entries;
+    }
+
+    /** Personal fields are encrypted at rest; one that cannot be decrypted is left out of the entry. */
+    private function open(array $row): array
+    {
+        return BookingData::fromApplication()->openLenient($row);
     }
 
     private function bookingQuery()

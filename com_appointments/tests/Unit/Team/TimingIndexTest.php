@@ -225,6 +225,27 @@ final class TimingIndexTest extends TestCase
             $this->expand($ics, '2027-01-10 00:00:00', '2027-01-12 00:00:00'));
     }
 
+    public function testLastEndOfSingleFiniteAndOpenSeries(): void
+    {
+        $index = new TimingIndex();
+        $end = static fn (string $ics, string $zone = 'Europe/Zurich'): ?string => ($index->lastEnd($index->extract($ics), new \DateTimeZone($zone)))?->format('Y-m-d\TH:i\Z');
+
+        self::assertSame('2027-01-15T10:00Z', $end(self::calendar(self::event('DTSTART:20270115T090000Z', 'DTEND:20270115T100000Z'))));
+        self::assertSame('2027-01-15T10:30Z', $end(self::calendar(self::event('DTSTART:20270115T090000Z', 'DURATION:PT90M'))));
+        self::assertSame('2027-03-28T22:00Z', $end(self::calendar(self::event('DTSTART;VALUE=DATE:20270328'))), 'An all-day date lasts its local day');
+        self::assertSame('2027-01-07T10:00Z', $end(self::calendar(self::event('DTSTART:20270105T090000Z', 'DTEND:20270105T100000Z', 'RRULE:FREQ=DAILY;COUNT=3'))));
+        self::assertSame('2027-02-01T10:00Z', $end(self::calendar(self::event('DTSTART:20270105T090000Z', 'DTEND:20270105T100000Z',
+            'RRULE:FREQ=DAILY;UNTIL=20270201T090000Z'))));
+        self::assertSame('2027-03-01T10:00Z', $end(self::calendar(self::event('DTSTART:20270105T090000Z', 'DTEND:20270105T100000Z',
+            'RRULE:FREQ=DAILY;COUNT=2', 'RDATE:20270301T090000Z'))));
+        self::assertSame('2027-02-10T15:00Z', $end(self::calendar(
+            self::event('DTSTART:20270105T090000Z', 'DTEND:20270105T100000Z', 'RRULE:FREQ=WEEKLY;COUNT=2'),
+            self::event('RECURRENCE-ID:20270112T090000Z', 'DTSTART:20270210T140000Z', 'DTEND:20270210T150000Z')
+        )), 'An override moved later extends the end');
+        self::assertNull($end(self::calendar(self::event('DTSTART:20270105T090000Z', 'DTEND:20270105T100000Z', 'RRULE:FREQ=DAILY'))));
+        self::assertNull($end(self::calendar(self::event('DTSTART:20000101T000000Z', 'RRULE:FREQ=MINUTELY;COUNT=999999'))), 'Beyond the step limit: never old');
+    }
+
     public function testInvalidInputIsRefusedWith400(): void
     {
         foreach (['not a calendar', "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:A\r\nEND:VCARD\r\n",
