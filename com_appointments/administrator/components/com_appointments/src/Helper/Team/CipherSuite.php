@@ -33,6 +33,19 @@ final class CipherSuite
     public const KEY_BYTES = 32;
     public const NONCE_BYTES = 24;
 
+    /** Salt length of the password key derivation (SODIUM_CRYPTO_PWHASH_SALTBYTES). */
+    public const PWHASH_SALT_BYTES = 16;
+
+    /** SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE; spelled out so the class loads without libsodium. */
+    public const PWHASH_OPSLIMIT = 2;
+
+    /** SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE (64 MiB), chosen because shared hosts limit memory. */
+    public const PWHASH_MEMLIMIT = 67108864;
+
+    /** Upper bounds accepted from a stored row, so a row can never make one sign-in exhaust the server. */
+    public const PWHASH_OPSLIMIT_MAX = 16;
+    public const PWHASH_MEMLIMIT_MAX = 1073741824;
+
     /**
      * Whether libsodium is available with every function this class needs. The
      * system check reports it, and the team calendars refuse to activate without.
@@ -43,6 +56,8 @@ final class CipherSuite
             'sodium_crypto_aead_xchacha20poly1305_ietf_encrypt',
             'sodium_crypto_aead_xchacha20poly1305_ietf_decrypt',
             'sodium_crypto_box_keypair',
+            'sodium_crypto_box_keypair_from_secretkey_and_publickey',
+            'sodium_crypto_box_publickey_from_secretkey',
             'sodium_crypto_box_seal',
             'sodium_crypto_box_seal_open',
             'sodium_crypto_pwhash',
@@ -144,6 +159,70 @@ final class CipherSuite
         sodium_memzero($pair);
 
         return $plaintext === false ? null : $plaintext;
+    }
+
+    /**
+     * The X25519 public key that belongs to a secret key. Used to check that an
+     * unwrapped secret really is the secret of the stored (MAC-protected) public key.
+     */
+    public static function publicKeyOf(string $secretKey): string
+    {
+        self::assertKey($secretKey);
+
+        return sodium_crypto_box_publickey_from_secretkey($secretKey);
+    }
+
+    /**
+     * The password key of specification 5.2:
+     * `s = Argon2id(password, salt, opslimit, memlimit)`,
+     * `K = HKDF-SHA256(s || serverKey, 32, 'com_appointments/password-kek/v1', salt)`.
+     *
+     * @throws  \InvalidArgumentException  On a wrong salt, server key or limits outside the accepted range.
+     * @throws  \SodiumException           When the server cannot allocate the memory (never a wrong password).
+     */
+    public static function passwordKey(string $password, string $salt, int $opslimit, int $memlimit, string $serverKey): string
+    {
+        self::assertKey($serverKey);
+
+        if (\strlen($salt) !== self::PWHASH_SALT_BYTES) {
+            throw new \InvalidArgumentException('The password salt has exactly 16 bytes.');
+        }
+
+        if (!self::acceptableLimits($opslimit, $memlimit)) {
+            throw new \InvalidArgumentException('The password hashing limits are outside the accepted range.');
+        }
+
+        $stretched = sodium_crypto_pwhash(self::KEY_BYTES, $password, $salt, $opslimit, $memlimit, SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13);
+        $material = $stretched . $serverKey;
+        self::wipe($stretched);
+        $key = hash_hkdf('sha256', $material, self::KEY_BYTES, 'com_appointments/password-kek/v1', $salt);
+        self::wipe($material);
+
+        return $key;
+    }
+
+    /**
+     * Whether stored Argon2id limits may be used: never weaker than INTERACTIVE
+     * (a downgrade), never so high that a sign-in becomes a denial of service.
+     */
+    public static function acceptableLimits(int $opslimit, int $memlimit): bool
+    {
+        return $opslimit >= self::PWHASH_OPSLIMIT && $opslimit <= self::PWHASH_OPSLIMIT_MAX
+            && $memlimit >= self::PWHASH_MEMLIMIT && $memlimit <= self::PWHASH_MEMLIMIT_MAX;
+    }
+
+    /**
+     * Overwrite a string that held key material and leave the variable null.
+     * When PHP shares the string with another variable (copy on write), only
+     * this variable is cleared; the other copy is wiped by its own owner.
+     */
+    public static function wipe(?string &$bytes): void
+    {
+        if (\is_string($bytes) && $bytes !== '' && \function_exists('sodium_memzero')) {
+            sodium_memzero($bytes);
+        }
+
+        $bytes = null;
     }
 
     private static function assertKey(string $key): void
