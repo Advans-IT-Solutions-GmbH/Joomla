@@ -45,6 +45,12 @@ interface LockoutServiceInterface
      */
     public function guardLogin(CMSApplicationInterface $app): void;
 
+    /**
+     * Whether guardLogin() refused this subject and address in the current
+     * request. The user plugin then writes no login.failure for the attempt.
+     */
+    public function wasRefused(string $username, string $ip): bool;
+
     public function recordFailure(string $username, string $ip): void;
 
     public function recordSuccess(string $username, string $ip): void;

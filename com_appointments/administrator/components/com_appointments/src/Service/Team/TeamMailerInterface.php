@@ -49,6 +49,13 @@ interface TeamMailerInterface
     public function accessSuspended(int $userId, string $reason): void;
 
     /**
+     * To every user with core.admin on com_appointments: an account with a
+     * calendar right is temporarily locked after failed sign-ins (so a lock by a
+     * third party is visible); at most once per account and 15 minutes.
+     */
+    public function accountLocked(int $userId, int $retryAfterSeconds): void;
+
+    /**
      * To the former owner and managers of a deleted calendar: title, who deleted
      * it, when. The calendar row no longer exists; the caller passes what the
      * mail needs. No content of the calendar.

@@ -37,6 +37,11 @@ final class LockoutService implements LockoutServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function wasRefused(string $username, string $ip): bool
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function recordFailure(string $username, string $ip): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

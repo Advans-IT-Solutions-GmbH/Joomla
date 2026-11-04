@@ -345,6 +345,8 @@ play back an older, validly signed grant, calendar, device or invitation row.
   addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)
   decrypts the candidate rows on the server in batches and compares in memory. Free-text search over
   names in the booking list works the same way, paged.
+- libsodium is therefore required for **every** installation of the component (preflight refuses
+  without it); the README and the system check say so.
 - One place reads and writes these columns (a booking record class of E); no other code selects them
   directly. CSV export, mails, reminders, signed links, the privacy plugin and the anonymiser use it.
 - Migration in 1.4.0: column types become TEXT/MEDIUMTEXT (`custom_fields` no longer JSON), the
@@ -390,7 +392,13 @@ play back an older, validly signed grant, calendar, device or invitation row.
   locked; `onUserAuthorisation` stays as a second safeguard only (Joomla then shows its own
   JLIB_LOGIN_DENIED; that path is reached only if `guardLogin()` did not run). `retryAfter()` is called before every
   check of a secret, then exactly one `recordFailure()` or `recordSuccess()`. Counter buckets are
-  keyed hashes (IPv6 per /64); no user name or address in clear. The website subject is the account
+  keyed hashes (IPv6 per /64); no user name or address in clear. Not covered by `guardLogin()`, stated
+  plainly: sign-ins that do not post `username` and `password` at the top level (AJAX or JSON logins of
+  extensions, Joomla's API with Basic authentication, extensions calling `login()` themselves); there
+  `onUserAuthorisation` refuses with Joomla's JLIB_LOGIN_DENIED, which shows that the password was
+  right. The README advises to keep the API's Basic authentication plugin off (Joomla's default).
+  Administrators get a mail when an account with a calendar right is locked (`accountLocked()`) and
+  can lift a lock in the devices view (`login.unlocked`). The website subject is the account
   (F maps the sign-in name to the user id); the CalDAV subject is `dav:<name>@<address>`, so CalDAV and
   website lock independently, and an address bucket counts both. Repeated log events of one bucket
   (`dav.auth_failure`, `dav.locked`) are aggregated per minute, `key.mac_failure` per calendar and
@@ -706,6 +714,10 @@ Round 6: static helpers of C are contract for B: `GrantService::macFields(row, g
 `CalendarService::bumpEpoch()`, `CalendarService::anchor()`. `KeyService::discardUserKey()` (B) with a backend action
 in C. The envelope MAC has its own key (`PURPOSE_TEAM_ENVELOPE`). CLI tests that touch the anchor remove
 the file they created, so the web server can write it.
+
+Round 7: `EpochAnchorInterface::KIND_LOG` (F anchors the newest verified log row), `LockoutServiceInterface::wasRefused()`
+(F; B skips login.failure), `TeamMailerInterface::accountLocked()` (D; F calls it), `AuditEvent::LOGIN_UNLOCKED`,
+libsodium required by the installer.
 
 Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every

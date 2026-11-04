@@ -40,6 +40,9 @@ interface EpochAnchorInterface
     public const KIND_CALENDAR = 'calendar';
     public const KIND_USER = 'user';
 
+    /** The newest verified log row (id 1, value last_id), recorded by work package F after an intact chain check and after pruning. */
+    public const KIND_LOG = 'log';
+
     /**
      * Record a new epoch after the database change committed. Never lowers a value.
      */

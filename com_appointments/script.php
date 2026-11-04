@@ -58,6 +58,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // install with a clear message instead of leaving a half-installed
         // component behind. An update keeps whatever driver the existing tables
         // were created on.
+        // Bookings are stored encrypted (team-calendars.md, 5.10), so libsodium is
+        // required for every installation, not only for the internet calendars.
+        if (!\function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt') || !\function_exists('sodium_crypto_box_seal')) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_SODIUM_MISSING'), 'error');
+
+            return false;
+        }
+
         if ($type === 'install' || $type === 'discover_install') {
             $db         = Factory::getContainer()->get(DatabaseInterface::class);
             $serverType = method_exists($db, 'getServerType') ? $db->getServerType() : 'mysql';
