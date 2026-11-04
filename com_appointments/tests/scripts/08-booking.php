@@ -315,8 +315,9 @@ try {
         && $text('//legend[contains(@class, "com-appointments-slots-legend")]/span[@aria-hidden="true"]') === $date->format('l, j F'),
         'The slot legend shows the weekday and the date without the year, its full wording for screen readers');
     $abbreviated = preg_match('/.{0,80}\b\d{2}:\d{2} (?:UTC|CES?T)\b.{0,20}/s', $html, $context) === 1;
-    $check($text('//label[@for="booking-slot-0"]') === '09:00' && !$abbreviated,
-        'Slot times read 09:00 without a zone abbreviation at every time (first time "' . $text('//label[@for="booking-slot-0"]') . '"'
+    // The consent sections above book the first times of this event type, so the first free time is not always 09:00.
+    $check(preg_match('/^(?:0\d|1\d|2[0-3]):[0-5]\d$/', $text('//label[@for="booking-slot-0"]')) === 1 && !$abbreviated,
+        'Slot times read like 09:00 without a zone abbreviation at every time (first time "' . $text('//label[@for="booking-slot-0"]') . '"'
         . ($abbreviated ? ', abbreviated at: ' . preg_replace('/\s+/', ' ', strip_tags($context[0])) : '') . ')');
     $check(substr_count($html, 'All times are shown in the UTC time zone.') === 1, 'The time zone is stated once');
     $weekdays = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th');

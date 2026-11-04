@@ -37,6 +37,11 @@ final class NotificationService
     /**
      * The guest list of booking $id as stored now. A copy without an id keeps its own list; a
      * booking that is no longer stored has no guests to write to.
+     *
+     * A locking read: it sees the latest committed list even inside a transaction of the caller
+     * that started earlier (the Scheduler's reminder run), and a guest removal that is still running
+     * finishes first (BookingStore::removeGuest locks the row FOR UPDATE). A removal that starts
+     * afterwards waits for the caller's transaction, so a removed address never gets a later mail.
      */
     private function currentGuests(int $id, mixed $copy): ?string
     {
@@ -44,10 +49,8 @@ final class NotificationService
             return is_string($copy) ? $copy : null;
         }
 
-        $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
-        $query->select($this->db->quoteName('guest_emails'))->from($this->db->quoteName('#__appointments_bookings'))
-            ->where($this->db->quoteName('id') . ' = ' . $id);
-        $rows = $this->db->setQuery($query)->loadColumn();
+        $rows = $this->db->setQuery('SELECT ' . $this->db->quoteName('guest_emails') . ' FROM ' . $this->db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadColumn();
 
         return is_string($rows[0] ?? null) ? $rows[0] : null;
     }
