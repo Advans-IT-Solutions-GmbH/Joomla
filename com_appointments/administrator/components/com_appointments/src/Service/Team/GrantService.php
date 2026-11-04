@@ -74,6 +74,11 @@ final class GrantService implements GrantServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function setClientProps(int $userId, int $calendarId, array $props): void
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function confirmExternal(int $actorUserId, int $calendarId, int $granteeUserId): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

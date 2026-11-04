@@ -16,6 +16,9 @@ defined('_JEXEC') or die;
  * after checking the row MAC, the grant state, the account and its second
  * factor. Any value object of this class means: this access is effective now.
  *
+ * `clientProps` are the user's own display properties of the calendar
+ * (`colour`, `order`), decoded from `client_props`; display only.
+ *
  * @since  1.4.0
  */
 final class CalendarAccess
@@ -28,7 +31,8 @@ final class CalendarAccess
         public readonly string $audience,
         public readonly string $title,
         public readonly string $colour,
-        public readonly int $synctoken
+        public readonly int $synctoken,
+        public readonly array $clientProps = []
     ) {
     }
 

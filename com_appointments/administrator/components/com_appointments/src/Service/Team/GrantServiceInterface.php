@@ -93,4 +93,14 @@ interface GrantServiceInterface
      * grant becomes active (pending its key wrap).
      */
     public function confirmExternal(int $actorUserId, int $calendarId, int $granteeUserId): void;
+
+    /**
+     * Per-user display properties of one calendar, for CalDAV PROPPATCH. Only an
+     * effective access may set them. Keys: `colour` (#RRGGBB or #RRGGBBAA) and
+     * `order` (int 0..9999); null removes. Display only: not part of row_mac,
+     * not logged.
+     *
+     * @param   array{colour?: string|null, order?: int|null}  $props
+     */
+    public function setClientProps(int $userId, int $calendarId, array $props): void;
 }
