@@ -41,16 +41,20 @@ interface DeviceServiceInterface
     /**
      * Authenticate a CalDAV request. Returns null for every failure without
      * telling the cases apart (unknown user, wrong or malformed password, other
-     * user's device, revoked device). The lock-out is the caller's job, before
-     * and after. A device in clean-up is authenticated without keys.
+     * user's device, revoked device, a found hash with a broken row MAC, a device
+     * of a blocked account). It throws only on an infrastructure failure (the
+     * database is unreachable), never depending on data, so an exception is no
+     * oracle. The lock-out is the caller's job, before and after. A device in
+     * clean-up is authenticated without keys.
      */
     public function authenticate(string $username, #[\SensitiveParameter] string $appPassword): ?DeviceSession;
 
     /**
      * Record a synchronisation: `last_sync_utc` of the device and, when given,
      * of the device and calendar pair. The pair row is written at the first
-     * synchronisation of a calendar always, with the device's current role on it;
-     * later updates at most once per device and minute. `$syncToken` is the
+     * synchronisation of a calendar always. Its role is the role of the latest
+     * synchronisation and is updated at once, without throttling, whenever it
+     * changes; only the time is updated at most once per device and minute. `$syncToken` is the
      * highest sync token delivered to the device for that calendar; it only rises
      * and is always written (not throttled) while the device is active.
      */
