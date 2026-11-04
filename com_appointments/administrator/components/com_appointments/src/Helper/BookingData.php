@@ -33,15 +33,17 @@ defined('_JEXEC') or die;
  * changes nothing (code that receives either a stored or an opened row opens
  * it), and sealing removes the key again before the write. A stored value that
  * is not sealed is clear text of a row written before 1.4.0: it is accepted
- * only while the migration of the update to 1.4.0 runs (`$acceptClear`): the
- * update writes a migration token, keyed with the site secret and valid for
- * {@see self::MIGRATION_DAYS} days, into the component option
- * {@see self::MIGRATION_OPTION}, and the migration deletes it when no clear
- * value is left. Without a valid token (a new installation, a finished
- * migration, a token deleted or forged by a database write) a clear value
- * counts as one that does not open, so a row changed by a database write alone
- * (an address put in as clear text) neither receives mail nor answers a
- * privacy request, and the migration does not encrypt it either.
+ * only while the migration of the update to 1.4.0 runs, and only in a row
+ * created before that update (`$clearBefore`). The update writes a migration
+ * token into the component option {@see self::MIGRATION_OPTION}: the update
+ * time and an expiry of at most {@see self::MIGRATION_DAYS} days, keyed with
+ * the site secret. The migration renews the expiry while old rows are left and
+ * deletes the token when none is (also a token an Options form wrote back).
+ * Without a valid token (a new installation, a finished migration, a token
+ * deleted or forged by a database write), and in any row created later, a
+ * clear value counts as one that does not open: an address put in as clear
+ * text by a database write alone neither receives mail nor answers a privacy
+ * request, and the migration does not encrypt it either.
  *
  * A value that does not open (another site secret, a changed byte) throws in
  * {@see self::open()}; {@see self::openLenient()} blanks it instead and reports
@@ -64,8 +66,8 @@ final class BookingData
     /** The component option that holds the migration token while clear rows are encrypted. */
     public const MIGRATION_OPTION = 'booking_data_migration';
 
-    /** How long a migration token is valid. */
-    public const MIGRATION_DAYS = 30;
+    /** How long a migration token is valid; the migration renews it while old rows are left. */
+    public const MIGRATION_DAYS = 7;
 
     private const PREFIX = 'v1:';
 
@@ -78,9 +80,9 @@ final class BookingData
     private $key;
 
     /**
-     * @param   bool  $acceptClear  Whether a stored clear value is read as it is (only while the migration runs).
+     * @param   int|null  $clearBefore  Unix time: a stored clear value is read as it is in a row created before it (only while the migration runs).
      */
-    public function __construct(KeyProvider $keys, private readonly bool $acceptClear = false)
+    public function __construct(KeyProvider $keys, private readonly ?int $clearBefore = null)
     {
         $this->key = $keys->key(KeyProvider::PURPOSE_BOOKING_DATA);
     }
@@ -97,27 +99,31 @@ final class BookingData
         return self::forToken($keys, $token);
     }
 
-    /** An instance that reads clear values only while `$token` is a valid migration token. */
+    /** An instance that reads clear values of old rows only while `$token` is a valid migration token. */
     public static function forToken(KeyProvider $keys, string $token): self
     {
-        return new self($keys, self::migrationOpen($token, $keys, time()));
+        return new self($keys, self::migrationCutoff($token, $keys, time()));
     }
 
-    /** A migration token valid until `$expiresAt` (Unix seconds). */
-    public static function migrationToken(KeyProvider $keys, int $expiresAt): string
+    /** A migration token for rows created before `$cutoff`, valid until `$expiresAt` (Unix seconds). */
+    public static function migrationToken(KeyProvider $keys, int $expiresAt, int $cutoff): string
     {
-        return $expiresAt . '.' . hash_hmac('sha256', 'com_appointments/booking-migration/v1|' . $expiresAt, $keys->key(KeyProvider::PURPOSE_BOOKING_DATA));
+        return $expiresAt . '.' . $cutoff . '.' . hash_hmac('sha256', 'com_appointments/booking-migration/v2|' . $expiresAt . '|' . $cutoff,
+            $keys->key(KeyProvider::PURPOSE_BOOKING_DATA));
     }
 
-    /** Whether a token was made with this site's key and has not expired. */
-    public static function migrationOpen(string $token, KeyProvider $keys, int $now): bool
+    /**
+     * The update time of a token made with this site's key that has not expired,
+     * null for any other value.
+     */
+    public static function migrationCutoff(string $token, KeyProvider $keys, int $now): ?int
     {
-        if (!preg_match('/^(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[1] <= $now
-            || (int) $match[1] > $now + self::MIGRATION_DAYS * 86400) {
-            return false;
+        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[1] <= $now
+            || (int) $match[1] > $now + self::MIGRATION_DAYS * 86400 || (int) $match[2] > $now) {
+            return null;
         }
 
-        return hash_equals(self::migrationToken($keys, (int) $match[1]), $token);
+        return hash_equals(self::migrationToken($keys, (int) $match[1], (int) $match[2]), $token) ? (int) $match[2] : null;
     }
 
     /** Whether a stored value has the form of a sealed value. */
@@ -214,7 +220,7 @@ final class BookingData
             }
 
             if (!self::isSealed($row[$column])) {
-                if (!$this->acceptClear) {
+                if (!$this->clearAccepted($row)) {
                     $failed[] = $column;
                     $row[$column] = null;
                 }
@@ -250,6 +256,18 @@ final class BookingData
         }
 
         return $row;
+    }
+
+    /** Whether a clear value of this row is read as it is: a row created before the update, while the migration runs. */
+    private function clearAccepted(array $row): bool
+    {
+        if ($this->clearBefore === null) {
+            return false;
+        }
+
+        $created = UtcTimestamp::parse((string) ($row['created_utc'] ?? ''));
+
+        return $created !== null && $created->getTimestamp() < $this->clearBefore;
     }
 
     private static function data(string $uid, string $created, string $column): string

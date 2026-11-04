@@ -42,24 +42,30 @@ final class BookingRecords
     /**
      * Open the migration of the update to 1.4.0: when rows with clear personal
      * fields exist and no row is sealed yet, write a migration token (keyed,
-     * valid {@see BookingData::MIGRATION_DAYS} days) into the component options.
-     * Only while it is valid are clear values read as data and encrypted by
-     * {@see self::migrate()}. Called by every update, before the first migrate();
+     * holding the update time, valid {@see BookingData::MIGRATION_DAYS} days and
+     * renewed by every migrate() that finds rows) into the component options.
+     * Only while it is valid, and only in rows created before the update, are
+     * clear values read as data and encrypted by {@see self::migrate()}. Called
+     * by every update, before the first migrate();
      * once a sealed row exists (any booking made with 1.4.0) it never opens a
      * migration again, so clear text a database write plants later is never
      * encrypted into trusted data. Does nothing on a new installation.
      */
     public static function begin(DatabaseInterface $db, KeyProvider $keys): void
     {
-        if (self::pending($db) > 0 && !self::anySealed($db) && !BookingData::migrationOpen(self::token($db), $keys, time())) {
-            self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400));
+        if (self::pending($db) > 0 && !self::anySealed($db) && BookingData::migrationCutoff(self::token($db), $keys, time()) === null) {
+            self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, time()));
         }
     }
 
     /**
      * Encrypt the personal fields of rows written before 1.4.0, one batch,
-     * only while the migration token is valid: a clear value a database write
-     * put in later is never encrypted into a valid one. Idempotent: a value
+     * only while the migration token is valid and only in rows created before
+     * the update: a clear value a database write put in later is never
+     * encrypted into a valid one. Each call that finds rows renews the token's
+     * expiry, so a large site is never left with rows that nobody can read and
+     * nobody encrypts; the Scheduler routine calls it until it returns 0. A token
+     * an Options form wrote back after the end is deleted again. Idempotent: a value
      * that is already sealed is left alone. Each row is updated with a
      * compare-and-set on its old values, so a concurrent change is never
      * overwritten (that row comes again in the next call). When no row is
@@ -70,15 +76,18 @@ final class BookingRecords
      */
     public static function migrate(DatabaseInterface $db, KeyProvider $keys, int $batch): int
     {
-        if (!BookingData::migrationOpen(self::token($db), $keys, time())) {
+        $cutoff = BookingData::migrationCutoff(self::token($db), $keys, time());
+
+        if ($cutoff === null) {
             return 0;
         }
 
-        $data = new BookingData($keys, true);
+        $data = new BookingData($keys, $cutoff);
         $columns = BookingData::COLUMNS;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))->from($db->quoteName('#__appointments_bookings'))
             ->where(self::clearCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
+            ->where($db->quoteName('created_utc') . ' < ' . $db->quote(gmdate('Y-m-d H:i:s', $cutoff)))
             ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
         $rows = $db->setQuery($query)->loadAssocList();
 
@@ -108,6 +117,8 @@ final class BookingRecords
 
             $db->setQuery($update)->execute();
         }
+
+        self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, $cutoff));
 
         return \count($rows);
     }

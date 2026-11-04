@@ -24,9 +24,9 @@ final class BookingDataTest extends TestCase
             'conference_url' => 'https://meet.example.test/room'];
     }
 
-    private function data(bool $acceptClear = false): BookingData
+    private function data(?int $clearBefore = null): BookingData
     {
-        return new BookingData(new KeyProvider('unit-site-secret'), $acceptClear);
+        return new BookingData(new KeyProvider('unit-site-secret'), $clearBefore);
     }
 
     public function testEveryPersonalFieldIsSealedAndOpensOnce(): void
@@ -109,7 +109,12 @@ final class BookingDataTest extends TestCase
         self::assertNull($strict['invitee_email'], 'A clear address put in by a database write gets no mail');
         self::assertCount(8, $failed);
 
-        self::assertSame($this->row() + [BookingData::OPENED => true], $this->data(true)->open($this->row()));
+        // While the migration runs: clear text of a row created before the update reads as it is, of a later row not.
+        $update = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        self::assertSame($this->row() + [BookingData::OPENED => true], $this->data($update)->open($this->row()));
+        $later = array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']);
+        $this->data($update)->openLenient($later, $failed);
+        self::assertCount(8, $failed, 'Clear text in a row made after the update is never data');
         self::assertFalse(BookingData::isSealed('v1:short'));
         self::assertFalse(BookingData::isSealed('anna@example.test'));
     }
@@ -118,14 +123,16 @@ final class BookingDataTest extends TestCase
     {
         $keys = new KeyProvider('unit-site-secret');
         $now = 1800000000;
-        $token = BookingData::migrationToken($keys, $now + 86400);
+        $token = BookingData::migrationToken($keys, $now + 86400, $now - 60);
 
-        self::assertTrue(BookingData::migrationOpen($token, $keys, $now));
-        self::assertFalse(BookingData::migrationOpen($token, $keys, $now + 86400), 'Expired');
-        self::assertFalse(BookingData::migrationOpen($token, new KeyProvider('another-site-secret'), $now), 'Another site');
-        self::assertFalse(BookingData::migrationOpen(($now + 86400) . '.' . str_repeat('0', 64), $keys, $now), 'Forged');
-        self::assertFalse(BookingData::migrationOpen(BookingData::migrationToken($keys, $now + 400 * 86400), $keys, $now), 'Longer than allowed');
-        self::assertFalse(BookingData::migrationOpen('', $keys, $now));
+        self::assertSame($now - 60, BookingData::migrationCutoff($token, $keys, $now));
+        self::assertNull(BookingData::migrationCutoff($token, $keys, $now + 86400), 'Expired');
+        self::assertNull(BookingData::migrationCutoff($token, new KeyProvider('another-site-secret'), $now), 'Another site');
+        self::assertNull(BookingData::migrationCutoff(($now + 86400) . '.' . ($now - 60) . '.' . str_repeat('0', 64), $keys, $now), 'Forged');
+        self::assertNull(BookingData::migrationCutoff(str_replace('.' . ($now - 60) . '.', '.' . ($now - 30) . '.', $token), $keys, $now), 'Update time changed');
+        self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 30 * 86400, $now), $keys, $now), 'Longer than allowed');
+        self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 86400, $now + 60), $keys, $now), 'Update in the future');
+        self::assertNull(BookingData::migrationCutoff('', $keys, $now));
     }
 
     public function testNoUidNoSeal(): void
