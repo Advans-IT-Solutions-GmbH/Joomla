@@ -280,17 +280,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $external = (int) ($params['external_group'] ?? 0);
 
         if ($internal === [] || !$this->groupExists($db, $internal[0])) {
-            $internal = [$this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_INTERNAL', 'Team calendars internal'))];
+            $internal = [$this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_INTERNAL', 'Internet calendars internal'))];
         }
 
         if ($external <= 0 || !$this->groupExists($db, $external)) {
-            $external = $this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_EXTERNAL', 'Team calendars external'));
+            $external = $this->findOrCreateGroup($db, $parent, $this->text('COM_APPOINTMENTS_TEAM_GROUP_EXTERNAL', 'Internet calendars external'));
         }
 
         $level = (int) ($params['team_viewlevel'] ?? 0);
 
         if ($level <= 0 || !$this->viewLevelExists($db, $level)) {
-            $level = $this->findOrCreateViewLevel($db, $this->text('COM_APPOINTMENTS_TEAM_VIEWLEVEL', 'Team calendars'), array_merge($internal, [$external]));
+            $level = $this->findOrCreateViewLevel($db, $this->text('COM_APPOINTMENTS_TEAM_VIEWLEVEL', 'Internet calendars'), array_merge($internal, [$external]));
         }
 
         $params['team_groups'] = $internal;

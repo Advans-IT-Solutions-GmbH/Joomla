@@ -1,4 +1,11 @@
-# Team calendars with CalDAV
+# Internet calendars with CalDAV
+
+An internet calendar is a calendar that every authorised user reads or writes over CalDAV, with
+sign-in only. That is the name in the interface, the language files and the documentation (de-DE
+«Internetkalender», fr-FR «calendriers Internet»; the backend menu entry «Internet calendars», the
+site view «My calendars»). Inside the code the feature keeps the short technical name `team`:
+namespaces `Helper\Team` and `Service\Team`, options `team_*`/`teamcal_enabled`, language keys
+`COM_APPOINTMENTS_TEAM_*`, this file's name. Do not rename those.
 
 Status: specification and scaffold (schema, interfaces, stubs, placeholder views). Target release
 1.4.0; the token feeds it replaces are removed in 2.0.0. This file is binding for every work
@@ -36,7 +43,7 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
   decrypt them. A recovery key is kept offline by the owner. After a password reset a manager grants
   again, or the recovery key is used.
-- **Private smartphones are allowed** for team calendars. No device management is required; the
+- **Private smartphones are allowed** for internet calendars. No device management is required; the
   usage rule (lock code, no forwarding, report a loss) and the clean-up are the safeguards.
 - **Mails as today:** content and ICS of booking mails also go to the team; they are outside the
   calendar encryption.
@@ -82,7 +89,7 @@ com_appointments (component, existing)
 └── plugins/task/appointments/            existing; new routines: clean-up advance, log prune, invitation purge
 ```
 
-- Both new plugins are installed **disabled**; the component option «Team calendars» is off by
+- Both new plugins are installed **disabled**; the component option «Internet calendars» is off by
   default. `TeamServices::enabled()` is the single switch: option on **and** libsodium available.
   Every entry point behaves as if the feature did not exist while it is false.
 - `TeamServices` is the only wiring point. Each service is an interface plus one class with a fixed
@@ -316,9 +323,9 @@ times); history and the time beyond the horizon are the additional exposure.
 
 | Item | Created by the installer | Meaning |
 |---|---|---|
-| Group «Team calendars internal» (de-DE «Teamkalender intern») | below the registration group (`com_users` `new_usertype`, normally «Registered»), no permission of its own | may receive team grants; second factor enforced |
-| Group «Team calendars external» (de-DE «Teamkalender extern») | same | may receive grants from administrators only, at most write; second factor enforced |
-| Access level «Team calendars» | holds both groups | access of the «My calendars» menu item, so the item is shown to these accounts only |
+| Group «Internet calendars internal» (de-DE «Internetkalender intern») | below the registration group (`com_users` `new_usertype`, normally «Registered»), no permission of its own | may receive team grants; second factor enforced |
+| Group «Internet calendars external» (de-DE «Internetkalender extern») | same | may receive grants from administrators only, at most write; second factor enforced |
+| Access level «Internet calendars» | holds both groups | access of the «My calendars» menu item, so the item is shown to these accounts only |
 | Component permission `appointments.team.external` «Share with external users» | in `access.xml`, granted to nobody by default (Super Users have it implicitly) | invite external users, confirm their acceptance, grant to them |
 
 - A group is **eligibility, not access**: it says that the account may hold calendar grants and must
@@ -429,6 +436,7 @@ except the invitation link. Booking mails stay as they are, with content and ICS
 
 ## 13. Administrator views
 
+- Backend menu: submenu «Dashboard» and «Internet calendars» (view `calendars`), in the manifest.
 - `calendars` (C): list, edit (title, description, colour, owner, allow externals, blocks
   availability, retention), grants, rotate key, recovery key setup and use. Navigation links on the
   dashboard (C).
@@ -498,10 +506,10 @@ appearing by itself within the interval, a revoked grant disappearing, and the c
 | A CalDAV | `plugins/system/appointmentsdav/**`, `administrator/…/lib/**`, `Service/Team/CalendarObjectStore.php`, `Helper/Team/VendorAutoloader.php`, `THIRD-PARTY-NOTICES.txt`, `tests/tools/sabre/**`, `tests/scripts/team-a-dav.php`, `tests/Unit/Team/Dav*` |
 | B Keys | `Service/Team/KeyService.php`, `Service/Team/KeySession.php`, `Helper/Team/CipherSuite.php`, `plugins/user/appointments/**`, `tests/scripts/team-b-keys.php`, `tests/Unit/Team/{CipherSuite,Key}*` |
 | C Grants and admin | `Service/Team/{CalendarService,GrantService,InvitationService}.php`, `Table/{Calendar,Grant,Invitation}Table.php`, admin views/controllers/models/forms/layouts `calendars`, `calendar`, `invitations`, `config.xml`, `DisplayController.php`, dashboard layout, `tests/Unit/ConfigurationTest.php`, `tests/scripts/team-c-grants.php` |
-| D Devices and site | `Service/Team/{DeviceService,TeamMailer}.php`, `Table/DeviceTable.php`, every site file of the team calendars (`mycalendars`, `invitation`, site controllers), `Helper/Team/AppPassword.php`, `tests/scripts/team-d-devices.php` |
+| D Devices and site | `Service/Team/{DeviceService,TeamMailer}.php`, `Table/DeviceTable.php`, every site file of the internet calendars (`mycalendars`, `invitation`, site controllers), `Helper/Team/AppPassword.php`, `tests/scripts/team-d-devices.php` |
 | E Booking | `Service/Team/{TimingIndex,BookingCalendarBridge}.php`, `Service/{AvailabilityService,BookingStore,FeedService}.php`, `Controller/FeedsController.php`, site `FeedController.php`, eventtype form/model/table, Feeds view, `tests/scripts/team-e-booking.php`, `12-feed.php` |
 | F Log and clean-up | `Service/Team/{AuditService,LockoutService,CleanupService}.php`, admin `devices`, `teamlog`, System view/model, `plugins/privacy/appointments/**`, `plugins/task/appointments/**`, `tests/scripts/team-f-log.php` |
-| G Tests and docs | `tests/caldav/**`, `tests/manual/teamcalendars*.md`, `tests/Dockerfile*` (TLS), `.github/workflows/appointments.yml`, `README.md` section «Team calendars» |
+| G Tests and docs | `tests/caldav/**`, `tests/manual/teamcalendars*.md`, `tests/Dockerfile*` (TLS), `.github/workflows/appointments.yml`, `README.md` section «Internet calendars» |
 
 Frozen for everybody (changes only through the coordinator): `Helper/Team/*` except the files named
 above, `Service/Team/*Interface.php`, `Service/Team/TeamServices.php`, the SQL files, `script.php`,

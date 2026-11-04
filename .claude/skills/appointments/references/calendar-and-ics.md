@@ -207,7 +207,7 @@ of one of its event types would either be revoked by that event type's rotation 
 
 ### Feed security
 
-The token feeds are a secret address and are replaced by the team calendars: off by default on new
+The token feeds are a secret address and are replaced by the internet calendars: off by default on new
 installations from 1.4.0, removed in 2.0.0. See `references/team-calendars.md`, section 15.
 
 The feed URL is a bearer secret: anyone holding it sees the bookings. Treat it as a credential.

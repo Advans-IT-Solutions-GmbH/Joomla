@@ -62,6 +62,10 @@
 
     <administration>
         <menu link="option=com_appointments">COM_APPOINTMENTS</menu>
+        <submenu>
+            <menu link="option=com_appointments">COM_APPOINTMENTS_MENU_DASHBOARD</menu>
+            <menu link="option=com_appointments&amp;view=calendars">COM_APPOINTMENTS_MENU_CALENDARS</menu>
+        </submenu>
         <files folder="administrator/components/com_appointments">
             <folder>forms</folder>
             <folder>lib</folder>
