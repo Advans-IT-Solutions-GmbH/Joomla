@@ -120,16 +120,19 @@ final class CalendarService implements CalendarServiceInterface
     }
 
     /**
-     * After the commit: remember the epochs outside the database. A failure of
-     * the anchor never undoes the change (the system check reports it).
+     * After the commit: let the anchor remember the committed epochs outside
+     * the database. `recordAfterCommit()` reads the committed value itself
+     * (at once, or at the end of the request when a transaction is still
+     * open), so the epoch given here is only informative. A failure of the
+     * anchor never undoes the change (the system check reports it).
      *
      * @param   array<int, int>  $epochs  Calendar id => epoch.
      */
     public static function anchor(TeamServices $services, array $epochs): void
     {
-        foreach ($epochs as $calendarId => $epoch) {
+        foreach (array_keys($epochs) as $calendarId) {
             try {
-                $services->anchor()->record(EpochAnchorInterface::KIND_CALENDAR, (int) $calendarId, (int) $epoch);
+                $services->anchor()->recordAfterCommit(EpochAnchorInterface::KIND_CALENDAR, (int) $calendarId);
             } catch (\Throwable) {
             }
         }
@@ -477,7 +480,7 @@ final class CalendarService implements CalendarServiceInterface
             } catch (\Throwable) {
             }
 
-            GrantService::queueEpoch($calendarId, max((int) $row->grant_epoch, $minimum) + 1);
+            GrantService::queueTombstone($calendarId, max((int) $row->grant_epoch, $minimum) + 1);
 
             return ['title' => $valid ? (string) $row->title : null, 'recipients' => array_values(array_unique($recipients))];
         });

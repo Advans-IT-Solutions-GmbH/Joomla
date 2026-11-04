@@ -391,6 +391,7 @@ final class InvitationService implements InvitationServiceInterface
         });
 
         $user = GrantService::user((int) $row->user_id);
+        $before = $this->storedPasswordHash((int) $row->user_id);
         $saved = false;
 
         try {
@@ -398,7 +399,9 @@ final class InvitationService implements InvitationServiceInterface
                 && $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
                 && $user->save(true);
         } catch (\Throwable) {
-            $saved = false;
+            // A plugin may throw after Joomla stored the password: then the
+            // activation did happen and must be logged and mailed.
+            $saved = $this->storedPasswordHash((int) $row->user_id) !== $before;
         }
 
         if (!$saved) {
@@ -539,6 +542,18 @@ final class InvitationService implements InvitationServiceInterface
         }
 
         return [$row, $user];
+    }
+
+    /**
+     * The stored password hash, compared only, never shown or logged.
+     */
+    private function storedPasswordHash(int $userId): string
+    {
+        $db = $this->services->db();
+
+        return hash('sha256', (string) $db->setQuery(
+            'SELECT ' . $db->quoteName('password') . ' FROM ' . $db->quoteName('#__users') . ' WHERE id = ' . $userId
+        )->loadResult());
     }
 
     /**

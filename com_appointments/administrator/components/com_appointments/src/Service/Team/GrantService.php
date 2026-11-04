@@ -344,12 +344,14 @@ final class GrantService implements GrantServiceInterface
      * Run work in a transaction that nests: inside another transaction (ours or
      * a caller's) it becomes a savepoint, never a second START TRANSACTION,
      * which in MySQL would silently commit the outer one and drop its locks.
-     * Epochs queued inside ({@see self::queueEpoch()}) reach the anchor only
-     * after the outermost commit, and only when no foreign transaction is
-     * still open around it (its commit is out of sight here, and an anchor
-     * ahead of the database would lock the calendar out); a rollback drops
-     * them. A dropped record only weakens the rollback protection until the
-     * next change of that calendar.
+     * Calendars whose epoch changed inside ({@see self::queueEpoch()}) are
+     * handed to the anchor after our outermost commit with
+     * `recordAfterCommit()`: the anchor reads the committed value itself, at
+     * once or at the end of the request when a foreign transaction is still
+     * open, so it never stands above a database that rolled back. A rollback
+     * here drops the queue. Tombstones of deleted calendars
+     * ({@see self::queueTombstone()}) have no row left to read; they are written
+     * with their value, and only when no transaction is open at all.
      *
      * @template T
      * @param   callable():T  $work
@@ -378,19 +380,40 @@ final class GrantService implements GrantServiceInterface
         if (self::$depth === 0) {
             $pending = self::$pendingEpochs;
             self::$pendingEpochs = [];
+            $changed = [];
+            $tombstones = [];
 
-            if (self::driverDepth($db) === 0) {
-                $epochs = [];
-
-                foreach ($pending as [$calendarId, $epoch]) {
-                    $epochs[$calendarId] = max($epochs[$calendarId] ?? 0, $epoch);
+            foreach ($pending as [$calendarId, $epoch, $tombstone]) {
+                if ($tombstone) {
+                    $tombstones[$calendarId] = max($tombstones[$calendarId] ?? 0, $epoch);
+                } else {
+                    $changed[$calendarId] = $epoch;
                 }
+            }
 
-                CalendarService::anchor($services, $epochs);
+            CalendarService::anchor($services, array_diff_key($changed, $tombstones));
+
+            if ($tombstones !== [] && self::driverDepth($db) === 0) {
+                foreach ($tombstones as $calendarId => $epoch) {
+                    try {
+                        $services->anchor()->record(EpochAnchorInterface::KIND_CALENDAR, $calendarId, $epoch);
+                    } catch (\Throwable) {
+                    }
+                }
             }
         }
 
         return $result;
+    }
+
+    /**
+     * Queue the anchor value of a deleted calendar inside {@see self::transaction()}.
+     */
+    public static function queueTombstone(int $calendarId, int $epoch): void
+    {
+        if (self::$depth > 0 && $calendarId > 0 && $epoch > 0) {
+            self::$pendingEpochs[] = [$calendarId, $epoch, true];
+        }
     }
 
     /**
@@ -400,7 +423,7 @@ final class GrantService implements GrantServiceInterface
     public static function queueEpoch(int $calendarId, int $epoch): void
     {
         if (self::$depth > 0 && $calendarId > 0 && $epoch > 0) {
-            self::$pendingEpochs[] = [$calendarId, $epoch];
+            self::$pendingEpochs[] = [$calendarId, $epoch, false];
         }
     }
 
@@ -409,15 +432,17 @@ final class GrantService implements GrantServiceInterface
      */
     private static function driverDepth(object $db): int
     {
-        foreach ([$db::class, \Joomla\Database\DatabaseDriver::class] as $class) {
-            if (property_exists($class, 'transactionDepth')) {
-                $value = (new \ReflectionProperty($class, 'transactionDepth'))->getValue($db);
-
-                return \is_int($value) ? $value : 1;
-            }
+        if (!$db instanceof \Joomla\Database\DatabaseDriver || !property_exists(\Joomla\Database\DatabaseDriver::class, 'transactionDepth')) {
+            return 1;
         }
 
-        return 1;
+        try {
+            $value = (new \ReflectionProperty(\Joomla\Database\DatabaseDriver::class, 'transactionDepth'))->getValue($db);
+        } catch (\Throwable) {
+            return 1;
+        }
+
+        return \is_int($value) ? $value : 1;
     }
 
     // ------------------------------------------------------------------
@@ -520,11 +545,39 @@ final class GrantService implements GrantServiceInterface
     public static function lockCalendarsOf(TeamServices $services, int $userId): array
     {
         $db = $services->db();
-
-        return array_map('intval', $db->setQuery(
+        // Calendars first (the order of every other path) ...
+        $locked = array_map('intval', $db->setQuery(
             'SELECT id FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id IN (SELECT calendar_id FROM '
             . $db->quoteName('#__' . self::TABLE) . ' WHERE user_id = ' . $userId . ') ORDER BY id FOR UPDATE'
         )->loadColumn() ?: []);
+
+        // ... then the user's grant rows with a locking (current) read: the
+        // list above may come from an older snapshot, so calendars of rows that
+        // appeared meanwhile are locked as well.
+        for ($round = 0; $round < 5; $round++) {
+            $ids = array_map('intval', $db->setQuery(
+                'SELECT calendar_id FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE user_id = ' . $userId . ' ORDER BY calendar_id FOR UPDATE'
+            )->loadColumn() ?: []);
+            $missing = array_values(array_diff($ids, $locked));
+
+            if ($missing === []) {
+                break;
+            }
+
+            sort($missing);
+            $locked = array_merge($locked, array_map('intval', $db->setQuery(
+                'SELECT id FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id IN (' . implode(',', $missing) . ') ORDER BY id FOR UPDATE'
+            )->loadColumn() ?: []));
+
+            if (array_diff($missing, $locked) !== []) {
+                // A grant row without a calendar cannot exist (foreign key); stop.
+                break;
+            }
+        }
+
+        sort($locked);
+
+        return $locked;
     }
 
     /**
@@ -857,14 +910,15 @@ final class GrantService implements GrantServiceInterface
         $result = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keys): array {
             // Decided under the calendar lock, so a concurrent revoke of the
             // actor's own grant cannot slip between the check and the write.
-            $this->lockCalendar($calendarId);
+            $locked = $this->lockCalendar($calendarId);
 
-            if (!$this->canGrant($actorUserId, $calendarId, $granteeUserId, $role)) {
+            if ($locked === null || !$this->canGrant($actorUserId, $calendarId, $granteeUserId, $role)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
             $previous = $this->grantRow($calendarId, $granteeUserId, true);
-            $previousRole = $previous !== null && $this->grantMacValid($previous) ? CalendarRole::tryFrom((int) $previous->role) : null;
+            $previousRole = $previous !== null && $this->grantMacValid($previous, (int) $locked->grant_epoch)
+                ? CalendarRole::tryFrom((int) $previous->role) : null;
             $audience = $this->audienceOf($granteeUserId);
             $state = $role->holdsKey() ? TeamStates::GRANT_PENDING_KEY : TeamStates::GRANT_ACTIVE;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
@@ -895,8 +949,8 @@ final class GrantService implements GrantServiceInterface
     {
         $this->assertEnabled();
         $grant = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId): object {
-            $this->lockCalendar($calendarId);
-            $calendar = $this->services->calendars()->get($calendarId);
+            $locked = $this->lockCalendar($calendarId);
+            $calendar = $locked !== null && CalendarService::rowValid($this->services, $locked) ? $locked : null;
             $grant = $calendar === null ? null : $this->grantRow($calendarId, $granteeUserId, true);
 
             if ($grant === null) {
@@ -909,7 +963,7 @@ final class GrantService implements GrantServiceInterface
             $allowed = self::mayRevoke(
                 $this->accessFor($actorUserId, $calendarId)?->role,
                 self::sharesExternally($this->services, $actorUserId),
-                $this->grantMacValid($grant) ? (string) $grant->audience : $granteeAudience,
+                $this->grantMacValid($grant, (int) $calendar->grant_epoch) ? (string) $grant->audience : $granteeAudience,
                 $granteeAudience,
                 $granteeUserId === (int) $calendar->owner_user_id,
                 $granteeUserId === $actorUserId
@@ -954,8 +1008,10 @@ final class GrantService implements GrantServiceInterface
             $done = [];
 
             foreach (self::lockCalendarsOf($this->services, $userId) as $calendarId) {
+                $locked = $this->lockCalendar($calendarId);
                 $current = $this->grantRow($calendarId, $userId, true);
-                $valid = $current !== null && $this->grantMacValid($current);
+                $valid = $locked !== null && $current !== null && CalendarService::rowValid($this->services, $locked)
+                    && $this->grantMacValid($current, (int) $locked->grant_epoch);
                 $role = $current === null ? null : CalendarRole::tryFrom((int) $current->role);
 
                 // Every calendar the user has any row on gets a new epoch, also
@@ -1051,7 +1107,11 @@ final class GrantService implements GrantServiceInterface
                 self::write($this->services, $calendarId, $granteeUserId, $role, TeamStates::GRANT_ACTIVE, $audience, $actorUserId);
                 $this->dropKeyAccess($calendarId, $granteeUserId);
             } else {
-                $wrapped = $this->services->keys()->wrapForUser($keyring->current(), $granteeUserId);
+                // The keyring was opened before the lock: when the key rotated
+                // meanwhile, its current version is not the calendar's any more,
+                // and the grant waits for the next key holder instead.
+                $wrapped = $keyring->current()->version() === (int) $calendar->key_version
+                    && $this->services->keys()->wrapForUser($keyring->current(), $granteeUserId);
                 $state = $wrapped ? TeamStates::GRANT_ACTIVE : TeamStates::GRANT_PENDING_KEY;
                 self::write($this->services, $calendarId, $granteeUserId, $role, $state, $audience, $actorUserId);
             }
@@ -1131,10 +1191,15 @@ final class GrantService implements GrantServiceInterface
     /**
      * Serialise every grant decision of one calendar.
      */
-    private function lockCalendar(int $calendarId): void
+    /**
+     * Lock the calendar row and return it as read under the lock (a current
+     * read, never an older snapshot), or null when it does not exist.
+     */
+    private function lockCalendar(int $calendarId): ?object
     {
         $db = $this->services->db();
-        $db->setQuery('SELECT id FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id = ' . $calendarId . ' FOR UPDATE')->loadResult();
+
+        return $db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE id = ' . $calendarId . ' FOR UPDATE')->loadObject() ?: null;
     }
 
     private function grantRow(int $calendarId, int $userId, bool $forUpdate = false): ?object
