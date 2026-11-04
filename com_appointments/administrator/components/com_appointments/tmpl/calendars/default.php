@@ -161,6 +161,18 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
                         <?php echo HTMLHelper::_('form.token'); ?>
                     </form>
 
+                    <h3 class="h5 mt-4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE'); ?></h3>
+                    <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE_DESC'); ?></p>
+                    <form action="<?php echo $action; ?>" method="post" autocomplete="off">
+                        <div class="mb-3">
+                            <label class="form-label" for="recovery-old"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_OLD_SECRET'); ?></label>
+                            <input class="form-control" type="password" id="recovery-old" name="recovery_secret" autocomplete="off" spellcheck="false" required>
+                        </div>
+                        <button type="submit" class="btn btn-secondary" name="task" value="calendars.recoveryRotate"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE'); ?></button>
+                        <?php echo HTMLHelper::_('form.token'); ?>
+                    </form>
+                <?php endif; ?>
+
                     <?php if ($this->invalidKeys) : ?>
                         <h3 class="h5 mt-4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEYS_INVALID_HEADING'); ?></h3>
                         <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEYS_INVALID_DESC'); ?></p>
@@ -181,18 +193,6 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
                             <?php endforeach; ?>
                         </ul>
                     <?php endif; ?>
-
-                    <h3 class="h5 mt-4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE'); ?></h3>
-                    <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE_DESC'); ?></p>
-                    <form action="<?php echo $action; ?>" method="post" autocomplete="off">
-                        <div class="mb-3">
-                            <label class="form-label" for="recovery-old"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_OLD_SECRET'); ?></label>
-                            <input class="form-control" type="password" id="recovery-old" name="recovery_secret" autocomplete="off" spellcheck="false" required>
-                        </div>
-                        <button type="submit" class="btn btn-secondary" name="task" value="calendars.recoveryRotate"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE'); ?></button>
-                        <?php echo HTMLHelper::_('form.token'); ?>
-                    </form>
-                <?php endif; ?>
             </div>
         </section>
     <?php endif; ?>

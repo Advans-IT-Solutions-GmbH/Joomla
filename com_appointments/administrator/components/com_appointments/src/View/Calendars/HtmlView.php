@@ -107,9 +107,9 @@ class HtmlView extends BaseHtmlView
             try {
                 $this->items = CalendarService::listing($services);
 
-                foreach ($this->items as $item) {
-                    $role = $item->mac_valid ? $services->grants()->accessFor((int) $user->id, (int) $item->id)?->role : null;
-                    $this->roles[(int) $item->id] = GrantService::roleLabelKey($role);
+                // The signed-in user's effective accesses in one call, not one per calendar.
+                foreach ($services->grants()->calendarsFor((int) $user->id) as $access) {
+                    $this->roles[$access->calendarId] = GrantService::roleLabelKey($access->role);
                 }
 
                 if ($this->canAdmin) {

@@ -366,36 +366,51 @@ final class InvitationService implements InvitationServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_PASSWORD', 400);
         }
 
-        // First the link is used up, in its own committed transaction: two
-        // requests with the same token can never both get past this point.
-        // The password is set afterwards, outside every transaction, because
-        // Joomla's user plugins react to it with transactions of their own.
-        $row = $this->atomic(function () use ($token): object {
-            $open = $this->openRow($token, true);
+        $peek = $this->openRow($token, false);
 
-            if ($open === null) {
-                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
-            }
+        if ($peek === null) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_FOUND', 404);
+        }
 
-            [$row] = $open;
-            $row->state = TeamStates::INVITATION_COMPLETED;
-            $row->completed_utc = $this->services->now()->format('Y-m-d H:i:s');
-            $this->store($row, []);
+        // Everything below runs under the account lock that revoke() holds as
+        // well: the link is used up in its own committed transaction (two
+        // requests with the same token never both get past it), then the
+        // password is saved outside every transaction (Joomla's user plugins
+        // react with transactions of their own), and a revoke can neither
+        // block the account in between nor be undone by a stale save. When
+        // the lock is not available, nothing has changed.
+        [$outcome, $row] = $this->withAccountLock((int) $peek[0]->user_id, function () use ($token, $password, $peek): array {
+            $row = $this->atomic(function () use ($token, $peek): ?object {
+                $open = $this->openRow($token, true);
 
-            return $row;
-        });
+                if ($open === null || (int) $open[0]->user_id !== (int) $peek[0]->user_id) {
+                    return null;
+                }
 
-        // Under the account lock that revoke() holds as well: a revoke cannot
-        // block the account between the reload below and the save, and a link
-        // closed meanwhile is not completed.
-        $outcome = $this->withAccountLock((int) $row->user_id, function () use ($row, $password): string {
-            $current = $this->rows('id = ' . (int) $row->id, false)[0] ?? null;
-            $user = GrantService::user((int) $row->user_id);
+                [$row] = $open;
+                $row->state = TeamStates::INVITATION_COMPLETED;
+                $row->completed_utc = $this->services->now()->format('Y-m-d H:i:s');
+                $this->store($row, []);
 
-            if ($current === null || !$this->macValid($current) || (int) $current->state !== TeamStates::INVITATION_COMPLETED
-                || (string) $current->completed_utc !== (string) $row->completed_utc || $user === null || $user->block) {
-                // Revoked or blocked meanwhile: the link is gone for good.
-                return 'gone';
+                return $row;
+            });
+
+            // Checked again right before the save: an address changed, a
+            // promotion to the administrator or a sign-in meanwhile ends it.
+            $user = $row === null ? null : $this->eligibleUser($row);
+
+            if ($row === null || $user === null) {
+                if ($row !== null) {
+                    $this->atomic(function () use ($row): void {
+                        $current = $this->rows('id = ' . (int) $row->id, true)[0] ?? null;
+
+                        if ($current !== null && $this->macValid($current)) {
+                            $this->close($current, null);
+                        }
+                    });
+                }
+
+                return ['gone', $row];
             }
 
             $before = $this->storedPasswordHash((int) $row->user_id);
@@ -409,7 +424,25 @@ final class InvitationService implements InvitationServiceInterface
                 $saved = $this->storedPasswordHash((int) $row->user_id) !== $before;
             }
 
-            return $saved ? 'saved' : 'refused';
+            if (!$saved) {
+                // Joomla refused the password: the link is given back unchanged
+                // (still bound to the account and its address), so the person
+                // can try again until it expires.
+                $this->atomic(function () use ($row): void {
+                    $current = $this->rows('id = ' . (int) $row->id, true)[0] ?? null;
+
+                    if ($current !== null && $this->macValid($current) && (int) $current->state === TeamStates::INVITATION_COMPLETED
+                        && (string) $current->completed_utc === (string) $row->completed_utc) {
+                        $current->state = TeamStates::INVITATION_OPEN;
+                        $current->completed_utc = null;
+                        $this->store($current, []);
+                    }
+                });
+
+                return ['refused', $row];
+            }
+
+            return ['saved', $row];
         });
 
         if ($outcome === 'gone') {
@@ -417,20 +450,6 @@ final class InvitationService implements InvitationServiceInterface
         }
 
         if ($outcome !== 'saved') {
-            // Joomla refused the password: the link is given back unchanged
-            // (still bound to the account and its address), so the person can
-            // try again until it expires.
-            $this->atomic(function () use ($row): void {
-                $current = $this->rows('id = ' . (int) $row->id, true)[0] ?? null;
-
-                if ($current !== null && $this->macValid($current) && (int) $current->state === TeamStates::INVITATION_COMPLETED
-                    && (string) $current->completed_utc === (string) $row->completed_utc) {
-                    $current->state = TeamStates::INVITATION_OPEN;
-                    $current->completed_utc = null;
-                    $this->store($current, []);
-                }
-            });
-
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_PASSWORD', 400);
         }
 
@@ -550,6 +569,18 @@ final class InvitationService implements InvitationServiceInterface
             return null;
         }
 
+        $user = $this->eligibleUser($row);
+
+        return $user === null ? null : [$row, $user];
+    }
+
+    /**
+     * The account of a link, freshly loaded, when it may still be activated:
+     * unblocked, without administrator sign-in, in a calendar group, never
+     * signed in, and still with the address the link was sent to.
+     */
+    private function eligibleUser(object $row): ?User
+    {
         $userId = (int) $row->user_id;
         $user = GrantService::user($userId);
 
@@ -560,7 +591,7 @@ final class InvitationService implements InvitationServiceInterface
             return null;
         }
 
-        return [$row, $user];
+        return $user;
     }
 
     /**

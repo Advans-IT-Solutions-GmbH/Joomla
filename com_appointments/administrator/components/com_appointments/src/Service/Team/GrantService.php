@@ -825,6 +825,7 @@ final class GrantService implements GrantServiceInterface
                 'role'          => (int) $row->role,
                 'state'         => (int) $row->state,
                 'audience'      => (string) $row->audience,
+                'current_audience' => $this->audienceOf((int) $row->user_id),
                 'granted_by'    => (int) $row->granted_by,
                 'created_utc'   => (string) $row->created_utc,
                 'modified_utc'  => (string) $row->modified_utc,

@@ -108,11 +108,14 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                     </tr></thead>
                     <tbody>
                     <?php foreach ($this->grants as $index => $grant) :
-                        $external = $grant->audience === TeamStates::AUDIENCE_EXTERNAL;
-                        $mayChange = !$grant->is_owner && (int) $grant->user_id !== $me
+                        // Changing follows the account's current group (as the
+                        // service decides); removing also the stored one.
+                        $external = $grant->current_audience === TeamStates::AUDIENCE_EXTERNAL;
+                        $wasExternal = $grant->audience === TeamStates::AUDIENCE_EXTERNAL;
+                        $mayChange = !$grant->is_owner && (int) $grant->user_id !== $me && $grant->current_audience !== 'none'
                             && ($external ? $this->canShareExternally : $manager);
                         $mayRemove = !$grant->is_owner && (int) $grant->user_id !== $me
-                            && ($manager || ($external && $this->canShareExternally));
+                            && ($manager || (($external || $wasExternal) && $this->canShareExternally));
                         ?>
                         <tr>
                             <th scope="row">
