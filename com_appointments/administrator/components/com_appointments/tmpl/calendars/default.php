@@ -138,6 +138,27 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
                         <?php echo HTMLHelper::_('form.token'); ?>
                     </form>
 
+                    <?php if ($this->invalidKeys) : ?>
+                        <h3 class="h5 mt-4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEYS_INVALID_HEADING'); ?></h3>
+                        <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEYS_INVALID_DESC'); ?></p>
+                        <ul class="list-unstyled">
+                            <?php foreach ($this->invalidKeys as $index => $account) : ?>
+                                <li class="mb-3">
+                                    <form action="<?php echo $action; ?>" method="post">
+                                        <strong><?php echo $this->escape(trim((string) $account->name . ' (' . (string) $account->username . ')')); ?></strong>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="discard-confirm-<?php echo (int) $index; ?>" name="confirm" value="1" required>
+                                            <label class="form-check-label" for="discard-confirm-<?php echo (int) $index; ?>"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARD_CONFIRM'); ?></label>
+                                        </div>
+                                        <input type="hidden" name="user_id" value="<?php echo (int) $account->id; ?>">
+                                        <button type="submit" class="btn btn-danger btn-sm" name="task" value="calendars.discardKey"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARD_BUTTON'); ?></button>
+                                        <?php echo HTMLHelper::_('form.token'); ?>
+                                    </form>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endif; ?>
+
                     <h3 class="h5 mt-4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE'); ?></h3>
                     <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_RECOVERY_ROTATE_DESC'); ?></p>
                     <form action="<?php echo $action; ?>" method="post" autocomplete="off">

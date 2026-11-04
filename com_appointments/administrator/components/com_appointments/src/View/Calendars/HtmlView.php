@@ -55,6 +55,9 @@ class HtmlView extends BaseHtmlView
     /** @var object[] */
     protected $users = [];
 
+    /** @var object[]  Accounts whose stored key row no longer verifies (id, name, username). */
+    protected $invalidKeys = [];
+
     /** @var bool */
     protected $canCreate = false;
 
@@ -107,6 +110,7 @@ class HtmlView extends BaseHtmlView
 
                 if ($this->canAdmin) {
                     $this->users = GrantService::eligibleUsers($services);
+                    $this->invalidKeys = $this->invalidKeys($services);
                 }
             } catch (TeamException) {
                 $this->available = false;
@@ -132,5 +136,22 @@ class HtmlView extends BaseHtmlView
         }
 
         return parent::display($tpl);
+    }
+
+    /**
+     * Accounts with a key row that exists but does not verify (the key service
+     * returns no public key for it). Only these can be discarded.
+     *
+     * @return  object[]
+     */
+    private function invalidKeys(TeamServices $services): array
+    {
+        $db = $services->db();
+        $rows = $db->setQuery(
+            'SELECT k.user_id AS id, u.name, u.username FROM ' . $db->quoteName('#__appointments_user_keys') . ' AS k'
+            . ' LEFT JOIN ' . $db->quoteName('#__users') . ' AS u ON u.id = k.user_id ORDER BY u.name, k.user_id LIMIT 1000'
+        )->loadObjectList() ?: [];
+
+        return array_values(array_filter($rows, static fn (object $row): bool => $services->keys()->userPublicKey((int) $row->id) === null));
     }
 }

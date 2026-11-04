@@ -254,6 +254,31 @@ class CalendarsController extends BaseController
         }, $this->listUrl(), true);
     }
 
+    /**
+     * Discard the key row of an account that no longer verifies (core.admin,
+     * confirmed). The key service refuses a row that still verifies, so this is
+     * never a way around a password reset.
+     */
+    public function discardKey(): bool
+    {
+        $services = $this->guard(true);
+        $this->requireAdmin();
+        $userId = $this->input->post->getInt('user_id', 0);
+
+        if ($this->input->post->getInt('confirm', 0) !== 1 || $userId <= 0) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARD_CONFIRM_MISSING'), 'warning');
+            $this->setRedirect($this->listUrl());
+
+            return false;
+        }
+
+        return $this->attempt(function () use ($services, $userId): void {
+            $services->keys()->discardUserKey($this->actor(), $userId);
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARDED'), 'message');
+            $this->setRedirect($this->listUrl());
+        }, $this->listUrl());
+    }
+
     // ------------------------------------------------------------------
 
     private function store(bool $close): bool

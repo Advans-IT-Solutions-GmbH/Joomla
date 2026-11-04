@@ -208,7 +208,10 @@ return static function (TeamSuite $suite): void {
             $first = $admin->status;
             $admin->request($base, ['task' => 'calendars.recoveryUse', 'calendar_id' => 1, 'user_id' => 1, 'role' => 4, 'recovery_secret' => 'x']);
 
-            return $first === 403 && $admin->status === 403 && $suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") === $before;
+            $second = $admin->status;
+            $admin->request($base, ['task' => 'calendars.discardKey', 'user_id' => 1, 'confirm' => 1]);
+
+            return $first === 403 && $second === 403 && $admin->status === 403 && $suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") === $before;
         });
 
         $outsider = $user('outsider', [2], true);
