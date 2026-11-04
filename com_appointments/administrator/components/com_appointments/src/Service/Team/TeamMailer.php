@@ -112,7 +112,18 @@ final class TeamMailer implements TeamMailerInterface
 
         $username = $this->username($userId);
 
-        $this->deliver('team_invitation_accepted', $this->usersWith('appointments.team.external'), static fn (): array => [
+        // Whoever may revoke this account receives the link, and only with an active second
+        // factor: for a team account the administrators (core.admin), for an external account
+        // everybody who shares with externals.
+        $grants = $this->services->grants();
+        $action = $grants->audienceOf($userId) === TeamStates::AUDIENCE_EXTERNAL ? 'appointments.team.external' : 'core.admin';
+        $recipients = array_values(array_filter($this->usersWith($action), static fn (object $user): bool => $grants->hasSecondFactor((int) $user->id)));
+
+        if ($recipients === []) {
+            Log::add('Internet calendar activation notice has no recipient with a second factor: account ' . $userId, Log::WARNING, 'com_appointments');
+        }
+
+        $this->deliver('team_invitation_accepted', $recipients, static fn (): array => [
             '{account_name}' => (string) $account->name,
             '{account_username}' => $username,
             '{revoke_url}' => $revokeUrl,
