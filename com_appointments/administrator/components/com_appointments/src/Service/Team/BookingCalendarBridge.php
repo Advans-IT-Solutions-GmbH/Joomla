@@ -159,16 +159,6 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         return $periods;
     }
 
-    public function lockForBooking(int $eventTypeId): void
-    {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-
-    public function removeOrphans(int $limit): int
-    {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-
     public function onBookingSaved(array $booking): void
     {
         $bookingId = (int) ($booking['id'] ?? 0);

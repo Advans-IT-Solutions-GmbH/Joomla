@@ -430,10 +430,8 @@ final class BookingStore
             return;
         }
 
-        $bridge = $team->enabled() ? $team->bookings() : null;
-
-        if ($bridge !== null && method_exists($bridge, 'lockForBooking')) {
-            $bridge->lockForBooking($eventId);
+        if ($team->enabled()) {
+            $team->bookings()->lockForBooking($eventId);
         }
     }
 
