@@ -295,6 +295,29 @@ final class TimingIndexTest extends TestCase
             $this->expand($autumn, '2027-10-20 00:00:00', '2027-11-05 00:00:00'));
     }
 
+    public function testDurationsAreExactAcrossTheSpringChange(): void
+    {
+        // 01:00 CET to 04:00 CEST is two hours; the library would end it an hour late or early.
+        $single = self::calendar(self::zurich(), self::event('DTSTART;TZID=Europe/Zurich:20270328T010000', 'DTEND;TZID=Europe/Zurich:20270328T040000'));
+        self::assertSame(['2027-03-28T00:00Z/2027-03-28T02:00Z'], $this->expand($single, '2027-03-27 00:00:00', '2027-03-29 00:00:00'));
+
+        // A weekly series of three hours keeps its exact duration on the day of the change (RFC 5545 3.8.5.3).
+        $weekly = self::calendar(self::zurich(), self::event('DTSTART;TZID=Europe/Zurich:20270321T010000', 'DTEND;TZID=Europe/Zurich:20270321T040000',
+            'RRULE:FREQ=WEEKLY;COUNT=2'));
+        self::assertSame(['2027-03-21T00:00Z/2027-03-21T03:00Z', '2027-03-28T00:00Z/2027-03-28T03:00Z'],
+            $this->expand($weekly, '2027-03-20 00:00:00', '2027-03-30 00:00:00'));
+
+        $index = new TimingIndex();
+        $twoDays = $index->extract(self::calendar(self::event('DTSTART;VALUE=DATE:20270328', 'DTEND;VALUE=DATE:20270330')));
+        self::assertSame('2027-03-29T22:00Z', $index->lastEnd($twoDays, new \DateTimeZone('Europe/Zurich'))?->format('Y-m-d\TH:i\Z'));
+
+        $future = $index->extract(self::calendar(
+            self::event('DTSTART:20270101T090000Z', 'DTEND:20270101T100000Z', 'RRULE:FREQ=DAILY;COUNT=5'),
+            self::event('RECURRENCE-ID;RANGE=THISANDFUTURE:20270103T090000Z', 'DTSTART:20270110T090000Z', 'DTEND:20270110T100000Z')
+        ));
+        self::assertNull($index->lastEnd($future, new \DateTimeZone('UTC')), 'THISANDFUTURE moves later instances: never old');
+    }
+
     public function testExceptionsOverridesAndCancelledInstances(): void
     {
         $ics = self::calendar(self::zurich(),

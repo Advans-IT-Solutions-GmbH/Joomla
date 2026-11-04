@@ -40,15 +40,18 @@ final class BookingRecords
     }
 
     /**
-     * Open the migration of an update: when rows with clear personal fields
-     * exist, write a migration token (keyed, valid {@see BookingData::MIGRATION_DAYS}
-     * days) into the component options. Only while it is valid are clear values
-     * read as data and encrypted by {@see self::migrate()}. Called once by the
-     * update, before the first migrate(); does nothing on a new installation.
+     * Open the migration of the update to 1.4.0: when rows with clear personal
+     * fields exist and no row is sealed yet, write a migration token (keyed,
+     * valid {@see BookingData::MIGRATION_DAYS} days) into the component options.
+     * Only while it is valid are clear values read as data and encrypted by
+     * {@see self::migrate()}. Called by every update, before the first migrate();
+     * once a sealed row exists (any booking made with 1.4.0) it never opens a
+     * migration again, so clear text a database write plants later is never
+     * encrypted into trusted data. Does nothing on a new installation.
      */
     public static function begin(DatabaseInterface $db, KeyProvider $keys): void
     {
-        if (self::pending($db) > 0 && !BookingData::migrationOpen(self::token($db), $keys, time())) {
+        if (self::pending($db) > 0 && !self::anySealed($db) && !BookingData::migrationOpen(self::token($db), $keys, time())) {
             self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400));
         }
     }
@@ -123,11 +126,27 @@ final class BookingRecords
         return (int) $db->setQuery($query)->loadResult();
     }
 
-    /** A value is clear unless it starts with `v1:`, compared case-sensitively. */
+    /** A value is clear unless it has the form of a sealed value (the pattern of BookingData::isSealed(), case-sensitive). */
     private static function clearCondition(DatabaseInterface $db): string
     {
         return '(' . implode(' OR ', array_map(static fn (string $column): string => '(' . $db->quoteName($column) . ' IS NOT NULL AND NOT ('
-            . $db->quoteName($column) . ' COLLATE utf8mb4_bin LIKE ' . $db->quote('v1:%') . '))', BookingData::COLUMNS)) . ')';
+            . self::sealedCondition($db, $column) . '))', BookingData::COLUMNS)) . ')';
+    }
+
+    private static function sealedCondition(DatabaseInterface $db, string $column): string
+    {
+        return $db->quoteName($column) . ' COLLATE utf8mb4_bin REGEXP ' . $db->quote('^v1:[A-Za-z0-9+/]{54,}={0,2}$');
+    }
+
+    /** Whether any booking holds a sealed field: then the migration of 1.3 rows is over. */
+    private static function anySealed(DatabaseInterface $db): bool
+    {
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select('1')->from($db->quoteName('#__appointments_bookings'))
+            ->where('(' . implode(' OR ', array_map(static fn (string $column): string => self::sealedCondition($db, $column), BookingData::COLUMNS)) . ')')
+            ->setLimit(1);
+
+        return (bool) $db->setQuery($query)->loadResult();
     }
 
     /** The migration token stored in the component options, read from the database (not a cached copy). */

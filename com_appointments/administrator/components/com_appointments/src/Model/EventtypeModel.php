@@ -116,6 +116,17 @@ class EventtypeModel extends AdminModel
             }
         }
 
+        // Removing a link changes the public free times too: comparing the page before and after
+        // would show the removed calendar's busy times. Only who reaches that calendar removes it.
+        $removed = array_diff(array_filter(array_merge($storedBusy, [$storedTarget])), array_merge($busy, [$target]));
+        $hidden = $removed === [] || $oldHost < 1 ? [] : self::reachable($oldHost, (int) Factory::getApplication()->getIdentity()->id)[2];
+
+        foreach ($removed as $calendar) {
+            if (isset($hidden[(int) $calendar])) {
+                throw new \DomainException('A linked calendar the editor cannot reach was removed.');
+            }
+        }
+
         // 0 is stored as NULL by the table; null itself would not be bound.
         $data['calendar_id'] = $target;
 
@@ -129,15 +140,17 @@ class EventtypeModel extends AdminModel
      * themselves, and nobody links a calendar the host may not see. A user
      * without a grant (also a Super User) links nothing until a manager grants.
      *
-     * @return array{0: array<int, string>, 1: array<int, string>} Visible and writable calendars, id => title.
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, true>} Visible and writable calendars
+     *               (id => title), and the calendars the host reaches but the actor does not.
      */
     public static function reachable(int $host, int $actor): array
     {
         $visible = [];
         $writable = [];
+        $hidden = [];
 
         if ($host < 1 || $actor < 1) {
-            return [$visible, $writable];
+            return [$visible, $writable, $hidden];
         }
 
         try {
@@ -155,6 +168,10 @@ class EventtypeModel extends AdminModel
             $actorAccess = $actor === $host ? $hostAccess : $index($grants->calendarsFor($actor));
 
             foreach ($hostAccess as $id => $access) {
+                if (!isset($actorAccess[$id])) {
+                    $hidden[$id] = true;
+                }
+
                 if (isset($actorAccess[$id])) {
                     $visible[$id] = $access->title;
 
@@ -167,7 +184,7 @@ class EventtypeModel extends AdminModel
             // Without the grant service no calendar is reachable; only unchanged values pass.
         }
 
-        return [$visible, $writable];
+        return [$visible, $writable, $hidden];
     }
 
     /** @param int[] $calendars */

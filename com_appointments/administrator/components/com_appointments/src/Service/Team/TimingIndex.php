@@ -264,9 +264,16 @@ final class TimingIndex implements TimingIndexInterface
 
         try {
             foreach ($events as $event) {
+                $id = $event->{'RECURRENCE-ID'} ?? null;
+
+                if ($id !== null && isset($id['RANGE'])) {
+                    // THISANDFUTURE moves every later instance too; the library does not apply it.
+                    return null;
+                }
+
                 $start = \DateTimeImmutable::createFromInterface($event->DTSTART->getDateTime($floatingZone));
-                $duration = $this->duration($event, $start, $floatingZone);
-                $end = $start->modify('+' . $duration . ' seconds');
+                $span = $this->span($event, $start, $floatingZone);
+                $end = $span($start);
 
                 if (!isset($event->{'RECURRENCE-ID'}) && isset($event->RRULE)) {
                     $parts = array_change_key_case($event->RRULE->getParts(), CASE_UPPER);
@@ -276,7 +283,7 @@ final class TimingIndex implements TimingIndexInterface
                         $last = \strlen($until) === 8
                             ? new \DateTimeImmutable(substr($until, 0, 4) . '-' . substr($until, 4, 2) . '-' . substr($until, 6, 2) . ' 23:59:59', $floatingZone)
                             : new \DateTimeImmutable(str_replace('T', ' ', rtrim($until, 'Z')), str_ends_with($until, 'Z') ? $utc : $start->getTimezone());
-                        $end = max($end, $last->modify('+' . $duration . ' seconds'));
+                        $end = max($end, $span($last));
                     } elseif (isset($parts['COUNT'])) {
                         $single = clone $event;
                         $single->remove('RDATE');
@@ -288,7 +295,7 @@ final class TimingIndex implements TimingIndexInterface
                                 return null;
                             }
 
-                            $end = max($end, \DateTimeImmutable::createFromInterface($iterator->getDtEnd()));
+                            $end = max($end, $span(\DateTimeImmutable::createFromInterface($iterator->getDtStart())));
                             $iterator->next();
                         }
                     } else {
@@ -298,7 +305,7 @@ final class TimingIndex implements TimingIndexInterface
 
                 foreach ($event->select('RDATE') as $rdate) {
                     foreach ($rdate->getDateTimes($floatingZone) as $date) {
-                        $end = max($end, \DateTimeImmutable::createFromInterface($date)->modify('+' . $duration . ' seconds'));
+                        $end = max($end, $span(\DateTimeImmutable::createFromInterface($date)));
                     }
                 }
 
@@ -316,18 +323,42 @@ final class TimingIndex implements TimingIndexInterface
         return $latest?->setTimezone($utc);
     }
 
-    /** Seconds an instance of the event lasts: DTEND, DURATION, one day for a date, or none. */
-    private function duration(Component $event, \DateTimeImmutable $start, \DateTimeZone $floatingZone): int
+    /**
+     * The end of an instance of the event from its start: for an all-day event in
+     * calendar days of the floating zone (a day of a daylight saving change has 23
+     * or 25 hours), otherwise in elapsed seconds (DTEND or DURATION, or none).
+     *
+     * @return  \Closure(\DateTimeImmutable): \DateTimeImmutable
+     */
+    private function span(Component $event, \DateTimeImmutable $start, \DateTimeZone $floatingZone): \Closure
     {
+        if (!$event->DTSTART->hasTime()) {
+            $days = 1;
+
+            if (isset($event->DTEND)) {
+                $days = max(1, (int) round(($event->DTEND->getDateTime($floatingZone)->getTimestamp() - $start->getTimestamp()) / 86400));
+            } elseif (isset($event->DURATION)) {
+                $days = max(1, (int) round(($start->add($event->DURATION->getDateInterval())->getTimestamp() - $start->getTimestamp()) / 86400));
+            }
+
+            return static fn (\DateTimeImmutable $at): \DateTimeImmutable => $at->setTimezone($floatingZone)->setTime(0, 0)->modify('+' . $days . ' days');
+        }
+
+        $days = 0;
+        $seconds = 0;
+
         if (isset($event->DTEND)) {
-            return max(0, $event->DTEND->getDateTime($floatingZone)->getTimestamp() - $start->getTimestamp());
+            // Exact duration (RFC 5545 3.8.5.3).
+            $seconds = max(0, $event->DTEND->getDateTime($floatingZone)->getTimestamp() - $start->getTimestamp());
+        } elseif (isset($event->DURATION)) {
+            // Days and weeks are nominal (wall-clock), hours, minutes and seconds exact.
+            $interval = $event->DURATION->getDateInterval();
+            $days = (int) $interval->d;
+            $seconds = (int) $interval->h * 3600 + (int) $interval->i * 60 + (int) $interval->s;
         }
 
-        if (isset($event->DURATION)) {
-            return max(0, $start->add($event->DURATION->getDateInterval())->getTimestamp() - $start->getTimestamp());
-        }
-
-        return $event->DTSTART->hasTime() ? 0 : 86400;
+        return static fn (\DateTimeImmutable $at): \DateTimeImmutable => (new \DateTimeImmutable('@'
+            . (($days > 0 ? $at->modify('+' . $days . ' days') : $at)->getTimestamp() + $seconds)));
     }
 
     /**
@@ -775,6 +806,21 @@ final class TimingIndex implements TimingIndexInterface
 
             $skipped = 0;
             $inside = 0;
+            // The library adds the duration in wall-clock time, which is off by an hour across a
+            // daylight saving change: the end is computed here, from the start of each instance.
+            $master = null;
+            $overrides = [];
+
+            foreach ($events as $event) {
+                if (isset($event->{'RECURRENCE-ID'})) {
+                    $overrides[] = $event;
+                } else {
+                    $master ??= $event;
+                }
+            }
+
+            $master ??= $overrides[0];
+            $masterSpan = $this->span($master, \DateTimeImmutable::createFromInterface($master->DTSTART->getDateTime($floatingZone)), $floatingZone);
 
             while ($iterator->valid()) {
                 $start = \DateTimeImmutable::createFromInterface($iterator->getDtStart());
@@ -783,7 +829,7 @@ final class TimingIndex implements TimingIndexInterface
                     break;
                 }
 
-                $end = \DateTimeImmutable::createFromInterface($iterator->getDtEnd());
+                $end = max(\DateTimeImmutable::createFromInterface($iterator->getDtEnd()), $masterSpan($start));
 
                 if ($end > $fromUtc) {
                     if (++$inside > self::MAX_STEPS) {
@@ -794,7 +840,8 @@ final class TimingIndex implements TimingIndexInterface
                     $instance = $iterator->getEventObject();
 
                     if ($this->blocks($instance)) {
-                        $window = $this->window($instance, $start, $end, $floatingZone);
+                        $span = \in_array($instance, $overrides, true) ? $this->span($instance, $start, $floatingZone) : $masterSpan;
+                        $window = $this->window($start, $span, $floatingZone);
 
                         if ($window !== null && $window->getEnd() > $fromUtc) {
                             $windows[] = $window;
@@ -830,22 +877,15 @@ final class TimingIndex implements TimingIndexInterface
     }
 
     /**
-     * The busy window of one instance in UTC. An all-day instance covers whole
-     * days of the floating zone, counted in calendar days, so a day with a
-     * daylight saving change is 23 or 25 hours long, never shifted by one hour.
+     * The busy window of one instance in UTC, its end from {@see self::span()}.
+     *
+     * @param   \Closure(\DateTimeImmutable): \DateTimeImmutable  $span
      */
-    private function window(Component $event, \DateTimeImmutable $start, \DateTimeImmutable $end, \DateTimeZone $floatingZone): ?AvailabilityWindow
+    private function window(\DateTimeImmutable $start, \Closure $span, \DateTimeZone $floatingZone): ?AvailabilityWindow
     {
         $utc = new \DateTimeZone('UTC');
-
-        if (isset($event->DTSTART) && method_exists($event->DTSTART, 'hasTime') && !$event->DTSTART->hasTime()) {
-            $days = max(1, (int) round(($end->getTimestamp() - $start->getTimestamp()) / 86400));
-            $start = $start->setTimezone($floatingZone)->setTime(0, 0);
-            $end = $start->modify('+' . $days . ' days');
-        }
-
+        $end = $span($start)->setTimezone($utc);
         $start = $start->setTimezone($utc);
-        $end = $end->setTimezone($utc);
 
         return $end > $start ? new AvailabilityWindow($start, $end) : null;
     }
