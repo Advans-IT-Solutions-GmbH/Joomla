@@ -117,7 +117,9 @@ $textField = function (string $key, string $label, string $type, string $autocom
                         <?php echo $dialPrefix('booking-phone-country', 'booking[phone][country]', $dialCode($phone), 'phone', ''); ?>
                         <input class="form-control com-appointments-tel-number<?php echo $invalid('phone'); ?>" id="booking-phone" type="tel" name="booking[phone][number]" maxlength="40" required autocomplete="tel-national" inputmode="tel" value="<?php echo $this->escape(is_string($phone['number'] ?? null) ? $phone['number'] : ''); ?>"<?php echo $aria('phone', ($this->fixedDialCode !== '' ? 'booking-phone-country ' : '') . 'booking-phone-desc'); ?>>
                     </div>
-                    <div id="booking-phone-desc" class="form-text com-appointments-field-description"><?php echo Text::_(($this->item->location_type === 'phone_host_calls' ? 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_HOST' : 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_INVITEE') . ($this->fixedDialCode !== '' ? '_FIXED' : '')); ?></div>
+                    <div id="booking-phone-desc" class="form-text com-appointments-field-description"><?php echo Text::_($this->item->location_type === 'phone_host_calls'
+                        ? ($this->fixedDialCode !== '' ? 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_HOST_FIXED' : 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_HOST')
+                        : ($this->fixedDialCode !== '' ? 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_INVITEE_FIXED' : 'COM_APPOINTMENTS_BOOKING_PHONE_DESC_INVITEE')); ?></div>
                     <?php echo $error('phone'); ?>
                 </div>
             <?php endif; ?>
