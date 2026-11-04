@@ -412,7 +412,9 @@ return static function (TeamSuite $suite): void {
             $db->query("UPDATE {$p}extensions SET enabled=1 WHERE extension_id=" . (int) $row['extension_id']);
         }
 
-        $services = TeamServices::fromApplication();
+        // The component options of this process were read before the feature was switched on:
+        // the services get the options as stored now, not the cached ones.
+        $services = new TeamServices($joomla, $enabled->keyProvider(), new Registry($decoded), static fn (): \DateTimeImmutable => new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
         $password = 'Member-' . bin2hex(random_bytes(8)) . '!';
         $member = $user('member', $password, [$teamGroup]);
         $admin = (int) $db->query("SELECT id FROM {$p}users WHERE username='" . $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin') . "'")->fetch_assoc()['id'];
@@ -648,15 +650,16 @@ return static function (TeamSuite $suite): void {
 
             $html = $browser->request($form['action'], $form['fields'] + ['name' => 'Locked phone', 'client' => 'davx5', 'rule' => 1], 0);
 
+            // Only devices that still work count: the replay probes above are revoked.
             return $browser->status === 423
                 && !str_contains($html, 'devices.create')
                 && !preg_match('/id="appointments-app-password"/', $html)
-                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === 1;
+                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member} AND state <> 0") === 1;
         });
         $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
             $browser = new TeamDBrowser($suite->base);
             $signIn($browser, $tag . 'member', $password, $secret);
-            $id = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} ORDER BY id LIMIT 1");
+            $id = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} AND state = 1 ORDER BY id LIMIT 1");
             $html = $browser->request('/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $id);
             $form = TeamDBrowser::form($html, 'devices.remove');
 
