@@ -607,6 +607,7 @@ narrower widths.
 | `--appointments-field-max-width` | `none` | Maximum width of a field |
 | `--appointments-field-font-size` | `max(1rem, 16px)` | Text size in fields; below 16 px iOS zooms into the page |
 | `--appointments-field-padding` | `0.5rem 0.75rem` | Inner padding of fields |
+| `--appointments-field-line-height` | `1.5` | Line height in fields |
 | `--appointments-field-min-height` | touch target | Minimum height of fields |
 | `--appointments-field-gap` | `1rem` | Space between the fields of step 2 |
 | `--appointments-label-size` | `inherit` | Text size of field labels |

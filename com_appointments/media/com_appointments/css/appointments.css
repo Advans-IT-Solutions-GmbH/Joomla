@@ -88,6 +88,7 @@
     --appointments-field-max-width: none;
     --appointments-field-font-size: max(1rem, 16px);
     --appointments-field-padding: 0.5rem 0.75rem;
+    --appointments-field-line-height: 1.5;
     --appointments-field-min-height: var(--appointments-target);
     --appointments-field-gap: 1rem;
     --appointments-label-size: inherit;
@@ -851,7 +852,7 @@
     transform: rotate(180deg);
 }
 
-/* The panel opens below the field, over the content that follows, at most 22rem wide. */
+/* The panel opens below the field, as wide as it, over the content that follows. */
 .com-appointments-zone-panel {
     position: absolute;
     z-index: 20;
@@ -859,7 +860,7 @@
     left: 0;
     display: grid;
     gap: 0.5rem;
-    width: min(22rem, calc(100vw - 2rem));
+    width: 100%;
     padding: 0.75rem;
     border: var(--appointments-border);
     border-radius: var(--appointments-radius);
@@ -918,12 +919,9 @@
 }
 
 .com-appointments-zone-option {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 0.5rem;
-    justify-content: space-between;
+    display: grid;
+    align-content: center;
     min-height: var(--appointments-target);
-    align-items: center;
     padding: 0.25rem 0.5rem;
     font-size: var(--appointments-small-size);
     cursor: pointer;
@@ -1018,6 +1016,7 @@
     font: inherit;
     /* Never below 16 px by default: a smaller field makes iOS zoom into the page on focus. */
     font-size: var(--appointments-field-font-size);
+    line-height: var(--appointments-field-line-height);
 }
 
 .com-appointments .form-control:focus,

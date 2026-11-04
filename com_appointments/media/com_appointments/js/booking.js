@@ -486,7 +486,10 @@
                 clear(element);
                 message.id = element.id + '-check';
                 message.className = 'invalid-feedback com-appointments-field-error';
-                message.textContent = element.validationMessage;
+                // The page's own wording for the two common cases, the browser's for the rest.
+                message.textContent = (element.validity.valueMissing && form.dataset.messageRequired)
+                    || (element.validity.typeMismatch && element.type === 'email' && form.dataset.messageEmail)
+                    || element.validationMessage;
                 holder.appendChild(message);
 
                 if (element.getAttribute('aria-invalid') !== 'true') {
