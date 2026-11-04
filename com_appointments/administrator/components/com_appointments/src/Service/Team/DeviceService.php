@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\AppPassword;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\DeviceSession;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
@@ -337,13 +338,24 @@ final class DeviceService implements DeviceServiceInterface
             if ($calendarId !== null && $calendarId > 0 && !isset($this->touched[$deviceId . ':' . $calendarId])) {
                 $this->touched[$deviceId . ':' . $calendarId] = true;
                 $column = $db->quoteName('last_sync_utc');
-                $db->setQuery(
-                    'INSERT INTO ' . $db->quoteName('#__appointments_device_calendars')
-                    . ' (' . implode(', ', $db->quoteName(['device_id', 'calendar_id', 'last_sync_utc'])) . ')'
-                    . ' VALUES (' . $deviceId . ', ' . (int) $calendarId . ', ' . $db->quote($nowSql) . ')'
-                    . ' ON DUPLICATE KEY UPDATE ' . $column . ' = IF(' . $column . ' <= ' . $db->quote($threshold) . ', '
-                    . $db->quote($nowSql) . ', ' . $column . ')'
-                )->execute();
+                $later = ' = IF(' . $column . ' <= ' . $db->quote($threshold) . ', ' . $db->quote($nowSql) . ', ' . $column . ')';
+
+                if ($role !== null && CalendarRole::tryFrom($role) !== null) {
+                    // The first synchronisation always writes the pair, with the role it had then;
+                    // later ones only move the time, at most once a minute, and keep that role.
+                    $db->setQuery(
+                        'INSERT INTO ' . $db->quoteName('#__appointments_device_calendars')
+                        . ' (' . implode(', ', $db->quoteName(['device_id', 'calendar_id', 'role', 'last_sync_utc'])) . ')'
+                        . ' VALUES (' . $deviceId . ', ' . (int) $calendarId . ', ' . $role . ', ' . $db->quote($nowSql) . ')'
+                        . ' ON DUPLICATE KEY UPDATE ' . $column . $later
+                    )->execute();
+                } else {
+                    // Without a role no pair row is created (the column has no default).
+                    $db->setQuery(
+                        'UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $column . $later
+                        . ' WHERE ' . $db->quoteName('device_id') . ' = ' . $deviceId . ' AND ' . $db->quoteName('calendar_id') . ' = ' . (int) $calendarId
+                    )->execute();
+                }
             }
         } catch (\RuntimeException $e) {
             // «Last synchronised» is information, never a reason to fail a synchronisation.
