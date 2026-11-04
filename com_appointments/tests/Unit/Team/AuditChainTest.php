@@ -281,6 +281,8 @@ final class AuditChainTest extends TestCase
         self::assertSame(32, strlen($hash));
         self::assertNotSame($hash, AuditService::addressHash(strrev(self::KEY), '192.0.2.10'));
         self::assertSame(AuditService::addressHash(self::KEY, '2001:db8::1'), AuditService::addressHash(self::KEY, '2001:0db8:0:0::1'));
+        self::assertSame(AuditService::addressHash(self::KEY, '2001:db8:1:2::1'), AuditService::addressHash(self::KEY, '2001:db8:1:2:ffff::9'), 'IPv6 per /64');
+        self::assertNotSame(AuditService::addressHash(self::KEY, '2001:db8:1:2::1'), AuditService::addressHash(self::KEY, '2001:db8:1:3::1'));
         self::assertNull(AuditService::addressHash(self::KEY, 'not an address'));
         self::assertNull(AuditService::addressHash(self::KEY, ''));
     }

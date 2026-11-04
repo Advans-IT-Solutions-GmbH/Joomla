@@ -80,4 +80,14 @@ use Joomla\CMS\Router\Route;
     <input type="hidden" name="task" value="">
     <?php echo HTMLHelper::_('form.token'); ?>
 </form>
+<form action="<?php echo Route::_('index.php?option=com_appointments&view=teamlog'); ?>" method="post" class="row g-2 mt-4">
+    <fieldset>
+        <legend><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_UNLOCK'); ?></legend>
+        <label for="unlock_user_id"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_USER_ID'); ?></label>
+        <input id="unlock_user_id" class="form-control" name="unlock_user_id" inputmode="numeric" pattern="[0-9]{1,10}" maxlength="10" required>
+        <button class="btn btn-secondary mt-2" type="submit"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_UNLOCK'); ?></button>
+    </fieldset>
+    <input type="hidden" name="task" value="teamlog.unlock">
+    <?php echo HTMLHelper::_('form.token'); ?>
+</form>
 <?php endif; ?>

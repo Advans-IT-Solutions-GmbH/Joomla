@@ -107,12 +107,17 @@ final class TeamPrivacy
                 // The value follows the first colon outside quoted parameter values.
                 $value = preg_match('/^(?:[^:"]|"[^"]*")*:(.*)$/s', $line, $m) === 1 ? $m[1] : '';
                 $address = mb_strtolower(trim((string) preg_replace('/^mailto:/i', '', trim($value))), 'UTF-8');
-                $lines[] = $address === $email ? $line : $name . ':' . $otherPerson;
+                if ($address !== $email) {
+                    $lines[] = $name . ':' . $otherPerson;
 
-                continue;
+                    continue;
+                }
+
+                // The requester's own line: other addresses in its parameters
+                // (SENT-BY, DELEGATED-FROM/-TO, MEMBER) are replaced below.
             }
 
-            if (!\in_array($name, self::KEPT, true)) {
+            if ($name !== 'ATTENDEE' && $name !== 'ORGANIZER' && !\in_array($name, self::KEPT, true)) {
                 continue;
             }
 

@@ -228,10 +228,10 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
         });
 
         $fresh();
-        $suite->test('Repeated CalDAV failures are written once per minute', static function () use ($run, $db, $p) {
-            $run('for ($i = 0; $i < 5; $i++) { $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "192.0.2.9", "details" => ["reason" => "bad"]]); }
+        $suite->test('Repeated CalDAV failures are written once per minute, also from changing IPv6 addresses of one /64', static function () use ($run, $db, $p) {
+            $run('for ($i = 0; $i < 5; $i++) { $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "2001:db8:5:5::" . dechex($i + 1), "details" => ["reason" => "bad"]]); }
                 $now = $now->modify("+61 seconds");
-                $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "192.0.2.9", "details" => ["reason" => "bad"]]);
+                $services->audit()->log(AuditEvent::DAV_AUTH_FAILURE, ["object_ref" => "dav:x", "ip" => "2001:db8:5:5::99", "details" => ["reason" => "bad"]]);
                 return true;');
 
             return (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_teamlog WHERE event='dav.auth_failure'")->fetch_row()[0] === 2;
@@ -256,6 +256,25 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
                 && $events === ['device.renamed', 'log.pruned'] && $run('return $services->audit()->prune($now);') === 0;
         });
 
+        $fresh();
+        $suite->test('Pruning a log that is entirely older than twelve months keeps its newest row and still verifies', static function () use ($run, $verify, $ids) {
+            $run('foreach ([AuditEvent::LOGIN_SUCCESS, AuditEvent::LOGIN_FAILURE, AuditEvent::DEVICE_RENAMED] as $e) { $services->audit()->log($e, ["actor_user_id" => 42]); } return true;', '-14 months');
+            $deleted = $run('return $services->audit()->prune($now);');
+            $after = $verify();
+            $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]); return true;');
+
+            return $deleted === 2 && $after['intact'] === true && count($ids()) === 3 && $verify()['intact'] === true;
+        });
+
+        $suite->test('Every MAC failure is written, also many within a day', static function () use ($run, $db, $p) {
+            $run('foreach (["grants", "devices", "user_keys"] as $t) { $services->audit()->log(AuditEvent::ROW_MAC_FAILURE, ["details" => ["table" => $t, "reason" => "mismatch"]]); $services->audit()->log(AuditEvent::ROW_MAC_FAILURE, ["details" => ["table" => $t, "reason" => "mismatch"]]); } return true;');
+
+            return (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_teamlog WHERE event='key.mac_failure'")->fetch_row()[0] === 6;
+        });
+
+        $fresh();
+        $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42], ); return true;', '-13 months');
+        $run('$services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]); $services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => 42]); $services->audit()->prune($now); return true;');
         $suite->test('Removing the oldest rows without pruning is detected', static function () use ($db, $p, $ids, $verify) {
             $first = $ids()[0];
             $db->query("DELETE FROM {$p}appointments_teamlog WHERE id={$first}");

@@ -71,6 +71,11 @@ final class AuditService implements AuditServiceInterface
 
     private const BATCH = 1000;
 
+    /**
+     * @var  bool
+     */
+    private static $anchorPending = false;
+
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -105,7 +110,7 @@ final class AuditService implements AuditServiceInterface
     {
         for ($error = $e; $error !== null; $error = $error->getPrevious()) {
             if (\in_array((int) $error->getCode(), [1205, 1213], true)
-                || preg_match('/deadlock|lock wait timeout|40001/i', $error->getMessage()) === 1) {
+                || preg_match('/\b(1205|1213|40001)\b|deadlock found|lock wait timeout exceeded/i', $error->getMessage()) === 1) {
                 return true;
             }
         }
@@ -169,8 +174,11 @@ final class AuditService implements AuditServiceInterface
             $prunedThrough = (int) $head['pruned_through_id'];
             $firstYoung = $db->setQuery($this->query()->select('MIN(' . $db->quoteName('id') . ')')->from($table)
                 ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote($cutoff)))->loadResult();
+            // The newest row always stays, so the next row can link to it and
+            // the head's seal can be checked against it.
             $query = $this->query()->select('MAX(' . $db->quoteName('id') . ')')->from($table)
-                ->where($db->quoteName('id') . ' > ' . $prunedThrough);
+                ->where($db->quoteName('id') . ' > ' . $prunedThrough)
+                ->where($db->quoteName('id') . ' < ' . (int) $head['last_id']);
 
             if ($firstYoung !== null) {
                 $query->where($db->quoteName('id') . ' < ' . (int) $firstYoung);
@@ -443,17 +451,14 @@ final class AuditService implements AuditServiceInterface
     }
 
     /**
-     * Keyed hash of an address for the log. The address itself is never stored.
+     * Keyed hash of an address for the log, IPv6 per /64 like the lock-out
+     * (a client controls the rest of it). The address itself is never stored.
      */
     public static function addressHash(string $key, string $ip): ?string
     {
-        $ip = trim($ip);
+        $address = LockoutService::normaliseAddress($ip);
 
-        if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP) === false) {
-            return null;
-        }
-
-        return hash_hmac('sha256', CipherSuite::associatedData('teamlog-ip', inet_ntop(inet_pton($ip))), $key, true);
+        return $address === null ? null : hash_hmac('sha256', CipherSuite::associatedData('teamlog-ip', $address), $key, true);
     }
 
     private static function cleanText(string $value, int $length): string
@@ -533,6 +538,7 @@ final class AuditService implements AuditServiceInterface
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($row['occurred_utc']))
                 ->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->execute();
             $db->transactionCommit(true);
+            $this->anchorAtShutdown();
         } catch (\Throwable $e) {
             try {
                 // After a deadlock InnoDB has rolled back the whole transaction
@@ -548,17 +554,49 @@ final class AuditService implements AuditServiceInterface
     }
 
     /**
-     * Repeated failure events are written once per window: `dav.auth_failure`
-     * and `dav.locked` per subject, address and minute, `key.mac_failure` per
-     * calendar and reason for 24 hours. The first row of a window says so in
-     * `details.summary`, the others are not written, so a flood cannot fill
-     * the log or slow its verification.
+     * At the end of the request the appended rows are committed (or rolled
+     * back with their caller): raise the anchor to what is in the database
+     * then, unless a transaction is still open.
+     */
+    private function anchorAtShutdown(): void
+    {
+        if (self::$anchorPending) {
+            return;
+        }
+
+        self::$anchorPending = true;
+        register_shutdown_function(function (): void {
+            self::$anchorPending = false;
+
+            try {
+                $db = $this->db();
+                $depth = new \ReflectionProperty($db, 'transactionDepth');
+
+                if ((int) $depth->getValue($db) > 0) {
+                    return;
+                }
+
+                $this->anchorLastId((int) $db->setQuery($this->query()->select($db->quoteName('last_id'))
+                    ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . self::HEAD_ID))->loadResult());
+            } catch (\Throwable $e) {
+                // The anchor is raised by the next verify or request.
+            }
+        });
+    }
+
+    /**
+     * Repeated CalDAV failures (`dav.auth_failure`, `dav.locked`) are written
+     * once per subject, address (IPv6 per /64) and minute; the first row of a
+     * window says so in `details.summary`, the others are not written, so an
+     * anonymous flood cannot fill the log or slow its verification.
+     * `key.mac_failure` is never summarised: only a database writer causes it,
+     * and every single row is evidence.
      *
      * @param   array<string, mixed>  $row
      */
     private function summarised(array &$row): bool
     {
-        $windows = [AuditEvent::DAV_AUTH_FAILURE => 60, AuditEvent::DAV_LOCKED => 60, AuditEvent::ROW_MAC_FAILURE => 86400];
+        $windows = [AuditEvent::DAV_AUTH_FAILURE => 60, AuditEvent::DAV_LOCKED => 60];
 
         if (!isset($windows[$row['event']])) {
             return false;
@@ -573,20 +611,12 @@ final class AuditService implements AuditServiceInterface
         $same = static fn (string $column, ?string $value): string => $value === null
             ? $db->quoteName($column) . ' IS NULL' : $db->quoteName($column) . ' = ' . $value;
 
-        if ($row['event'] === AuditEvent::ROW_MAC_FAILURE) {
-            $query->where($same('calendar_id', $row['calendar_id'] === null ? null : (string) (int) $row['calendar_id']));
-        } else {
-            $query->where($same('subject_user_id', $row['subject_user_id'] === null ? null : (string) (int) $row['subject_user_id']))
-                ->where($same('object_ref', $row['object_ref'] === null ? null : $db->quote((string) $row['object_ref'])))
-                ->where($same('ip_hash', $row['ip_hash'] === null ? null : $this->binary($row['ip_hash'])));
-        }
+        $query->where($same('subject_user_id', $row['subject_user_id'] === null ? null : (string) (int) $row['subject_user_id']))
+            ->where($same('object_ref', $row['object_ref'] === null ? null : $db->quote((string) $row['object_ref'])))
+            ->where($same('ip_hash', $row['ip_hash'] === null ? null : $this->binary($row['ip_hash'])));
 
-        $reason = self::decodeDetails($row['details'])['reason'] ?? null;
-
-        foreach ($db->setQuery($query->setLimit(50))->loadColumn() ?: [] as $details) {
-            if ($row['event'] !== AuditEvent::ROW_MAC_FAILURE || (self::decodeDetails($details)['reason'] ?? null) === $reason) {
-                return true;
-            }
+        if ($db->setQuery($query->setLimit(1))->loadColumn()) {
+            return true;
         }
 
         $details = self::decodeDetails($row['details']) ?? [];
@@ -700,50 +730,36 @@ final class AuditService implements AuditServiceInterface
         return $head;
     }
 
-    /**
-     * The anchor kind of the log in the signed file of work package B, null
-     * while that kind does not exist.
-     */
-    private static function anchorKind(): ?string
-    {
-        $constant = EpochAnchorInterface::class . '::KIND_LOG';
-
-        return \defined($constant) ? (string) \constant($constant) : null;
-    }
 
     /**
      * The newest row id the file anchor knows, 0 without an anchor.
      */
     private function anchoredLastId(): int
     {
-        $kind = self::anchorKind();
-
-        if ($kind === null) {
-            return 0;
-        }
-
         try {
-            return $this->services->anchor()->minimum($kind, self::HEAD_ID);
+            return $this->services->anchor()->minimum(EpochAnchorInterface::KIND_LOG, self::HEAD_ID);
         } catch (\Throwable $e) {
             return 0;
         }
     }
 
     /**
-     * Raise the file anchor to a committed newest row id. Only from a verified
-     * chain and after a prune, both outside any caller's transaction, so an
-     * append that is rolled back later can never leave the anchor ahead.
+     * Raise the file anchor to a committed newest row id: after a verified
+     * chain, after a prune, and at the end of every request that appended,
+     * when no transaction is open any more, so an append that a caller rolls
+     * back can never leave the anchor ahead. A database restored without its
+     * files then shows as broken; deleting the anchor file
+     * (`administrator/components/com_appointments/data/epochs.php`) after such
+     * a deliberate restore resets it.
      */
     private function anchorLastId(int $lastId): void
     {
-        $kind = self::anchorKind();
-
-        if ($kind === null || $lastId <= 0) {
+        if ($lastId <= 0) {
             return;
         }
 
         try {
-            $this->services->anchor()->record($kind, self::HEAD_ID, $lastId);
+            $this->services->anchor()->record(EpochAnchorInterface::KIND_LOG, self::HEAD_ID, $lastId);
         } catch (\Throwable $e) {
             Log::add('Team calendars: the log anchor could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }

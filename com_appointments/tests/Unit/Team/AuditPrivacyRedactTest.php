@@ -51,6 +51,15 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertStringNotContainsString('joan@', $out);
     }
 
+    public function testOtherAddressesInTheOwnLineAreReplaced(): void
+    {
+        $out = TeamPrivacy::redact("ATTENDEE;SENT-BY=\"mailto:boss@example.test\";DELEGATED-FROM=\"mailto:joan@example.test\":mailto:an@example.test\r\n", 'an@example.test');
+
+        self::assertStringContainsString('mailto:an@example.test', $out);
+        self::assertStringNotContainsString('boss@', $out);
+        self::assertStringNotContainsString('joan@', $out);
+    }
+
     public function testFoldedLinesAreUnfoldedFirst(): void
     {
         $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nATTENDEE;CN=\"Long\r\n Name\":mailto:x@example.test\r\nDESCRIPTION:a\r\n b\r\nEND:VEVENT", 'an@example.test', 'other');

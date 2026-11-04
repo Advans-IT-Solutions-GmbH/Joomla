@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Application\CMSApplicationInterface;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseInterface;
@@ -164,7 +165,13 @@ final class LockoutService implements LockoutServiceInterface
         $ip = (string) $input->server->getString('REMOTE_ADDR', '');
 
         // Only accounts with a calendar right are counted, so only they are locked.
-        if ($userId <= 0 || $this->services->grants()->audienceOf($userId) === 'none' || $this->retryAfter($username, $ip) === 0) {
+        if ($userId <= 0 || $this->services->grants()->audienceOf($userId) === 'none') {
+            return;
+        }
+
+        $wait = $this->retryAfter($username, $ip);
+
+        if ($wait === 0) {
             return;
         }
 
@@ -185,8 +192,16 @@ final class LockoutService implements LockoutServiceInterface
 
         self::$refused[$this->refusalKey($username, $ip)] = true;
 
+        // Logged, and the administrators mailed, at most once per account in
+        // LOCKED_LOG_MINUTES, so a lock by somebody else is visible but no flood.
         if (!$this->lockedLoggedRecently($userId)) {
             $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
+
+            try {
+                $this->services->mailer()->accountLocked($userId, $wait);
+            } catch (\Throwable $e) {
+                Log::add('Team calendars: the lock mail could not be sent (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            }
         }
     }
 
@@ -458,10 +473,13 @@ final class LockoutService implements LockoutServiceInterface
     }
 
     /**
-     * A request that ends without a result gives back what it took: a POST
-     * that only looked like a sign-in, a form Joomla refused, an error. A
-     * failure or success already settled its attempts; an unfinished attempt
-     * therefore cannot hold a bucket or count invisibly.
+     * A request that ends without a result gives back its reservations, so
+     * nobody can keep a bucket reserved by starting attempts that never
+     * finish. Counted attempts stay counted: when the password was compared
+     * but no result was recorded (an error in a listener, an aborted request),
+     * giving them back would be a free guess. The price, accepted: a form that
+     * only looks like a sign-in (top-level user name and password, valid
+     * token) counts an attempt for that account without comparing anything.
      */
     private function releaseAtShutdown(): void
     {
@@ -472,9 +490,13 @@ final class LockoutService implements LockoutServiceInterface
         self::$shutdown = true;
         register_shutdown_function(function (): void {
             try {
-                foreach (array_keys(self::$attempts) as $hex) {
-                    $this->giveBack((string) $hex);
+                foreach (self::$attempts as $hex => $taken) {
+                    if ($taken !== self::COUNTED) {
+                        $this->giveBack((string) $hex);
+                    }
                 }
+
+                self::$attempts = [];
 
                 self::$refused = [];
             } catch (\Throwable $e) {
@@ -534,10 +556,7 @@ final class LockoutService implements LockoutServiceInterface
         $bucket = self::buckets($this->key(), self::identityFor($userId, ''), '')['user'];
         $db->setQuery($this->query()->delete($db->quoteName('#__appointments_auth_failures'))
             ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote(bin2hex($bucket)) . ')'))->execute();
-        $unlocked = AuditEvent::class . '::LOGIN_UNLOCKED';
-        $this->services->audit()->log(\defined($unlocked) ? (string) \constant($unlocked) : AuditEvent::LOGIN_LOCKED, [
-            'actor_user_id' => $actorUserId, 'subject_user_id' => $userId, 'details' => ['action' => 'cleared'],
-        ]);
+        $this->services->audit()->log(AuditEvent::LOGIN_UNLOCKED, ['actor_user_id' => $actorUserId, 'subject_user_id' => $userId]);
     }
 
     private function refusalKey(string $username, string $ip): string

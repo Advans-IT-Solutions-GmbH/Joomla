@@ -83,19 +83,23 @@ class SystemModel extends BaseDatabaseModel
      */
     public function teamChecks(): array
     {
+        // libsodium is required by the whole component (encrypted bookings),
+        // so everybody who may see this view sees whether it is there.
+        $sodium = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM', CipherSuite::available(),
+            Text::_(CipherSuite::available() ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM_FIX');
+
         // The state of keys, MFA enforcement and the log is for administrators only.
         if (!Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
-            return [];
+            return [$sodium];
         }
 
         $services = TeamServices::fromApplication();
         $params = $services->params();
         $enabled = $services->enabled();
         $checks = [
+            $sodium,
             ['label' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_ENABLED', 'ok' => true,
                 'value' => Text::_((int) $params->get('teamcal_enabled', 0) === 1 ? 'JENABLED' : 'JDISABLED')],
-            $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM', CipherSuite::available(),
-                Text::_(CipherSuite::available() ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM_FIX'),
         ];
         $memory = self::bytes((string) ini_get('memory_limit'));
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY', $memory < 0 || $memory >= 128 * 1024 * 1024,
