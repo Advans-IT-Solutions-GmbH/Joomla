@@ -34,6 +34,24 @@ final class NotificationService
     {
     }
 
+    /**
+     * The guest list of booking $id as stored now. A copy without an id keeps its own list; a
+     * booking that is no longer stored has no guests to write to.
+     */
+    private function currentGuests(int $id, mixed $copy): ?string
+    {
+        if ($id < 1) {
+            return is_string($copy) ? $copy : null;
+        }
+
+        $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+        $query->select($this->db->quoteName('guest_emails'))->from($this->db->quoteName('#__appointments_bookings'))
+            ->where($this->db->quoteName('id') . ' = ' . $id);
+        $rows = $this->db->setQuery($query)->loadColumn();
+
+        return is_string($rows[0] ?? null) ? $rows[0] : null;
+    }
+
     public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
     {
         if (!in_array($purpose, DefaultTemplates::SENT, true)) {
@@ -53,6 +71,10 @@ final class NotificationService
         $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage : 'en-GB';
         $inviteeLanguage = (string) ($booking['invitee_language'] ?? 'en-GB');
         $recipients = [];
+        // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
+        // who removed their address in the meantime gets no further mail and is no attendee of the
+        // calendar entry.
+        $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], $booking['guest_emails'] ?? null);
 
         if (!$hostOnly && !empty($booking['invitee_email'])) {
             $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true, false];

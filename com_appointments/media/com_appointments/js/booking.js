@@ -468,9 +468,17 @@
                 }
 
                 if (element.dataset.checked) {
+                    const group = element.closest('.com-appointments-tel');
+
                     delete element.dataset.checked;
                     element.removeAttribute('aria-invalid');
                     element.classList.remove('is-invalid');
+
+                    // The line of a telephone field is drawn by its group.
+                    if (group && group.dataset.checked) {
+                        delete group.dataset.checked;
+                        group.classList.remove('is-invalid');
+                    }
                     element.setAttribute('aria-describedby', (element.getAttribute('aria-describedby') || '')
                         .split(' ').filter((id) => id && id !== element.id + '-check').join(' '));
 
@@ -493,9 +501,16 @@
                 holder.appendChild(message);
 
                 if (element.getAttribute('aria-invalid') !== 'true') {
+                    const group = element.closest('.com-appointments-tel');
+
                     element.dataset.checked = '1';
                     element.setAttribute('aria-invalid', 'true');
                     element.classList.add('is-invalid');
+
+                    if (group && !group.classList.contains('is-invalid')) {
+                        group.dataset.checked = '1';
+                        group.classList.add('is-invalid');
+                    }
                 }
 
                 element.setAttribute('aria-describedby', ((element.getAttribute('aria-describedby') || '') + ' ' + message.id).trim());
