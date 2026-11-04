@@ -70,7 +70,7 @@ final class ConferenceServiceTest extends TestCase
                 throw new \RuntimeException('SQL password=credential https://example.com/private');
             }
 
-            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : $this->stored($this->row);
+            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : ($this->row === null ? null : $this->stored($this->row));
         });
         $db->method('updateObject')->willReturnCallback(function ($table, $object, $key, $nulls) {
             if ($this->failWrite) {
