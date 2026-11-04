@@ -96,6 +96,15 @@ each container is ready, so a broken TLS set-up fails before any suite runs, and
 in `21-teamcalendars.php`, which sets `CURLOPT_CAINFO` to `ca.pem`. A client outside the container
 verifies against `ca.pem` too (copy it out with `docker cp`).
 
+**Real CalDAV clients** (job `caldav-clients`, J6 lane): `tests/caldav/run-clients.sh` builds a
+client container (`tests/caldav/Dockerfile`, pinned Python `caldav` and `vdirsyncer`) on the compose
+network, which reaches the site as `https://joomla` and verifies the certificate against `ca.pem`.
+`tests/caldav/fixture.php` prepares and changes the server between the phases of
+`tests/caldav/clients.py` through the component's own services: seed, discovery, sync, roles,
+vdirsyncer, booking, revocation and the three clean-up phases. Phases whose work package still
+ships its stub print PENDING, as `TeamSuite::pending()` does (a failure with `TEAM_NO_PENDING=1`).
+Locally, with the Joomla 6 stack running: `bash caldav/run-clients.sh` from `tests/`.
+
 ```
 com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, both Scheduler tasks created once (never re-enabled), no signing secret stored

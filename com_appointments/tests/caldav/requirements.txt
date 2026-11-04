@@ -1,0 +1,4 @@
+# Real CalDAV clients of the caldav-clients job (tests/caldav/run-clients.sh).
+# Pinned, so a client release cannot change the result unnoticed; raise them on purpose.
+caldav==3.7.0
+vdirsyncer==0.21.0
