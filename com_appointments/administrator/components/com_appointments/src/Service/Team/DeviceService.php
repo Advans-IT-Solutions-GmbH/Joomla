@@ -69,9 +69,10 @@ final class DeviceService implements DeviceServiceInterface
     private const TABLE = 'appointments_devices';
 
     /**
-     * Writes of this request, so a sync that touches the same pair twice costs one statement.
+     * Devices whose time this request has written already, so a sync over several calendars
+     * costs one statement for the device row.
      *
-     * @var  array<string, true>
+     * @var  array<int, true>
      */
     private $touched = [];
 
@@ -336,6 +337,13 @@ final class DeviceService implements DeviceServiceInterface
         return new DeviceSession((int) $row->id, (int) $row->user_id, (string) $row->username, $state, $keys);
     }
 
+    /**
+     * «Last synchronised» is information and best effort: the device time and the time of a
+     * pair are throttled and a failure there is only logged. The pair row itself, with the
+     * latest role, and the highest delivered sync token are what the clean-up relies on: they
+     * are written on every call that carries them, and a failure there reaches the caller, so
+     * it can refuse to deliver data it could not track.
+     */
     public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null): void
     {
         $db = $this->services->db();
@@ -344,9 +352,10 @@ final class DeviceService implements DeviceServiceInterface
         $threshold = $now->modify('-' . self::TOUCH_INTERVAL . ' seconds')->format('Y-m-d H:i:s');
         $deviceId = $session->deviceId;
 
-        try {
-            if (!isset($this->touched[$deviceId . ':'])) {
-                $this->touched[$deviceId . ':'] = true;
+        if (!isset($this->touched[$deviceId])) {
+            $this->touched[$deviceId] = true;
+
+            try {
                 $query = $this->query()
                     ->update($db->quoteName('#__' . self::TABLE))
                     ->set($db->quoteName('last_sync_utc') . ' = :now')
@@ -356,47 +365,47 @@ final class DeviceService implements DeviceServiceInterface
                     ->bind(':id', $deviceId, ParameterType::INTEGER)
                     ->bind(':threshold', $threshold);
                 $db->setQuery($query)->execute();
+            } catch (\RuntimeException $e) {
+                Log::add('Internet calendar sync time not recorded: device ' . $deviceId, Log::WARNING, 'com_appointments');
             }
+        }
 
-            if ($calendarId !== null && $calendarId > 0 && !isset($this->touched[$deviceId . ':' . $calendarId])) {
-                $this->touched[$deviceId . ':' . $calendarId] = true;
-                $column = $db->quoteName('last_sync_utc');
-                $later = ' = IF(' . $column . ' <= ' . $db->quote($threshold) . ', ' . $db->quote($nowSql) . ', ' . $column . ')';
+        if ($calendarId === null || $calendarId <= 0) {
+            return;
+        }
 
-                if ($role !== null && CalendarRole::tryFrom($role) !== null) {
-                    // The pair always carries the role of the latest synchronisation, written at once;
-                    // only the time moves at most once a minute.
-                    $db->setQuery(
-                        'INSERT INTO ' . $db->quoteName('#__appointments_device_calendars')
-                        . ' (' . implode(', ', $db->quoteName(['device_id', 'calendar_id', 'role', 'last_sync_utc'])) . ')'
-                        . ' VALUES (' . $deviceId . ', ' . (int) $calendarId . ', ' . $role . ', ' . $db->quote($nowSql) . ')'
-                        . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('role') . ' = ' . $role . ', ' . $column . $later
-                    )->execute();
-                } else {
-                    // Without a role no pair row is created (the column has no default).
-                    $db->setQuery(
-                        'UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $column . $later
-                        . ' WHERE ' . $db->quoteName('device_id') . ' = ' . $deviceId . ' AND ' . $db->quoteName('calendar_id') . ' = ' . (int) $calendarId
-                    )->execute();
-                }
+        $calendarId = (int) $calendarId;
+        $column = $db->quoteName('last_sync_utc');
+        $later = ' = IF(' . $column . ' <= ' . $db->quote($threshold) . ', ' . $db->quote($nowSql) . ', ' . $column . ')';
+        $pair = ' WHERE ' . $db->quoteName('device_id') . ' = ' . $deviceId . ' AND ' . $db->quoteName('calendar_id') . ' = ' . $calendarId;
+
+        if ($role !== null && CalendarRole::tryFrom($role) !== null) {
+            // Required: the pair exists and carries the role of this synchronisation, written at
+            // once on every call; only its time stays throttled (in SQL). No catch: see above.
+            $db->setQuery(
+                'INSERT INTO ' . $db->quoteName('#__appointments_device_calendars')
+                . ' (' . implode(', ', $db->quoteName(['device_id', 'calendar_id', 'role', 'last_sync_utc'])) . ')'
+                . ' VALUES (' . $deviceId . ', ' . $calendarId . ', ' . $role . ', ' . $db->quote($nowSql) . ')'
+                . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('role') . ' = ' . $role . ', ' . $column . $later
+            )->execute();
+        } else {
+            // Without a role no pair is created (the column has no default); the time is best effort.
+            try {
+                $db->setQuery('UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $column . $later . $pair)->execute();
+            } catch (\RuntimeException $e) {
+                Log::add('Internet calendar sync time not recorded: device ' . $deviceId, Log::WARNING, 'com_appointments');
             }
+        }
 
-            // The highest sync token delivered to an active device, never throttled and never
-            // lowered: the clean-up needs to know what the device may still hold.
-            if ($calendarId !== null && $calendarId > 0 && $syncToken !== null && $syncToken > 0 && $session->isActive()) {
-                $token = $db->quoteName('synctoken');
-                $db->setQuery(
-                    'UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $token . ' = ' . $syncToken
-                    . ' WHERE ' . $db->quoteName('device_id') . ' = ' . $deviceId . ' AND ' . $db->quoteName('calendar_id') . ' = ' . (int) $calendarId
-                    . ' AND ' . $token . ' < ' . $syncToken
-                )->execute();
-            }
-        } catch (\RuntimeException $e) {
-            // «Last synchronised» is information, never a reason to fail a synchronisation.
-            Log::add('Internet calendar sync time not recorded: device ' . $deviceId, Log::WARNING, 'com_appointments');
+        // Required too: the highest sync token delivered to an active device, never lowered.
+        if ($syncToken !== null && $syncToken > 0 && $session->isActive()) {
+            $token = $db->quoteName('synctoken');
+            $db->setQuery(
+                'UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $token . ' = ' . $syncToken
+                . $pair . ' AND ' . $token . ' < ' . $syncToken
+            )->execute();
         }
     }
-
     public function listForUser(int $userId): array
     {
         $db = $this->services->db();
