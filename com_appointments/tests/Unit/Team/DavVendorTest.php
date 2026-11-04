@@ -167,7 +167,7 @@ final class DavVendorTest extends TestCase
                 $found[] = $file->getFilename() . ': unprefixed namespace or import';
             }
 
-            if (preg_match("/^\\\\?defined\('_JEXEC'\) or die;$/m", $code) !== 1) {
+            if (preg_match("/^\\\\?defined\('_JEXEC'\) or die;\r?$/m", $code) !== 1) {
                 $found[] = $file->getFilename() . ': no direct-access guard';
             }
         }
