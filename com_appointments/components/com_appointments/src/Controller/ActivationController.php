@@ -25,9 +25,9 @@ defined('_JEXEC') or die;
  * Account activation: set the password of an account an administrator created,
  * with the one-time link. POST only, with the form token, signed out. The
  * password is checked against Joomla's password rules (Users → Options), then
- * the invitation service sets it and closes the link. Afterwards the browser
- * goes to the sign-in page, so the token is no longer in the address bar, and
- * Joomla asks for the second factor there.
+ * the invitation service sets it and closes the link. The token comes from the
+ * session exchange of the activation page, never from the form. Afterwards the
+ * browser goes to the sign-in page, and Joomla asks for the second factor there.
  *
  * @since  1.4.0
  */
@@ -43,14 +43,17 @@ class ActivationController extends BaseController
 
         MycalendarsView::privateHeaders();
         $services = TeamServices::fromApplication();
-        $token = (string) $this->input->post->getString('token', '');
+        $exchange = HtmlView::exchange();
 
-        if (!$services->enabled() || !HtmlView::isToken($token)) {
+        // The form carries the value of this session's exchange, never the token itself.
+        if (!$services->enabled() || $exchange === null || !hash_equals($exchange['nonce'], $this->input->post->getAlnum('nonce', ''))) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 
+        $token = $exchange['token'];
+
         if (!$this->app->getIdentity()->guest) {
-            return $this->back($token, ['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_SIGNED_IN']);
+            return $this->back(['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_SIGNED_IN']);
         }
 
         // Raw: a password keeps every character the person typed.
@@ -58,31 +61,34 @@ class ActivationController extends BaseController
         $repeat = (string) $this->input->post->get('password2', '', 'raw');
 
         if ($password === '' || \strlen($password) > 4096) {
-            return $this->back($token, ['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
+            return $this->back(['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
         }
 
         if (!hash_equals($password, $repeat)) {
-            return $this->back($token, ['password2' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_REPEAT']);
+            return $this->back(['password2' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_REPEAT']);
         }
 
         // Joomla's own rules from the user options; the rule explains itself in a message.
         $rule = new \SimpleXMLElement('<field name="password1" type="password" validate="password" required="true" />');
 
         if ((new PasswordRule())->test($rule, $password) !== true) {
-            return $this->back($token, ['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
+            return $this->back(['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
         }
 
         try {
             $services->invitations()->complete($token, $password);
         } catch (TeamException $e) {
             if ($e->getCode() === 400) {
-                return $this->back($token, ['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
+                return $this->back(['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);
             }
 
             // Unknown, used, expired: one answer for all.
+            $this->app->getSession()->set(HtmlView::EXCHANGE, null);
+
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 
+        $this->app->getSession()->set(HtmlView::EXCHANGE, null);
         $this->setRedirect(Route::_('index.php?option=com_users&view=login', false), Text::_('COM_APPOINTMENTS_TEAM_D_ACTIVATION_DONE'), 'success');
 
         return true;
@@ -93,10 +99,10 @@ class ActivationController extends BaseController
      *
      * @param   array<string, string>  $errors
      */
-    private function back(string $token, array $errors): bool
+    private function back(array $errors): bool
     {
         $this->app->setUserState(HtmlView::FORM_STATE, $errors);
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=activation&token=' . $token, false));
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=activation', false));
 
         return false;
     }

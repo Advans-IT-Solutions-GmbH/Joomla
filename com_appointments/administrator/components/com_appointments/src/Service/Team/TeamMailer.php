@@ -84,7 +84,7 @@ final class TeamMailer implements TeamMailerInterface
         }, [$this->siteUrl('index.php?option=com_appointments&view=mycalendars') => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
-    public function invitation(string $email, string $link, \DateTimeImmutable $expiresUtc): void
+    public function invitation(string $email, #[\SensitiveParameter] string $link, \DateTimeImmutable $expiresUtc): void
     {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('#\Ahttps://#i', $link) !== 1) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
@@ -481,6 +481,22 @@ final class TeamMailer implements TeamMailerInterface
 
     public function calendarDeleted(string $calendarTitle, array $recipientUserIds, int $actorUserId, \DateTimeImmutable $deletedUtc): void
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-}
+        $recipients = [];
+
+        // Like a grant change, so that no deletion happens unseen; the actor gets no copy.
+        foreach (array_unique(array_map('intval', $recipientUserIds)) as $id) {
+            if ($id > 0 && $id !== $actorUserId && ($user = $this->user($id)) !== null) {
+                $recipients[] = $user;
+            }
+        }
+
+        $actor = $this->user($actorUserId);
+
+        $this->deliver('team_calendar_deleted', $recipients, function (Language $language, object $recipient) use ($calendarTitle, $actor, $deletedUtc): array {
+            return [
+                '{calendar_title}' => $calendarTitle,
+                '{actor_name}' => $actor !== null ? (string) $actor->name : '',
+                '{deleted}' => $this->when($deletedUtc, $language, $recipient),
+            ];
+        });
+    }}

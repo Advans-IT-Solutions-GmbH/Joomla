@@ -27,6 +27,7 @@ use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Advans\Component\Appointments\Administrator\Service\Team\CalendarService;
 use Advans\Component\Appointments\Administrator\Service\Team\CleanupService;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
 use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
 use Advans\Component\Appointments\Administrator\Service\Team\KeyService;
 use Advans\Component\Appointments\Administrator\Service\Team\KeySession;
@@ -193,10 +194,10 @@ return static function (TeamSuite $suite): void {
         return true;
     });
 
-    $suite->test('The five internet calendar mails are site-wide DB templates in all three languages', static function () use ($suite, $p) {
-        $purposes = "'team_device_added','team_invitation','team_invitation_accepted','team_grant_changed','team_access_suspended'";
+    $suite->test('The six internet calendar mails are site-wide DB templates in all three languages', static function () use ($suite, $p) {
+        $purposes = "'team_device_added','team_invitation','team_invitation_accepted','team_grant_changed','team_access_suspended','team_calendar_deleted'";
 
-        return $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id = 0 AND published = 1 AND purpose IN ({$purposes}) AND language IN ('en-GB','de-DE','fr-FR')") === 15
+        return $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id = 0 AND published = 1 AND purpose IN ({$purposes}) AND language IN ('en-GB','de-DE','fr-FR')") === 18
             && $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE eventtype_id <> 0 AND purpose IN ({$purposes})") === 0
             && $suite->count("SELECT COUNT(*) FROM {$p}appointments_templates WHERE purpose = 'team_device_added' AND body LIKE '%{device_name}%' AND body NOT LIKE '%password}%'") === 3;
     });
@@ -324,7 +325,7 @@ return static function (TeamSuite $suite): void {
 
         $stubs = [];
 
-        foreach (['B' => [KeySession::class, KeyService::class], 'C' => [GrantService::class, CalendarService::class], 'F' => [AuditService::class, CleanupService::class]] as $package => $classes) {
+        foreach (['B' => [KeySession::class, KeyService::class, EpochAnchor::class], 'C' => [GrantService::class, CalendarService::class], 'F' => [AuditService::class, CleanupService::class]] as $package => $classes) {
             foreach ($classes as $class) {
                 if ($suite->isStub($class)) {
                     $stubs[$package] = true;
@@ -341,7 +342,7 @@ return static function (TeamSuite $suite): void {
             'D: A second submission of the same form creates no second device and shows no password',
             'D: The app password authenticates the device, the Joomla password never does',
             'D: Without the key in the session «Add device» answers 423',
-            'D: «Remove device» starts the clean-up',
+            'D: «Remove device» starts the clean-up and raises the device epoch',
         ];
 
         if ($stubs !== []) {
@@ -529,9 +530,12 @@ return static function (TeamSuite $suite): void {
                 return false;
             }
 
+            $epoch = $suite->count("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}");
             $browser->request($form['action'], $form['fields'] + ['confirm' => 1]);
 
-            return $suite->count("SELECT state FROM {$p}appointments_devices WHERE id = {$id}") === TeamStates::DEVICE_CLEANUP_EMPTY;
+            // The clean-up step raised the user's device epoch (replay protection, 5.11).
+            return $suite->count("SELECT state FROM {$p}appointments_devices WHERE id = {$id}") === TeamStates::DEVICE_CLEANUP_EMPTY
+                && $suite->count("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}") > $epoch;
         });
     } finally {
         // Own rows only; the log keeps its rows so that the chain of part F still verifies.

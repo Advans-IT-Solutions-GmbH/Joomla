@@ -57,7 +57,7 @@ $error = fn (string $key): string => isset($errors[$key])
                     <?php echo $error('password2'); ?>
                 </div>
                 <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_ACTIVATION_MFA'); ?></p>
-                <input type="hidden" name="token" value="<?php echo $this->escape($this->token); ?>">
+                <input type="hidden" name="nonce" value="<?php echo $this->escape($this->nonce); ?>">
                 <?php echo HTMLHelper::_('form.token'); ?>
                 <div class="com-appointments-actions">
                     <button type="submit" class="btn btn-primary"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_ACTIVATION_SUBMIT'); ?></button>

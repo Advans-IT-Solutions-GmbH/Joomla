@@ -29,18 +29,18 @@ defined('_JEXEC') or die;
  *
  * Row MAC of `#__appointments_devices` (table `appointments_devices`), in this
  * order: `id`, `user_id`, `secret_hash`, `kek_salt`, `usk_wrapped`,
- * `user_key_version`, `state`. Integers as integers, binary columns as raw
+ * `user_key_version`, `state` and the user's `device_epoch` from
+ * `#__appointments_user_keys` ({@see macFields()}). Integers as integers, binary columns as raw
  * bytes, `usk_wrapped` null when cleared. A row whose MAC does not verify never
  * authenticates, and no method of this class ever writes a new MAC over a row
  * whose old MAC did not verify, so a tampered row stays detectable.
  *
  * Name, client, times and the revocation columns are not covered: they carry
  * no access. A device that leaves the active state loses `usk_wrapped`, so a
- * changed state or a restored key alone does not make it active again. Not
- * covered, stated plainly: writing back a complete older row from a backup
- * (with its then valid MAC) restores that device for whoever still has its
- * app password, unless the user's key was reset since. After restoring a
- * database backup, revoke the devices that were revoked after it was taken.
+ * changed state or a restored key alone does not make it active again. An older
+ * row played back as a whole is caught by the user's `device_epoch`, which is
+ * part of the MAC, rises with every revocation and clean-up step and is anchored
+ * outside the database (specification 5.11).
  *
  * @since  1.4.0
  */
@@ -166,6 +166,8 @@ final class DeviceService implements DeviceServiceInterface
             $db->transactionStart();
 
             try {
+                // The user key row is locked, so no revocation raises the epoch in between.
+                $epoch = $this->epochOf($userId, true);
                 $query = $this->query()
                     ->insert($db->quoteName('#__' . self::TABLE))
                     ->columns($db->quoteName([
@@ -190,7 +192,7 @@ final class DeviceService implements DeviceServiceInterface
 
                 $mac = $this->mac([
                     'id' => $deviceId, 'user_id' => $userId, 'secret_hash' => $secretHash, 'kek_salt' => $salt,
-                    'usk_wrapped' => $wrapped, 'user_key_version' => $keyVersion, 'state' => $state,
+                    'usk_wrapped' => $wrapped, 'user_key_version' => $keyVersion, 'state' => $state, 'device_epoch' => $epoch,
                 ]);
                 $query = $this->query()
                     ->update($db->quoteName('#__' . self::TABLE))
@@ -252,8 +254,10 @@ final class DeviceService implements DeviceServiceInterface
         $query = $this->query()
             ->select($db->quoteName(['d.id', 'd.user_id', 'd.secret_hash', 'd.kek_salt', 'd.usk_wrapped', 'd.user_key_version', 'd.state', 'd.row_mac']))
             ->select($db->quoteName(['u.username', 'u.block']))
+            ->select('COALESCE(' . $db->quoteName('k.device_epoch') . ', 0) AS ' . $db->quoteName('device_epoch'))
             ->from($db->quoteName('#__' . self::TABLE, 'd'))
             ->join('INNER', $db->quoteName('#__users', 'u'), $db->quoteName('u.id') . ' = ' . $db->quoteName('d.user_id'))
+            ->join('LEFT', $db->quoteName('#__appointments_user_keys', 'k'), $db->quoteName('k.user_id') . ' = ' . $db->quoteName('d.user_id'))
             ->where($db->quoteName('d.secret_hash') . ' = :hash')
             ->bind(':hash', $hash, ParameterType::LARGE_OBJECT);
         $row = $db->setQuery($query)->loadObject();
@@ -264,14 +268,21 @@ final class DeviceService implements DeviceServiceInterface
 
         $state = (int) $row->state;
 
-        if ($state === TeamStates::DEVICE_REVOKED || !$this->verifies($row)) {
-            if ($state !== TeamStates::DEVICE_REVOKED) {
-                $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
-                    'subject_user_id' => (int) $row->user_id,
-                    'actor_device_id' => (int) $row->id,
-                    'details' => ['table' => self::TABLE, 'reason' => 'device_auth'],
-                ]);
-            }
+        if ($state === TeamStates::DEVICE_REVOKED) {
+            return null;
+        }
+
+        // A valid MAC proves the server wrote the row; the epoch against the anchor proves
+        // it is not an older row played back together with an older epoch (5.11).
+        $reason = !$this->verifies($row) ? 'device_auth'
+            : (!$this->services->anchor()->accepts(EpochAnchorInterface::KIND_USER, (int) $row->user_id, (int) $row->device_epoch) ? 'epoch' : '');
+
+        if ($reason !== '') {
+            $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
+                'subject_user_id' => (int) $row->user_id,
+                'actor_device_id' => (int) $row->id,
+                'details' => ['table' => self::TABLE, 'reason' => $reason],
+            ]);
 
             return null;
         }
@@ -512,64 +523,88 @@ final class DeviceService implements DeviceServiceInterface
     }
 
     /**
-     * One state change under a row lock. The wrapped key goes with the active state;
+     * One state change under row locks. The wrapped key goes with the active state;
      * a revocation also replaces the secret hash, so the app password no longer even
-     * finds the row. The MAC is rewritten only over a row whose MAC verified before.
+     * finds the row. Every change raises the user's `device_epoch` (5.11) and rewrites
+     * the MACs of the user's other devices with it, so an older device row played back
+     * into the database no longer verifies. A MAC is rewritten only over a row whose
+     * MAC verified before. Lock order: user key row, then device rows, as in create().
      *
      * @param   array<string, string|int|null>  $extra  Further columns (times, actor, reason).
      */
     private function transition(int $deviceId, int $fromState, int $toState, array $extra): bool
     {
         $db = $this->services->db();
+        $query = $this->query()
+            ->select($db->quoteName('user_id'))
+            ->from($db->quoteName('#__' . self::TABLE))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $deviceId, ParameterType::INTEGER);
+        $owner = (int) $db->setQuery($query)->loadResult();
+
+        if ($owner <= 0) {
+            return false;
+        }
+
         $db->transactionStart();
 
         try {
+            $keyRow = $this->lockUserKey($owner);
+            $old = $keyRow !== null ? (int) $keyRow['device_epoch'] : 0;
+            $new = $keyRow !== null ? $old + 1 : 0;
+            $revoked = TeamStates::DEVICE_REVOKED;
             $query = $this->query()
                 ->select($db->quoteName(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state', 'row_mac']))
                 ->from($db->quoteName('#__' . self::TABLE))
-                ->where($db->quoteName('id') . ' = :id')
+                ->where($db->quoteName('user_id') . ' = :user')
+                ->where('(' . $db->quoteName('state') . ' <> :revoked OR ' . $db->quoteName('id') . ' = :id)')
+                ->bind(':user', $owner, ParameterType::INTEGER)
+                ->bind(':revoked', $revoked, ParameterType::INTEGER)
                 ->bind(':id', $deviceId, ParameterType::INTEGER);
-            $row = $db->setQuery((string) $query . ' FOR UPDATE')->loadObject();
+            $rows = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssocList('id');
+            $target = $rows[$deviceId] ?? null;
 
-            if ($row === null || (int) $row->state !== $fromState) {
+            if ($target === null || (int) $target['state'] !== $fromState) {
                 $db->transactionRollback();
 
                 return false;
             }
 
-            $intact = $this->verifies($row);
-            $row->state = $toState;
-            $row->usk_wrapped = null;
-
-            if ($toState === TeamStates::DEVICE_REVOKED) {
-                $row->secret_hash = random_bytes(32);
+            if ($keyRow !== null) {
+                $this->raiseEpoch($keyRow, $new);
             }
 
-            $mac = $intact ? $this->mac((array) $row) : (string) $row->row_mac;
-            $secretHash = (string) $row->secret_hash;
-            $update = $this->query()
-                ->update($db->quoteName('#__' . self::TABLE))
-                ->set($db->quoteName('state') . ' = :state')
-                ->set($db->quoteName('usk_wrapped') . ' = NULL')
-                ->set($db->quoteName('secret_hash') . ' = :hash')
-                ->set($db->quoteName('row_mac') . ' = :mac')
-                ->where($db->quoteName('id') . ' = :id')
-                ->bind(':state', $toState, ParameterType::INTEGER)
-                ->bind(':hash', $secretHash, ParameterType::LARGE_OBJECT)
-                ->bind(':mac', $mac, ParameterType::LARGE_OBJECT)
-                ->bind(':id', $deviceId, ParameterType::INTEGER);
+            foreach ($rows as $id => $row) {
+                $row['device_epoch'] = $old;
+                $intact = $this->verifies((object) $row);
+                $row['device_epoch'] = $new;
+                $update = $this->query()->update($db->quoteName('#__' . self::TABLE))->where($db->quoteName('id') . ' = ' . (int) $id);
 
-            foreach ($extra as $column => $value) {
-                if ($value === null) {
-                    $update->set($db->quoteName($column) . ' = NULL');
-                } elseif (\is_int($value)) {
-                    $update->set($db->quoteName($column) . ' = ' . $value);
-                } else {
-                    $update->set($db->quoteName($column) . ' = ' . $db->quote($value));
+                if ((int) $id === $deviceId) {
+                    $row['state'] = $toState;
+                    $row['usk_wrapped'] = null;
+
+                    if ($toState === TeamStates::DEVICE_REVOKED) {
+                        $row['secret_hash'] = random_bytes(32);
+                    }
+
+                    $update->set($db->quoteName('state') . ' = ' . $toState)
+                        ->set($db->quoteName('usk_wrapped') . ' = NULL')
+                        ->set($db->quoteName('secret_hash') . ' = ' . self::hex((string) $row['secret_hash']));
+
+                    foreach ($extra as $column => $value) {
+                        $update->set($db->quoteName($column) . ' = ' . ($value === null ? 'NULL' : (\is_int($value) ? (string) $value : $db->quote($value))));
+                    }
+                } elseif ((int) $row['state'] === $revoked || !$intact) {
+                    // A revoked or tampered row keeps its MAC and so stays invalid.
+                    continue;
                 }
+
+                $mac = $intact ? $this->mac($row) : (string) $row['row_mac'];
+                $update->set($db->quoteName('row_mac') . ' = ' . self::hex($mac));
+                $db->setQuery($update)->execute();
             }
 
-            $db->setQuery($update)->execute();
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -577,9 +612,94 @@ final class DeviceService implements DeviceServiceInterface
             throw $e;
         }
 
+        if ($keyRow !== null) {
+            try {
+                $this->services->anchor()->record(EpochAnchorInterface::KIND_USER, $owner, $new);
+            } catch (\Throwable $e) {
+                // The change is committed; without the anchor only the rollback protection is weaker.
+                Log::add('Internet calendar device epoch not anchored: user ' . $owner, Log::WARNING, 'com_appointments');
+            }
+        }
+
         return true;
     }
 
+    /**
+     * The user key row, locked for the rest of the transaction; null when the user has none.
+     *
+     * @return  array<string, mixed>|null
+     */
+    private function lockUserKey(int $userId): ?array
+    {
+        $db = $this->services->db();
+        $query = $this->query()
+            ->select('*')
+            ->from($db->quoteName('#__appointments_user_keys'))
+            ->where($db->quoteName('user_id') . ' = :user')
+            ->bind(':user', $userId, ParameterType::INTEGER);
+
+        return $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+    }
+
+    /**
+     * The user's `device_epoch`, 0 without a key row. With $lock the row stays locked
+     * until the end of the transaction.
+     */
+    private function epochOf(int $userId, bool $lock): int
+    {
+        if ($lock) {
+            $row = $this->lockUserKey($userId);
+
+            return $row !== null ? (int) $row['device_epoch'] : 0;
+        }
+
+        $db = $this->services->db();
+        $query = $this->query()
+            ->select($db->quoteName('device_epoch'))
+            ->from($db->quoteName('#__appointments_user_keys'))
+            ->where($db->quoteName('user_id') . ' = :user')
+            ->bind(':user', $userId, ParameterType::INTEGER);
+
+        return (int) $db->setQuery($query)->loadResult();
+    }
+
+    /**
+     * Raise the epoch of a locked user key row and rewrite its MAC with the field list
+     * of the key service (work package B), only when the old MAC verified.
+     *
+     * @param   array<string, mixed>  $keyRow
+     */
+    private function raiseEpoch(array $keyRow, int $epoch): void
+    {
+        if (!method_exists(KeyService::class, 'macFields')) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        }
+
+        $keys = $this->services->keys();
+        $fields = static function (array $row): array {
+            $out = [];
+
+            foreach (KeyService::macFields('user_keys') as $name) {
+                $out[$name] = $row[$name] ?? null;
+            }
+
+            return $out;
+        };
+        $intact = \strlen((string) $keyRow['row_mac']) === 32 && $keys->verifyRowMac('user_keys', $fields($keyRow), (string) $keyRow['row_mac']);
+        $keyRow['device_epoch'] = $epoch;
+        $db = $this->services->db();
+        $db->setQuery(
+            'UPDATE ' . $db->quoteName('#__appointments_user_keys')
+            . ' SET ' . $db->quoteName('device_epoch') . ' = ' . $epoch
+            . ($intact ? ', ' . $db->quoteName('row_mac') . ' = ' . self::hex($keys->rowMac('user_keys', $fields($keyRow))) : '')
+            . ' WHERE ' . $db->quoteName('user_id') . ' = ' . (int) $keyRow['user_id']
+        )->execute();
+    }
+
+    private static function hex(string $bytes): string
+    {
+        return "X'" . bin2hex($bytes) . "'";
+    }
     /**
      * @param   array<string, mixed>|object  $row
      */
@@ -596,7 +716,7 @@ final class DeviceService implements DeviceServiceInterface
     }
 
     /**
-     * The covered columns in their fixed order and types.
+     * The covered columns in their fixed order and types, the user's device_epoch included.
      *
      * @param   array<string, mixed>  $row
      *
@@ -612,6 +732,8 @@ final class DeviceService implements DeviceServiceInterface
             'usk_wrapped' => $row['usk_wrapped'] === null ? null : (string) $row['usk_wrapped'],
             'user_key_version' => (int) $row['user_key_version'],
             'state' => (int) $row['state'],
+            // The user's device epoch (5.11): an older row played back no longer verifies.
+            'device_epoch' => (int) ($row['device_epoch'] ?? throw new \InvalidArgumentException('A device MAC needs the device epoch.')),
         ];
     }
 

@@ -31,6 +31,7 @@
             <option value="team_invitation_accepted">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION_ACCEPTED</option>
             <option value="team_grant_changed">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_GRANT_CHANGED</option>
             <option value="team_access_suspended">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCESS_SUSPENDED</option>
+            <option value="team_calendar_deleted">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_CALENDAR_DELETED</option>
         </field>
         <field name="language" type="text" label="JFIELD_LANGUAGE_LABEL" description="COM_APPOINTMENTS_TEMPLATE_LANGUAGE_DESC" required="true" maxlength="7" />
         <field name="subject" type="text" label="COM_APPOINTMENTS_TEMPLATE_SUBJECT" required="true" maxlength="255" filter="raw" />

@@ -71,17 +71,24 @@ final class DeviceServiceTest extends TestCase
     {
         $fields = DeviceService::macFields([
             'id' => '7', 'user_id' => '42', 'secret_hash' => str_repeat("\x01", 32), 'kek_salt' => str_repeat("\x02", 16),
-            'usk_wrapped' => null, 'user_key_version' => '3', 'state' => '2',
+            'usk_wrapped' => null, 'user_key_version' => '3', 'state' => '2', 'device_epoch' => '9',
             'name' => 'not covered', 'last_sync_utc' => '2026-11-04 10:00:00',
         ]);
 
-        self::assertSame(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state'], array_keys($fields));
+        self::assertSame(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state', 'device_epoch'], array_keys($fields));
+        self::assertSame(9, $fields['device_epoch']);
         self::assertSame(7, $fields['id']);
         self::assertSame(42, $fields['user_id']);
         self::assertSame(3, $fields['user_key_version']);
         self::assertSame(2, $fields['state']);
         self::assertNull($fields['usk_wrapped']);
         self::assertSame(str_repeat("\x01", 32), $fields['secret_hash']);
+    }
+
+    public function testADeviceMacWithoutTheUsersEpochIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        DeviceService::macFields(['id' => 1, 'user_id' => 2, 'secret_hash' => 'a', 'kek_salt' => 'b', 'usk_wrapped' => null, 'user_key_version' => 1, 'state' => 1]);
     }
 
     #[DataProvider('notAppPasswords')]

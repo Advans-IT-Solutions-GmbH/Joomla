@@ -38,6 +38,7 @@ $purposeKeys = [
     'team_invitation_accepted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION_ACCEPTED',
     'team_grant_changed' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_GRANT_CHANGED',
     'team_access_suspended' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCESS_SUSPENDED',
+    'team_calendar_deleted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_CALENDAR_DELETED',
 ];
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>" method="post" name="adminForm" id="adminForm">

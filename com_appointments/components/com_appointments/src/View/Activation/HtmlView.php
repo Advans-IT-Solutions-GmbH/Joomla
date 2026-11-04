@@ -16,6 +16,7 @@ use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -23,8 +24,14 @@ defined('_JEXEC') or die;
  * Account activation of the internet calendars: an administrator created the
  * account and sent a one-time link; this page shows the user name and the
  * masked address and sets the password, nothing else. Joomla enforces the
- * second factor at the first sign-in. An unknown, used or expired link, a
- * disabled feature and a malformed token all answer 404 alike.
+ * second factor at the first sign-in.
+ *
+ * The first request carries the token from the mail. It is checked, kept in
+ * this browser session for a short time together with a random form value,
+ * and the browser is sent on to the same page without the token, so the token
+ * stays out of the address bar, the history and any later request. The form
+ * carries only the form value. An unknown, used or expired link, a disabled
+ * feature, a malformed token and an expired exchange all answer 404 alike.
  *
  * @since  1.4.0
  */
@@ -35,10 +42,16 @@ class HtmlView extends BaseHtmlView
     /** User state of the last refused submission: messages only, never a password. */
     public const FORM_STATE = 'com_appointments.team.activation_errors';
 
+    /** Session key of the exchanged token: token, form value, expiry. */
+    public const EXCHANGE = 'com_appointments.team.activation';
+
+    /** Seconds the exchanged token stays usable in the session. */
+    public const EXCHANGE_SECONDS = 900;
+
     /** @var array{username: string, email_masked: string, expires_utc: string}|null */
     protected $account;
 
-    protected $token = '';
+    protected $nonce = '';
 
     protected $signedIn = false;
 
@@ -50,23 +63,34 @@ class HtmlView extends BaseHtmlView
         $app = Factory::getApplication();
         MycalendarsView::privateHeaders();
         $services = TeamServices::fromApplication();
-        $token = (string) $app->getInput()->getString('token', '');
 
-        if (!$services->enabled() || !self::isToken($token)) {
+        if (!$services->enabled()) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 
-        try {
-            $this->account = $services->invitations()->inspect($token);
-        } catch (TeamException $e) {
-            $this->account = null;
+        $token = (string) $app->getInput()->get->getString('token', '');
+
+        if ($token !== '') {
+            if (!self::isToken($token) || self::inspect($services, $token) === null) {
+                throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+            }
+
+            $app->getSession()->set(self::EXCHANGE, [
+                'token' => $token,
+                'nonce' => bin2hex(random_bytes(16)),
+                'expires' => time() + self::EXCHANGE_SECONDS,
+            ]);
+            $app->redirect(Route::_('index.php?option=com_appointments&view=activation', false), 303);
         }
+
+        $exchange = self::exchange();
+        $this->account = $exchange !== null ? self::inspect($services, $exchange['token']) : null;
 
         if ($this->account === null) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 
-        $this->token = $token;
+        $this->nonce = $exchange['nonce'];
         $this->signedIn = !$app->getIdentity()->guest;
         $this->errors = array_filter((array) $app->getUserState(self::FORM_STATE, []), 'is_string');
         $app->setUserState(self::FORM_STATE, null);
@@ -88,5 +112,40 @@ class HtmlView extends BaseHtmlView
     public static function isToken(string $token): bool
     {
         return preg_match('/\A[A-Za-z0-9_-]{43}\z/', $token) === 1;
+    }
+
+    /**
+     * The exchanged token of this session while it is valid, null otherwise (an
+     * expired exchange is removed).
+     *
+     * @return  array{token: string, nonce: string, expires: int}|null
+     */
+    public static function exchange(): ?array
+    {
+        $session = Factory::getApplication()->getSession();
+        $exchange = $session->get(self::EXCHANGE);
+
+        if (!\is_array($exchange) || !self::isToken((string) ($exchange['token'] ?? ''))
+            || preg_match('/\A[0-9a-f]{32}\z/', (string) ($exchange['nonce'] ?? '')) !== 1
+            || (int) ($exchange['expires'] ?? 0) < time()
+        ) {
+            $session->set(self::EXCHANGE, null);
+
+            return null;
+        }
+
+        return ['token' => (string) $exchange['token'], 'nonce' => (string) $exchange['nonce'], 'expires' => (int) $exchange['expires']];
+    }
+
+    /**
+     * @return  array{username: string, email_masked: string, expires_utc: string}|null
+     */
+    private static function inspect(TeamServices $services, string $token): ?array
+    {
+        try {
+            return $services->invitations()->inspect($token);
+        } catch (TeamException $e) {
+            return null;
+        }
     }
 }
