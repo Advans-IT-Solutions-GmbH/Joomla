@@ -15,8 +15,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The pure rules of the object store: addresses, object limits, ETag
- * preconditions, the journal collapse and the end of a series for the
- * retention.
+ * preconditions and the journal collapse.
  */
 final class DavObjectRulesTest extends TestCase
 {
@@ -102,31 +101,5 @@ final class DavObjectRulesTest extends TestCase
             ['added' => ['new.ics'], 'modified' => ['old.ics', 'back.ics'], 'deleted' => ['gone.ics']],
             CalendarObjectStore::collapse($rows)
         );
-    }
-
-    public function testTheEndOfASeriesForTheRetention(): void
-    {
-        self::assertEquals(new \DateTimeImmutable('2026-01-01 10:00:00', new \DateTimeZone('UTC')), CalendarObjectStore::lastEnd(self::ics(self::event('a'))));
-        self::assertEquals(
-            new \DateTimeImmutable('2026-01-15 10:00:00', new \DateTimeZone('UTC')),
-            CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=WEEKLY;COUNT=3\r\n")))
-        );
-        self::assertEquals(
-            new \DateTimeImmutable('2026-01-08 12:00:00', new \DateTimeZone('UTC')),
-            CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=WEEKLY;COUNT=2\r\n") . self::event('a', "RECURRENCE-ID:20260108T090000Z\r\n", '20260108T110000Z', '20260108T120000Z')))
-        );
-        self::assertEquals(
-            new \DateTimeImmutable('2026-01-02 00:00:00', new \DateTimeZone('UTC')),
-            CalendarObjectStore::lastEnd(self::ics("BEGIN:VEVENT\r\nUID:d\r\nDTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260101\r\nEND:VEVENT\r\n"))
-        );
-
-        self::assertEquals(
-            new \DateTimeImmutable('2036-12-13 10:00:00', new \DateTimeZone('UTC')),
-            CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=DAILY;COUNT=4000\r\n"))),
-            'A finite series beyond the 3500 occurrences of vObject still ends.'
-        );
-        self::assertNull(CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=DAILY\r\n"))), 'An open series is never deleted.');
-        self::assertNull(CalendarObjectStore::lastEnd('garbage'));
-        self::assertNull(CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=SECONDLY;COUNT=100000\r\n"))), 'Too many occurrences are kept.');
     }
 }

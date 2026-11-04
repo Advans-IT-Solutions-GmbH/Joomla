@@ -120,7 +120,7 @@ final class DavContext
             }
 
             if ($this->session->state === TeamStates::DEVICE_CLEANUP_EMPTY) {
-                foreach ($services->cleanup->calendarsInCleanup($this->session) as $calendarId) {
+                foreach ($services->cleanup->calendarsInCleanup($this->session) as $calendarId => $role) {
                     $row = $services->calendars->get((int) $calendarId);
 
                     if ($row === null || !isset($row->id, $row->uri)) {
@@ -134,7 +134,7 @@ final class DavContext
                         (string) ($row->colour ?? ''),
                         null,
                         (int) ($row->synctoken ?? 0),
-                        $this->roleInCleanup((int) $row->id),
+                        CalendarRole::tryFrom((int) $role),
                         CleanupServiceInterface::VIEW_EMPTY,
                         false
                     );
@@ -263,7 +263,7 @@ final class DavContext
             $map = [];
 
             try {
-                foreach ($this->services->objects->all($calendar->id) as $object) {
+                foreach ($this->services->objects->listing($calendar->id) as $object) {
                     $map[$this->freeBusyUri($calendar->id, $object->uri)] = $object;
                 }
             } catch (TeamException $e) {
@@ -324,20 +324,5 @@ final class DavContext
 
         $this->keyrings = [];
         $this->freeBusyMaps = [];
-    }
-
-    /**
-     * The role the user held on a calendar of the clean-up, also when the grant
-     * is suspended; null when no grant row is left.
-     */
-    private function roleInCleanup(int $calendarId): ?CalendarRole
-    {
-        foreach ($this->services->grants->grantsOf($calendarId) as $grant) {
-            if ((int) ($grant->user_id ?? 0) === $this->session->userId) {
-                return CalendarRole::tryFrom((int) ($grant->role ?? 0));
-            }
-        }
-
-        return null;
     }
 }

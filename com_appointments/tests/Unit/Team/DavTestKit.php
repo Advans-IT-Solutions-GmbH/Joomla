@@ -104,6 +104,11 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
         return array_values(array_map(fn (string $uri) => $this->object($calendarId, $uri), array_keys($this->objects[$calendarId] ?? [])));
     }
 
+    public function listing(int $calendarId): array
+    {
+        return array_map(static fn (StoredObject $o) => new StoredObject($o->id, $o->calendarId, $o->uri, $o->etag, $o->size, $o->scheme, $o->keyVersion, '', $o->timing, $o->bookingId, $o->modifiedUtc), $this->all($calendarId));
+    }
+
     public function many(int $calendarId, array $uris): array
     {
         return array_values(array_filter(array_map(fn (string $uri) => isset($this->objects[$calendarId][$uri]) ? $this->object($calendarId, $uri) : null, $uris)));
@@ -325,7 +330,7 @@ final class DavWorld
     /** @var array<int, string> Calendar id → clean-up view for active devices. */
     public array $views = [];
 
-    /** @var int[] Calendars the clean-up lists for a device in clean-up. */
+    /** @var array<int, int> Calendar id => role value the clean-up lists for a device in clean-up. */
     public array $inCleanup = [];
 
     /** @var array<int, array<string, mixed>> */
@@ -333,6 +338,9 @@ final class DavWorld
 
     /** @var array<int, int|null> Calendar ids passed to touch(). */
     public array $touched = [];
+
+    /** @var array<int, int|null> Roles passed to touch(). */
+    public array $touchedRoles = [];
 
     /** @var int[] */
     public array $delivered = [];
@@ -400,8 +408,9 @@ final class DavWorld
 
             return $device !== null && hash_equals($device['password'], $password) ? $device['session'] : null;
         });
-        $devices->method('touch')->willReturnCallback(function (DeviceSession $session, ?int $calendarId) use ($world): void {
+        $devices->method('touch')->willReturnCallback(function (DeviceSession $session, ?int $calendarId, ?int $role = null) use ($world): void {
             $world->touched[] = $calendarId;
+            $world->touchedRoles[] = $role;
         });
 
         $grants = $test->getMockBuilder(\Advans\Component\Appointments\Administrator\Service\Team\GrantServiceInterface::class)->getMock();

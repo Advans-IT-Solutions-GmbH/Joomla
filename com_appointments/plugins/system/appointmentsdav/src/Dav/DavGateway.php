@@ -269,7 +269,8 @@ final class DavGateway
         $method = strtoupper($request->getMethod());
         $listing = ($method === 'PROPFIND' && trim((string) $request->getHeader('Depth')) !== '0') || $method === 'REPORT';
 
-        $context->quietly(fn () => $this->services->devices->touch($session, $calendar?->id));
+        // The role goes with the first synchronisation of a calendar, so a later clean-up knows what the device could see.
+        $context->quietly(fn () => $this->services->devices->touch($session, $calendar?->id, $calendar?->role?->value));
 
         if ($listing) {
             foreach ($context->emptyServed() as $calendarId) {

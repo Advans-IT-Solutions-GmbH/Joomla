@@ -19,8 +19,6 @@ use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Helper\Team\VendorAutoloader;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Component\VCalendar;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Reader;
-use Advans\Component\Appointments\Vendor\Sabre\VObject\Recur\EventIterator;
-use Advans\Component\Appointments\Vendor\Sabre\VObject\Settings;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 
@@ -48,16 +46,14 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
     /** Largest object in bytes. */
     public const MAX_BYTES = 1048576;
 
-    /** Occurrences read at most to find the end of a finite series. */
-    private const MAX_OCCURRENCES = 20000;
-
     /**
      * Objects and bytes one calendar holds at most through CalDAV writes, so no
-     * writer can make listing or synchronising the calendar fail for everybody.
-     * Booking objects are always written.
+     * writer can make a full calendar query (every object decrypted at once) fail
+     * for everybody. Listings and sync read no payload. Booking objects are always
+     * written.
      */
-    public const MAX_OBJECTS_PER_CALENDAR = 10000;
-    public const MAX_BYTES_PER_CALENDAR = 8388608;
+    public const MAX_OBJECTS_PER_CALENDAR = 20000;
+    public const MAX_BYTES_PER_CALENDAR = 16777216;
 
     private const COLUMNS = ['id', 'calendar_id', 'uri', 'etag', 'size', 'enc_scheme', 'key_version', 'payload', 'timing', 'booking_id', 'modified_utc'];
 
@@ -196,65 +192,6 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         return $result;
     }
 
-    /**
-     * End of the last occurrence of a time skeleton, in UTC; null for an
-     * open-ended series and for anything that cannot be read (kept, never
-     * deleted by the retention).
-     */
-    public static function lastEnd(string $skeleton): ?\DateTimeImmutable
-    {
-        if (!VendorAutoloader::register()) {
-            return null;
-        }
-
-        try {
-            $calendar = Reader::read($skeleton);
-        } catch (\Throwable $e) {
-            return null;
-        }
-
-        try {
-            $events = $calendar instanceof VCalendar ? $calendar->select('VEVENT') : [];
-
-            if ($events === []) {
-                return null;
-            }
-
-            // vObject stops at 3500 occurrences by default; a longer finite series must still end.
-            $maxRecurrences = Settings::$maxRecurrences;
-            Settings::$maxRecurrences = self::MAX_OCCURRENCES + 1;
-            $iterator = new EventIterator(array_values($events), null, new \DateTimeZone('UTC'));
-
-            if ($iterator->isInfinite()) {
-                return null;
-            }
-
-            $last = null;
-            $count = 0;
-
-            while ($iterator->valid()) {
-                $end = \DateTimeImmutable::createFromInterface($iterator->getDtEnd());
-                $last = $last === null || $end > $last ? $end : $last;
-
-                if (++$count > self::MAX_OCCURRENCES) {
-                    return null;
-                }
-
-                $iterator->next();
-            }
-
-            return $last?->setTimezone(new \DateTimeZone('UTC'));
-        } catch (\Throwable $e) {
-            return null;
-        } finally {
-            if (isset($maxRecurrences)) {
-                Settings::$maxRecurrences = $maxRecurrences;
-            }
-
-            $calendar->destroy();
-        }
-    }
-
     public function all(int $calendarId): array
     {
         $db = $this->db();
@@ -267,7 +204,15 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
 
     public function listing(int $calendarId): array
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        $db = $this->db();
+        $columns = array_map(static fn (string $column): string => $column === 'payload' ? "'' AS " . $db->quoteName('payload') : $db->quoteName($column), self::COLUMNS);
+        $query = $this->query()
+            ->select($columns)
+            ->from($db->quoteName('#__appointments_calendar_objects'))
+            ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
+            ->order($db->quoteName('uri'));
+
+        return array_map([$this, 'toObject'], $db->setQuery($query)->loadAssocList() ?: []);
     }
 
     public function many(int $calendarId, array $uris): array
@@ -510,7 +455,12 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         $deleted = 0;
 
         foreach ($this->skeletons($calendarId) as $entry) {
-            $end = self::lastEnd($entry['skeleton']);
+            // Times without a zone count as UTC: the retention works in days, hours do not matter.
+            try {
+                $end = $this->services->timing()->lastEnd($entry['skeleton'], new \DateTimeZone('UTC'));
+            } catch (TeamException $e) {
+                $end = null;
+            }
 
             if ($end === null || $end >= $before) {
                 continue;

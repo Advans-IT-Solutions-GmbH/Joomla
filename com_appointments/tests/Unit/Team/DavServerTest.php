@@ -441,6 +441,7 @@ final class DavServerTest extends TestCase
         $this->propfind('/dav/principals/u5/', '0');
 
         self::assertSame([1, null], $this->world->touched);
+        self::assertSame([CalendarRole::Read->value, null], $this->world->touchedRoles);
     }
 
     // Clean-up.
@@ -451,7 +452,7 @@ final class DavServerTest extends TestCase
         $this->world->store->seed(1, 'a.ics', self::ics('a'));
         $password = $this->world->device(7, 'carol', TeamStates::DEVICE_CLEANUP_EMPTY, false);
         $this->world->grant(7, 1, CalendarRole::Read);
-        $this->world->inCleanup = [1];
+        $this->world->inCleanup = [1 => CalendarRole::Read->value];
         $base = '/dav/calendars/u7/' . $this->teamUri . '/';
 
         $home = self::body($this->send('PROPFIND', '/dav/calendars/u7/', ['Depth' => '1'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/></d:prop></d:propfind>', $password, 'carol'));
@@ -476,7 +477,7 @@ final class DavServerTest extends TestCase
         $this->world->grant(5, 1, CalendarRole::Write);
         $this->world->store->seed(1, 'uid-of-a-meeting.ics', self::ics('uid-of-a-meeting'));
         $password = $this->world->device(9, 'erin', TeamStates::DEVICE_CLEANUP_EMPTY, false);
-        $this->world->inCleanup = [1];
+        $this->world->inCleanup = [1 => 0];
         $this->world->store->seed(1, 'later.ics', self::ics('later'));
 
         $sync = self::body($this->send('REPORT', '/dav/calendars/u9/' . $this->teamUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'erin'));

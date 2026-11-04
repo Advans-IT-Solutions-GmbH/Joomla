@@ -161,7 +161,10 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
 
         $withData = $this->context->wantsData();
 
-        foreach ($this->store(fn () => $this->context->services->objects->all($calendar->id)) as $object) {
+        // A listing reads no payload; a REPORT decrypts every object once.
+        $objects = $this->store(fn () => $withData ? $this->context->services->objects->all($calendar->id) : $this->context->services->objects->listing($calendar->id));
+
+        foreach ($objects as $object) {
             $row = $this->row($calendar, $object, $withData);
 
             if ($row !== null) {
@@ -294,17 +297,18 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
      * Every address the device may hold for a calendar of the clean-up: the
      * objects that existed at its token (current ones not added since, plus
      * the ones deleted since), or every current object when the token is no
-     * longer in the journal. In the form of the role it had: the free/busy
-     * addresses for free/busy, the originals for a key-holding role. When the
-     * role is no longer known, only the free/busy addresses, so an original
-     * address (often the UID) never reaches a device that may not have known it.
+     * longer in the journal. In the form of the role the device had at its first
+     * synchronisation of the calendar: the free/busy addresses for free/busy,
+     * the originals for a key-holding role. When no role is recorded, only the
+     * free/busy addresses, so an original address (often the UID) never reaches
+     * a device that may not have known it.
      *
      * @return  string[]
      */
     private function knownToDevice(DavCalendar $calendar, string $token): array
     {
         try {
-            $current = array_map(static fn ($object): string => $object->uri, $this->context->services->objects->all($calendar->id));
+            $current = array_map(static fn ($object): string => $object->uri, $this->context->services->objects->listing($calendar->id));
         } catch (TeamException $e) {
             throw DavErrors::fromTeam($e);
         }
