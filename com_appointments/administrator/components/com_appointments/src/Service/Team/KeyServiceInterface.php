@@ -90,6 +90,15 @@ interface KeyServiceInterface
     public function resetUserKey(int $userId): void;
 
     /**
+     * Discard a user key row that no longer verifies (wrong MAC), as a logged
+     * administrator action (`core.admin`, backend of work package C). Deletes the
+     * row and the user's wraps, suspends the grants and puts the devices into
+     * clean-up; the next password sign-in creates a new key pair. Refused for a
+     * row that still verifies, so it can never be used instead of a reset.
+     */
+    public function discardUserKey(int $actorUserId, int $userId): void;
+
+    /**
      * @return  string  `usk_wrapped` for `#__appointments_devices`.
      */
     public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string;

@@ -206,7 +206,7 @@ Formulas (normative):
 - Object (scheme 1): `encrypt(CK_v, ics, associatedData('object', calendarId, uri, v))`.
 - Object (scheme 2, booking flow): `seal(boxPublicKey_v, envelope)` where the envelope is
   `"ACv1\n" . json_encode(['c' => calendarId, 'u' => uri, 'm' => base64(hmac)]) . "\n" . ics` with
-  `hmac = hash_hmac('sha256', associatedData('envelope', calendarId, uri, ics), key(TEAM_ROW_MAC), true)`;
+  `hmac = hash_hmac('sha256', associatedData('envelope', calendarId, uri, ics), key(TEAM_ENVELOPE), true)`;
   on open the calendar id and URI must match the row and `m` must verify, otherwise the object is
   refused (anybody can seal to the public box key, only the server can produce `m`).
   Sealed objects are re-encrypted to scheme 1 by the next key holder's
@@ -328,6 +328,9 @@ play back an older, validly signed grant, calendar, device or invitation row.
   valid only when its epoch is at least the anchored one. Without a writable file the feature works
   without this protection and the system check says so. Restoring files and database together is a
   legitimate rollback.
+- Known residual risk, low: a database writer can put back an older, validly sealed envelope at the
+  same URI (the envelope binds no revision). The booking row stays the source of truth and the next
+  booking change rewrites the copy.
 - Activation links cannot be anchored; `complete()` therefore works only for an account that has never
   signed in, and every completion mails the administrators with the revoke link.
 
@@ -697,6 +700,12 @@ Round 5: `listing()` (A), the role per device and calendar in `#__appointments_d
 it at the first `touch()`, `calendarsInCleanup()` returns calendar id => role), `TimingIndex::lastEnd()`
 (E, for the retention of finite series), log aggregation and a warning when Joomla trusts
 `X-Forwarded-*` headers (`behind_loadbalancer`) in the system check (F).
+
+Round 6: static helpers of C are contract for B: `GrantService::macFields(row, grantEpoch, userKeyVersion)`,
+`GrantService::rowValid()`, `GrantService::rebindUserKey()`, `CalendarService::macFields()`, `CalendarService::rowValid()`,
+`CalendarService::bumpEpoch()`, `CalendarService::anchor()`. `KeyService::discardUserKey()` (B) with a backend action
+in C. The envelope MAC has its own key (`PURPOSE_TEAM_ENVELOPE`). CLI tests that touch the anchor remove
+the file they created, so the web server can write it.
 
 Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every

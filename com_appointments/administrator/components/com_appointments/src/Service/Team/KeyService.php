@@ -75,6 +75,11 @@ final class KeyService implements KeyServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function discardUserKey(int $actorUserId, int $userId): void
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

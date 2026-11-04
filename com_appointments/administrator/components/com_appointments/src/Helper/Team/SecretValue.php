@@ -53,13 +53,15 @@ abstract class SecretValue
     public function wipe(): void
     {
         if (self::$store !== null && isset(self::$store[$this])) {
+            // Take the string out of the map first, so this variable holds the
+            // only reference; sodium_memzero() on a shared string would only
+            // clear the local copy and free the original unchanged.
             $bytes = self::$store[$this];
+            unset(self::$store[$this]);
 
             if ($bytes !== '' && \function_exists('sodium_memzero')) {
                 sodium_memzero($bytes);
             }
-
-            unset(self::$store[$this]);
         }
     }
 
