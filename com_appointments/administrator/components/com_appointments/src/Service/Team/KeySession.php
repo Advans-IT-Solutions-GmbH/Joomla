@@ -307,6 +307,7 @@ final class KeySession implements KeySessionInterface
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
             || !$this->joomlaSecondFactor($userId)
+            || !$this->secondFactorUsedSince($userId, (int) ($escrow['at'] ?? 0))
             || !$this->services->grants()->hasSecondFactor($userId)) {
             return null;
         }
@@ -323,7 +324,7 @@ final class KeySession implements KeySessionInterface
         $payload = CipherSuite::decrypt(
             $sessionKey,
             (string) base64_decode((string) $escrow['box'], true),
-            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'])
+            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (int) ($escrow['at'] ?? 0))
         );
 
         if ($payload === null || \strlen($payload) !== CipherSuite::KEY_BYTES) {
@@ -357,7 +358,10 @@ final class KeySession implements KeySessionInterface
                 case self::MODE_REPLACE:
                     // A new pair only after the old one is reset and the grants are
                     // suspended together; otherwise nothing, and the escrow goes.
-                    if ($status['status'] === 'usable' && $unchanged && $this->resetFlow($userId, 'key_unreachable', null)) {
+                    // The observed version and public key are compared again under
+                    // the lock of the reset, so a second stale escrow can never
+                    // reset a key that another session created meanwhile.
+                    if ($status['status'] === 'usable' && $unchanged && $this->resetFlow($userId, 'key_unreachable', null, (int) $escrow['version'], $observedPublic)) {
                         $context = $keys->createUserKeyWithKek($userId, $payload, $salt, CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT);
                     }
 
@@ -374,7 +378,7 @@ final class KeySession implements KeySessionInterface
 
             if ($escrow['mode'] !== self::MODE_KEY) {
                 // From now on the session holds the key itself, under the same cookie.
-                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, $context->secretKey());
+                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (int) $escrow['at'], $context->secretKey());
             }
 
             return $context;
@@ -393,24 +397,34 @@ final class KeySession implements KeySessionInterface
      *
      * @return  bool  Whether key and grants were reset.
      */
-    private function resetFlow(int $userId, string $reason, ?int $actorUserId): bool
+    private function resetFlow(int $userId, string $reason, ?int $actorUserId, ?int $expectedVersion = null, ?string $expectedPublicKey = null): bool
     {
         $db = $this->services->db();
         $db->transactionStart(true);
 
         try {
-            $this->keyService()->resetUserKey($userId);
+            if ($expectedVersion === null) {
+                $this->keyService()->resetUserKey($userId);
+            } else {
+                $this->keyService()->resetUserKeyIf($userId, $expectedVersion, (string) $expectedPublicKey);
+            }
+
             $this->services->grants()->suspendAllForUser($userId, $reason);
             $db->transactionCommit(true);
             $done = true;
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            try {
+                $db->transactionRollback(true);
+            } catch (\Throwable $ignored) {
+                // After a deadlock the savepoint is gone already.
+            }
+
             $this->warn('a key reset was refused', $e);
             $done = false;
 
             // Written after the rollback, which would otherwise take the log row
             // of a tampered key row with it.
-            if ($e instanceof TeamException && $e->getCode() === 409) {
+            if ($e instanceof TeamException && $e->getMessage() === 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_TAMPERED') {
                 $this->keyService()->reportMacFailure('user_keys', ['subject_user_id' => $userId]);
             }
         }
@@ -463,14 +477,14 @@ final class KeySession implements KeySessionInterface
         $sessionKey = random_bytes(CipherSuite::KEY_BYTES);
 
         try {
-            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $payload);
+            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, time(), $payload);
             $this->setCookie($app, $client, bin2hex($sessionKey), 0);
         } finally {
             CipherSuite::wipe($sessionKey);
         }
     }
 
-    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, #[\SensitiveParameter] string $payload): void
+    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, int $signedInAt, #[\SensitiveParameter] string $payload): void
     {
         $nonce = random_bytes(16);
         $session->set(self::SESSION_KEY . $client, [
@@ -480,20 +494,58 @@ final class KeySession implements KeySessionInterface
             'pub'     => base64_encode($publicKey),
             'salt'    => base64_encode($salt),
             'mfa'     => $secondFactor,
+            'at'      => $signedInAt,
             'nonce'   => base64_encode($nonce),
-            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor))),
+            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $signedInAt))),
         ]);
     }
 
     /**
      * Associated data of the escrow: bound to user, client, mode, user key
      * version, a fresh nonce and every other field of the session entry
-     * (observed public key, salt, second factor at sign-in), so neither a box
-     * nor a field can be replayed or changed in the session table unnoticed.
+     * (observed public key, salt, second factor at sign-in, time of the
+     * sign-in), so neither a box nor a field can be replayed or changed in the
+     * session table unnoticed.
      */
-    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor): string
+    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, int $signedInAt): string
     {
-        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0);
+        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $signedInAt);
+    }
+
+    /**
+     * Whether the factor that passed Joomla's captive page after this sign-in
+     * is one that counts. Joomla sets `mfa_checked` for any method, also for
+     * an e-mail code or a backup code, and stamps the record it accepted with
+     * `last_used`: the most recently used record must be an enabled, counting
+     * method and must have been used at or after the sign-in.
+     */
+    private function secondFactorUsedSince(int $userId, int $signedInAt): bool
+    {
+        if ($signedInAt <= 0) {
+            return false;
+        }
+
+        $methods = [];
+
+        foreach (MfaHelper::getMfaMethods() as $method) {
+            $methods[] = (string) ($method['name'] ?? '');
+        }
+
+        $latest = null;
+        $latestAt = 0;
+
+        foreach (MfaHelper::getUserMfaRecords($userId) as $record) {
+            $used = empty($record->last_used) ? 0 : (new \DateTimeImmutable((string) $record->last_used, new \DateTimeZone('UTC')))->getTimestamp();
+
+            if ($used > $latestAt) {
+                $latest = $record;
+                $latestAt = $used;
+            }
+        }
+
+        return $latest !== null && $latestAt >= $signedInAt
+            && !\in_array($latest->method, self::NOT_A_SECOND_FACTOR, true)
+            && \in_array($latest->method, $methods, true);
     }
 
     private function forget(): void

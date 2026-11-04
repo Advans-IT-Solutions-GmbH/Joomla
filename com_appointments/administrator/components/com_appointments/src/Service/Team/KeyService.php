@@ -331,6 +331,21 @@ final class KeyService implements KeyServiceInterface
 
     public function resetUserKey(int $userId): void
     {
+        $this->resetRow($userId, null, null);
+    }
+
+    /**
+     * A reset only if the row is still the one observed (version and public
+     * key), compared under the lock of the reset; otherwise 409 and nothing
+     * changes. For the key session: a stale escrow never resets a newer key.
+     */
+    public function resetUserKeyIf(int $userId, int $expectedVersion, string $expectedPublicKey): void
+    {
+        $this->resetRow($userId, $expectedVersion, $expectedPublicKey);
+    }
+
+    private function resetRow(int $userId, ?int $expectedVersion, ?string $expectedPublicKey): void
+    {
         $db = $this->services->db();
         $db->transactionStart(true);
 
@@ -347,6 +362,11 @@ final class KeyService implements KeyServiceInterface
             // find the user's key and wraps.
             if ($stored !== null && !$this->verifyStoredRow('user_keys', $stored)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_TAMPERED', 409);
+            }
+
+            if ($expectedVersion !== null
+                && ($stored === null || $current !== $expectedVersion || !hash_equals((string) $stored['public_key'], (string) $expectedPublicKey))) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED', 409);
             }
 
             if ($current !== null) {
@@ -385,8 +405,10 @@ final class KeyService implements KeyServiceInterface
         } catch (\Throwable $e) {
             $this->rollback();
 
-            if ($e instanceof TeamException && $e->getCode() === 409) {
-                $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
+            if ($e instanceof TeamException) {
+                if ($e->getMessage() === 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_TAMPERED') {
+                    $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
+                }
 
                 throw $e;
             }
@@ -434,17 +456,25 @@ final class KeyService implements KeyServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_VERIFIES', 409);
         }
 
-        $epoch = max((int) $stored['device_epoch'], $this->anchorMinimum(EpochAnchorInterface::KIND_USER, $userId)) + 1;
-
+        $minimum = $this->anchorMinimum(EpochAnchorInterface::KIND_USER, $userId);
         $db = $this->services->db();
         $db->transactionStart(true);
 
         try {
-            $query = $this->query()
-                ->select($db->quoteName(['key_version']))
-                ->from($db->quoteName('#__appointments_user_keys'))
-                ->where($db->quoteName('user_id') . ' = ' . $userId);
-            $previous = (int) $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+            // Decided again under the lock: a key created or repaired meanwhile
+            // must not be overwritten.
+            $locked = $this->rawUserKeyRow($userId, true);
+
+            if ($locked === null) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_USER_KEY', 404);
+            }
+
+            if ($this->verifyStoredRow('user_keys', $locked)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_VERIFIES', 409);
+            }
+
+            $previous = (int) $locked['key_version'];
+            $epoch = max((int) $locked['device_epoch'], $minimum) + 1;
             $highestWrap = (int) $db->setQuery(
                 $this->query()->select('MAX(' . $db->quoteName('user_key_version') . ')')
                     ->from($db->quoteName('#__appointments_calendar_key_wraps'))
@@ -482,7 +512,7 @@ final class KeyService implements KeyServiceInterface
         } catch (\Throwable $e) {
             $this->rollback();
 
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+            throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
 
         $this->anchorAfterCommit(EpochAnchorInterface::KIND_USER, $userId);
@@ -592,6 +622,46 @@ final class KeyService implements KeyServiceInterface
      */
     public function openKeyring(int $calendarId, KeyContext $keys): ?CalendarKeyring
     {
+        $keyring = $this->openWithoutRotation($calendarId, $keys);
+
+        if ($keyring === null || !$this->rotationDue($calendarId)) {
+            return $keyring;
+        }
+
+        try {
+            $rotated = $this->rotate($keyring, $keys->userId());
+        } catch (TeamException $e) {
+            if ($e->getMessage() !== 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED') {
+                // Postponed (no holder can be judged now, no recovery key): the
+                // keyring is still the current one.
+                $this->warn('a due key rotation was postponed', $e);
+
+                return $keyring;
+            }
+
+            // Another request rotated first: never hand out the older version as
+            // current; open again, with the new version if this user holds it.
+            $keyring->wipe();
+
+            return $this->openWithoutRotation($calendarId, $keys);
+        }
+
+        if ($rotated === null) {
+            // The rotation went through, but this user is no holder any more
+            // (revoked while waiting for the lock): no key for this request.
+            $keyring->wipe();
+        }
+
+        return $rotated;
+    }
+
+    private function rotationDue(int $calendarId): bool
+    {
+        return (bool) ($this->calendarState($calendarId)['rotation_due'] ?? false);
+    }
+
+    private function openWithoutRotation(int $calendarId, KeyContext $keys): ?CalendarKeyring
+    {
         $calendar = $this->calendarState($calendarId);
         $row = $this->usableUserKey($keys->userId());
 
@@ -629,18 +699,7 @@ final class KeyService implements KeyServiceInterface
             return null;
         }
 
-        $keyring = new CalendarKeyring($calendarId, $calendar['key_version'], array_values($calendarKeys));
-
-        if ($calendar['rotation_due']) {
-            try {
-                $keyring = $this->rotateCalendarKey($keyring);
-            } catch (\Throwable $e) {
-                // Rotation waits for the next key holder; the keyring still works.
-                $this->warn('a due key rotation was postponed', $e);
-            }
-        }
-
-        return $keyring;
+        return new CalendarKeyring($calendarId, $calendar['key_version'], array_values($calendarKeys));
     }
 
     public function wrapForUser(CalendarKey $key, int $userId): bool
@@ -717,7 +776,28 @@ final class KeyService implements KeyServiceInterface
         )->execute();
     }
 
+    /**
+     * A version rotated by another request in the meantime is a conflict
+     * (409): the caller must open the calendar again rather than go on with
+     * an older current key.
+     */
     public function rotateCalendarKey(CalendarKeyring $keyring): CalendarKeyring
+    {
+        $rotated = $this->rotate($keyring, null);
+
+        if ($rotated === null) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED', 409);
+        }
+
+        return $rotated;
+    }
+
+    /**
+     * @param   int|null  $requesterUserId  The user whose request rotates; when they are no
+     *                                      holder any more under the lock, the rotation still
+     *                                      happens but no keyring is returned.
+     */
+    private function rotate(CalendarKeyring $keyring, ?int $requesterUserId): ?CalendarKeyring
     {
         $calendarId = $keyring->calendarId();
 
@@ -736,11 +816,8 @@ final class KeyService implements KeyServiceInterface
             $current = $this->currentVersion($calendarId);
 
             if ($current === null || $current !== $keyring->current()->version()) {
-                // Somebody rotated in the meantime; the caller keeps its keyring.
-                $db->transactionCommit(true);
-                CipherSuite::wipe($newKey);
-
-                return $keyring;
+                // Somebody rotated in the meantime: a conflict, never the old ring.
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED', 409);
             }
 
             // A rotation is a change of who holds the key: the grant epoch rises
@@ -788,6 +865,15 @@ final class KeyService implements KeyServiceInterface
         // the rotation (the system check reports a missing anchor).
         $this->anchorAfterCommit(EpochAnchorInterface::KIND_CALENDAR, $calendarId);
         $this->anchorAfterCommit(EpochAnchorInterface::KIND_CALENDAR_KEY, $calendarId);
+        $this->log(AuditEvent::CALENDAR_KEY_ROTATED, ['calendar_id' => $calendarId, 'details' => ['version' => $version]]);
+
+        // The new key goes back only to a requester who is a holder under the
+        // lock, so a request that lost its grant while it waited gets nothing.
+        if ($requesterUserId !== null && !isset($holders[$requesterUserId])) {
+            CipherSuite::wipe($newKey);
+
+            return null;
+        }
 
         $keys = [CalendarKey::create($calendarId, $version, $newKey)];
         CipherSuite::wipe($newKey);
@@ -797,8 +883,6 @@ final class KeyService implements KeyServiceInterface
                 $keys[] = $keyring->version($old);
             }
         }
-
-        $this->log(AuditEvent::CALENDAR_KEY_ROTATED, ['calendar_id' => $calendarId, 'details' => ['version' => $version]]);
 
         return new CalendarKeyring($calendarId, $version, $keys);
     }

@@ -72,7 +72,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
         $response = $event->getAuthenticationResponse();
         $username = (string) ($response['username'] ?? '');
-        $userId = $username === '' ? 0 : (int) UserHelper::getUserId($username);
+        $userId = $this->userIdOf($username);
 
         if ($userId <= 0) {
             return;
@@ -116,7 +116,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $ip = $this->clientAddress();
 
         try {
-            $userId = (int) UserHelper::getUserId($username);
+            $userId = $this->userIdOf($username);
 
             if ($userId <= 0 || !$this->isCalendarUser($services, $userId)
                 || $services->lockout()->retryAfter($username, $ip) === 0) {
@@ -143,7 +143,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
 
         $username = (string) ($event->getAuthenticationResponse()['username'] ?? '');
-        $userId = $username === '' ? 0 : (int) UserHelper::getUserId($username);
+        $userId = $this->userIdOf($username);
         $ip = $this->clientAddress();
 
         // Only accounts with a calendar right are counted and logged here; the
@@ -224,6 +224,24 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
     }
 
+    /**
+     * The account id of a user name, 0 when unknown; a database error is
+     * logged and never interrupts the sign-in.
+     */
+    private function userIdOf(string $username): int
+    {
+        if ($username === '') {
+            return 0;
+        }
+
+        try {
+            return (int) UserHelper::getUserId($username);
+        } catch (\Throwable $e) {
+            $this->failed($e);
+
+            return 0;
+        }
+    }
     private function isCalendarUser(TeamServices $services, int $userId): bool
     {
         try {
