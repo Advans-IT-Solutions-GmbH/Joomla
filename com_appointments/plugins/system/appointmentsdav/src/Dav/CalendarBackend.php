@@ -312,6 +312,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $changes['result_truncated'] = true;
         }
 
+        $this->context->recordDelivered($calendar->id, (int) $changes['syncToken']);
+
         if ($calendar->isFreeBusy()) {
             foreach (['added', 'modified', 'deleted'] as $key) {
                 $changes[$key] = array_map(fn (string $uri): string => $this->context->freeBusyUri($calendar->id, $uri), $changes[$key]);
@@ -323,7 +325,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
 
     /**
      * Every address the device may hold for a calendar of the clean-up: the
-     * objects that existed at its token (current ones not added since, plus
+     * objects that existed at the last token delivered to it before the clean-up
+     * (else at the client's token) (current ones not added since, plus
      * the ones deleted since), or every current object when the token is no
      * longer in the journal. In the form of the role the device had at its first
      * synchronisation of the calendar: the free/busy addresses for free/busy,
@@ -341,7 +344,9 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw DavErrors::fromTeam($e);
         }
 
-        $since = (string) preg_replace('/-c$/', '', $token);
+        // Never beyond what the device had: the last token delivered before the clean-up
+        // wins over whatever the client sends, so it learns nothing created since.
+        $since = $calendar->cleanupToken !== null ? (string) $calendar->cleanupToken : (string) preg_replace('/-c$/', '', $token);
         $known = $current;
 
         if (preg_match('/^\d{1,19}$/', $since) === 1) {

@@ -25,6 +25,7 @@ final class DavCalendar
     /**
      * @param   CalendarRole|null  $role  Null when the device is in clean-up and no grant row is left.
      * @param   string             $view  One of the CleanupServiceInterface::VIEW_* constants (never hidden).
+     * @param   int|null           $cleanupToken  In the clean-up: the highest sync token delivered to the device before it.
      */
     public function __construct(
         public readonly int $id,
@@ -35,7 +36,8 @@ final class DavCalendar
         public readonly int $synctoken,
         public readonly ?CalendarRole $role,
         public readonly string $view,
-        public readonly bool $deviceActive
+        public readonly bool $deviceActive,
+        public readonly ?int $cleanupToken = null
     ) {
     }
 

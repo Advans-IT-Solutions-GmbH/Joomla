@@ -269,8 +269,15 @@ final class DavGateway
         $method = strtoupper($request->getMethod());
         $listing = ($method === 'PROPFIND' && trim((string) $request->getHeader('Depth')) !== '0') || $method === 'REPORT';
 
-        // The role goes with the first synchronisation of a calendar, so a later clean-up knows what the device could see.
-        $context->quietly(fn () => $this->services->devices->touch($session, $calendar?->id, $calendar?->role?->value));
+        // Role and highest delivered sync token go with the synchronisation, so a later
+        // clean-up reports exactly what the device could see, and nothing newer.
+        $delivered = null;
+
+        if ($calendar !== null && !$calendar->isEmptyView()) {
+            $delivered = $context->delivered($calendar->id) ?? ($method === 'PROPFIND' ? $calendar->synctoken : null);
+        }
+
+        $context->quietly(fn () => $this->services->devices->touch($session, $calendar?->id, $calendar?->role?->value, $delivered));
 
         if ($listing) {
             foreach ($context->emptyServed() as $calendarId) {

@@ -55,6 +55,11 @@ final class DavContext
 
     private bool $homeHidden = false;
 
+    /**
+     * @var  array<int, int>  Sync token handed out per calendar in this request.
+     */
+    private array $delivered = [];
+
     private ?string $busySummary = null;
 
     private ?RequestInterface $request = null;
@@ -133,7 +138,7 @@ final class DavContext
             }
 
             if ($this->session->state === TeamStates::DEVICE_CLEANUP_EMPTY) {
-                foreach ($services->cleanup->calendarsInCleanup($this->session) as $calendarId => $role) {
+                foreach ($services->cleanup->calendarsInCleanup($this->session) as $calendarId => $known) {
                     $row = $services->calendars->get((int) $calendarId);
 
                     if ($row === null || !isset($row->id, $row->uri)) {
@@ -147,9 +152,10 @@ final class DavContext
                         (string) ($row->colour ?? ''),
                         null,
                         (int) ($row->synctoken ?? 0),
-                        CalendarRole::tryFrom((int) $role),
+                        CalendarRole::tryFrom((int) ($known['role'] ?? 0)),
                         CleanupServiceInterface::VIEW_EMPTY,
-                        false
+                        false,
+                        isset($known['synctoken']) ? (int) $known['synctoken'] : null
                     );
                     $this->calendars[$calendar->uri] = $calendar;
                 }
@@ -292,6 +298,16 @@ final class DavContext
     public function busySummary(): string
     {
         return $this->busySummary ??= ($this->busySummaryProvider)($this->session->userId);
+    }
+
+    public function recordDelivered(int $calendarId, int $syncToken): void
+    {
+        $this->delivered[$calendarId] = max($syncToken, $this->delivered[$calendarId] ?? 0);
+    }
+
+    public function delivered(int $calendarId): ?int
+    {
+        return $this->delivered[$calendarId] ?? null;
     }
 
     public function markEmptyServed(int $calendarId): void

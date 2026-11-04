@@ -267,6 +267,11 @@ final class DavLockout implements LockoutServiceInterface
     {
     }
 
+    public function wasRefused(string $username, string $ip): bool
+    {
+        return false;
+    }
+
     public function recordFailure(string $username, string $ip): void
     {
         $this->calls[] = 'failure:' . $username;
@@ -345,7 +350,7 @@ final class DavWorld
     /** @var array<int, string> Calendar id → clean-up view for active devices. */
     public array $views = [];
 
-    /** @var array<int, int> Calendar id => role value the clean-up lists for a device in clean-up. */
+    /** @var array<int, array{role: int, synctoken: int}> What the clean-up lists for a device in clean-up. */
     public array $inCleanup = [];
 
     /** @var array<int, array<string, mixed>> */
@@ -356,6 +361,9 @@ final class DavWorld
 
     /** @var array<int, int|null> Roles passed to touch(). */
     public array $touchedRoles = [];
+
+    /** @var array<int, int|null> Sync tokens passed to touch(). */
+    public array $touchedTokens = [];
 
     /** @var int[] */
     public array $delivered = [];
@@ -423,9 +431,10 @@ final class DavWorld
 
             return $device !== null && hash_equals($device['password'], $password) ? $device['session'] : null;
         });
-        $devices->method('touch')->willReturnCallback(function (DeviceSession $session, ?int $calendarId, ?int $role = null) use ($world): void {
+        $devices->method('touch')->willReturnCallback(function (DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null) use ($world): void {
             $world->touched[] = $calendarId;
             $world->touchedRoles[] = $role;
+            $world->touchedTokens[] = $syncToken;
         });
 
         $grants = $test->getMockBuilder(\Advans\Component\Appointments\Administrator\Service\Team\GrantServiceInterface::class)->getMock();

@@ -468,6 +468,7 @@ final class DavServerTest extends TestCase
 
         self::assertSame([1, null], $this->world->touched);
         self::assertSame([CalendarRole::Read->value, null], $this->world->touchedRoles);
+        self::assertSame([1, null], $this->world->touchedTokens, 'The PROPFIND handed out the CTag of token 1.');
     }
 
     // Clean-up.
@@ -478,7 +479,7 @@ final class DavServerTest extends TestCase
         $this->world->store->seed(1, 'a.ics', self::ics('a'));
         $password = $this->world->device(7, 'carol', TeamStates::DEVICE_CLEANUP_EMPTY, false);
         $this->world->grant(7, 1, CalendarRole::Read);
-        $this->world->inCleanup = [1 => CalendarRole::Read->value];
+        $this->world->inCleanup = [1 => ['role' => CalendarRole::Read->value, 'synctoken' => 2]];
         $base = '/dav/calendars/u7/' . $this->teamUri . '/';
 
         $home = self::body($this->send('PROPFIND', '/dav/calendars/u7/', ['Depth' => '1'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/></d:prop></d:propfind>', $password, 'carol'));
@@ -493,6 +494,12 @@ final class DavServerTest extends TestCase
         self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $sync);
         self::assertStringContainsString('http://sabre.io/ns/sync/2-c', $sync);
 
+        // Created after the clean-up started: a made-up newer token reveals nothing about it.
+        $this->world->store->seed(1, 'after-cleanup.ics', self::ics('after-cleanup'));
+        $guess = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/3</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
+        self::assertStringContainsString('a.ics', $guess);
+        self::assertStringNotContainsString('after-cleanup', $guess);
+
         self::assertSame(403, $this->send('PUT', $base . 'n.ics', ['Content-Type' => 'text/calendar'], self::ics('n'), $password, 'carol')->getStatus());
         self::assertSame(404, $this->send('GET', $base . 'a.ics', [], '', $password, 'carol')->getStatus());
         self::assertSame(0, $this->world->keyringOpened);
@@ -503,7 +510,7 @@ final class DavServerTest extends TestCase
         $this->world->grant(5, 1, CalendarRole::Write);
         $this->world->store->seed(1, 'uid-of-a-meeting.ics', self::ics('uid-of-a-meeting'));
         $password = $this->world->device(9, 'erin', TeamStates::DEVICE_CLEANUP_EMPTY, false);
-        $this->world->inCleanup = [1 => 0];
+        $this->world->inCleanup = [1 => ['role' => 0, 'synctoken' => 2]];
         $this->world->store->seed(1, 'later.ics', self::ics('later'));
 
         $sync = self::body($this->send('REPORT', '/dav/calendars/u9/' . $this->teamUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'erin'));
