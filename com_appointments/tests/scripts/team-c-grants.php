@@ -6,14 +6,9 @@
  */
 
 return static function (TeamSuite $suite): void {
-    $suite->test('A calendar has no secret address column', static function () use ($suite) {
-        foreach ($suite->columns('appointments_calendars') as $column) {
-            if (preg_match('/token|secret|password/', $column)) {
-                return false;
-            }
-        }
-
-        return true;
+    $suite->test('A calendar has exactly the specified columns, none of them a secret address', static function () use ($suite) {
+        // `synctoken` is the WebDAV sync counter (RFC 6578), not a credential.
+        return $suite->columns('appointments_calendars') === ['id', 'uri', 'title', 'description', 'colour', 'owner_user_id', 'allow_external', 'blocks_availability', 'retention_days', 'synctoken', 'key_version', 'rotation_due', 'state', 'row_mac', 'created_utc', 'modified_utc', 'checked_out', 'checked_out_time'];
     });
 
     $suite->test('At most one grant per user and calendar', static function () use ($suite) {
