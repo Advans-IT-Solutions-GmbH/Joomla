@@ -490,13 +490,17 @@ return static function (TeamSuite $suite): void {
         return $kept && $forged;
     });
 
-    $suite->test('B: recordAfterCommit anchors only what was committed, never a value of a rolled-back transaction', static function () use ($services, &$st) {
+    $suite->test('B: recordAfterCommit anchors only what was committed, nothing while a transaction is open, never a rolled-back value', static function () use ($services, &$st) {
         $file = sys_get_temp_dir() . '/teamb-anchor-' . bin2hex(random_bytes(6)) . '/epochs.php';
         $anchor = new EpochAnchor($services, $file);
         $jdb = $services->db();
         $jdb->transactionStart();
         $anchor->recordAfterCommit(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']);
         $queued = $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']) === 0;
+        // The end of a request with a transaction still open (fatal error,
+        // timeout) anchors nothing: the connection rolls back when it closes.
+        $anchor->flush();
+        $skipped = !is_file($file) || (new EpochAnchor($services, $file))->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']) === 0;
         $jdb->transactionRollback();
         $anchor->flush();
         $committed = (new EpochAnchor($services, $file))->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']) >= 1;
@@ -507,7 +511,7 @@ return static function (TeamSuite $suite): void {
 
         @rmdir(\dirname($file));
 
-        return $queued && $committed;
+        return $queued && $skipped && $committed;
     });
 
     $suite->test('B: a calendar whose key version is anchored above its newest key row fails closed', static function () use ($services, &$recovery, &$st) {
