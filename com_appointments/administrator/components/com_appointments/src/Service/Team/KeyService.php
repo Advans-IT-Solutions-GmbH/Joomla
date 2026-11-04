@@ -402,8 +402,8 @@ final class KeyService implements KeyServiceInterface
      * but replaced by a `reset` row of the next key version (new public key,
      * secret discarded, no password wrap), so no key version is ever used twice:
      * a grant signed for an older version can never verify again. The device
-     * epoch is raised in the anchor first, above the stored and the anchored
-     * value. In one transaction the user's grants are bound to the new version
+     * epoch rises above the stored and the anchored value and is anchored once
+     * committed. In one transaction the user's grants are bound to the new version
      * and suspended, and the wraps go. Refused while the site secret looks
      * changed, because then every row fails and the old secret is the way back.
      */
@@ -433,16 +433,6 @@ final class KeyService implements KeyServiceInterface
         }
 
         $epoch = max((int) $stored['device_epoch'], $this->anchorMinimum(EpochAnchorInterface::KIND_USER, $userId)) + 1;
-        $anchor = $this->services->anchor();
-
-        try {
-            if ($anchor->writable()) {
-                $anchor->record(EpochAnchorInterface::KIND_USER, $userId, $epoch);
-            }
-        } catch (\Throwable $e) {
-            // Nothing is changed before the higher epoch is anchored.
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
-        }
 
         $db = $this->services->db();
         $db->transactionStart(true);
@@ -492,6 +482,8 @@ final class KeyService implements KeyServiceInterface
 
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
+
+        $this->anchorAfterCommit(EpochAnchorInterface::KIND_USER, $userId);
 
         foreach ([
             fn () => $this->services->cleanup()->startForUser($userId, 'key_discarded', $actorUserId),
@@ -587,6 +579,8 @@ final class KeyService implements KeyServiceInterface
             CipherSuite::wipe($calendarKey);
             unset($this->calendarKeyRows[$calendarId . ':1']);
         }
+
+        $this->anchorAfterCommit(EpochAnchorInterface::KIND_CALENDAR_KEY, $calendarId);
     }
 
     /**
@@ -725,11 +719,6 @@ final class KeyService implements KeyServiceInterface
     {
         $calendarId = $keyring->calendarId();
 
-        if ($this->insideForeignTransaction()) {
-            // Postponed: `rotation_due` stays set and the next key holder's
-            // request outside a transaction rotates.
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
-        }
         $db = $this->services->db();
         $newKey = CipherSuite::randomKey();
         $db->transactionStart(true);
@@ -792,11 +781,11 @@ final class KeyService implements KeyServiceInterface
             throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
 
-        // Outside the database only after the commit; a failing anchor never
-        // undoes the rotation (the system check reports a missing anchor).
-        if (method_exists(CalendarService::class, 'anchor')) {
-            CalendarService::anchor($this->services, [$calendarId => $epoch]);
-        }
+        // Outside the database only once the change is committed, also when this
+        // ran inside somebody else's transaction; a failing anchor never undoes
+        // the rotation (the system check reports a missing anchor).
+        $this->anchorAfterCommit(EpochAnchorInterface::KIND_CALENDAR, $calendarId);
+        $this->anchorAfterCommit(EpochAnchorInterface::KIND_CALENDAR_KEY, $calendarId);
 
         $keys = [CalendarKey::create($calendarId, $version, $newKey)];
         CipherSuite::wipe($newKey);
@@ -1358,20 +1347,12 @@ final class KeyService implements KeyServiceInterface
         }
     }
 
-    /**
-     * Whether a transaction of somebody else is open. A rotation records the new
-     * grant epoch outside the database after its commit; inside a foreign
-     * transaction that commit is only a savepoint, and a later rollback would
-     * leave the anchor ahead of the database and the calendar closed for all.
-     */
-    private function insideForeignTransaction(): bool
+    private function anchorAfterCommit(string $kind, int $id): void
     {
         try {
-            $depth = (new \ReflectionProperty($this->services->db(), 'transactionDepth'))->getValue($this->services->db());
-
-            return (int) $depth > 0;
+            $this->services->anchor()->recordAfterCommit($kind, $id);
         } catch (\Throwable $e) {
-            return true;
+            $this->warn('an epoch could not be queued for the anchor', $e);
         }
     }
 
@@ -1628,9 +1609,10 @@ final class KeyService implements KeyServiceInterface
                 ->where($db->quoteName('id') . ' = ' . $calendarId)
         )->loadResult();
 
-        // A newest row below the version the calendar row names means key rows
-        // were removed: fail closed as well.
-        if ($newest < $stored) {
+        // A newest row below the version the calendar row names, or below the
+        // version anchored outside the database, means key rows were removed
+        // (and the column lowered): fail closed as well.
+        if ($newest < $stored || !$this->anchorAccepts(EpochAnchorInterface::KIND_CALENDAR_KEY, $calendarId, $newest)) {
             $this->macFailure('calendar_keys', 'missing', ['calendar_id' => $calendarId]);
 
             return null;

@@ -490,6 +490,34 @@ return static function (TeamSuite $suite): void {
         return $kept && $forged;
     });
 
+    $suite->test('B: recordAfterCommit anchors only what was committed, never a value of a rolled-back transaction', static function () use ($services, &$st) {
+        $file = sys_get_temp_dir() . '/teamb-anchor-' . bin2hex(random_bytes(6)) . '/epochs.php';
+        $anchor = new EpochAnchor($services, $file);
+        $jdb = $services->db();
+        $jdb->transactionStart();
+        $anchor->recordAfterCommit(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']);
+        $queued = $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']) === 0;
+        $jdb->transactionRollback();
+        $anchor->flush();
+        $committed = (new EpochAnchor($services, $file))->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar']) >= 1;
+
+        foreach (glob(\dirname($file) . '/*') ?: [] as $leftover) {
+            @unlink($leftover);
+        }
+
+        @rmdir(\dirname($file));
+
+        return $queued && $committed;
+    });
+
+    $suite->test('B: a calendar whose key version is anchored above its newest key row fails closed', static function () use ($services, &$recovery, &$st) {
+        $before = TeamServices::fromApplication()->keys()->recoverKeyring($st['calendar'], $recovery) !== null;
+        $services->anchor()->record(EpochAnchorInterface::KIND_CALENDAR_KEY, $st['calendar'], 99);
+
+        return $before && (!$services->anchor()->writable()
+            || TeamServices::fromApplication()->keys()->recoverKeyring($st['calendar'], $recovery) === null);
+    });
+
     $suite->test('B: without a writable anchor everything works without it', static function () use ($services) {
         $anchor = new EpochAnchor($services, '/proc/teamb-not-writable/epochs.php');
 

@@ -22,15 +22,23 @@ defined('_JEXEC') or die;
  * The file holds one line that stops any direct request (`defined('_JEXEC')
  * or die;`) and, after it, a JSON document that is read as data, never
  * included, so no opcode cache can serve an old copy:
- * `{"v":1,"calendar":{"<id>":<epoch>,…},"user":{"<id>":<epoch>,…},"mac":"<hex>"}`
- * with `mac = HMAC-SHA256(key(TEAM_ANCHOR), "com_appointments/epoch-anchor/v1|" . json(v, calendar, user))`,
+ * `{"v":1,"calendar":{…},"calendar_key":{…},"log":{…},"user":{…},"mac":"<hex>"}`
+ * (each map id => value) with
+ * `mac = HMAC-SHA256(key(TEAM_ANCHOR), "com_appointments/epoch-anchor/v1|" . json(the document without mac))`,
  * the maps sorted by id. Writes happen under an exclusive lock of a side file
- * and replace the file atomically (temporary file in the same folder, rename),
- * so a reader sees the old or the new document, never half of one.
+ * and replace the file atomically (temporary file in the same folder, synced,
+ * then renamed), so a reader needs no lock and sees the old or the new
+ * document, never half of one.
  *
- * Not writable: every method answers as if no epoch were anchored and
- * writable() is false. Missing (first use, or deleted) or wrongly signed: the
- * file is rebuilt from the epochs in the database and that is logged once.
+ * - Not writable: a valid file is still enforced; without one nothing is
+ *   anchored and writable() is false.
+ * - Missing (first use, or deleted) or wrongly signed: rebuilt from the rows of
+ *   the database whose MAC verifies, logged once. Never while the site secret
+ *   looks changed: the file is then kept for the old secret.
+ * - recordAfterCommit() never lets the anchor stand above the database: inside
+ *   a transaction it only remembers the row, and at the end of the request it
+ *   records the value that was committed (read afresh), or nothing if a
+ *   transaction is still open.
  *
  * @since  1.4.0
  */
@@ -40,12 +48,26 @@ final class EpochAnchor implements EpochAnchorInterface
 
     private const HEADER = "<?php defined('_JEXEC') or die;\n";
 
+    private const KINDS = [self::KIND_CALENDAR, self::KIND_CALENDAR_KEY, self::KIND_LOG, self::KIND_USER];
+
     /**
      * The verified document of this request, null before the first read.
      *
-     * @var  array{calendar: array<int, int>, user: array<int, int>}|null
+     * @var  array<string, array<int, int>>|null
      */
     private $data;
+
+    /**
+     * Rows waiting for the end of the request: kind => id => true.
+     *
+     * @var  array<string, array<int, true>>
+     */
+    private $queue = [];
+
+    /**
+     * @var  bool
+     */
+    private $shutdownRegistered = false;
 
     /**
      * @var  string|null  Overrides the file for the tests; null means the component folder.
@@ -66,7 +88,7 @@ final class EpochAnchor implements EpochAnchorInterface
         }
 
         $this->locked(function () use ($kind, $id, $epoch): void {
-            // Read again under the lock: another request may have raised an epoch.
+            // Read again under the lock: another request may have raised a value.
             $data = $this->load(true);
 
             // A file kept for the old site secret is never overwritten.
@@ -74,21 +96,61 @@ final class EpochAnchor implements EpochAnchorInterface
                 return;
             }
 
-            if (($data[$kind][$id] ?? 0) >= $epoch) {
-                $this->data = $data;
-
-                return;
+            if (($data[$kind][$id] ?? 0) < $epoch) {
+                $data[$kind][$id] = $epoch;
+                $this->write($data);
             }
 
-            $data[$kind][$id] = $epoch;
-            $this->write($data);
             $this->data = $data;
         });
     }
 
     public function recordAfterCommit(string $kind, int $id): void
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        self::assertKind($kind);
+
+        if ($id <= 0) {
+            return;
+        }
+
+        if (!$this->insideTransaction()) {
+            $this->recordCommitted($kind, $id);
+
+            return;
+        }
+
+        $this->queue[$kind][$id] = true;
+
+        if (!$this->shutdownRegistered) {
+            $this->shutdownRegistered = true;
+            register_shutdown_function(function (): void {
+                $this->flush();
+            });
+        }
+    }
+
+    /**
+     * Record every queued row with its committed value. Nothing when a
+     * transaction is still open: it would roll back when the connection closes.
+     */
+    public function flush(): void
+    {
+        if ($this->queue === [] || $this->insideTransaction()) {
+            return;
+        }
+
+        $queue = $this->queue;
+        $this->queue = [];
+
+        foreach ($queue as $kind => $ids) {
+            foreach (array_keys($ids) as $id) {
+                try {
+                    $this->recordCommitted($kind, $id);
+                } catch (\Throwable $e) {
+                    $this->warn('an epoch could not be anchored', $e);
+                }
+            }
+        }
     }
 
     public function minimum(string $kind, int $id): int
@@ -108,7 +170,7 @@ final class EpochAnchor implements EpochAnchorInterface
                 $data = $this->locked(fn (): ?array => $this->load(true));
             }
 
-            $this->data = $data ?? ['calendar' => [], 'user' => []];
+            $this->data = $data ?? self::empty();
         }
 
         return (int) ($this->data[$kind][$id] ?? 0);
@@ -133,27 +195,118 @@ final class EpochAnchor implements EpochAnchorInterface
     /**
      * The canonical bytes the MAC covers.
      *
-     * @param   array{calendar: array<int, int>, user: array<int, int>}  $data
+     * @param   array<string, array<int, int>>  $data
      */
     public static function canonical(array $data): string
     {
-        $calendar = $data['calendar'];
-        $user = $data['user'];
-        ksort($calendar, SORT_NUMERIC);
-        ksort($user, SORT_NUMERIC);
+        $document = ['v' => self::VERSION];
 
-        return 'com_appointments/epoch-anchor/v1|' . json_encode(
-            ['v' => self::VERSION, 'calendar' => (object) $calendar, 'user' => (object) $user],
-            JSON_THROW_ON_ERROR
-        );
+        foreach (self::KINDS as $kind) {
+            $map = $data[$kind] ?? [];
+            ksort($map, SORT_NUMERIC);
+            $document[$kind] = (object) $map;
+        }
+
+        return 'com_appointments/epoch-anchor/v1|' . json_encode($document, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @return  array<string, array<int, int>>
+     */
+    private static function empty(): array
+    {
+        return array_fill_keys(self::KINDS, []);
+    }
+
+    /**
+     * The committed value of a row of the given kind, read afresh, 0 when the
+     * row is unknown or does not verify (nothing is anchored then).
+     */
+    private function committedValue(string $kind, int $id): int
+    {
+        $db = $this->services->db();
+        $keys = $this->services->keys();
+
+        switch ($kind) {
+            case self::KIND_CALENDAR:
+                $row = $db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_calendars') . ' WHERE ' . $db->quoteName('id') . ' = ' . $id)->loadObject();
+
+                return $row && method_exists(CalendarService::class, 'macFields')
+                    && $keys->verifyRowMac('calendars', CalendarService::macFields($row), (string) $row->row_mac)
+                    ? (int) $row->grant_epoch : 0;
+
+            case self::KIND_USER:
+                $row = $db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_user_keys') . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $id)->loadAssoc();
+
+                return $row && $this->userRowVerifies($row) ? (int) $row['device_epoch'] : 0;
+
+            case self::KIND_CALENDAR_KEY:
+                return $this->newestCalendarKey($id);
+
+            case self::KIND_LOG:
+                // The log head carries no MAC; work package F records it only
+                // after an intact chain check.
+                return (int) $db->setQuery(
+                    'SELECT ' . $db->quoteName('last_id') . ' FROM ' . $db->quoteName('#__appointments_teamlog_head') . ' WHERE ' . $db->quoteName('id') . ' = ' . $id
+                )->loadResult();
+        }
+
+        return 0;
+    }
+
+    private function recordCommitted(string $kind, int $id): void
+    {
+        $value = $this->committedValue($kind, $id);
+
+        if ($value > 0) {
+            $this->record($kind, $id, $value);
+        }
+    }
+
+    /**
+     * @param   array<string, mixed>  $row
+     */
+    private function userRowVerifies(array $row): bool
+    {
+        $fields = [];
+
+        foreach (KeyService::macFields('user_keys') as $name) {
+            $fields[$name] = $row[$name] ?? null;
+        }
+
+        return (int) ($row['user_id'] ?? 0) > 0 && $this->services->keys()->verifyRowMac('user_keys', $fields, (string) ($row['row_mac'] ?? ''));
+    }
+
+    /**
+     * The newest key version of a calendar whose calendar_keys row verifies.
+     */
+    private function newestCalendarKey(int $calendarId): int
+    {
+        $db = $this->services->db();
+        $row = $db->setQuery(
+            'SELECT * FROM ' . $db->quoteName('#__appointments_calendar_keys') . ' WHERE ' . $db->quoteName('calendar_id') . ' = ' . $calendarId
+            . ' ORDER BY ' . $db->quoteName('key_version') . ' DESC LIMIT 1'
+        )->loadAssoc();
+
+        if (!$row) {
+            return 0;
+        }
+
+        $fields = [];
+
+        foreach (KeyService::macFields('calendar_keys') as $name) {
+            $fields[$name] = $row[$name] ?? null;
+        }
+
+        return $this->services->keys()->verifyRowMac('calendar_keys', $fields, (string) $row['row_mac']) ? (int) $row['key_version'] : 0;
     }
 
     /**
      * The verified document, rebuilt from the database when the file is
      * missing or its signature does not match. The caller holds the lock.
      *
-     * @return  array{calendar: array<int, int>, user: array<int, int>}|null  Null when a file
-     *          exists that must be kept as it is (the site secret looks changed).
+     * @return  array<string, array<int, int>>|null  Null when a file exists that must be
+     *          kept as it is (the site secret looks changed).
      */
     private function load(bool $rebuild): ?array
     {
@@ -164,8 +317,6 @@ final class EpochAnchor implements EpochAnchorInterface
             return $data;
         }
 
-        $data = ['calendar' => [], 'user' => []];
-
         // After a change of the site secret every signature fails: rebuilding
         // would sign whatever the database holds under the wrong secret. Keep
         // the file for the old secret and run without the anchor meanwhile.
@@ -174,7 +325,7 @@ final class EpochAnchor implements EpochAnchorInterface
         }
 
         if (!$rebuild) {
-            return $data;
+            return self::empty();
         }
 
         $data = $this->fromDatabase();
@@ -185,7 +336,7 @@ final class EpochAnchor implements EpochAnchorInterface
     }
 
     /**
-     * @return  array{calendar: array<int, int>, user: array<int, int>}|null
+     * @return  array<string, array<int, int>>|null
      */
     private function parse(string $raw): ?array
     {
@@ -195,14 +346,17 @@ final class EpochAnchor implements EpochAnchorInterface
 
         $document = json_decode(substr($raw, \strlen(self::HEADER)), true);
 
-        if (!\is_array($document) || ($document['v'] ?? null) !== self::VERSION || !\is_string($document['mac'] ?? null)
-            || !\is_array($document['calendar'] ?? null) || !\is_array($document['user'] ?? null)) {
+        if (!\is_array($document) || ($document['v'] ?? null) !== self::VERSION || !\is_string($document['mac'] ?? null)) {
             return null;
         }
 
-        $data = ['calendar' => [], 'user' => []];
+        $data = self::empty();
 
-        foreach (['calendar', 'user'] as $kind) {
+        foreach (self::KINDS as $kind) {
+            if (!\is_array($document[$kind] ?? null)) {
+                return null;
+            }
+
             foreach ($document[$kind] as $id => $epoch) {
                 if (!\is_int($epoch) || (int) $id <= 0 || $epoch <= 0) {
                     return null;
@@ -220,23 +374,26 @@ final class EpochAnchor implements EpochAnchorInterface
     }
 
     /**
-     * @param   array{calendar: array<int, int>, user: array<int, int>}  $data
+     * @param   array<string, array<int, int>>  $data
      */
     private function write(array $data): void
     {
-        ksort($data['calendar'], SORT_NUMERIC);
-        ksort($data['user'], SORT_NUMERIC);
         $key = $this->services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_ANCHOR);
         $mac = hash_hmac('sha256', self::canonical($data), $key);
         CipherSuite::wipe($key);
-        $document = self::HEADER . json_encode(
-            ['v' => self::VERSION, 'calendar' => (object) $data['calendar'], 'user' => (object) $data['user'], 'mac' => $mac],
-            JSON_THROW_ON_ERROR
-        ) . "\n";
-        $temporary = $this->file() . '.' . bin2hex(random_bytes(6)) . '.tmp';
+        $document = ['v' => self::VERSION];
 
+        foreach (self::KINDS as $kind) {
+            $map = $data[$kind] ?? [];
+            ksort($map, SORT_NUMERIC);
+            $document[$kind] = (object) $map;
+        }
+
+        $document['mac'] = $mac;
+        $bytes = self::HEADER . json_encode($document, JSON_THROW_ON_ERROR) . "\n";
+        $temporary = $this->file() . '.' . bin2hex(random_bytes(6)) . '.tmp';
         $handle = @fopen($temporary, 'xb');
-        $written = $handle !== false && @fwrite($handle, $document) === \strlen($document) && @fflush($handle);
+        $written = $handle !== false && @fwrite($handle, $bytes) === \strlen($bytes) && @fflush($handle);
 
         // On disk before the rename, so a crash never leaves an empty anchor.
         if ($handle !== false) {
@@ -261,45 +418,60 @@ final class EpochAnchor implements EpochAnchorInterface
     }
 
     /**
-     * The epochs as the database holds them now (used only when the file is
-     * missing or broken, so there is nothing better to compare with).
+     * The values as the database holds them now, from rows whose MAC verifies
+     * (used only when the file is missing or broken, so there is nothing
+     * better to compare with). A value a database writer set must not become a
+     * permanent lower bound. The log head is not rebuilt: work package F
+     * records it after its next intact chain check.
      *
-     * @return  array{calendar: array<int, int>, user: array<int, int>}
+     * @return  array<string, array<int, int>>
      */
     private function fromDatabase(): array
     {
         $db = $this->services->db();
-        $data = ['calendar' => [], 'user' => []];
-
         $keys = $this->services->keys();
+        $data = self::empty();
 
-        // Only epochs of rows whose MAC verifies: a value a database writer set
-        // must not become a permanent lower bound.
         if (method_exists(CalendarService::class, 'macFields')) {
             foreach ($db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_calendars'))->loadObjectList() ?: [] as $row) {
                 if ((int) $row->id > 0 && (int) $row->grant_epoch > 0
                     && $keys->verifyRowMac('calendars', CalendarService::macFields($row), (string) $row->row_mac)) {
-                    $data['calendar'][(int) $row->id] = (int) $row->grant_epoch;
+                    $data[self::KIND_CALENDAR][(int) $row->id] = (int) $row->grant_epoch;
                 }
             }
         }
 
-        $names = KeyService::macFields('user_keys');
-
         foreach ($db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_user_keys'))->loadAssocList() ?: [] as $row) {
-            $fields = [];
-
-            foreach ($names as $name) {
-                $fields[$name] = $row[$name] ?? null;
+            if ((int) $row['device_epoch'] > 0 && $this->userRowVerifies($row)) {
+                $data[self::KIND_USER][(int) $row['user_id']] = (int) $row['device_epoch'];
             }
+        }
 
-            if ((int) $row['user_id'] > 0 && (int) $row['device_epoch'] > 0
-                && $keys->verifyRowMac('user_keys', $fields, (string) $row['row_mac'])) {
-                $data['user'][(int) $row['user_id']] = (int) $row['device_epoch'];
+        foreach ($db->setQuery('SELECT DISTINCT ' . $db->quoteName('calendar_id') . ' FROM ' . $db->quoteName('#__appointments_calendar_keys'))->loadColumn() ?: [] as $calendarId) {
+            $version = $this->newestCalendarKey((int) $calendarId);
+
+            if ($version > 0) {
+                $data[self::KIND_CALENDAR_KEY][(int) $calendarId] = $version;
             }
         }
 
         return $data;
+    }
+
+    /**
+     * Whether a transaction is open on the connection. Joomla keeps the depth
+     * in a protected property and offers no getter; unknown counts as open, so
+     * nothing is anchored that might still roll back.
+     */
+    private function insideTransaction(): bool
+    {
+        try {
+            $db = $this->services->db();
+
+            return (int) (new \ReflectionProperty($db, 'transactionDepth'))->getValue($db) > 0;
+        } catch (\Throwable $e) {
+            return true;
+        }
     }
 
     /**
@@ -352,16 +524,21 @@ final class EpochAnchor implements EpochAnchorInterface
         try {
             $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, ['details' => ['table' => 'epoch_anchor', 'reason' => $reason]]);
         } catch (\Throwable $e) {
-            try {
-                Log::add('Internet calendars: the epoch anchor was rebuilt (' . $reason . ').', Log::WARNING, 'com_appointments');
-            } catch (\Throwable $ignored) {
-            }
+            $this->warn('the epoch anchor was rebuilt (' . $reason . ')', $e);
+        }
+    }
+
+    private function warn(string $what, \Throwable $e): void
+    {
+        try {
+            Log::add('Internet calendars: ' . $what . ' (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+        } catch (\Throwable $ignored) {
         }
     }
 
     private static function assertKind(string $kind): void
     {
-        if ($kind !== self::KIND_CALENDAR && $kind !== self::KIND_USER) {
+        if (!\in_array($kind, self::KINDS, true)) {
             throw new \InvalidArgumentException('Unknown epoch kind.');
         }
     }
