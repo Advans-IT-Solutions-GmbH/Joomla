@@ -322,23 +322,42 @@ class SystemModel extends BaseDatabaseModel
         $anchor = $services->anchor();
         $behind = 0;
 
-        foreach ($db->setQuery($this->query()->select($db->quoteName('id'))->from($db->quoteName('#__appointments_calendars'))
-            ->setLimit(1000))->loadColumn() ?: [] as $id) {
-            try {
-                $row = $services->calendars()->get((int) $id);
-                $behind += $row !== null && isset($row->grant_epoch)
-                    && $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR, (int) $id) < (int) $row->grant_epoch ? 1 : 0;
-            } catch (\Throwable $e) {
-                // Unknown: not counted.
+        // Every row, in batches by id; a value that cannot be read counts as
+        // not anchored, so the check is never green on a partial scan.
+        for ($after = 0; ; $after = (int) end($ids)) {
+            $ids = $db->setQuery($this->query()->select($db->quoteName('id'))->from($db->quoteName('#__appointments_calendars'))
+                ->where($db->quoteName('id') . ' > ' . $after)->order($db->quoteName('id') . ' ASC')->setLimit(500))->loadColumn() ?: [];
+
+            foreach ($ids as $id) {
+                try {
+                    $row = $services->calendars()->get((int) $id);
+                    $behind += $row === null || !isset($row->grant_epoch)
+                        || $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR, (int) $id) < (int) $row->grant_epoch ? 1 : 0;
+                } catch (\Throwable $e) {
+                    $behind++;
+                }
+            }
+
+            if (\count($ids) < 500) {
+                break;
             }
         }
 
-        foreach ($db->setQuery($this->query()->select($db->quoteName(['user_id', 'device_epoch']))
-            ->from($db->quoteName('#__appointments_user_keys'))->setLimit(1000))->loadAssocList() ?: [] as $row) {
-            try {
-                $behind += $anchor->minimum(EpochAnchorInterface::KIND_USER, (int) $row['user_id']) < (int) $row['device_epoch'] ? 1 : 0;
-            } catch (\Throwable $e) {
-                // Unknown: not counted.
+        for ($after = 0; ; $after = (int) end($rows)['user_id']) {
+            $rows = $db->setQuery($this->query()->select($db->quoteName(['user_id', 'device_epoch']))
+                ->from($db->quoteName('#__appointments_user_keys'))->where($db->quoteName('user_id') . ' > ' . $after)
+                ->order($db->quoteName('user_id') . ' ASC')->setLimit(500))->loadAssocList() ?: [];
+
+            foreach ($rows as $row) {
+                try {
+                    $behind += $anchor->minimum(EpochAnchorInterface::KIND_USER, (int) $row['user_id']) < (int) $row['device_epoch'] ? 1 : 0;
+                } catch (\Throwable $e) {
+                    $behind++;
+                }
+            }
+
+            if (\count($rows) < 500) {
+                break;
             }
         }
 

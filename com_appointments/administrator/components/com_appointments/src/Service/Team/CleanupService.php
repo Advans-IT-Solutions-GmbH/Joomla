@@ -408,11 +408,35 @@ final class CleanupService implements CleanupServiceInterface
 
     private function toHidden(int $deviceId, int $userId, string $cause): bool
     {
-        if (!$this->services->devices()->changeState($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN)) {
+        // The new phase start is written first, so nobody can see the hidden
+        // state with the old (expired) start and revoke at once. If the state
+        // change does not happen, the old start is put back.
+        $before = $this->device($deviceId);
+        $this->startPhase($deviceId);
+
+        try {
+            $changed = $this->services->devices()->changeState($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN);
+        } catch (\Throwable $e) {
+            $changed = false;
+            $failure = $e;
+        }
+
+        if (!$changed) {
+            if ($before !== null && (int) $before['state'] === TeamStates::DEVICE_CLEANUP_EMPTY) {
+                $db = $this->db();
+                $db->setQuery($this->query()->update($db->quoteName('#__appointments_devices'))
+                    ->set($db->quoteName('cleanup_started_utc') . ' = ' . ($before['cleanup_started_utc'] === null ? 'NULL' : $db->quote((string) $before['cleanup_started_utc'])))
+                    ->where($db->quoteName('id') . ' = ' . $deviceId)
+                    ->where($db->quoteName('state') . ' = ' . TeamStates::DEVICE_CLEANUP_EMPTY))->execute();
+            }
+
+            if (isset($failure)) {
+                throw $failure;
+            }
+
             return false;
         }
 
-        $this->startPhase($deviceId);
         $this->logAdvanced($deviceId, $userId, 'hidden', $cause);
 
         return true;

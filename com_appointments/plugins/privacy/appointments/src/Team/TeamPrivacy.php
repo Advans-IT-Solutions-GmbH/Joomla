@@ -165,7 +165,10 @@ final class TeamPrivacy
                 continue;
             }
 
-            $redact = static fn (string $text): string => preg_replace_callback('/[\p{L}\p{N}._%+\-]+(?:@|%40)[\p{L}\p{N}.\-]+\.\p{L}{2,}/iu',
+            // Every complete span around an «@» (also percent-encoded), up to the
+            // next separator, is one mailbox: decoded and compared as a whole,
+            // so neither encoding nor a matching suffix lets another one through.
+            $redact = static fn (string $text): string => preg_replace_callback('/[^\s:;,<>"\'()\[\]{}]*(?:@|%40)[^\s:;,<>"\'()\[\]{}]*/iu',
                 static fn (array $match): string => self::address($match[0]) === $email ? $match[0] : '[redacted]', $text) ?? '';
             $kept = '';
 
