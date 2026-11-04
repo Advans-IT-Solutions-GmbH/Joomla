@@ -641,7 +641,7 @@ final class DeviceService implements DeviceServiceInterface
         }
 
         if ($new !== null) {
-            $this->anchorEpoch($owner, $new);
+            $this->anchorEpoch($owner);
         }
 
         return true;
@@ -685,7 +685,7 @@ final class DeviceService implements DeviceServiceInterface
      * The user's `device_epoch` when it can be trusted: the key row exists, its MAC
      * (field list of the key service, which must cover the epoch) verifies, and the
      * epoch reaches the anchor. Null otherwise. A later epoch than the anchored one is
-     * anchored on the way, so a failed record() catches up with the next request.
+     * anchored on the way, so a failed anchoring catches up with the next request.
      *
      * @param   array<string, mixed>|null  $keyRow
      */
@@ -709,7 +709,7 @@ final class DeviceService implements DeviceServiceInterface
         }
 
         if ($anchor->minimum(EpochAnchorInterface::KIND_USER, $userId) < $epoch) {
-            $this->anchorEpoch($userId, $epoch);
+            $this->anchorEpoch($userId);
         }
 
         return $epoch;
@@ -757,12 +757,17 @@ final class DeviceService implements DeviceServiceInterface
         )->execute();
     }
 
-    private function anchorEpoch(int $userId, int $epoch): void
+    /**
+     * Anchor the committed epoch of the user. Inside somebody else's transaction the anchor
+     * waits until that commits (recordAfterCommit), so it never stands above a database that
+     * rolled back.
+     */
+    private function anchorEpoch(int $userId): void
     {
         try {
-            $this->services->anchor()->record(EpochAnchorInterface::KIND_USER, $userId, $epoch);
+            $this->services->anchor()->recordAfterCommit(EpochAnchorInterface::KIND_USER, $userId);
         } catch (\Throwable $e) {
-            // The change is committed; until the next successful record() the rollback
+            // The change is committed; until the next successful anchoring the rollback
             // protection lags one step behind. The system check reports an unwritable anchor.
             Log::add('Internet calendar device epoch not anchored: user ' . $userId, Log::ERROR, 'com_appointments');
         }
