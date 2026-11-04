@@ -88,7 +88,8 @@ class BookingsModel extends ListModel
 
         if (!isset($this->matched[$key])) {
             $records = new BookingRecords($db, new KeyProvider((string) Factory::getApplication()->get('secret', '')));
-            $ids = $search === '' ? null : $records->search($query, $search)['ids'];
+            $found = $search === '' ? null : $records->search($query, $search);
+            $ids = $found['ids'] ?? null;
             $candidates = clone $query;
 
             if ($ids !== null) {
@@ -96,6 +97,11 @@ class BookingsModel extends ListModel
             }
 
             $this->matched[$key] = $byName ? $records->orderedByName($candidates, $direction === 'DESC') : $ids;
+
+            // Never silently incomplete: the search and the name order cover the newest bookings only.
+            if (!empty($found['cut']) || ($byName && count($this->matched[$key]) >= BookingRecords::SEARCH_LIMIT)) {
+                Factory::getApplication()->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_E_BOOKINGS_SEARCH_CUT', BookingRecords::SEARCH_LIMIT), 'warning');
+            }
         }
 
         $ids = $this->matched[$key];

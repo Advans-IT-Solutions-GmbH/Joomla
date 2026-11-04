@@ -6,6 +6,7 @@ use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceMana
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceProviderInterface;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingRequest;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingResult;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Service\ConferenceService;
 use Joomla\Database\DatabaseInterface;
@@ -69,7 +70,7 @@ final class ConferenceServiceTest extends TestCase
                 throw new \RuntimeException('SQL password=credential https://example.com/private');
             }
 
-            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : $this->row;
+            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : $this->stored($this->row);
         });
         $db->method('updateObject')->willReturnCallback(function ($table, $object, $key, $nulls) {
             if ($this->failWrite) {
@@ -94,6 +95,16 @@ final class ConferenceServiceTest extends TestCase
         });
 
         return $db;
+    }
+
+    /** The row as the database holds it: personal fields encrypted at rest (BookingData). */
+    private function stored(array $row): array
+    {
+        $data = new BookingData(new KeyProvider('unit-site-secret'));
+        $clear = array_filter(array_intersect_key($row, array_flip(BookingData::COLUMNS)),
+            static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
+
+        return array_replace($row, $data->seal((string) $row['uid'], $clear));
     }
 
     private function service(array $params = [], ?ConferenceManager $manager = null): ConferenceService

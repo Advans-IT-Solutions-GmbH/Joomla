@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
@@ -19,6 +20,8 @@ defined('_JEXEC') or die;
 
 final class PrivacyService
 {
+    private int $unreadable = 0;
+
     public function __construct(private DatabaseInterface $db, private Registry $params)
     {
     }
@@ -34,12 +37,15 @@ final class PrivacyService
     public function bookings(string $address): \Generator
     {
         $ids = [];
+        $records = $this->records();
 
-        foreach ($this->records()->findByEmail($address, 200) as $match) {
+        foreach ($records->findByEmail($address, 200) as $match) {
             if ($match['role'] === 1) {
                 $ids[] = $match['id'];
             }
         }
+
+        $this->reportUnreadable($records);
 
         foreach (array_chunk($ids, 200) as $chunk) {
             foreach ($this->rows($chunk, ['b.*']) as $row) {
@@ -59,12 +65,15 @@ final class PrivacyService
     {
         $normalised = PrivacyAddress::normalise($address);
         $ids = [];
+        $records = $this->records();
 
-        foreach ($this->records()->findByEmail($address, 200) as $match) {
+        foreach ($records->findByEmail($address, 200) as $match) {
             if ($match['role'] === 2) {
                 $ids[] = $match['id'];
             }
         }
+
+        $this->reportUnreadable($records);
 
         foreach (array_chunk($ids, 200) as $chunk) {
             foreach ($this->rows($chunk, ['b.id', 'b.uid', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.guest_emails']) as $row) {
@@ -107,6 +116,27 @@ final class PrivacyService
         $data = BookingData::fromApplication();
 
         return array_map(static fn (array $row): array => $data->openLenient($row), $db->setQuery($query)->loadAssocList());
+    }
+
+    /**
+     * Bookings that could not be opened cannot be searched: the operator learns it
+     * from the log (a count, never an address), and unreadable() tells the caller
+     * that the request was not complete.
+     */
+    private function reportUnreadable(BookingRecords $records): void
+    {
+        $count = $records->unreadable();
+        $this->unreadable += $count;
+
+        if ($count > 0) {
+            Log::add('Appointment privacy request: ' . $count . ' bookings could not be decrypted and were not searched.', Log::WARNING, 'com_appointments');
+        }
+    }
+
+    /** Bookings the searches of this service could not open. */
+    public function unreadable(): int
+    {
+        return $this->unreadable;
     }
 
     private function records(): BookingRecords

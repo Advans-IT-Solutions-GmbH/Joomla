@@ -31,55 +31,82 @@ final class BookingRecords
 
     private BookingData $data;
 
+    /** Bookings the last findByEmail() could not open. */
+    private int $unreadable = 0;
+
     public function __construct(private DatabaseInterface $db, KeyProvider $keys)
     {
-        $this->data = new BookingData($keys);
+        $this->data = BookingData::forToken($keys, self::token($db));
     }
 
     /**
-     * Encrypt the personal fields of rows written before 1.4.0, one batch.
-     * Idempotent: a value that is already sealed is left alone. Each row is
-     * updated with a compare-and-set on its old values, so a concurrent change
-     * is never overwritten (that row is picked up by the next call).
+     * Open the migration of an update: when rows with clear personal fields
+     * exist, write a migration token (keyed, valid {@see BookingData::MIGRATION_DAYS}
+     * days) into the component options. Only while it is valid are clear values
+     * read as data and encrypted by {@see self::migrate()}. Called once by the
+     * update, before the first migrate(); does nothing on a new installation.
+     */
+    public static function begin(DatabaseInterface $db, KeyProvider $keys): void
+    {
+        if (self::pending($db) > 0 && !BookingData::migrationOpen(self::token($db), $keys, time())) {
+            self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400));
+        }
+    }
+
+    /**
+     * Encrypt the personal fields of rows written before 1.4.0, one batch,
+     * only while the migration token is valid: a clear value a database write
+     * put in later is never encrypted into a valid one. Idempotent: a value
+     * that is already sealed is left alone. Each row is updated with a
+     * compare-and-set on its old values, so a concurrent change is never
+     * overwritten (that row comes again in the next call). When no row is
+     * left, the token is deleted: from then on a clear value is never read as
+     * data again.
      *
-     * @return  int  Rows encrypted in this call; 0 when nothing is left.
+     * @return  int  Rows taken up in this call; 0 when nothing is left or no migration is open.
      */
     public static function migrate(DatabaseInterface $db, KeyProvider $keys, int $batch): int
     {
-        $data = new BookingData($keys);
+        if (!BookingData::migrationOpen(self::token($db), $keys, time())) {
+            return 0;
+        }
+
+        $data = new BookingData($keys, true);
         $columns = BookingData::COLUMNS;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(array_merge(['id', 'uid'], $columns)))->from($db->quoteName('#__appointments_bookings'))
-            ->where(self::clearCondition($db))->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
-        $done = 0;
+            ->where(self::clearCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
+            ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
+        $rows = $db->setQuery($query)->loadAssocList();
 
-        foreach ($db->setQuery($query)->loadAssocList() as $row) {
-            if ((string) $row['uid'] === '') {
+        if ($rows === []) {
+            self::setToken($db, null);
+
+            return 0;
+        }
+
+        foreach ($rows as $row) {
+            // Only the clear values: seal() encrypts everything it is given.
+            $clear = array_filter(array_intersect_key($row, array_flip($columns)),
+                static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
+
+            if ($clear === []) {
                 continue;
             }
 
-            $sealed = $data->seal((string) $row['uid'], $row);
+            $sealed = $data->seal((string) $row['uid'], $clear);
             $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $update->update($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . (int) $row['id']);
-            $changed = false;
 
-            foreach ($columns as $column) {
-                if ($row[$column] === null || $sealed[$column] === $row[$column]) {
-                    continue;
-                }
-
-                $changed = true;
+            foreach ($clear as $column => $value) {
                 $update->set($db->quoteName($column) . ' = ' . $db->quote($sealed[$column]))
-                    ->where($db->quoteName($column) . ' <=> ' . $db->quote($row[$column]));
+                    ->where($db->quoteName($column) . ' <=> ' . $db->quote($value));
             }
 
-            if ($changed) {
-                $db->setQuery($update)->execute();
-                $done += $db->getAffectedRows() > 0 ? 1 : 0;
-            }
+            $db->setQuery($update)->execute();
         }
 
-        return $done;
+        return \count($rows);
     }
 
     /**
@@ -96,23 +123,68 @@ final class BookingRecords
         return (int) $db->setQuery($query)->loadResult();
     }
 
+    /** A value is clear unless it starts with `v1:`, compared case-sensitively. */
     private static function clearCondition(DatabaseInterface $db): string
     {
-        return '(' . implode(' OR ', array_map(static fn (string $column): string => '(' . $db->quoteName($column) . ' IS NOT NULL AND '
-            . $db->quoteName($column) . ' NOT LIKE ' . $db->quote('v1:%') . ')', BookingData::COLUMNS)) . ')';
+        return '(' . implode(' OR ', array_map(static fn (string $column): string => '(' . $db->quoteName($column) . ' IS NOT NULL AND NOT ('
+            . $db->quoteName($column) . ' COLLATE utf8mb4_bin LIKE ' . $db->quote('v1:%') . '))', BookingData::COLUMNS)) . ')';
     }
 
+    /** The migration token stored in the component options, read from the database (not a cached copy). */
+    private static function token(DatabaseInterface $db): string
+    {
+        $params = self::params($db);
+
+        return \is_array($params) ? (string) ($params[BookingData::MIGRATION_OPTION] ?? '') : '';
+    }
+
+    /** @return array<string, mixed>|null */
+    private static function params(DatabaseInterface $db): ?array
+    {
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('params'))->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote('com_appointments'));
+        $params = json_decode((string) $db->setQuery($query)->loadResult(), true);
+
+        return \is_array($params) ? $params : null;
+    }
+
+    /** Write or (null) delete the migration token. */
+    private static function setToken(DatabaseInterface $db, ?string $token): void
+    {
+        $params = self::params($db);
+
+        if ($params === null || ($token === null && !\array_key_exists(BookingData::MIGRATION_OPTION, $params))) {
+            return;
+        }
+
+        if ($token === null) {
+            unset($params[BookingData::MIGRATION_OPTION]);
+        } else {
+            $params[BookingData::MIGRATION_OPTION] = $token;
+        }
+
+        $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $update->update($db->quoteName('#__extensions'))
+            ->set($db->quoteName('params') . ' = ' . $db->quote(json_encode($params, JSON_THROW_ON_ERROR)))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote('com_appointments'));
+        $db->setQuery($update)->execute();
+    }
     /**
      * Bookings in which an address occurs, as invitee (role 1) or as an
      * additional guest (role 2), exactly after trimming and Unicode lower case.
-     * Anonymised bookings hold no address. A booking whose fields cannot be
-     * opened is skipped (and cannot hold the address in readable form).
+     * Anonymised bookings hold no address. A booking whose address fields
+     * cannot be opened is skipped; {@see self::unreadable()} says how many, so
+     * the privacy request can say that it was not complete.
      *
      * @return  iterable<array{id: int, role: int}>
      */
     public function findByEmail(string $email, int $batch): iterable
     {
         $wanted = PrivacyAddress::normalise($email);
+        $this->unreadable = 0;
         $db = $this->db;
         $last = 0;
         $batch = max(1, min(1000, $batch));
@@ -128,7 +200,9 @@ final class BookingRecords
 
             foreach ($rows as $row) {
                 $last = (int) $row['id'];
-                $row = $this->data->openLenient($row);
+                $failed = [];
+                $row = $this->data->openLenient($row, $failed);
+                $this->unreadable += $failed === [] ? 0 : 1;
 
                 if (\is_string($row['invitee_email']) && self::same($row['invitee_email'], $wanted)) {
                     yield ['id' => $last, 'role' => 1];
@@ -141,9 +215,15 @@ final class BookingRecords
         } while (\count($rows) === $batch);
     }
 
+    /** Bookings whose address fields the last {@see self::findByEmail()} could not open. */
+    public function unreadable(): int
+    {
+        return $this->unreadable;
+    }
+
     /**
      * Ids of the bookings of a list query whose name or address contains the
-     * needle (case-insensitive), in the order of the query, from at most
+     * needle (case-insensitive), newest first, from at most
      * {@see self::SEARCH_LIMIT} candidates.
      *
      * @param   mixed  $query  The list query with every filter except the search; its select list is replaced.
@@ -155,8 +235,9 @@ final class BookingRecords
         $db = $this->db;
         $needle = mb_strtolower(trim($needle), 'UTF-8');
         $query = clone $query;
-        $query->clear('select')->select($db->quoteName(['b.id', 'b.uid', 'b.invitee_name', 'b.invitee_first_name',
-            'b.invitee_last_name', 'b.invitee_email']));
+        // A unique order, so paging the candidates neither skips nor repeats a row.
+        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.invitee_name', 'b.invitee_first_name',
+            'b.invitee_last_name', 'b.invitee_email']))->order($db->quoteName('b.id') . ' DESC');
         $ids = [];
         $offset = 0;
         $batch = 500;
@@ -184,7 +265,7 @@ final class BookingRecords
 
     /**
      * Ids of a list query ordered by the invitee's last and first name, opened
-     * in memory, from at most {@see self::SEARCH_LIMIT} rows.
+     * in memory, from the newest {@see self::SEARCH_LIMIT} rows.
      *
      * @param   mixed  $query  The list query with every filter; its select list and order are replaced.
      *
@@ -195,7 +276,7 @@ final class BookingRecords
         $db = $this->db;
         $query = clone $query;
         $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_name']))
-            ->order($db->quoteName('b.id'));
+            ->order($db->quoteName('b.id') . ' DESC');
         $rows = [];
 
         $query->setLimit(self::SEARCH_LIMIT);

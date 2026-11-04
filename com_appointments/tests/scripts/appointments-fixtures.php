@@ -68,6 +68,19 @@ final class AppointmentsFixture
         return appointments_open_booking($this->stored($id));
     }
 
+    /** Change stored fields of a booking the way the application stores them (personal fields sealed). */
+    public function update(int $id, array $fields): void
+    {
+        $stored = $this->stored($id);
+        $set = [];
+
+        foreach (appointments_seal_booking((string) $stored['uid'], $fields) as $key => $value) {
+            $set[] = '`' . $key . '`=' . ($value === null ? 'NULL' : "'" . $this->db->real_escape_string((string) $value) . "'");
+        }
+
+        $this->db->query("UPDATE {$this->prefix}appointments_bookings SET " . implode(',', $set) . " WHERE id={$id}");
+    }
+
     public function stored(int $id): ?array
     {
         return $this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE id={$id}")->fetch_assoc();

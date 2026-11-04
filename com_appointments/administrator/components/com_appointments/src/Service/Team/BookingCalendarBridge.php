@@ -49,8 +49,10 @@ defined('_JEXEC') or die;
  * a calendar that cannot be read at all, on the booking page. Inside the
  * locked booking transaction such a calendar is left out, because a calendar
  * error never fails a booking and the transaction only books a time the page
- * offered. Only {@see self::lockForBooking()} lets a database error of its
- * lock through.
+ * offered. Accepted residual, like the PUT race of the specification: a forged
+ * booking request for a time the page did not offer passes while a linked
+ * calendar cannot be read at all. Only {@see self::lockForBooking()} lets a
+ * database error of its lock through.
  *
  * Bookings of different hosts that share a calendar are serialised by
  * {@see self::lockForBooking()} and see each other through the bookings table,
@@ -65,6 +67,9 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
     /** Work per calendar and computation, in seconds, before the rest of the window counts as busy. */
     private const MAX_SECONDS = 10;
+
+    /** How long a result cut by the time budget is cached. */
+    private const PARTIAL_SECONDS = 3600;
 
     /** Orphaned calendar copies removed after each booking change. */
     private const ORPHAN_BATCH = 20;
@@ -420,20 +425,28 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         }
 
         $zones = [];
+        $until = null;
 
         if ($cached !== null && $cached['start'] <= $fromUtc && $cached['end'] >= $toUtc) {
             // Same sync token and window, only this zone is new: keep the others.
             $window = [$cached['start'], $cached['end']];
             $zones = \array_slice($cached['zones'], -(self::MAX_ZONES - 1), null, true);
+            $until = $cached['until'];
         }
 
-        [$intervals, $complete] = $this->compute($calendarId, $window[0], $window[1], $zone);
+        [$intervals, $complete, $partial] = $this->compute($calendarId, $window[0], $window[1], $zone);
         $zones[$zoneName] = $intervals;
+
+        // A result cut by the time budget is kept for an hour only, then computed again.
+        if ($partial) {
+            $retry = $this->services->now()->getTimestamp() + self::PARTIAL_SECONDS;
+            $until = $until === null ? $retry : min($until, $retry);
+        }
 
         // A result with an unreadable object is never cached: the cause may be
         // passing (a library missing during an update), and it is busy anyway.
         if (!$readOnly && $complete) {
-            $this->writeCache($calendarId, $synctoken, $window[0], $window[1], $zones);
+            $this->writeCache($calendarId, $synctoken, $window[0], $window[1], $zones, $until);
         }
 
         return $intervals;
@@ -442,11 +455,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     /**
      * Busy intervals of every object in a window. Fails closed: an object that
      * cannot be expanded makes the whole window busy (and the result is not
-     * complete); more than {@see self::MAX_SECONDS} of work makes the rest of
-     * the window busy (the result stays complete, so it is cached and not
-     * recomputed by every visitor).
+     * complete); more than {@see self::MAX_SECONDS} of work makes the whole
+     * window busy (partial: cached for {@see self::PARTIAL_SECONDS} only, so not
+     * every visitor recomputes it, and a large calendar on a slow host is not
+     * blocked for long).
      *
-     * @return  array{0: list<array{0: int, 1: int, 2: int}>, 1: bool}  Intervals, and whether every object was read.
+     * @return  array{0: list<array{0: int, 1: int, 2: int}>, 1: bool, 2: bool}  Intervals, whether every object was read, whether the budget cut it.
      */
     private function compute(int $calendarId, \DateTimeImmutable $start, \DateTimeImmutable $end, \DateTimeZone $zone): array
     {
@@ -460,7 +474,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             if (microtime(true) - $began > self::MAX_SECONDS) {
                 $this->failure('budget', $calendarId, new \OverflowException('Busy time budget exceeded.'));
 
-                return [[$whole], true];
+                return [[$whole], true, true];
             }
 
             try {
@@ -480,15 +494,15 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             }
 
             if (\count($intervals) > self::MAX_INTERVALS * 2) {
-                return [[$whole], $complete];
+                return [[$whole], $complete, false];
             }
         }
 
-        return [self::compact($intervals, $start->getTimestamp(), $end->getTimestamp()), $complete];
+        return [self::compact($intervals, $start->getTimestamp(), $end->getTimestamp()), $complete, false];
     }
 
     /**
-     * @return  array{start: \DateTimeImmutable, end: \DateTimeImmutable, zones: array<string, list<array{0: int, 1: int, 2: int}>>}|null
+     * @return  array{start: \DateTimeImmutable, end: \DateTimeImmutable, zones: array<string, list<array{0: int, 1: int, 2: int}>>, until: int|null}|null
      */
     private function readCache(int $calendarId, int $synctoken): ?array
     {
@@ -517,6 +531,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             return null;
         }
 
+        $until = isset($data['until']) && \is_int($data['until']) ? $data['until'] : null;
+
+        if ($until !== null && $until <= $this->services->now()->getTimestamp()) {
+            return null;
+        }
+
         $zones = [];
 
         foreach ($data['zones'] as $name => $intervals) {
@@ -533,18 +553,18 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $zones[$name] = array_values($intervals);
         }
 
-        return ['start' => $start, 'end' => $end, 'zones' => $zones];
+        return ['start' => $start, 'end' => $end, 'zones' => $zones, 'until' => $until];
     }
 
     /**
      * @param   array<string, list<array{0: int, 1: int, 2: int}>>  $zones
      */
-    private function writeCache(int $calendarId, int $synctoken, \DateTimeImmutable $start, \DateTimeImmutable $end, array $zones): void
+    private function writeCache(int $calendarId, int $synctoken, \DateTimeImmutable $start, \DateTimeImmutable $end, array $zones, ?int $until): void
     {
         $db = $this->services->db();
         $from = $start->format('Y-m-d H:i:s');
         $to = $end->format('Y-m-d H:i:s');
-        $payload = CipherSuite::encrypt($this->timingKey(), json_encode(['v' => 1, 'zones' => $zones], JSON_THROW_ON_ERROR),
+        $payload = CipherSuite::encrypt($this->timingKey(), json_encode(['v' => 1, 'zones' => $zones] + ($until === null ? [] : ['until' => $until]), JSON_THROW_ON_ERROR),
             self::cacheData($calendarId, $synctoken, $from, $to));
         $values = [
             'synctoken' => (string) $synctoken,
@@ -749,7 +769,8 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         $row = $db->setQuery((string) $query . ($lock ? ' FOR UPDATE' : ''))->loadAssoc() ?: null;
 
         // Personal fields are encrypted at rest; one that cannot be decrypted is left out of the copy.
-        return $row === null ? null : (new BookingData($this->services->keyProvider()))->openLenient($row);
+        return $row === null ? null : BookingData::forToken($this->services->keyProvider(),
+            (string) $this->services->params()->get(BookingData::MIGRATION_OPTION, ''))->openLenient($row);
     }
 
     /**

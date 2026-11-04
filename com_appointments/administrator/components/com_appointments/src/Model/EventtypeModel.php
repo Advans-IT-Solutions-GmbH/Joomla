@@ -97,7 +97,13 @@ class EventtypeModel extends AdminModel
             $storedBusy = $this->busyCalendars($id);
         }
 
-        $keep = $id > 0 && $oldHost === $newHost;
+        // Values outside the reachable set may only stay as the unchanged, complete set:
+        // removing some would let an editor without access isolate one calendar's busy times.
+        $sortedBusy = $busy;
+        $sortedStored = $storedBusy;
+        sort($sortedBusy);
+        sort($sortedStored);
+        $keep = $id > 0 && $oldHost === $newHost && $target === $storedTarget && $sortedBusy === $sortedStored;
         [$visible, $writable] = self::reachable($newHost, (int) Factory::getApplication()->getIdentity()->id);
 
         if ($target > 0 && !isset($writable[$target]) && !($keep && $target === $storedTarget)) {

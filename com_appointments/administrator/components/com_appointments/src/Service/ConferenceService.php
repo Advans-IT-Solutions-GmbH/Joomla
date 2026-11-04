@@ -463,7 +463,7 @@ final class ConferenceService
 
     private function bookingData(): BookingData
     {
-        return $this->bookingData ??= new BookingData($this->keyProvider());
+        return $this->bookingData ??= BookingData::forToken($this->keyProvider(), (string) $this->params->get(BookingData::MIGRATION_OPTION, ''));
     }
 
     private function event(int $id): ?array

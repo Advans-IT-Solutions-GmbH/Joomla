@@ -532,6 +532,13 @@ final class TimingIndex implements TimingIndexInterface
                 $line = \in_array($value, self::ENUMERATIONS[$name], true) ? $name . ':' . $value : null;
             }
 
+            if ($line === null && \in_array($name, ['DTSTART', 'DTEND', 'DURATION', 'RECURRENCE-ID', 'RDATE'], true)) {
+                // Dropping a time it cannot read would hide busy time (or make an override a
+                // series of its own): the object is refused instead. An unreadable EXDATE or
+                // enumeration only ever leaves more time busy and is dropped.
+                throw new TeamException('COM_APPOINTMENTS_TEAM_E_TIMING_INVALID', 400);
+            }
+
             if ($line !== null) {
                 $seen[$name] = true;
                 $lines[] = IcsWriter::fold($line) . "\r\n";
@@ -606,7 +613,7 @@ final class TimingIndex implements TimingIndexInterface
             return false;
         }
 
-        return checkdate((int) $m[2], (int) $m[3], (int) $m[1]) && (int) $m[1] >= 1900 && (int) $m[1] <= 9998
+        return checkdate((int) $m[2], (int) $m[3], (int) $m[1]) && (int) $m[1] >= 1000 && (int) $m[1] <= 9998
             && ($date || ((int) $m[4] <= 23 && (int) $m[5] <= 59 && (int) $m[6] <= 60));
     }
 

@@ -189,6 +189,21 @@ final class TimingIndexTest extends TestCase
             self::assertSame(400, $e->getCode());
         }
 
+        foreach (['DTEND:20270230T100000Z', 'DURATION:soon', 'RDATE:2027-01-05'] as $unreadable) {
+            try {
+                (new TimingIndex())->extract(self::calendar(self::event('DTSTART:20270101T090000Z', $unreadable)));
+                self::fail('A time the index cannot read was dropped: ' . $unreadable);
+            } catch (TeamException $e) {
+                self::assertSame(400, $e->getCode());
+            }
+        }
+
+        // A birthday with an unknown year (clients write 1604) is a normal series.
+        $birthday = (new TimingIndex())->extract(self::calendar(self::event('DTSTART;VALUE=DATE:16040315', 'RRULE:FREQ=YEARLY')));
+        self::assertStringContainsString('DTSTART;VALUE=DATE:16040315', $birthday);
+        self::assertSame(['2027-03-14T23:00Z/2027-03-15T23:00Z'], self::spans((new TimingIndex())->expand($birthday,
+            self::utc('2027-03-01 00:00:00'), self::utc('2027-04-01 00:00:00'), new \DateTimeZone('Europe/Zurich'))));
+
         try {
             (new TimingIndex())->extract(self::calendar(self::event('DTSTART:20270101T090000Z', 'DTEND:20270101T100000Z',
                 'RDATE;VALUE=PERIOD:20270105T090000Z/PT2H')));

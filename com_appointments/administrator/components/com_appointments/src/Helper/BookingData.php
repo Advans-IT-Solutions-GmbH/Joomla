@@ -23,15 +23,30 @@ defined('_JEXEC') or die;
  *
  * This class is the only code that turns these columns into text and back.
  * Code that reads a booking row calls {@see self::open()} right after the read,
- * code that writes calls {@see self::seal()} right before the write. Both
- * accept a whole row: other keys pass through unchanged, `null` stays `null`.
- * Opening is idempotent: a value that is not a sealed value (clear text of a
- * row the migration has not reached yet, or a value opened before) is
- * returned as it is. A sealed value that does not open (another site secret,
- * a changed byte) throws; {@see self::openLenient()} blanks it instead and
- * reports the column, for mails, reminders and exports.
+ * code that writes calls {@see self::seal()} right before the write, with the
+ * clear values it writes. Both accept a whole row: other keys pass through
+ * unchanged, a null value stays null.
  *
- * Pure: no database, no Joomla runtime, so it is tested on its own.
+ * An opened row carries the key {@see self::OPENED}, so opening it again
+ * changes nothing (code that receives either a stored or an opened row opens
+ * it), and sealing removes the key again before the write. A stored value that
+ * is not sealed is clear text of a row written before 1.4.0: it is accepted
+ * only while the migration of the update to 1.4.0 runs (`$acceptClear`): the
+ * update writes a migration token, keyed with the site secret and valid for
+ * {@see self::MIGRATION_DAYS} days, into the component option
+ * {@see self::MIGRATION_OPTION}, and the migration deletes it when no clear
+ * value is left. Without a valid token (a new installation, a finished
+ * migration, a token deleted or forged by a database write) a clear value
+ * counts as one that does not open, so a row changed by a database write alone
+ * (an address put in as clear text) neither receives mail nor answers a
+ * privacy request, and the migration does not encrypt it either.
+ *
+ * A value that does not open (another site secret, a changed byte) throws in
+ * {@see self::open()}; {@see self::openLenient()} blanks it instead and reports
+ * the column, for pages, mails, reminders and exports.
+ *
+ * Pure: no database and, except {@see self::fromApplication()}, no Joomla
+ * runtime, so it is tested on its own.
  *
  * @since  1.4.0
  */
@@ -41,9 +56,18 @@ final class BookingData
     public const COLUMNS = ['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
         'guest_emails', 'custom_fields', 'cancel_reason', 'conference_url'];
 
+    /** The key an opened row carries. */
+    public const OPENED = '_opened';
+
+    /** The component option that holds the migration token while clear rows are encrypted. */
+    public const MIGRATION_OPTION = 'booking_data_migration';
+
+    /** How long a migration token is valid. */
+    public const MIGRATION_DAYS = 30;
+
     private const PREFIX = 'v1:';
 
-    /** `v1:` and Base64 of at least nonce and tag (40 bytes): nothing a person types looks like it. */
+    /** `v1:` and Base64 of at least nonce and tag (40 bytes). */
     private const SEALED = '/^v1:[A-Za-z0-9+\/]{54,}={0,2}$/D';
 
     /**
@@ -51,27 +75,60 @@ final class BookingData
      */
     private $key;
 
-    public function __construct(KeyProvider $keys)
+    /**
+     * @param   bool  $acceptClear  Whether a stored clear value is read as it is (only while the migration runs).
+     */
+    public function __construct(KeyProvider $keys, private readonly bool $acceptClear = false)
     {
         $this->key = $keys->key(KeyProvider::PURPOSE_BOOKING_DATA);
     }
 
     /**
-     * The installation's instance, for code that runs inside Joomla.
+     * The installation's instance, for code that runs inside Joomla: clear
+     * values are accepted only with a valid migration token.
      */
     public static function fromApplication(): self
     {
-        return new self(new KeyProvider((string) \Joomla\CMS\Factory::getApplication()->get('secret', '')));
+        $keys = new KeyProvider((string) \Joomla\CMS\Factory::getApplication()->get('secret', ''));
+        $token = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')->get(self::MIGRATION_OPTION, '');
+
+        return self::forToken($keys, $token);
     }
 
+    /** An instance that reads clear values only while `$token` is a valid migration token. */
+    public static function forToken(KeyProvider $keys, string $token): self
+    {
+        return new self($keys, self::migrationOpen($token, $keys, time()));
+    }
+
+    /** A migration token valid until `$expiresAt` (Unix seconds). */
+    public static function migrationToken(KeyProvider $keys, int $expiresAt): string
+    {
+        return $expiresAt . '.' . hash_hmac('sha256', 'com_appointments/booking-migration/v1|' . $expiresAt, $keys->key(KeyProvider::PURPOSE_BOOKING_DATA));
+    }
+
+    /** Whether a token was made with this site's key and has not expired. */
+    public static function migrationOpen(string $token, KeyProvider $keys, int $now): bool
+    {
+        if (!preg_match('/^(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[1] <= $now
+            || (int) $match[1] > $now + self::MIGRATION_DAYS * 86400) {
+            return false;
+        }
+
+        return hash_equals(self::migrationToken($keys, (int) $match[1]), $token);
+    }
+
+    /** Whether a stored value has the form of a sealed value. */
     public static function isSealed(mixed $value): bool
     {
         return \is_string($value) && preg_match(self::SEALED, $value) === 1;
     }
 
     /**
-     * The row with every personal field sealed. A value that is already sealed
-     * stays as it is; an array (answers) is stored as its JSON text.
+     * The row with every personal field present sealed, also a value that only
+     * looks sealed (input is never trusted to be ciphertext); an array (answers)
+     * is stored as its JSON text. Pass the clear values that are written, never
+     * stored values that were not opened.
      *
      * @param   array<string, mixed>  $row
      *
@@ -85,8 +142,10 @@ final class BookingData
             throw new \InvalidArgumentException('A booking without UID cannot be sealed.');
         }
 
+        unset($row[self::OPENED]);
+
         foreach (self::COLUMNS as $column) {
-            if (!\array_key_exists($column, $row) || $row[$column] === null || self::isSealed($row[$column])) {
+            if (!\array_key_exists($column, $row) || $row[$column] === null) {
                 continue;
             }
 
@@ -113,7 +172,7 @@ final class BookingData
      *
      * @return  array<string, mixed>
      *
-     * @throws  \UnexpectedValueException  When a sealed value does not open; the message names the column, never a value.
+     * @throws  \UnexpectedValueException  When a value does not open; the message names the column, never a value.
      */
     public function open(array $row): array
     {
@@ -128,7 +187,7 @@ final class BookingData
     }
 
     /**
-     * Like {@see self::open()}, but a value that does not open becomes `null`
+     * Like {@see self::open()}, but a value that does not open becomes null
      * and its column is added to `$failed`.
      *
      * @param   array<string, mixed>  $row
@@ -139,10 +198,24 @@ final class BookingData
     public function openLenient(array $row, ?array &$failed = null): array
     {
         $failed = [];
+
+        if (!empty($row[self::OPENED])) {
+            return $row;
+        }
+
         $uid = (string) ($row['uid'] ?? '');
 
         foreach (self::COLUMNS as $column) {
-            if (!\array_key_exists($column, $row) || !self::isSealed($row[$column])) {
+            if (!\array_key_exists($column, $row) || $row[$column] === null) {
+                continue;
+            }
+
+            if (!self::isSealed($row[$column])) {
+                if (!$this->acceptClear) {
+                    $failed[] = $column;
+                    $row[$column] = null;
+                }
+
                 continue;
             }
 
@@ -155,6 +228,8 @@ final class BookingData
 
             $row[$column] = $plain;
         }
+
+        $row[self::OPENED] = true;
 
         return $row;
     }

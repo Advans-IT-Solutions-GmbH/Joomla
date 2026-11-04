@@ -36,6 +36,22 @@ function appointments_open_booking(?array $row): ?array
     return $data->open($row);
 }
 
+/**
+ * Fields as the application stores them: the personal ones sealed for the booking's UID.
+ *
+ * @param array<string, mixed> $fields
+ *
+ * @return array<string, mixed>
+ */
+function appointments_seal_booking(string $uid, array $fields): array
+{
+    $data = new \Advans\Component\Appointments\Administrator\Helper\BookingData(
+        new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret)
+    );
+
+    return $data->seal($uid, $fields);
+}
+
 /** Whether a stored value is encrypted (for the checks that nothing personal is stored in clear). */
 function appointments_is_sealed(mixed $value): bool
 {

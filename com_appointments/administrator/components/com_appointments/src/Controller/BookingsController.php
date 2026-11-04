@@ -162,7 +162,8 @@ class BookingsController extends BaseController
             if (!$booking || !$user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $booking['eventtype_id'])) {
                 throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
-            $rows[] = $booking;
+            // Personal fields are encrypted at rest: compare and mail the opened row.
+            $rows[] = \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openLenient($booking);
         }
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
         $success = true;
