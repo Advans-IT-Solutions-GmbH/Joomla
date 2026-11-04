@@ -162,6 +162,14 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- `sequence` is the iCalendar SEQUENCE and is raised on every change.
 -- `start_utc`/`end_utc` are the meeting itself, buffers are not part of it.
 -- `state`: 0 pending, 1 confirmed, 2 cancelled.
+-- `invitee_name` is the full name ("first last"); `invitee_first_name` and
+-- `invitee_last_name` hold its two parts. All three are personal data and are
+-- erased together.
+--
+-- `consent_utc` and `consent_version` are set only in the consent mode of the
+-- booking form: when the person ticked the consent checkbox and the sha256 of
+-- mode, language and the exact label text. They are proof of the consent, not
+-- data of the person, and stay on an anonymised row.
 --
 -- A reschedule updates this row in place: the times change, `sequence` is
 -- raised and `modified_utc` is touched. It does not insert a successor row,
@@ -213,12 +221,16 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `state` TINYINT NOT NULL DEFAULT 0,
     `state_active` TINYINT(1) GENERATED ALWAYS AS (CASE WHEN `state` IN (0, 1) THEN 1 ELSE NULL END) STORED,
     `invitee_name` VARCHAR(255) DEFAULT NULL,
+    `invitee_first_name` VARCHAR(255) DEFAULT NULL,
+    `invitee_last_name` VARCHAR(255) DEFAULT NULL,
     `invitee_email` VARCHAR(255) DEFAULT NULL,
     `invitee_phone` VARCHAR(64) DEFAULT NULL,
     `invitee_timezone` VARCHAR(64) DEFAULT NULL,
     `invitee_language` CHAR(7) DEFAULT NULL,
     `guest_emails` TEXT,
     `custom_fields` JSON DEFAULT NULL,
+    `consent_utc` DATETIME DEFAULT NULL,
+    `consent_version` CHAR(64) DEFAULT NULL,
     `conference_provider` VARCHAR(64) DEFAULT NULL,
     `conference_url` TEXT,
     `conference_room` VARCHAR(255) DEFAULT NULL,

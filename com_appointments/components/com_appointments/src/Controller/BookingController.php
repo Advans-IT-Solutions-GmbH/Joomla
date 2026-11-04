@@ -10,12 +10,15 @@ namespace Advans\Component\Appointments\Site\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Advans\Component\Appointments\Administrator\Helper\BookingValidationException;
+use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
+use Advans\Component\Appointments\Site\Helper\PrivacyLink;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -62,8 +65,23 @@ class BookingController extends BaseController
             $fieldErrors['start'] = 'COM_APPOINTMENTS_BOOKING_ERROR_SLOT';
         }
 
-        if ($this->input->post->getInt('consent') !== 1) {
-            $fieldErrors['consent'] = 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
+        // The checkbox exists only in the acknowledge and consent modes; in the notice mode a
+        // posted value is ignored and nothing is required or stored.
+        $params = ComponentHelper::getParams('com_appointments');
+        $consentMode = ConsentMode::fromParams($params);
+        $proof = [];
+
+        if (ConsentMode::requiresCheckbox($consentMode) && $this->input->post->getInt('consent') !== 1) {
+            $fieldErrors['consent'] = $consentMode === ConsentMode::ACKNOWLEDGE
+                ? 'COM_APPOINTMENTS_BOOKING_ERROR_ACKNOWLEDGE' : 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
+        } elseif ($consentMode === ConsentMode::CONSENT) {
+            // The version names the exact label the page showed: the same helper derives it there.
+            $label = ConsentMode::labelText($consentMode, PrivacyLink::resolve($params) !== '',
+                static fn (string $key): string => Text::_($key), Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK'));
+            $proof = [
+                'consent_utc' => $now->format('Y-m-d H:i:s'),
+                'consent_version' => ConsentMode::version($consentMode, $this->app->getLanguage()->getTag(), $label),
+            ];
         }
 
         if ($fieldErrors !== []) {
@@ -71,7 +89,8 @@ class BookingController extends BaseController
             // everything at once. Nothing is saved on this path.
             try {
                 (new BookingInput())->validate($data, $events->getFields($eventId), $this->app->getLanguage()->getTag(),
-                    BookingInput::requiresPhone((string) $event->location_type));
+                    BookingInput::requiresPhone((string) $event->location_type),
+                    BookingInput::maxGuests($params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS)), BookingInput::fixedDialCode($params));
             } catch (BookingValidationException $e) {
                 if ($e->fieldErrors === []) {
                     return $this->refuse($eventId, $e->languageKey);
@@ -84,7 +103,7 @@ class BookingController extends BaseController
         }
 
         try {
-            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now);
+            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now, $proof);
         } catch (BookingValidationException $e) {
             return $this->refuse($eventId, $e->fieldErrors === [] ? $e->languageKey : '', $e->fieldErrors);
         } catch (SlotTakenException $e) {

@@ -8,6 +8,11 @@
 <config addruleprefix="Advans\Component\Appointments\Administrator\Rule">
     <fieldset name="basic">
         <field name="autoload_language" type="hidden" default="1" />
+        <field name="consent_mode" type="list" label="COM_APPOINTMENTS_CONFIG_CONSENT_MODE" description="COM_APPOINTMENTS_CONFIG_CONSENT_MODE_DESC" default="notice" filter="cmd" validate="options">
+            <option value="notice">COM_APPOINTMENTS_CONFIG_CONSENT_MODE_NOTICE</option>
+            <option value="acknowledge">COM_APPOINTMENTS_CONFIG_CONSENT_MODE_ACKNOWLEDGE</option>
+            <option value="consent">COM_APPOINTMENTS_CONFIG_CONSENT_MODE_CONSENT</option>
+        </field>
         <field name="consent_text" type="textarea" label="COM_APPOINTMENTS_CONFIG_CONSENT" description="COM_APPOINTMENTS_CONFIG_CONSENT_DESC" filter="string" />
         <field name="privacy_menuitem" type="menuitem" label="COM_APPOINTMENTS_CONFIG_PRIVACY_MENUITEM" description="COM_APPOINTMENTS_CONFIG_PRIVACY_MENUITEM_DESC" filter="integer" client="site">
             <option value="">JNONE</option>
@@ -15,6 +20,11 @@
         <field name="privacy_anchor" type="text" label="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR" description="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR_DESC" filter="cmd" maxlength="64" showon="privacy_menuitem!:" />
         <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" description="COM_APPOINTMENTS_CONFIG_PRIVACY_URL_DESC" filter="url" relative="true" />
         <field name="phone_default_country" type="text" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_DESC" filter="cmd" maxlength="3" pattern="[0-9]{0,3}" />
+        <field name="phone_country_choice" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_DESC" default="1" filter="integer" validate="options">
+            <option value="0">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FIXED</option>
+            <option value="1">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FREE</option>
+        </field>
+        <field name="max_guests" type="number" label="COM_APPOINTMENTS_CONFIG_MAX_GUESTS" description="COM_APPOINTMENTS_CONFIG_MAX_GUESTS_DESC" default="10" min="0" max="50" required="true" filter="raw" validate="range" />
         <field name="erase_mode" type="list" label="COM_APPOINTMENTS_CONFIG_ERASE_MODE" description="COM_APPOINTMENTS_CONFIG_ERASE_MODE_DESC" default="anonymise" filter="cmd" validate="options">
             <option value="anonymise">COM_APPOINTMENTS_CONFIG_ERASE_ANONYMISE</option>
             <option value="delete">COM_APPOINTMENTS_CONFIG_ERASE_DELETE</option>

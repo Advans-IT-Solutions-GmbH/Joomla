@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Application\ConsoleApplication;
@@ -35,7 +36,7 @@ final class NotificationService
 
     public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
     {
-        if (!isset(DefaultTemplates::KEYS[$purpose])) {
+        if (!in_array($purpose, DefaultTemplates::SENT, true)) {
             throw new \InvalidArgumentException('Unsupported notification purpose.');
         }
 
@@ -54,18 +55,23 @@ final class NotificationService
         $recipients = [];
 
         if (!$hostOnly && !empty($booking['invitee_email'])) {
-            $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true];
-            foreach (preg_split('/\r\n|\r|\n/', trim((string) ($booking['guest_emails'] ?? '')), -1, PREG_SPLIT_NO_EMPTY) as $guest) {
-                $recipients[] = [$guest, $inviteeLanguage, false, false];
+            $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true, false];
+            // A guest gets the guest template of the purpose, with a neutral salutation and the
+            // link that removes only their own address. A purpose without one is not sent to guests.
+            if (isset(DefaultTemplates::GUEST[$purpose])) {
+                foreach (PrivacyAddress::guestList($booking['guest_emails'] ?? null) as $guest) {
+                    $recipients[] = [$guest, $inviteeLanguage, false, false, true];
+                }
             }
         }
-        $recipients[] = [$event['host_email'], $hostLanguage, true, false];
+        $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
         $failures = 0;
         $conferences = ConferenceService::forComponent($this->db);
 
-        foreach ($recipients as [$address, $tag, $isHost, $canManage]) {
+        foreach ($recipients as [$address, $tag, $isHost, $canManage, $isGuest]) {
             try {
-                $recipientPurpose = $isHost && in_array($purpose, ['confirmation', 'pending'], true) ? 'host_notice' : $purpose;
+                $recipientPurpose = $isHost ? (DefaultTemplates::HOST[$purpose] ?? $purpose)
+                    : ($isGuest ? DefaultTemplates::GUEST[$purpose] : $purpose);
                 $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
                 $language = new Language($tag);
                 $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
@@ -81,7 +87,7 @@ final class NotificationService
                 $presentation['{state_label}'] = $language->_($stateKey);
                 $template['subject'] = strtr($template['subject'], $presentation);
                 $template['body'] = strtr($template['body'], $presentation);
-                $links = $canManage ? $this->links($booking) : [];
+                $links = $canManage ? $this->links($booking) : ($isGuest ? $this->guestLinks($booking, $address) : []);
                 $recipientBooking = $booking;
                 if ($isHost && !empty($booking['conference_url'])) {
                     $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
@@ -99,6 +105,10 @@ final class NotificationService
                         . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ":\n" . $links['erase_url'];
                 }
 
+                if ($isGuest) {
+                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_GUEST_REMOVE') . ":\n" . $links['guest_remove_url'];
+                }
+
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
                 $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
                 $mailer->addRecipient($address);
@@ -110,7 +120,8 @@ final class NotificationService
                 if (!empty($recipientBooking['conference_url'])) {
                     $known[(string) $recipientBooking['conference_url']] = $language->_('COM_APPOINTMENTS_MAIL_JOIN');
                 }
-                foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL', 'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE'] as $field => $key) {
+                foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL',
+                    'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE', 'guest_remove_url' => 'COM_APPOINTMENTS_MAIL_GUEST_REMOVE'] as $field => $key) {
                     if (!empty($links[$field])) {
                         $known[(string) $links[$field]] = $language->_($key);
                     }
@@ -209,6 +220,41 @@ final class NotificationService
 
     public function links(array $booking): array
     {
+        $base = $this->linkBase();
+        $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+        $result = [];
+        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
+
+        foreach ($names as $action => $key) {
+            $result[$key] = $base . '/index.php?' . http_build_query([
+                'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
+                'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
+            ]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * The guest's own address and the signed link that removes only that address from the
+     * booking. The address is bound into the signature, never written into the URL.
+     */
+    public function guestLinks(array $booking, string $guest): array
+    {
+        $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+
+        return [
+            'guest_email' => $guest,
+            'guest_remove_url' => $this->linkBase() . '/index.php?' . http_build_query([
+                'option' => 'com_appointments', 'task' => 'guest.confirm', 'id' => (int) $booking['id'],
+                'signature' => $signed->signGuest((int) $booking['id'], $guest, $booking['modified_utc']),
+            ]),
+        ];
+    }
+
+    /** Public site root for signed links, without a trailing slash. */
+    private function linkBase(): string
+    {
         $app = Factory::getApplication();
         $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
         if ($base === '') {
@@ -226,17 +272,7 @@ final class NotificationService
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
             throw new NotificationException('The appointment public site URL is invalid.');
         }
-        $signed = new SignedLink(new KeyProvider((string) $app->get('secret')));
-        $result = [];
-        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
 
-        foreach ($names as $action => $key) {
-            $result[$key] = rtrim($base, '/') . '/index.php?' . http_build_query([
-                'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
-                'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
-            ]);
-        }
-
-        return $result;
+        return rtrim($base, '/');
     }
 }

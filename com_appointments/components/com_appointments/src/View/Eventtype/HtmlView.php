@@ -11,16 +11,18 @@ namespace Advans\Component\Appointments\Site\View\Eventtype;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\HTML\HTMLHelper;
-use Joomla\CMS\Language\Associations;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Advans\Component\Appointments\Administrator\Helper\BookingInput;
+use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\PrivacyLink;
+use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 
 defined('_JEXEC') or die;
@@ -28,6 +30,26 @@ defined('_JEXEC') or die;
 class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
+    use AssetsTrait;
+
+    /**
+     * Flag before a fixed calling code: the image of Joomla's language switcher
+     * (media/mod_languages/images/<name>.gif) for the calling codes that belong to one country.
+     * Codes without an entry, or a site without the image, show the code alone.
+     */
+    private const DIAL_FLAGS = [
+        '27' => 'af_za', '30' => 'el_gr', '31' => 'nl_nl', '32' => 'nl_be', '33' => 'fr_fr', '34' => 'es_es',
+        '36' => 'hu_hu', '39' => 'it_it', '40' => 'ro_ro', '41' => 'ch', '43' => 'at', '44' => 'en_gb',
+        '45' => 'da_dk', '46' => 'sv_se', '47' => 'nb_no', '48' => 'pl_pl', '49' => 'de_de', '55' => 'pt_br',
+        '57' => 'es_co', '60' => 'ms_my', '61' => 'en_au', '62' => 'id_id', '64' => 'en_nz', '66' => 'th_th',
+        '81' => 'ja_jp', '82' => 'ko_kr', '84' => 'vi_vn', '86' => 'zh_cn', '90' => 'tr_tr', '91' => 'hi_in',
+        '92' => 'ur_pk', '94' => 'si_lk', '98' => 'fa_ir', '254' => 'sw_ke', '351' => 'pt_pt', '352' => 'de_lu',
+        '353' => 'ga_ie', '354' => 'is_is', '355' => 'sq_al', '358' => 'fi_fi', '359' => 'bg_bg', '370' => 'lt_lt',
+        '371' => 'lv_lv', '372' => 'et_ee', '374' => 'hy_am', '375' => 'be_by', '380' => 'uk_ua', '381' => 'sr_rs',
+        '382' => 'srp_me', '385' => 'hr_hr', '386' => 'sl_si', '389' => 'mk_mk', '420' => 'cs_cz', '421' => 'sk_sk',
+        '423' => 'de_li', '852' => 'hk_hk', '855' => 'km_kh', '856' => 'lo_la', '886' => 'zh_tw', '972' => 'he_il',
+        '976' => 'mn_mn', '993' => 'tk_tm', '994' => 'az_az', '995' => 'ka_ge', '998' => 'uz_uz',
+    ];
 
     protected $item;
     protected $fields = [];
@@ -62,6 +84,20 @@ class HtmlView extends BaseHtmlView
     protected string $infoLayout = 'logo';
     /** The title of the event type above the card instead of in the information column. */
     protected bool $titleAbove = false;
+    /** Clock of the times shown: '24' or '12', from the address or the language (COM_APPOINTMENTS_CLOCK_DEFAULT). */
+    protected string $clock = '24';
+    /** The clock of the language, which the addresses leave out. */
+    protected string $defaultClock = '24';
+    /** Pattern of a time of day in the chosen clock (date() letters). */
+    protected string $timeFormat = 'H:i';
+    /** Most further guests per booking; 0 shows no guest field. */
+    protected int $maxGuests = 0;
+    /** The only calling code of the telephone fields, or '' when the visitor chooses one. */
+    protected string $fixedDialCode = '';
+    /** Address of the flag before the fixed calling code, or '' for none. */
+    protected string $dialFlag = '';
+    /** How the details step asks about the privacy notice: ConsentMode::NOTICE, ACKNOWLEDGE or CONSENT. */
+    protected string $consentMode = 'notice';
 
     public function display($tpl = null)
     {
@@ -71,12 +107,9 @@ class HtmlView extends BaseHtmlView
         $this->formSignature = (new FormGuard(new KeyProvider((string) $app->get('secret'))))->sign(
             (int) $this->item->id, $this->renderedAt, Session::getFormToken()
         );
-        $this->privacyLink = $this->resolvePrivacyLink();
-        $assets = $app->getDocument()->getWebAssetManager();
-        $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
-        $assets->useStyle('com_appointments.site');
+        $this->privacyLink = PrivacyLink::resolve($this->params);
         // Progressive enhancement only: without the script every step is a normal link or form.
-        $assets->useScript('com_appointments.booking');
+        $this->useAppointmentsAssets(true);
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
         $this->applyPageTitle('eventtype', (string) $this->item->title, (int) $this->item->id);
 
@@ -179,6 +212,21 @@ class HtmlView extends BaseHtmlView
         $this->phoneRequired = BookingInput::requiresPhone((string) $this->item->location_type);
         $dialCode = trim((string) $this->params->get('phone_default_country', ''), " +\t");
         $this->defaultDialCode = in_array($dialCode, BookingInput::DIAL_CODES, true) ? $dialCode : '';
+        $this->fixedDialCode = BookingInput::fixedDialCode($this->params);
+        $flag = self::DIAL_FLAGS[$this->fixedDialCode] ?? '';
+
+        if ($flag !== '' && is_file(JPATH_ROOT . '/media/mod_languages/images/' . $flag . '.gif')) {
+            $this->dialFlag = Uri::root(true) . '/media/mod_languages/images/' . $flag . '.gif';
+        }
+
+        $this->maxGuests = BookingInput::maxGuests($this->params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS));
+        $this->consentMode = ConsentMode::fromParams($this->params);
+
+        // The clock of the language unless the visitor switched it; the addresses only carry a switched clock.
+        $this->defaultClock = Text::_('COM_APPOINTMENTS_CLOCK_DEFAULT') === '12' ? '12' : '24';
+        $clock = $input->getString('clock', '');
+        $this->clock = in_array($clock, ['12', '24'], true) ? $clock : $this->defaultClock;
+        $this->timeFormat = Text::_($this->clock === '12' ? 'COM_APPOINTMENTS_DATE_FORMAT_TIME_12' : 'COM_APPOINTMENTS_DATE_FORMAT_TIME');
     }
 
     /**
@@ -192,7 +240,8 @@ class HtmlView extends BaseHtmlView
     public function bookingLink(array $query = [], string $fragment = ''): string
     {
         $url = 'index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id
-            . '&timezone=' . urlencode($this->zone->getName());
+            . '&timezone=' . urlencode($this->zone->getName())
+            . ($this->clock !== $this->defaultClock ? '&clock=' . $this->clock : '');
 
         foreach ($query as $key => $value) {
             $url .= '&' . urlencode((string) $key) . '=' . urlencode((string) $value);
@@ -260,34 +309,5 @@ class HtmlView extends BaseHtmlView
             'width' => (int) ($image->attributes['width'] ?? 0),
             'height' => (int) ($image->attributes['height'] ?? 0),
         ];
-    }
-
-    /**
-     * The privacy notice the consent label links to: the configured menu item (in the
-     * visitor's language when the item has a language association), else the configured
-     * address. A menu item the visitor cannot open is never linked.
-     */
-    private function resolvePrivacyLink(): string
-    {
-        $app = Factory::getApplication();
-        $itemId = (int) $this->params->get('privacy_menuitem', 0);
-
-        if ($itemId > 0) {
-            if (Associations::isEnabled()) {
-                $associated = Associations::getAssociations('com_menus', '#__menu', 'com_menus.item', $itemId, 'id', '', '');
-                $itemId = (int) ($associated[$app->getLanguage()->getTag()]->id ?? $itemId);
-            }
-
-            $menuItem = $app->getMenu()->getItem($itemId);
-
-            if ($menuItem !== null && in_array((int) $menuItem->access, array_map('intval', $app->getIdentity()->getAuthorisedViewLevels()), true)) {
-                $anchor = trim((string) $this->params->get('privacy_anchor', ''), " #\t");
-
-                // Unescaped: the layout escapes the address once for the attribute.
-                return Route::_('index.php?Itemid=' . $itemId, false) . ($anchor !== '' ? '#' . rawurlencode($anchor) : '');
-            }
-        }
-
-        return trim((string) $this->params->get('privacy_url', ''));
     }
 }

@@ -13,6 +13,8 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\User\CurrentUserInterface;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Filesystem\File;
@@ -95,6 +97,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
+        $this->ensureSchedulerTasks();
         $this->removeLegacyManifest();
 
         // An update only gets a short confirmation; the first installation shows
@@ -193,6 +196,62 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
                     ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
                     ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
+            }
+        }
+    }
+
+    /**
+     * Creates the two Scheduler tasks of the bundled task plugin, enabled, through the
+     * Scheduler's own task model, the way Joomla's core update creates the tasks of its own
+     * plugins. A routine gets a task only when no task of its type exists at all, in any
+     * state: a task the operator disabled or trashed is never enabled or created again.
+     * A failure never fails the installation; it is reported, so the operator can create the
+     * task by hand under System > Scheduled Tasks.
+     */
+    private function ensureSchedulerTasks(): void
+    {
+        $app = Factory::getApplication();
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $lang = $app->getLanguage();
+        $lang->load('plg_task_appointments', JPATH_ADMINISTRATOR)
+            || $lang->load('plg_task_appointments', JPATH_PLUGINS . '/task/appointments');
+        $routines = [
+            'plg_task_appointments.reminders' => ['PLG_TASK_APPOINTMENTS_REMINDERS_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
+            'plg_task_appointments.retention' => ['PLG_TASK_APPOINTMENTS_RETENTION_TITLE', ['rule-type' => 'interval-hours', 'interval-hours' => 24]],
+        ];
+
+        foreach ($routines as $type => [$titleKey, $rules]) {
+            try {
+                $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__scheduler_tasks'))
+                    ->where($db->quoteName('type') . ' = :type')->bind(':type', $type);
+
+                if ((int) $db->setQuery($query)->loadResult() > 0) {
+                    continue;
+                }
+
+                $model = $app->bootComponent('com_scheduler')->getMVCFactory()
+                    ->createModel('Task', 'Administrator', ['ignore_request' => true]);
+                // From the CLI there is no signed-in user: the task is then created by the guest
+                // user (id 0), set explicitly so the model and its table never have to guess.
+                $identity = $app->getIdentity()
+                    ?? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById(0);
+                if ($model instanceof CurrentUserInterface) {
+                    $model->setCurrentUser($identity);
+                }
+                $saved = $model && $model->save([
+                    'title' => Text::_($titleKey),
+                    'type' => $type,
+                    'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
+                    'state' => 1,
+                    'params' => ['batch_size' => 100],
+                    'created_by' => (int) $identity->id,
+                ]);
+
+                if (!$saved) {
+                    throw new \RuntimeException('The Scheduler task could not be saved.');
+                }
+            } catch (\Throwable $e) {
+                $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_FAILED', Text::_($titleKey)), 'warning');
             }
         }
     }

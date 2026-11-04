@@ -26,7 +26,7 @@ final class MailComposer
      * @param array{subject: string, body: string} $template
      * @param array<string, mixed> $booking
      * @param array<string, mixed> $event IcsWriter event metadata.
-     * @param array{reschedule_url?: string, cancel_url?: string, erase_url?: string} $links
+     * @param array{reschedule_url?: string, cancel_url?: string, erase_url?: string, guest_email?: string, guest_remove_url?: string} $links
      * @return array{subject: string, body: string, attachments: list<array{filename: string, content: string, content_type: string}>}
      */
     public function compose(
@@ -69,8 +69,8 @@ final class MailComposer
     {
         $fields = [
             'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
-            'invitee_name', 'invitee_email', 'invitee_phone', 'invitee_timezone', 'invitee_language',
-            'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
+            'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
+            'invitee_timezone', 'invitee_language', 'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
             'conference_state', 'conference_error', 'cancel_reason', 'reminder_sent_utc',
             'anonymised_utc', 'created_utc', 'modified_utc',
         ];
@@ -86,7 +86,9 @@ final class MailComposer
 
         $result['{location}'] = $this->value($event['location'] ?? $event['location_text'] ?? null);
 
-        foreach (['reschedule_url', 'cancel_url', 'erase_url'] as $field) {
+        // {guest_email} and {guest_remove_url} are only filled in a mail to an additional guest:
+        // the recipient's own address and the signed link that removes only that address.
+        foreach (['reschedule_url', 'cancel_url', 'erase_url', 'guest_email', 'guest_remove_url'] as $field) {
             $result['{' . $field . '}'] = $this->value($links[$field] ?? null);
         }
 

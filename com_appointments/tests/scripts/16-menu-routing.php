@@ -408,7 +408,7 @@ try {
     [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-booking")]');
     $fields = array_replace($fields, [
         $client->token($html) => 1, 'consent' => 1, 'website' => '',
-        'booking[name]' => 'Fixture Invitee', 'booking[email]' => 'invitee@example.test',
+        'booking[first_name]' => 'Fixture', 'booking[last_name]' => 'Invitee', 'booking[email]' => 'invitee@example.test',
         'booking[timezone]' => 'UTC', 'booking[start]' => $day . ' 10:00:00',
     ]);
     $before = AppointmentsMail::snapshot();

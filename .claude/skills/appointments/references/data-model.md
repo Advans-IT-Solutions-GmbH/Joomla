@@ -136,13 +136,16 @@ Index `(user_id, start_utc, end_utc)`.
 | `host_user_id` | `INT UNSIGNED NOT NULL` | copied at booking time |
 | `start_utc`, `end_utc` | `DATETIME NOT NULL` | the meeting itself, buffers excluded |
 | `state` | `TINYINT NOT NULL` | 0 pending, 1 confirmed, 2 cancelled. 0 and 1 both hold the slot, see `references/scope.md`, "Booking lifecycle" |
-| `invitee_name` | `VARCHAR(255)` | nullable after anonymisation |
+| `invitee_name` | `VARCHAR(255)` | full name "first last", nullable after anonymisation; what the calendar `CN`, the host notice and `{invitee_name}` use |
+| `invitee_first_name`, `invitee_last_name` | `VARCHAR(255) NULL` | the two required form fields (127 characters each, so the full name fits `invitee_name`); added in 1.3.0, which derives them from `invitee_name` for existing rows (last word = last name, a single word = first name with an empty last name, anonymised rows stay NULL); erased together with `invitee_name` |
 | `invitee_email` | `VARCHAR(255)` | |
 | `invitee_phone` | `VARCHAR(64)` | |
 | `invitee_timezone` | `VARCHAR(64)` | what they saw, for the e-mail |
 | `invitee_language` | `CHAR(7)` | which language to write to them in |
-| `guest_emails` | `TEXT` | newline separated |
+| `guest_emails` | `TEXT` | newline separated, at most the component option `max_guests` (0–50, default 10) addresses; a guest is matched exactly per line, never by substring |
 | `custom_fields` | `JSON` | answers, keyed by field id |
+| `consent_utc` | `DATETIME NULL` | set only in the consent mode of the booking form (`consent_mode = consent`): when the person consented; kept on anonymisation (proof, no data of the person) |
+| `consent_version` | `CHAR(64) NULL` | sha256 hex of mode, language tag and the exact plain label text (`ConsentMode::version()`); kept on anonymisation |
 | `conference_provider` | `VARCHAR(64) NULL` | |
 | `conference_url` | `TEXT NULL` | |
 | `conference_room` | `VARCHAR(255) NULL` | identifier for teardown |
@@ -225,7 +228,7 @@ E-mail templates. One row per (event type or site-wide) × purpose × language.
 |---|---|---|
 | `id` | `INT UNSIGNED AUTO_INCREMENT` | |
 | `eventtype_id` | `INT UNSIGNED NOT NULL DEFAULT 0` | `0` = site-wide fallback |
-| `purpose` | `VARCHAR(32) NOT NULL` | `confirmation`, `pending`, `approved`, `reschedule`, `cancellation`, `reminder`, `host_notice`, `erasure_notice` |
+| `purpose` | `VARCHAR(32) NOT NULL` | `confirmation`, `pending`, `approved`, `reschedule`, `cancellation`, `reminder`, `host_notice`, `erasure_notice`, and the guest templates `guest_confirmation`, `guest_pending`, `guest_approved`, `guest_reschedule`, `guest_cancellation`, `guest_reminder` that an additional guest receives instead of the invitee's template (`DefaultTemplates::GUEST`), and the host templates `host_approved`, `host_reschedule`, `host_cancellation`, `host_reminder` (`DefaultTemplates::HOST`, with `host_notice` for confirmation and pending) |
 | `language` | `CHAR(7) NOT NULL` | |
 | `subject` | `VARCHAR(255) NOT NULL` | |
 | `body` | `MEDIUMTEXT NOT NULL` | |
@@ -248,8 +251,8 @@ Deletion evidence. **Contains no data of an invitee.** A test asserts the exact 
 |---|---|---|
 | `id` | `INT UNSIGNED AUTO_INCREMENT` | |
 | `booking_id` | `INT UNSIGNED NOT NULL` | may point at a deleted row |
-| `action` | `VARCHAR(32) NOT NULL` | `anonymised`, `deleted` |
-| `path` | `VARCHAR(32) NOT NULL` | `self_service`, `privacy_request`, `retention`, `admin` |
+| `action` | `VARCHAR(32) NOT NULL` | `anonymise`, `delete`, `remove_guest` (one guest address taken out of a booking's guest list) |
+| `path` | `VARCHAR(32) NOT NULL` | `self_service`, `privacy_request`, `retention`, `admin`; `remove_guest` uses `self_service` (guest link) or `privacy_request` |
 | `actor_user_id` | `INT UNSIGNED NULL` | set only for `admin` |
 | `occurred_utc` | `DATETIME NOT NULL` | |
 
@@ -270,9 +273,10 @@ hashed with a key from `KeyProvider`, so the table is not a log of visitors.
 ## Signing keys
 
 `KeyProvider` derives one key per purpose from the **Joomla site secret** of the installation:
-`hash_hmac('sha256', 'com_appointments:' . $purpose, $siteSecret, true)`. `SignedLink` and the
-rate-limit hash each get their own key, so a key that signs a link can never verify a rate-limit
-bucket.
+`hash_hmac('sha256', 'com_appointments:' . $purpose, $siteSecret, true)`. `SignedLink` (invitee links,
+`signed-link`), the guest removal links (`guest-link`) and the rate-limit hash each get their own
+key, so a key that signs a link can never verify a rate-limit bucket, and an invitee link can never
+verify as a guest link or the other way round.
 
 Nothing is stored, which is the point:
 

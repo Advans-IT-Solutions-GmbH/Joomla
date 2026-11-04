@@ -10,6 +10,11 @@ $tag = 'suite-booking-' . bin2hex(random_bytes(6));
 $scheduleIds = [];
 $eventIds = [];
 $componentParams = null;
+$originalParams = null;
+$setParams = static function (array $changes) use ($db, $prefix, &$originalParams): void {
+    $params = array_replace(json_decode((string) $originalParams, true) ?: [], $changes);
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
+};
 $privacyMenu = null;
 $failures = 0;
 $check = static function (bool $condition, string $label) use (&$failures): void {
@@ -35,7 +40,7 @@ $prepare = static function (int $event, string $start) use ($check): array {
     $data = [
         $client->token($html) => 1, 'rendered_at' => $hidden['rendered_at'] ?? '',
         'form_signature' => $hidden['form_signature'] ?? '', 'website' => '', 'consent' => 1,
-        'booking' => ['name' => 'Fixture Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start],
+        'booking' => ['first_name' => 'Fixture', 'last_name' => 'Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start],
     ];
     return [$client, '/index.php?option=com_appointments&task=booking.submit&id=' . $event, $data];
 };
@@ -59,6 +64,10 @@ $pageTitle = static fn (string $html): string => preg_match('#<title>(.*?)</titl
 $bookings = static fn (int $event): int => (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}")->fetch_assoc()['n'];
 
 try {
+    $originalParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    // Most checks below cover the privacy checkbox, which only the acknowledge and consent
+    // modes render; the default notice mode is checked on its own further down.
+    $setParams(['consent_mode' => 'consent']);
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
@@ -134,6 +143,11 @@ try {
     $body = $request[0]->request($request[1], $request[2]);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
     $check($booking && (int) $booking['state'] === 0 && str_contains($body, 'held while'), 'Pending request holds its slot');
+    $check($booking && $booking['consent_utc'] !== null && $booking['consent_utc'] >= $time
+        && $booking['consent_version'] === hash('sha256', "consent\nen-GB\nI agree to the processing of my data for this appointment."),
+        'The consent mode stores the consent time and the 64-hex version of mode, language and label');
+    $check($booking && $booking['invitee_first_name'] === 'Fixture' && $booking['invitee_last_name'] === 'Invitee'
+        && $booking['invitee_name'] === 'Fixture Invitee', 'First and last name are stored separately and the full name stays in invitee_name');
     $check($pageTitle($body) === 'Appointment received', 'The confirmation page sets its own title without a menu item of its own');
     // Step 3: the calendar entry and the reschedule and cancel links of the confirmation mail.
     $confirmation = $dom($body);
@@ -177,15 +191,17 @@ try {
 
     // Release test 22.10.: every invalid field gets its own message at the field.
     $request = $prepare($eventIds[0], $slot);
-    $request[2]['booking']['name'] = '';
+    $request[2]['booking']['first_name'] = '';
+    $request[2]['booking']['last_name'] = '';
     $request[2]['booking']['email'] = 'not-an-address';
     sleep(2);
     $body = $request[0]->request($request[1], $request[2]);
     $xpath = $dom($body);
-    $check($fieldError($xpath, 'booking-name', 'Please enter your name.')
+    $check($fieldError($xpath, 'booking-first_name', 'Please enter your first name.')
+        && $fieldError($xpath, 'booking-last_name', 'Please enter your last name.')
         && $fieldError($xpath, 'booking-email', 'Please enter a valid email address.'),
-        'Empty name and invalid email each get their own message at the field with aria-invalid and aria-describedby');
-    $check(substr_count($body, 'Please enter your name.') === 1 && !str_contains($body, 'Please complete all required fields'),
+        'Empty first name, empty last name and invalid email each get their own message at the field with aria-invalid and aria-describedby');
+    $check(substr_count($body, 'Please enter your first name.') === 1 && !str_contains($body, 'Please complete all required fields'),
         'Field messages are not repeated as a collective message above the form');
     $email = $xpath->query('//input[@id="booking-email"]')->item(0);
     $check($email instanceof DOMElement && $email->getAttribute('value') === 'not-an-address' && $bookings($eventIds[0]) === 1,
@@ -193,15 +209,73 @@ try {
 
     $request = $prepare($eventIds[0], $slot);
     $request[2]['consent'] = 0;
-    $request[2]['booking']['name'] = '';
+    $request[2]['booking']['first_name'] = '';
     sleep(2);
     $xpath = $dom($request[0]->request($request[1], $request[2]));
     $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
-        && $fieldError($xpath, 'booking-name', 'Please enter your name.'),
-        'A missing consent and an empty name are reported together in one round trip');
+        && $fieldError($xpath, 'booking-first_name', 'Please enter your first name.'),
+        'A missing consent and an empty first name are reported together in one round trip');
     $focused = $xpath->query('//*[@autofocus]');
-    $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-name',
+    $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-first_name',
         'The first invalid control in page order receives the focus, not the consent checkbox');
+
+    // The component option max_guests limits the guests on the server, whatever the form sends.
+    // The submissions above used the hourly booking budget of this client address.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $guestParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $componentParams ??= $guestParams;
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(array_merge(json_decode($guestParams, true) ?: [], ['max_guests' => 2]))) . "' WHERE element='com_appointments' AND type='component'");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['guests'] = 'one@example.test, two@example.test, three@example.test';
+    sleep(2);
+    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $guestError = trim((string) ($xpath->query('//*[@id="booking-guests-error"]')->item(0)?->textContent ?? ''));
+    $check($guestError === 'Please enter valid email addresses for at most 2 guests.' && $bookings($eventIds[0]) === 1,
+        'More guests than the configured maximum are refused at the guest field with the configured number');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(array_merge(json_decode($guestParams, true) ?: [], ['max_guests' => 0]))) . "' WHERE element='com_appointments' AND type='component'");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['guests'] = 'one@example.test';
+    sleep(2);
+    $request[0]->request($request[1], $request[2]);
+    $check($bookings($eventIds[0]) === 1, 'With max_guests 0 a submitted guest list is refused as a tampered form');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($guestParams) . "' WHERE element='com_appointments' AND type='component'");
+
+    // The privacy notice modes. Default (and unknown values): no checkbox, nothing required or
+    // stored. Acknowledge: a required checkbox, nothing stored.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $modeForm = static fn (int $event, string $start): DOMXPath => $dom((new AppointmentsHttp('http://localhost', 'booking-mode'))
+        ->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start)));
+    $stored = static fn (int $event, string $start): ?array => $db->query("SELECT id,consent_utc,consent_version FROM {$prefix}appointments_bookings"
+        . " WHERE eventtype_id={$event} AND start_utc='{$start}' AND state IN (0,1)")->fetch_assoc();
+    $setParams(['consent_mode' => 'unknown-mode']);
+    $noticeSlot = $day . ' 09:00:00';
+    $check($modeForm($eventIds[1], $noticeSlot)->query('//input[@name="consent"]')->length === 0,
+        'Notice mode (also for an unknown value): the form has no privacy checkbox');
+    $request = $prepare($eventIds[1], $noticeSlot);
+    unset($request[2]['consent']);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $row = $stored($eventIds[1], $noticeSlot);
+    $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
+        'Notice mode: a booking without the checkbox succeeds and stores no consent');
+    $setParams(['consent_mode' => 'acknowledge']);
+    $ackSlot = $day . ' 16:00:00';
+    $check($modeForm($eventIds[1], $ackSlot)->query('//input[@name="consent"][@required]')->length === 1,
+        'Acknowledge mode: the form has a required checkbox');
+    $request = $prepare($eventIds[1], $ackSlot);
+    $request[2]['consent'] = 0;
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $check($fieldError($dom($body), 'booking-consent', 'Please confirm that you have taken note of the notice.') && $stored($eventIds[1], $ackSlot) === null,
+        'Acknowledge mode: without the checkbox the booking is refused at the checkbox');
+    $request = $prepare($eventIds[1], $ackSlot);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $row = $stored($eventIds[1], $ackSlot);
+    $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
+        'Acknowledge mode: with the checkbox the booking succeeds and nothing is stored');
+    $setParams(['consent_mode' => 'consent']);
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
 
     $request = $prepare($eventIds[0], $slot);
     $request[2]['website'] = 'filled by a robot';
@@ -398,6 +472,9 @@ try {
     }
     if ($componentParams !== null) {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
+    if ($originalParams !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
     }
     if ($eventIds) {
         $db->query("DELETE FROM {$prefix}appointments_bookings WHERE eventtype_id IN(" . implode(',', $eventIds) . ')');

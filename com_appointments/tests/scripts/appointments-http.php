@@ -146,7 +146,7 @@ final class AppointmentsHttp
                 $this->token($html) => 1, 'rendered_at' => $hidden['rendered_at'] ?? '',
                 'form_signature' => $hidden['form_signature'] ?? '', 'website' => '', 'consent' => 1,
                 'booking' => array_replace([
-                    'name' => 'Fixture Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start,
+                    'first_name' => 'Fixture', 'last_name' => 'Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start,
                 ], $details),
             ],
         ];

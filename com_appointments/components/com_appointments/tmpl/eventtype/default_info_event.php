@@ -55,7 +55,7 @@ $selected = $this->selected;
             <span class="com-appointments-selected-text">
                 <span class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_SELECTED'); ?></span>
                 <span class="com-appointments-selected-date"><?php echo $this->escape($dates->format($local, $dayFormat)); ?></span>
-                <span class="com-appointments-selected-time"><?php echo $this->escape($dates->range($local, $end, Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME'), $dayFormat, Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET'), Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))); ?></span>
+                <span class="com-appointments-selected-time"><?php echo $this->escape($dates->range($local, $end, $this->timeFormat, $dayFormat, Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET'), Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))); ?></span>
             </span>
         </li>
         <li class="com-appointments-selected-zone"><?php echo $icon('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'); ?><span><?php echo $this->escape($this->zone->getName()); ?></span></li>

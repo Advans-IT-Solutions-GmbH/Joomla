@@ -19,7 +19,8 @@ final class MailComposerTest extends TestCase
             'id' => 1, 'uid' => 'stable-uid', 'sequence' => 0, 'state' => 1,
             'start_utc' => '2026-10-15 10:00:00', 'end_utc' => '2026-10-15 10:30:00',
             'modified_utc' => '2026-10-14 10:00:00',
-            'invitee_name' => 'Private Invitee', 'invitee_email' => 'invitee@example.test',
+            'invitee_name' => 'Private Invitee', 'invitee_first_name' => 'Private', 'invitee_last_name' => 'Invitee',
+            'invitee_email' => 'invitee@example.test',
             'custom_fields' => ['question' => 'Answer {host_email}', 12 => 'ä,;'],
             'guest_emails' => 'guest@example.test', 'cancel_reason' => 'private-reason',
         ];
@@ -47,18 +48,24 @@ final class MailComposerTest extends TestCase
         $composer = new MailComposer(new IcsWriter());
         $fields = [
             'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
-            'invitee_name', 'invitee_email', 'invitee_phone', 'invitee_timezone', 'invitee_language',
+            'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'invitee_timezone', 'invitee_language',
             'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
             'conference_state', 'conference_error', 'cancel_reason', 'reminder_sent_utc',
             'anonymised_utc', 'created_utc', 'modified_utc',
         ];
         $placeholders = $composer->placeholders($this->booking(), $this->event());
+        self::assertSame('Private', $placeholders['{invitee_first_name}']);
+        self::assertSame('Invitee', $placeholders['{invitee_last_name}']);
+        self::assertSame('Private Invitee', $placeholders['{invitee_name}']);
+        self::assertSame('', $placeholders['{guest_email}']);
+        self::assertSame('', $placeholders['{guest_remove_url}']);
 
         foreach ($fields as $field) {
             self::assertArrayHasKey('{' . $field . '}', $placeholders);
         }
 
-        foreach (['event_title', 'description', 'location', 'location_text', 'location_type', 'host_name', 'host_email', 'reschedule_url', 'cancel_url', 'erase_url'] as $field) {
+        foreach (['event_title', 'description', 'location', 'location_text', 'location_type', 'host_name', 'host_email', 'reschedule_url', 'cancel_url', 'erase_url',
+            'guest_email', 'guest_remove_url'] as $field) {
             self::assertArrayHasKey('{' . $field . '}', $placeholders);
         }
 
@@ -70,6 +77,17 @@ final class MailComposerTest extends TestCase
             'Stored address',
             $composer->placeholders($booking, $this->event() + ['location_text' => 'Stored address'])['{location}']
         );
+    }
+
+    public function testGuestTemplateGreetsNeutrallyAndCarriesTheGuestLinkOnly(): void
+    {
+        $mail = (new MailComposer(new IcsWriter()))->compose(
+            ['subject' => 'Invitation: {event_title}', 'body' => "Hello\n\n{invitee_name} invited {guest_email}.\n{guest_remove_url}\n{erase_url}"],
+            $this->booking(), $this->event(),
+            ['guest_email' => 'guest@example.test', 'guest_remove_url' => 'https://example.test/?task=guest.confirm&signature=example'],
+            new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'))
+        );
+        self::assertSame("Hello\n\nPrivate Invitee invited guest@example.test.\nhttps://example.test/?task=guest.confirm&signature=example\n", $mail['body']);
     }
 
     public function testEveryStateAndRecipientReceivesBothIcsParts(): void
@@ -101,7 +119,7 @@ final class MailComposerTest extends TestCase
         $now = new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'));
         $erased = $anonymiser->anonymise($this->booking(), $now);
         $mail = (new MailComposer(new IcsWriter()))->compose(
-            ['subject' => '{event_title}', 'body' => '{start_utc}: {invitee_name} {invitee_email} {cancel_reason} {custom_fields} {guest_emails}'],
+            ['subject' => '{event_title}', 'body' => '{start_utc}: {invitee_name} {invitee_first_name} {invitee_last_name} {invitee_email} {cancel_reason} {custom_fields} {guest_emails}'],
             $anonymiser->cancellationPayload($erased), $this->event(), [], $now
         );
         self::assertStringNotContainsString('Private', json_encode($mail));

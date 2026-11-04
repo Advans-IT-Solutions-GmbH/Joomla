@@ -295,11 +295,11 @@ Additional field administration:
 | BU-05 | POS | Book on a narrow smartphone screen and at 200% zoom, with both information-column layouts. | Date, times and details one at a time with a way back; no clipped required actions, unusable tables or overlapping controls. |
 | BU-05a | POS | With each of the three information-column layouts and both title places, open the calendar and then choose a day at a tablet width (about 768 px) and at desktop widths (1024 px and wider). | The card has the same width before and after a day is chosen (a hint stands in the times column until then); calendar and times side by side, at tablet width below the information bar, from about 1024 px beside the information column; *Appointment only* shows no image; *Above the card* shows the one main heading above the card, aligned with it; the time zone stands in one line below the times. |
 | BU-05b | POS | On step 2, check the fields at 375 px and at 768 px and wider. | One column of fields, only name and email side by side from about 768 px; every required field carries the same mark; no label or control is pushed down by its neighbour; at 375 px the information column keeps date, time and zone and leaves out the description and the location text. |
-| BU-06 | NEG | Omit name, email or consent. Bypass browser validation and resubmit. | Server-side refusal too; no booking or notification; previously valid input retained. |
+| BU-06 | NEG | Omit first name, last name, email or consent. Bypass browser validation and resubmit. | Server-side refusal too; no booking or notification; previously valid input retained. |
 | BU-07 | NEG | Submit a form older than one hour. | Understandable refusal or required reload; no booking. |
 | BU-08 | NEG | Fill the honeypot using developer tools, or submit in less than two seconds. | Refusal without booking; no external CAPTCHA request. |
-| BU-09 | POS | Enter ten distinct valid guests; also test duplicate addresses. | Permitted guests processed; duplicates do not create repeated identical recipients. |
-| BU-10 | NEG | Enter more than ten guests, then an invalid guest address. | Understandable refusal; no partially created booking. |
+| BU-09 | POS | Enter as many distinct valid guests as **Options → Maximum number of additional guests** allows (default 10); also test duplicate addresses and the option set to 0. | Permitted guests processed; duplicates do not create repeated identical recipients. |
+| BU-10 | NEG | Enter more guests than the configured maximum, then an invalid guest address. | Understandable refusal naming the configured number; no partially created booking. |
 | BU-11 | NEG | Submit an unavailable slot, a different event type or a past time in POST. | Server-side recheck refuses the operation. |
 | BU-12 | NEG | Open the confirmation URL in another browser without the original session. | No other person's booking data visible; confirmation page is not a public record lookup. |
 | BU-13 | GRZ | Navigate back/forward between the steps; after success, reload, navigate back/forward and resend the same POST. | Back and forward show the step of their address; no second active booking for the same slot; no false success. |
@@ -467,7 +467,7 @@ calendar copies or backups. Treat these separately from removal in the active ex
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | DS-09 | INT | Request, confirm and process a Joomla export for an address with several bookings. | All of that address's bookings and readable answers exported; no other bookings. |
-| DS-10 | NEG | Request export as an additional guest address. | No disclosure of primary invitee or other guests' personal information. |
+| DS-10 | NEG | Request export and removal as an additional guest address; then use the removal link of a guest mail, once more and in another browser, and with a changed signature. | The export lists only the guest invitation (address, event type, time, state); no disclosure of primary invitee or other guests' personal information. Removal and the guest link remove only that address; the booking and the other links stay; a used or changed link answers 404. |
 | DS-11 | NEG | Test addresses differing only in accents; test letter case separately. | Accent similarity does not establish ownership; case follows documented normalisation. |
 | DS-12 | INT | Process a confirmed Joomla removal request. | Same erasure scope as self-service; audit path `privacy_request`. |
 | DS-13 | NEG | Configure a legal blocking reason and repeat formal removal. | Removal explicitly blocked, reason visible; no silent partial processing. |
@@ -635,7 +635,7 @@ Configure this scenario **only through Joomla administration**, without file/dat
    - rolling 30-day horizon;
    - host calls invitee.
 4. Configure the form:
-   - required name;
+   - required first and last name;
    - required email;
    - optional additional guests;
    - required phone with country selector;
@@ -652,7 +652,7 @@ Configure this scenario **only through Joomla administration**, without file/dat
 | 1 | Open event type on a smartphone and change display time zone. | Appropriate days and correct local slots. |
 | 2 | First submit with a required answer missing. | Understandable error; no booking; other input retained. |
 | 3 | Correct and book. | Exactly one booking and correct confirmation. |
-| 4 | Inspect invitee, guest and host mail. | Correct recipients, language, phone details and calendar attachments; capabilities separated. |
+| 4 | Inspect invitee, guest and host mail. | Correct recipients, language, phone details and calendar attachments; capabilities separated; the guest is greeted neutrally and gets only the guest removal link. |
 | 5 | Accept invitation in a desktop calendar. | One meeting with correct time/duration. |
 | 6 | Reschedule through signed link. | Same UID; existing calendar entry updated; old slot free. |
 | 7 | Subscribe to and refresh calendar feed. | Current meeting visible; no duplicate UID. |
