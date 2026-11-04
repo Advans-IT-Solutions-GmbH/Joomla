@@ -17,7 +17,6 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
-use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\Version;
 
@@ -157,7 +156,7 @@ class SystemModel extends BaseDatabaseModel
             return $checks;
         }
 
-        return array_merge($checks, $this->probes($base, $enabled));
+        return array_merge($checks, $this->probes($base, $services->davBaseUrl(), $enabled));
     }
 
     /**
@@ -169,7 +168,7 @@ class SystemModel extends BaseDatabaseModel
      *
      * @return  array<int, array{label: string, ok: bool, value: string, remedy?: string}>
      */
-    private function probes(string $base, bool $enabled): array
+    private function probes(string $base, string $dav, bool $enabled): array
     {
         $checks = [];
         $argon = false;
@@ -201,7 +200,6 @@ class SystemModel extends BaseDatabaseModel
             return $checks;
         }
 
-        $dav = $base . $this->davPath() . '/';
         $blocked = [];
 
         foreach (['OPTIONS', 'PROPFIND', 'REPORT', 'PUT', 'DELETE', 'MKCALENDAR'] as $method) {
@@ -220,7 +218,7 @@ class SystemModel extends BaseDatabaseModel
             Text::_($received ? 'JYES' : 'COM_APPOINTMENTS_TEAM_F_SYSTEM_NOT_CONFIRMED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_AUTH_HEADER_FIX');
         $answer = $this->request('PROPFIND', $base . '.well-known/caldav');
         $location = preg_match('/\nlocation:\s*(\S+)/i', $answer['headers'], $m) === 1 ? $m[1] : '';
-        $wellKnown = \in_array($answer['status'], [301, 308], true) && str_ends_with(rtrim($location, '/'), '/' . $this->davPath());
+        $wellKnown = \in_array($answer['status'], [301, 308], true) && rtrim($location, '/') === rtrim($dav, '/');
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_WELL_KNOWN', $wellKnown,
             $answer['status'] > 0 ? (string) $answer['status'] : Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_NO_ANSWER'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_WELL_KNOWN_FIX');
 
@@ -269,15 +267,6 @@ class SystemModel extends BaseDatabaseModel
         }
 
         return rtrim($url, '/') . '/';
-    }
-
-    private function davPath(): string
-    {
-        $plugin = PluginHelper::getPlugin('system', 'appointmentsdav');
-        $params = new \Joomla\Registry\Registry(\is_object($plugin) ? ($plugin->params ?? '') : '');
-        $path = trim((string) $params->get('dav_path', 'dav'), '/');
-
-        return preg_match('#^[A-Za-z0-9._~/-]{1,64}$#', $path) === 1 ? $path : 'dav';
     }
 
     /**

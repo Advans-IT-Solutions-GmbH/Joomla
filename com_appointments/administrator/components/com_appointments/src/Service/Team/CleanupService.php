@@ -137,11 +137,6 @@ final class CleanupService implements CleanupServiceInterface
         }
     }
 
-    public function calendarsInCleanup(DeviceSession $session): array
-    {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
-
     public function markHomeSeen(DeviceSession $session): void
     {
         $state = $this->effectiveState($session);
@@ -241,17 +236,22 @@ final class CleanupService implements CleanupServiceInterface
                     ->where($db->quoteName('id') . ' IN (' . $in($calendars) . ')'))->execute();
             }
 
-            $service = $this->services->calendars();
-
-            if (method_exists($service, 'releaseOwner')) {
-                $released = (int) $service->releaseOwner($userId);
-            }
-
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
 
             throw $e;
+        }
+
+        // Access is gone at this point. Releasing the ownership changes the
+        // calendars' row MAC and belongs to the calendar service; a failure
+        // there is reported, but never brings a device or a grant back.
+        $failure = null;
+
+        try {
+            $released = $this->services->calendars()->releaseOwner($userId);
+        } catch (\Throwable $e) {
+            $failure = $e;
         }
 
         $this->services->audit()->log(AuditEvent::USER_CLEANUP_STARTED, [
@@ -261,8 +261,13 @@ final class CleanupService implements CleanupServiceInterface
                 'devices'   => $devices,
                 'grants'    => $grants,
                 'calendars' => $released,
+                'owner_released' => $failure === null,
             ],
         ]);
+
+        if ($failure !== null) {
+            throw $failure;
+        }
     }
 
     /**

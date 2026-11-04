@@ -101,6 +101,7 @@ final class TeamPrivacy
         $domains = [];
         $counts = ['entries' => 0, 'content' => 0, 'incomplete' => 0, 'staff' => 0];
 
+        // Entries and staff data are independent: a failure in one never hides the other.
         try {
             [$entries, $incomplete] = $this->entryDomains($email);
             $domains[] = $entries;
@@ -111,18 +112,24 @@ final class TeamPrivacy
                 $domains[] = $incomplete;
                 $counts['incomplete'] = \count($incomplete->getItems());
             }
+        } catch (\Throwable $e) {
+            Log::add('Team calendars: the privacy export of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            $domains[] = $this->noteDomain('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED');
+            $counts['incomplete']++;
+        }
 
-            $userId = $user !== null ? (int) $user->id : 0;
+        $userId = $user !== null ? (int) $user->id : 0;
 
-            if ($userId > 0) {
+        if ($userId > 0) {
+            try {
                 foreach ($this->staffDomains($userId) as $domain) {
                     $domains[] = $domain;
                     $counts['staff'] += \count($domain->getItems());
                 }
+            } catch (\Throwable $e) {
+                Log::add('Team calendars: the privacy export of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+                $domains[] = $this->noteDomain('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED');
             }
-        } catch (\Throwable $e) {
-            Log::add('Team calendars: the privacy export failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
-            $domains[] = $this->noteDomain('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED');
         }
 
         $this->services->audit()->log(AuditEvent::PRIVACY_EXPORT, [
@@ -160,18 +167,24 @@ final class TeamPrivacy
             }
 
             $unsearched = $this->calendarTitles($this->services->objects()->calendarsWithUnindexedObjects());
-            $userId = $user !== null ? (int) $user->id : 0;
+        } catch (\Throwable $e) {
+            $failed++;
+            Log::add('Team calendars: the privacy removal of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+        }
 
-            if ($userId > 0) {
-                $this->services->cleanup()->onUserDeleted($userId);
+        $userId = $user !== null ? (int) $user->id : 0;
+
+        if ($userId > 0) {
+            try {
                 $db = $this->services->db();
                 $db->setQuery($this->query()->delete($db->quoteName('#__appointments_invitations'))
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
                 $staff = true;
+                $this->services->cleanup()->onUserDeleted($userId);
+            } catch (\Throwable $e) {
+                $failed++;
+                Log::add('Team calendars: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
             }
-        } catch (\Throwable $e) {
-            $failed++;
-            Log::add('Team calendars: the privacy removal failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
 
         $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_REMOVED', $deleted), 'message');
