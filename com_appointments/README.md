@@ -419,12 +419,13 @@ page heading replaces the default heading when the menu item shows the page head
 cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an
 appointment that crosses midnight in the displayed zone.
 
-**Information column.** Each event type chooses in **Display → Information column** what stands
-beside the calendar above the appointment details: *Company logo and appointment* (an optional
+**Information column.** Each event type chooses in **Display → Information column** what the
+column beside the calendar shows: *Company logo and appointment* (an optional
 logo from the media manager; the default, also for event types created before this setting) or
-*Person with photo* (an optional photo shown as a circle, a name and an optional role). Both show
-the title, duration, location type, description and location text, and on step 2 the chosen date,
-time and time zone. An empty image, name or role is left out, and an unknown value falls back to
+*Person with photo* (an optional photo shown as a circle, a name and an optional role), or
+*Appointment only* (no image at all, for example when the site header already shows the logo). All
+three show the title, duration, location type, description and location text, and on step 2 the
+chosen date, time and time zone. An empty image, name or role is left out, and an unknown value falls back to
 the logo layout. Images are local paths chosen in the media field; a relative path is made
 absolute so it also resolves below a menu item's address.
 
@@ -448,9 +449,14 @@ The values must come after the component stylesheet or carry a more specific sel
 after it, because the component registers its own stylesheet first.
 
 The layout adapts to the width of the template's content column (container queries on
-`.com-appointments-container`), not only to the screen: below 36rem one column of fields, below
-46rem the steps one after the other without a card frame, from 60rem calendar and times side by
-side.
+`.com-appointments-container`), not only to the screen. Below 36rem the steps stand one after the
+other without a card frame, with one column of fields. From 36rem the page is a card with the
+calendar and the times side by side and the information as a bar above them, from 54rem the
+information is a column of its own beside them. The card is only as
+wide as its content (information column, calendar, times and the card paddings), so a wide content
+column keeps a compact card. The two thresholds follow from the default sizes below; a template
+that makes the days, the times column or the information column much wider should check the
+narrower widths.
 
 | Property | Default | Used for |
 |---|---|---|
@@ -496,12 +502,13 @@ side.
 | `--appointments-check-size` | `1.25rem` | Size of checkboxes and radio buttons |
 | `--appointments-gap` | `0.75rem` | Gap between list entries |
 | `--appointments-target` | `44px` | Minimum size of every touch target |
-| `--appointments-day-size` | `2.75rem` | Diameter of a calendar day (never below the touch target) |
-| `--appointments-card-padding` | `1.5rem` | Inner padding of the card columns and the confirmation |
-| `--appointments-max-width` | `66rem` | Width of the booking page |
+| `--appointments-day-size` | `2.5rem` | Diameter of a calendar day (never below the touch target) |
+| `--appointments-calendar-width` | seven days plus `0.75rem` | Maximum width of the month calendar |
+| `--appointments-card-padding` | `1.25rem` | Inner padding of the card columns and the confirmation |
+| `--appointments-max-width` | `66rem` | Outer width limit of the booking page; the card itself is only as wide as its columns |
 | `--appointments-narrow-width` | `42rem` | Width of the list, confirmation and manage pages |
-| `--appointments-info-width` | `18rem` | Width of the information column beside the step |
-| `--appointments-times-width` | `14rem` | Width of the times column beside the calendar |
+| `--appointments-info-width` | `16rem` | Width of the information column beside the step |
+| `--appointments-times-width` | `12rem` | Width of the times column beside the calendar |
 
 Markup changes go into Joomla template overrides (**System → Site Templates → your template →
 Create Overrides → com_appointments**), which copies the files to
@@ -512,7 +519,7 @@ Create Overrides → com_appointments**), which copies the files to
 | `eventtype/default.php` | The booking page: the card, the information column, the step title and the step (also the time-zone choice) |
 | `eventtype/default_info_logo.php` | Information column, layout *Company logo and appointment* |
 | `eventtype/default_info_person.php` | Information column, layout *Person with photo* |
-| `eventtype/default_info_event.php` | The event details both column layouts show, with the chosen time on step 2 |
+| `eventtype/default_info_event.php` | The event details every column layout shows, with the chosen time on step 2; on its own the layout *Appointment only* |
 | `eventtype/default_picker.php` | Step 1: calendar and times; also the whole response of the slot endpoint |
 | `eventtype/default_details.php` | Step 2: the details form |
 | `booking/default.php` | Step 3: the confirmation |
@@ -657,7 +664,7 @@ routines; a never-run task is explicitly shown as needing attention.
 | Require approval | Holds a pending request's slot until approval or cancellation |
 | Retention days | Per-event override; empty inherits the component setting, zero expires after the meeting ends |
 | Colour | Six-digit hexadecimal colour |
-| Display: information column | *Company logo and appointment* (logo) or *Person with photo* (photo, name, role) beside the calendar; see "Page markup and styling" |
+| Display: information column | *Company logo and appointment* (logo), *Person with photo* (photo, name, role) or *Appointment only* (no image) beside the calendar; see "Page markup and styling" |
 | Published, access, language | Visibility controls for the public list and direct event links |
 | Ordering | Order in the public list |
 | Permissions | Joomla per-event-type edit, state and deletion rules |

@@ -73,12 +73,14 @@
     /* Sizes */
     --appointments-gap: 0.75rem;
     --appointments-target: 44px;
-    --appointments-day-size: 2.75rem;
-    --appointments-card-padding: 1.5rem;
+    --appointments-day-size: 2.5rem;
+    --appointments-card-padding: 1.25rem;
     --appointments-max-width: 66rem;
     --appointments-narrow-width: 42rem;
-    --appointments-info-width: 18rem;
-    --appointments-times-width: 14rem;
+    --appointments-info-width: 16rem;
+    --appointments-times-width: 12rem;
+    /* Seven days, each at least a touch target, and a little air between them. */
+    --appointments-calendar-width: calc(7 * max(var(--appointments-day-size), var(--appointments-target)) + 0.75rem);
 
     color: var(--appointments-text);
     font-family: var(--appointments-font);
@@ -262,7 +264,8 @@
 }
 
 /* The booking card: the information column and the step. On a narrow column the two stand
-   one above the other without a frame; from 46rem they stand side by side in a card. */
+   one above the other without a frame; from 36rem they stand in a card, the information as a
+   bar above the step, and from 54rem side by side. */
 .com-appointments-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -444,7 +447,7 @@
 
 .com-appointments-picker-grid {
     display: grid;
-    gap: 1.5rem;
+    gap: 1.25rem;
     align-items: start;
 }
 
@@ -454,14 +457,14 @@
 }
 
 /* One step at a time on a narrow column: the chosen day shows its times instead of the
-   calendar, with the way back; from 46rem both stand side by side and the way back goes. */
+   calendar, with the way back; from 36rem both stand side by side and the way back goes. */
 .com-appointments-picker-day .com-appointments-calendar {
     display: none;
 }
 
 .com-appointments-calendar {
     width: 100%;
-    max-width: 26rem;
+    max-width: var(--appointments-calendar-width);
 }
 
 .com-appointments-calendar-nav {
@@ -495,22 +498,22 @@
 .com-appointments-calendar-title {
     flex: 1 1 auto;
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.9375rem;
     text-align: center;
 }
 
 .com-appointments-calendar-grid {
     width: 100%;
-    margin-block: 0.75rem 0;
+    margin-block: 0.5rem 0;
     border-collapse: separate;
     border-spacing: 0;
     table-layout: fixed;
 }
 
 .com-appointments-weekday {
-    padding: 0.25rem 0 0.5rem;
+    padding: 0.25rem 0 0.375rem;
     color: var(--appointments-muted);
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     text-align: center;
     text-transform: uppercase;
@@ -538,6 +541,7 @@
     min-height: var(--appointments-target);
     margin-inline: auto;
     border-radius: var(--appointments-day-radius);
+    font-size: 0.9375rem;
     aspect-ratio: 1;
 }
 
@@ -980,9 +984,19 @@
         align-items: baseline;
         justify-content: space-between;
     }
+}
 
+/*
+ * From 36rem the booking page is one card with calendar and times side by side. 36rem is what
+ * that row needs with the default sizes and a 16px root font: two card paddings (2.5rem),
+ * seven days of at least the touch target (19.25rem), the gap of the picker (1.25rem) and the
+ * times column (12rem). Below 54rem the information stands as a bar above the step, from 54rem
+ * (36rem plus the information column of 16rem and its two paddings) as a column beside it.
+ * The card is only as wide as its content, so a wide content column keeps a compact card.
+ */
+@container appointments (min-width: 36rem) {
     .com-appointments-layout {
-        grid-template-columns: var(--appointments-info-width) minmax(0, 1fr);
+        max-width: calc(2 * var(--appointments-card-padding) + var(--appointments-calendar-width) + 1.25rem + var(--appointments-times-width));
         border: var(--appointments-border);
         border-radius: var(--appointments-radius);
         background: var(--appointments-surface);
@@ -991,7 +1005,7 @@
 
     /* Before a day is chosen the card only holds the information and the calendar. */
     .com-appointments-layout-time:not(.com-appointments-layout-day) {
-        max-width: calc(var(--appointments-info-width) + 28rem + 4 * var(--appointments-card-padding));
+        max-width: calc(2 * var(--appointments-card-padding) + var(--appointments-calendar-width));
     }
 
     .com-appointments-info,
@@ -999,9 +1013,11 @@
         padding: var(--appointments-card-padding);
     }
 
-    .com-appointments-info {
-        border-right: var(--appointments-border);
-        border-bottom: 0;
+    /* The information as a compact bar: its details in one wrapping line. */
+    .com-appointments-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.5rem;
     }
 
     .com-appointments-picker-day .com-appointments-calendar {
@@ -1011,9 +1027,7 @@
     .com-appointments .com-appointments-times-back {
         display: none !important;
     }
-}
 
-@container appointments (min-width: 60rem) {
     .com-appointments-picker-day .com-appointments-picker-grid {
         grid-template-columns: minmax(0, 1fr) var(--appointments-times-width);
     }
@@ -1025,6 +1039,26 @@
     }
 }
 
+@container appointments (min-width: 54rem) {
+    .com-appointments-layout {
+        grid-template-columns: var(--appointments-info-width) minmax(0, 1fr);
+        max-width: calc(var(--appointments-info-width) + 4 * var(--appointments-card-padding) + var(--appointments-calendar-width) + 1.25rem + var(--appointments-times-width));
+    }
+
+    .com-appointments-layout-time:not(.com-appointments-layout-day) {
+        max-width: calc(var(--appointments-info-width) + 4 * var(--appointments-card-padding) + var(--appointments-calendar-width));
+    }
+
+    .com-appointments-info {
+        border-right: var(--appointments-border);
+        border-bottom: 0;
+    }
+
+    .com-appointments-meta {
+        display: grid;
+        gap: 0.5rem;
+    }
+}
 @media (prefers-reduced-motion: reduce) {
     .com-appointments *,
     .com-appointments *::before,
