@@ -255,12 +255,13 @@ CREATE TABLE IF NOT EXISTS `#__appointments_devices` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Per device and calendar: when it last synchronised, and when the clean-up view
--- was delivered to it.
+-- Per device and calendar: the role it had at its first synchronisation, when it
+-- last synchronised, and when the clean-up view was delivered to it.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_device_calendars` (
     `device_id` INT UNSIGNED NOT NULL,
     `calendar_id` INT UNSIGNED NOT NULL,
+    `role` TINYINT UNSIGNED NOT NULL,
     `last_sync_utc` DATETIME NOT NULL,
     `cleanup_delivered_utc` DATETIME DEFAULT NULL,
     PRIMARY KEY (`device_id`, `calendar_id`),

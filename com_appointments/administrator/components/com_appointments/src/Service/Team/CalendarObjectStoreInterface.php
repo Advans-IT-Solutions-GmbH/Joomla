@@ -39,6 +39,14 @@ interface CalendarObjectStoreInterface
     public function all(int $calendarId): array;
 
     /**
+     * Every object of the calendar without its payload (`payload` is ''), for
+     * PROPFIND Depth 1, sync and the free/busy view, which need no content.
+     *
+     * @return  StoredObject[]
+     */
+    public function listing(int $calendarId): array;
+
+    /**
      * @param   string[]  $uris
      *
      * @return  StoredObject[]  The existing ones among them (calendar-multiget).

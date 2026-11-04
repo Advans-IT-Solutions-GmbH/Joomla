@@ -48,9 +48,11 @@ interface DeviceServiceInterface
 
     /**
      * Record a synchronisation: `last_sync_utc` of the device and, when given,
-     * of the device and calendar pair. At most one write per device and minute.
+     * of the device and calendar pair. The pair row is written at the first
+     * synchronisation of a calendar always, with the device's current role on it;
+     * later updates at most once per device and minute.
      */
-    public function touch(DeviceSession $session, ?int $calendarId): void;
+    public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null): void;
 
     /**
      * @return  object[]  The user's devices: id, name, client, state, created_utc, last_sync_utc. Never a hash or salt.

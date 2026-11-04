@@ -387,7 +387,11 @@ play back an older, validly signed grant, calendar, device or invitation row.
   locked; `onUserAuthorisation` stays as a second safeguard only (Joomla then shows its own
   JLIB_LOGIN_DENIED; that path is reached only if `guardLogin()` did not run). `retryAfter()` is called before every
   check of a secret, then exactly one `recordFailure()` or `recordSuccess()`. Counter buckets are
-  keyed hashes (IPv6 per /64); no user name or address in clear.
+  keyed hashes (IPv6 per /64); no user name or address in clear. The website subject is the account
+  (F maps the sign-in name to the user id); the CalDAV subject is `dav:<name>@<address>`, so CalDAV and
+  website lock independently, and an address bucket counts both. Repeated log events of one bucket
+  (`dav.auth_failure`, `dav.locked`) are aggregated per minute, `key.mac_failure` per calendar and
+  reason per 24 hours, so an attacker cannot flood the log chain.
 
 ## 7. Roles and grants
 
@@ -688,6 +692,11 @@ Round 4: B owns `EpochAnchor` (5.11); C raises `grant_epoch`, D raises `device_e
 `calendarDeleted()`; E owns `lockForBooking()` and `removeOrphans()`, F calls `removeOrphans()` from the
 Scheduler. Every parameter that carries a password or secret is marked `#[\SensitiveParameter]` in the
 interface and in the implementation.
+
+Round 5: `listing()` (A), the role per device and calendar in `#__appointments_device_calendars` (D writes
+it at the first `touch()`, `calendarsInCleanup()` returns calendar id => role), `TimingIndex::lastEnd()`
+(E, for the retention of finite series), log aggregation and a warning when Joomla trusts
+`X-Forwarded-*` headers (`behind_loadbalancer`) in the system check (F).
 
 Integration tests that need another package's
 service use `TeamSuite::isStub()` and `TeamSuite::pending()`; `TEAM_NO_PENDING=1` turns every

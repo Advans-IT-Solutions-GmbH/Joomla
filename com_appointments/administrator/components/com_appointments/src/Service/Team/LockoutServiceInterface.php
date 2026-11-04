@@ -16,7 +16,10 @@ defined('_JEXEC') or die;
 /**
  * Temporary lock after failed sign-ins (work package F), for CalDAV requests
  * and for the website sign-in of users with a calendar right. Two buckets per
- * attempt, each a keyed hash: the user name (lower case) and the address.
+ * attempt, each a keyed hash: the subject and the address (IPv6 per /64).
+ * `$username` is an opaque subject: the website passes the sign-in name (F maps
+ * it to the user id), CalDAV passes `dav:<name>@<address>`, which F uses as it
+ * is, so CalDAV and website lock independently.
  * From the tenth failure in a bucket, the bucket is locked for 1, 2, 4, 8, 16,
  * 32 and then 60 minutes per further failure, never longer and never
  * permanently. A success resets the user bucket. Counters without a failure for

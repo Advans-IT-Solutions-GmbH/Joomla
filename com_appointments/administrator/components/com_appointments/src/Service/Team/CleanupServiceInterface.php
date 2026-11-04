@@ -58,8 +58,11 @@ interface CleanupServiceInterface
      * calendar it synchronised before (`#__appointments_device_calendars`) that
      * still exists, although its grant may already be suspended. The CalDAV
      * handler lists exactly these, without objects, read-only, CTag `<token>-c`.
+     * The role is the one the device had at its first synchronisation (written by
+     * DeviceService::touch()), so the empty view reports exactly the URIs that role
+     * could see, also after the grant row is gone.
      *
-     * @return  int[]  Calendar ids.
+     * @return  array<int, int>  Calendar id => CalendarRole value.
      */
     public function calendarsInCleanup(DeviceSession $session): array;
 

@@ -34,6 +34,11 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function listing(int $calendarId): array
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function many(int $calendarId, array $uris): array
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

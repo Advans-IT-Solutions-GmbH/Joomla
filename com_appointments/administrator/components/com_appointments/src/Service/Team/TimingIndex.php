@@ -37,6 +37,11 @@ final class TimingIndex implements TimingIndexInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
+    public function lastEnd(string $skeleton, \DateTimeZone $floatingZone): ?\DateTimeImmutable
+    {
+        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+    }
+
     public function redacted(string $skeleton, string $uidSeed, string $summary): string
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);

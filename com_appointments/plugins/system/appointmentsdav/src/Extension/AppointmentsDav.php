@@ -74,8 +74,11 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
             if ($services->enabled()) {
                 $services->lockout()->guardLogin($this->getApplication());
             }
-        } catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
-            // A stub of a work package that is not delivered yet.
+        } catch (\Throwable $e) {
+            // A failure must not turn every sign-in into an error page. The
+            // second safeguard in the user plugin still applies. No detail is
+            // logged: the request carries a password.
+            \Joomla\CMS\Log\Log::add('Internet calendars: the sign-in lock-out check failed (' . \get_class($e) . ').', \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
         }
     }
 }

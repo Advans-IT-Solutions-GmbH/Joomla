@@ -55,6 +55,13 @@ interface TimingIndexInterface
      * CONFIDENTIAL, its own VTIMEZONE from PHP's zone data (1970 to 2050),
      * nothing else.
      */
+    /**
+     * The end of the last occurrence, from DTEND/DURATION and UNTIL or COUNT,
+     * without expanding every occurrence; null for an open-ended series. Used by
+     * the per-calendar retention.
+     */
+    public function lastEnd(string $skeleton, \DateTimeZone $floatingZone): ?\DateTimeImmutable;
+
     public function redacted(string $skeleton, string $uidSeed, string $summary): string;
 
     /**
