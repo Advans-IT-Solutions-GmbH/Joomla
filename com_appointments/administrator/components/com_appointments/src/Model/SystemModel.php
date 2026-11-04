@@ -139,6 +139,25 @@ class SystemModel extends BaseDatabaseModel
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_RECOVERY', $recovery, Text::_($recovery ? 'JYES' : 'JNO'),
             'COM_APPOINTMENTS_TEAM_F_SYSTEM_RECOVERY_FIX');
 
+        try {
+            $anchor = $services->anchor()->writable();
+        } catch (\Throwable $e) {
+            $anchor = false;
+        }
+
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR', $anchor, Text::_($anchor ? 'JYES' : 'JNO'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_FIX');
+
+        if (class_exists('Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords')) {
+            // Booking rows still in clear (section 5.10): the retention routine encrypts them.
+            $clear = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_bookings'))
+                ->where($db->quoteName('anonymised_utc') . ' IS NULL')
+                ->where($db->quoteName('invitee_email') . ' IS NOT NULL')
+                ->where($db->quoteName('invitee_email') . " NOT LIKE 'v1:%'"))->loadResult();
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
+        }
+
         $secret = $this->secretUnchanged($services);
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET', $secret !== false,
             Text::_($secret === null ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_NO_LOG' : ($secret ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_SAME' : 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_CHANGED')),

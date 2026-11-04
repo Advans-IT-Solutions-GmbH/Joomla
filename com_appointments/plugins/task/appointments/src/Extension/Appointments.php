@@ -111,11 +111,20 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
     /**
      * Retention per calendar: delete the entries that ended longer ago than the
-     * calendar's `retention_days`; calendars with 0 keep everything.
+     * calendar's `retention_days`; calendars with 0 keep everything. Also,
+     * whether the internet calendars are on or off: remove calendar copies of
+     * cancelled, anonymised or deleted bookings, and encrypt booking rows that
+     * are still in clear (once the booking record class exists).
      */
     protected function teamRetention(ExecuteTaskEvent $event): int
     {
         return $this->executeTeam('teamretention', static function (TeamServices $services, \DateTimeImmutable $now): array {
+            $result = self::bookingUpkeep($services);
+
+            if (!$services->enabled()) {
+                return $result;
+            }
+
             $db = $services->db();
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $calendars = $db->setQuery($query->select($db->quoteName(['id', 'retention_days']))
@@ -135,20 +144,50 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
                 }
             }
 
-            return ['calendars' => \count($calendars), 'entries_deleted' => $deleted];
-        });
+            return $result + ['calendars' => \count($calendars), 'entries_deleted' => $deleted];
+        }, true);
+    }
+
+    /**
+     * Work that needs no key and runs with the internet calendars switched off too.
+     *
+     * @return  array<string, int>
+     */
+    private static function bookingUpkeep(TeamServices $services): array
+    {
+        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)];
+        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (class_exists($records) && method_exists($records, 'migrate')) {
+            $encrypted = 0;
+
+            // Batches of 200 until nothing is left, at most 50 per run.
+            for ($round = 0; $round < 50; $round++) {
+                $done = (int) $records::migrate($services->db(), $services->keyProvider(), 200);
+                $encrypted += $done;
+
+                if ($done === 0) {
+                    break;
+                }
+            }
+
+            $result['bookings_encrypted'] = $encrypted;
+        }
+
+        return $result;
     }
 
     /**
      * @param   callable(TeamServices, \DateTimeImmutable): array<string, int>  $routine
+     * @param   bool  $alsoWhenOff  The routine decides itself what runs while the internet calendars are off.
      */
-    private function executeTeam(string $name, callable $routine): int
+    private function executeTeam(string $name, callable $routine, bool $alsoWhenOff = false): int
     {
         try {
             $this->getApplication()->bootComponent('com_appointments');
             $services = TeamServices::fromApplication();
 
-            if (!$services->enabled()) {
+            if (!$alsoWhenOff && !$services->enabled()) {
                 $this->logTask('Appointments ' . $name . ': internet calendars are switched off, nothing to do.');
 
                 return Status::OK;

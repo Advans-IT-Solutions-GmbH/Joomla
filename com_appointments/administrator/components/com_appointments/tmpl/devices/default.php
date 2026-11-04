@@ -16,6 +16,9 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 /** @var \Advans\Component\Appointments\Administrator\View\Devices\HtmlView $this */
+// The client labels of work package D, when it provides them.
+$labels = 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\DeviceService::CLIENT_LABELS';
+$clients = \defined($labels) ? (array) \constant($labels) : [];
 ?>
 <?php if (!$this->enabled) : ?>
 <div class="alert alert-info" role="status">
@@ -60,7 +63,7 @@ use Joomla\CMS\Router\Route;
             <?php foreach ($this->items as $i => $item) : ?>
                 <tr>
                     <td><?php echo HTMLHelper::_('grid.id', $i, (int) $item->id); ?></td>
-                    <td><?php echo $this->escape((string) $item->name); ?><br><small><?php echo $this->escape((string) $item->client); ?></small></td>
+                    <td><?php echo $this->escape((string) $item->name); ?><br><small><?php echo isset($clients[(string) $item->client]) ? Text::_($clients[(string) $item->client]) : $this->escape((string) $item->client); ?></small></td>
                     <td><?php echo $this->escape((string) ($item->user_name ?? '')); ?><br><small><?php echo $this->escape((string) ($item->user_username ?? '#' . (int) $item->user_id)); ?></small></td>
                     <td><?php echo Text::_(DevicesModel::STATES[(int) $item->state] ?? 'COM_APPOINTMENTS_TEAM_F_DEVICE_REVOKED'); ?>
                         <?php if ($item->cleanup_started_utc !== null && !in_array((int) $item->state, [TeamStates::DEVICE_ACTIVE, TeamStates::DEVICE_REVOKED], true)) : ?>
