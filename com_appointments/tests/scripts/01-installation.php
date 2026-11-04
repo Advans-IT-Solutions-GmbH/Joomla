@@ -274,14 +274,19 @@ class InstallationTest
             }
         });
 
-        $this->test('An update creates a routine task that does not exist at all', function () use ($tasks, $reinstall) {
+        $this->test('An update creates a missing routine task disabled, so it changes no existing booking unasked', function () use ($tasks, $reinstall) {
             $this->db->query("DELETE FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_appointments.retention'");
             if (!$reinstall()) {
                 return false;
             }
             $after = $tasks();
+            $created = $after['plg_task_appointments.retention'] ?? [];
+            // The later suites run the installed tasks: enable the new one again as an operator would.
+            if (count($created) === 1) {
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = 1 WHERE id = " . (int) $created[0]['id']);
+            }
 
-            return count($after['plg_task_appointments.retention'] ?? []) === 1 && (int) $after['plg_task_appointments.retention'][0]['state'] === 1
+            return count($created) === 1 && (int) $created[0]['state'] === 0
                 && count($after['plg_task_appointments.reminders'] ?? []) === 1;
         });
 

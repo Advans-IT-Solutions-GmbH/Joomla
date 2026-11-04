@@ -300,12 +300,12 @@ the associated Joomla user object.
 
 The component installs and enables **Task - Appointments**. Updates preserve its enabled/disabled
 state; uninstalling the component removes the plugin and its Scheduler tasks. Installation and
-every update create the two tasks in **System → Scheduled Tasks** through Joomla's Scheduler,
-enabled: **Appointments: reminders**, running every five minutes, and **Appointments: retention**,
+every update create the two tasks in **System → Scheduled Tasks** through Joomla's Scheduler:
+**Appointments: reminders**, running every five minutes, and **Appointments: retention**,
 running daily, each with a batch size of 100. A task is only created when no task of its routine
 exists at all, in any state: a task you disabled or trashed is never enabled or created again, and
 its schedule and options are never overwritten. A task that was deleted permanently is created
-again by the next update, so disable a task instead of deleting it. If a task cannot be created,
+again by the next update, so disable a task instead of deleting it. A first installation creates the tasks enabled. An update creates a missing task **disabled** and says so, because the retention task would otherwise start anonymising the existing bookings and the reminder task start writing to their invitees without your decision: enable them yourself. If a task cannot be created,
 the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.

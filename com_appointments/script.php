@@ -97,7 +97,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
-        $this->ensureSchedulerTasks();
+        $this->ensureSchedulerTasks($type === 'install');
         $this->removeLegacyManifest();
 
         // An update only gets a short confirmation; the first installation shows
@@ -201,14 +201,19 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
-     * Creates the two Scheduler tasks of the bundled task plugin, enabled, through the
-     * Scheduler's own task model, the way Joomla's core update creates the tasks of its own
-     * plugins. A routine gets a task only when no task of its type exists at all, in any
-     * state: a task the operator disabled or trashed is never enabled or created again.
-     * A failure never fails the installation; it is reported, so the operator can create the
-     * task by hand under System > Scheduled Tasks.
+     * Creates the two Scheduler tasks of the bundled task plugin through the Scheduler's own
+     * task model, the way Joomla's core update creates the tasks of its own plugins. A routine
+     * gets a task only when no task of its type exists at all, in any state: a task the operator
+     * disabled or trashed is never enabled or created again.
+     *
+     * A first installation creates them enabled. An update of a site that had no such task
+     * creates them disabled and says so: the retention task would otherwise start anonymising
+     * the site's existing bookings, and the reminder task start writing to their invitees,
+     * without the operator having decided it. The operator enables them under
+     * System > Scheduled Tasks. A failure never fails the installation; it is reported, so the
+     * operator can create the task by hand there.
      */
-    private function ensureSchedulerTasks(): void
+    private function ensureSchedulerTasks(bool $enabled): void
     {
         $app = Factory::getApplication();
         $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -242,13 +247,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     'title' => Text::_($titleKey),
                     'type' => $type,
                     'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
-                    'state' => 1,
+                    'state' => $enabled ? 1 : 0,
                     'params' => ['batch_size' => 100],
                     'created_by' => (int) $identity->id,
                 ]);
 
                 if (!$saved) {
                     throw new \RuntimeException('The Scheduler task could not be saved.');
+                }
+
+                if (!$enabled) {
+                    $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
                 }
             } catch (\Throwable $e) {
                 $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_FAILED', Text::_($titleKey)), 'warning');
