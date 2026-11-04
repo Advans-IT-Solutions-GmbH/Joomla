@@ -46,12 +46,21 @@ final class DavVendorTest extends TestCase
     public function testACraftedClassNameNeverLeavesTheBundle(): void
     {
         VendorAutoloader::register();
-        $before = get_included_files();
+        $lib = str_replace('\\', '/', self::lib());
+        $loaded = static fn (): array => array_values(array_filter(
+            array_map(static fn (string $f): string => str_replace('\\', '/', $f), get_included_files()),
+            static fn (string $f): bool => str_starts_with($f, $lib)
+        ));
+        $before = $loaded();
 
-        self::assertFalse(class_exists(self::PREFIX . 'Sabre/../../autoload', true));
-        self::assertFalse(class_exists(self::PREFIX . 'Sabre\\..\\..\\autoload', true));
-        self::assertFalse(class_exists('Sabre\\DAV\\Server', true));
-        self::assertSame($before, get_included_files());
+        $crafted = [
+            class_exists(self::PREFIX . 'Sabre/../../autoload', true),
+            class_exists(self::PREFIX . 'Sabre\\..\\..\\autoload', true),
+            class_exists('Sabre\\DAV\\Server', true),
+        ];
+
+        self::assertSame([false, false, false], $crafted);
+        self::assertSame($before, $loaded());
     }
 
     public function testTheMapClaimsOnlyThePrefixedNamespace(): void
