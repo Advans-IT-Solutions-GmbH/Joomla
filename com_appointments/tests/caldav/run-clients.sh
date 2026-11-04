@@ -96,7 +96,9 @@ WORK="$(mktemp -d)"
 NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "$CONTAINER")"
 
 fixture() {
-    docker exec "$CONTAINER" php /var/www/html/tests/caldav/fixture.php "$@"
+    # As the web server's user: files the services create (the signed epoch anchor of
+    # specification 5.11, Joomla's cache and logs) must stay writable for CalDAV requests.
+    docker exec -u www-data "$CONTAINER" php /var/www/html/tests/caldav/fixture.php "$@"
 }
 
 teardown() {
