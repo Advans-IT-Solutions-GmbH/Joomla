@@ -190,16 +190,23 @@ final class TeamMailer implements TeamMailerInterface
      * Replace the placeholders of a template. Values are inserted as plain text; the
      * HTML part escapes the whole body afterwards, so a device name or calendar title
      * can never add markup. Line breaks in a value are flattened, so a value cannot
-     * add lines to the mail either. Pure, for the tests.
+     * add lines to the mail either. A value that is not one of the mail's own links
+     * gets a word joiner after the scheme, so a name such as «https://example» never
+     * becomes a link in the HTML part. Pure, for the tests.
      *
      * @param   array{subject: string, body: string}  $template
      * @param   array<string, string>                 $values
+     * @param   string[]                              $links  The URLs the mail itself carries, inserted unchanged.
      *
      * @return  array{subject: string, body: string}
      */
-    public static function fill(array $template, array $values): array
+    public static function fill(array $template, array $values, array $links = []): array
     {
-        $values = array_map(static fn (string $value): string => trim((string) preg_replace('/[\r\n\t]+/', ' ', $value)), $values);
+        $values = array_map(static function (string $value) use ($links): string {
+            $value = trim((string) preg_replace('/[\r\n\t]+/', ' ', $value));
+
+            return \in_array($value, $links, true) ? $value : str_replace('://', ":\u{2060}//", $value);
+        }, $values);
 
         return [
             'subject' => trim((string) preg_replace('/[\r\n]+/', ' ', strtr($template['subject'], $values))),
@@ -240,7 +247,7 @@ final class TeamMailer implements TeamMailerInterface
                 $message = self::fill($this->template($purpose, $tag, $language), [
                     '{site_name}' => $siteName,
                     '{user_name}' => (string) $recipient->name,
-                ] + $values($language, $recipient));
+                ] + $values($language, $recipient), array_keys($links));
 
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
                 $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);

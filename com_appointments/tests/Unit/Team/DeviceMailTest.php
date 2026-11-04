@@ -76,6 +76,21 @@ final class DeviceMailTest extends TestCase
         self::assertSame("Device: Phone Bcc: someone@example.test\nProgram: Thunderbird Password: x", $filled['body']);
     }
 
+    public function testOnlyTheMailsOwnLinksStayLinks(): void
+    {
+        $link = 'https://site.example/index.php?option=com_appointments&view=activation&token=abc';
+        $filled = TeamMailer::fill(
+            ['subject' => 'S', 'body' => "{account_name}\n{activation_url}"],
+            ['{account_name}' => 'Please confirm: https://evil.example/login', '{activation_url}' => $link],
+            [$link]
+        );
+        [$name, $url] = explode("\n", $filled['body']);
+
+        self::assertStringNotContainsString('https://', $name);
+        self::assertStringContainsString('evil.example', $name);
+        self::assertSame($link, $url);
+    }
+
     public function testPlaceholdersAreReplacedOnceAndNotRecursively(): void
     {
         $filled = TeamMailer::fill(

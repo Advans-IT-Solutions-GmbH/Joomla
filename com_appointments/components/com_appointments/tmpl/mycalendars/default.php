@@ -146,6 +146,7 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                         </div>
                     </fieldset>
                     <input type="hidden" name="form_nonce" value="<?php echo $this->escape($this->formNonce); ?>">
+                    <input type="hidden" name="rule_version" value="<?php echo $this->escape(TeamStates::DEVICE_RULE_VERSION); ?>">
                     <?php echo HTMLHelper::_('form.token'); ?>
                     <div class="com-appointments-actions">
                         <button type="submit" class="btn btn-primary"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_ADD_SUBMIT'); ?></button>

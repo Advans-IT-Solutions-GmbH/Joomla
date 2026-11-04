@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Table;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Table;
 use Joomla\Database\DatabaseDriver;
@@ -23,6 +24,9 @@ class TemplateTable extends Table
 
     /** Mails of the internet calendars: site-wide only, an event type has no say in them. */
     public const SITE_WIDE_PURPOSES = ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended'];
+
+    /** The link each of these mails must carry, alone on its line. */
+    private const LINK_PLACEHOLDERS = ['team_invitation' => '{activation_url}', 'team_invitation_accepted' => '{revoke_url}'];
 
     public function __construct(DatabaseDriver $db)
     {
@@ -50,8 +54,39 @@ class TemplateTable extends Table
             return false;
         }
 
+        if (in_array($this->purpose, self::SITE_WIDE_PURPOSES, true) && !$this->teamTemplateAllowed()) {
+            return false;
+        }
+
         if ($this->duplicate()) {
             $this->setError(Text::_('COM_APPOINTMENTS_TEMPLATE_ERROR_DUPLICATE'));
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * The internet calendar mails carry an activation or a revoke link: only a user with
+     * core.admin on the component edits them in the backend, and the link stays on a line
+     * of its own, so a template can neither drop it nor wrap it into another address.
+     */
+    private function teamTemplateAllowed(): bool
+    {
+        $app = Factory::getApplication();
+
+        if ($app->isClient('administrator') && !$app->getIdentity()?->authorise('core.admin', 'com_appointments')) {
+            $this->setError(Text::_('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_ADMIN'));
+
+            return false;
+        }
+
+        $link = self::LINK_PLACEHOLDERS[$this->purpose] ?? null;
+        $lines = array_map('trim', preg_split('/\R/', (string) $this->body) ?: []);
+
+        if ($link !== null && (!in_array($link, $lines, true) || substr_count((string) $this->body, $link) !== 1)) {
+            $this->setError(Text::sprintf('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_LINK', $link));
 
             return false;
         }

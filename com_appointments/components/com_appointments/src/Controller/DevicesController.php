@@ -67,6 +67,9 @@ class DevicesController extends BaseController
 
         if ($post->getInt('rule', 0) !== 1) {
             $errors['rule'] = 'COM_APPOINTMENTS_TEAM_D_ERROR_RULE';
+        } elseif ($post->getString('rule_version', '') !== TeamStates::DEVICE_RULE_VERSION) {
+            // The rule changed after the form was shown: the confirmation is for the text the person read.
+            $errors['rule'] = 'COM_APPOINTMENTS_TEAM_D_ERROR_RULE_CHANGED';
         }
 
         if ($errors !== []) {

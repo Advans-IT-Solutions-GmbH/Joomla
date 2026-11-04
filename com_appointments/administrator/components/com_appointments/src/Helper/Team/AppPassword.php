@@ -62,7 +62,7 @@ final class AppPassword
      *
      * @throws  \InvalidArgumentException  When the secret has the wrong length.
      */
-    public static function format(string $raw): string
+    public static function format(#[\SensitiveParameter] string $raw): string
     {
         if (\strlen($raw) !== self::BYTES) {
             throw new \InvalidArgumentException('An app password has exactly 20 bytes.');
@@ -76,7 +76,7 @@ final class AppPassword
      * password at all. Case, spaces and hyphens are ignored, so a password typed
      * by hand in lower case or without the groups is accepted.
      */
-    public static function parse(string $input): ?string
+    public static function parse(#[\SensitiveParameter] string $input): ?string
     {
         $normal = strtoupper(str_replace(['-', ' '], '', $input));
 
@@ -90,7 +90,7 @@ final class AppPassword
     /**
      * The value stored in `#__appointments_devices.secret_hash` (32 raw bytes).
      */
-    public static function hash(string $raw, KeyProvider $keys): string
+    public static function hash(#[\SensitiveParameter] string $raw, KeyProvider $keys): string
     {
         return hash_hmac(
             'sha256',
@@ -107,7 +107,7 @@ final class AppPassword
      *
      * @throws  \InvalidArgumentException  When the salt has the wrong length.
      */
-    public static function wrappingKey(string $raw, string $salt, KeyProvider $keys): string
+    public static function wrappingKey(#[\SensitiveParameter] string $raw, string $salt, KeyProvider $keys): string
     {
         if (\strlen($salt) !== self::SALT_BYTES) {
             throw new \InvalidArgumentException('The device salt has exactly 16 bytes.');
@@ -122,7 +122,7 @@ final class AppPassword
         );
     }
 
-    private static function encode(string $raw): string
+    private static function encode(#[\SensitiveParameter] string $raw): string
     {
         $bits = '';
 
@@ -139,7 +139,7 @@ final class AppPassword
         return $out;
     }
 
-    private static function decode(string $text): string
+    private static function decode(#[\SensitiveParameter] string $text): string
     {
         $bits = '';
 

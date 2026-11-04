@@ -66,7 +66,7 @@ class ActivationController extends BaseController
         }
 
         // Joomla's own rules from the user options; the rule explains itself in a message.
-        $rule = new \SimpleXMLElement('<field name="password1" type="password" validate="password" />');
+        $rule = new \SimpleXMLElement('<field name="password1" type="password" validate="password" required="true" />');
 
         if ((new PasswordRule())->test($rule, $password) !== true) {
             return $this->back($token, ['password1' => 'COM_APPOINTMENTS_TEAM_D_ACTIVATION_ERROR_PASSWORD']);

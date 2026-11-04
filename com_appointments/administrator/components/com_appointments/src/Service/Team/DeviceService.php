@@ -36,8 +36,11 @@ defined('_JEXEC') or die;
  *
  * Name, client, times and the revocation columns are not covered: they carry
  * no access. A device that leaves the active state loses `usk_wrapped`, so a
- * device in clean-up or revoked can never be made active again by a database
- * write alone: it would need the wrapped key and a matching MAC.
+ * changed state or a restored key alone does not make it active again. Not
+ * covered, stated plainly: writing back a complete older row from a backup
+ * (with its then valid MAC) restores that device for whoever still has its
+ * app password, unless the user's key was reset since. After restoring a
+ * database backup, revoke the devices that were revoked after it was taken.
  *
  * @since  1.4.0
  */
@@ -409,18 +412,28 @@ final class DeviceService implements DeviceServiceInterface
             return;
         }
 
-        if ($this->nameTaken($actorUserId, $name, $deviceId)) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
+        $db = $this->services->db();
+        $lock = $db->getPrefix() . 'com_appointments.device.' . $actorUserId;
+
+        if ((int) $db->setQuery('SELECT GET_LOCK(' . $db->quote($lock) . ', 10)')->loadResult() !== 1) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_BUSY', 409);
         }
 
-        $db = $this->services->db();
-        $query = $this->query()
-            ->update($db->quoteName('#__' . self::TABLE))
-            ->set($db->quoteName('name') . ' = :name')
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':name', $name)
-            ->bind(':id', $deviceId, ParameterType::INTEGER);
-        $db->setQuery($query)->execute();
+        try {
+            if ($this->nameTaken($actorUserId, $name, $deviceId)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
+            }
+
+            $query = $this->query()
+                ->update($db->quoteName('#__' . self::TABLE))
+                ->set($db->quoteName('name') . ' = :name')
+                ->where($db->quoteName('id') . ' = :id')
+                ->bind(':name', $name)
+                ->bind(':id', $deviceId, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+        } finally {
+            $db->setQuery('SELECT RELEASE_LOCK(' . $db->quote($lock) . ')')->execute();
+        }
 
         $this->services->audit()->log(AuditEvent::DEVICE_RENAMED, [
             'actor_user_id' => $actorUserId,
@@ -445,11 +458,24 @@ final class DeviceService implements DeviceServiceInterface
         $reason = preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $reason) === 1 ? $reason : 'other';
         $now = $this->services->now()->format('Y-m-d H:i:s');
 
-        $this->transition($deviceId, (int) $device->state, TeamStates::DEVICE_REVOKED, [
-            'revoked_utc' => $now,
-            'revoked_by' => $actorUserId,
-            'revoke_reason' => $reason,
-        ]);
+        $extra = ['revoked_utc' => $now, 'revoked_by' => $actorUserId, 'revoke_reason' => $reason];
+        $state = (int) $device->state;
+
+        // The clean-up may move the device between the read and the locked write: read
+        // again and retry, so an emergency stop never fails silently.
+        for ($attempt = 0; !$this->transition($deviceId, $state, TeamStates::DEVICE_REVOKED, $extra); $attempt++) {
+            $current = $this->device($deviceId);
+
+            if ($current === null || (int) $current->state === TeamStates::DEVICE_REVOKED) {
+                return;
+            }
+
+            if ($attempt >= 3) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_BUSY', 409);
+            }
+
+            $state = (int) $current->state;
+        }
 
         $this->services->audit()->log(AuditEvent::DEVICE_REVOKED, [
             'actor_user_id' => $actorUserId,
