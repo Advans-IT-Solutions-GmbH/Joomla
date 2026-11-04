@@ -15,6 +15,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
+use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 
 defined('_JEXEC') or die;
@@ -22,6 +23,7 @@ defined('_JEXEC') or die;
 class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
+    use AssetsTrait;
 
     protected $item;
     /** Address of the .ics download of the appointment, or '' when there is nothing to add. */
@@ -51,9 +53,7 @@ class HtmlView extends BaseHtmlView
             }
         }
 
-        $assets = $app->getDocument()->getWebAssetManager();
-        $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
-        $assets->useStyle('com_appointments.site');
+        $this->useAppointmentsAssets(false);
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
         // The heading says what happened: confirmed, requested (held for the host's approval) or cancelled.
         $this->applyPageTitle('booking', Text::_(match ((int) $this->item->state) {
