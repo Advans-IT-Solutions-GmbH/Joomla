@@ -52,6 +52,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMINVITATIONS',
             'method' => 'teamInvitations',
         ],
+        'plg_task_appointments.teamretention' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMRETENTION',
+            'method' => 'teamRetention',
+        ],
     ];
 
     public static function getSubscribedEvents(): array
@@ -103,6 +107,30 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         return $this->executeTeam('teaminvitations', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
             'invitations_closed' => $services->invitations()->purgeExpired($now),
         ]);
+    }
+
+    /**
+     * Retention per calendar: delete the entries that ended longer ago than the
+     * calendar's `retention_days`; calendars with 0 keep everything.
+     */
+    protected function teamRetention(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamretention', static function (TeamServices $services, \DateTimeImmutable $now): array {
+            $db = $services->db();
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $calendars = $db->setQuery($query->select($db->quoteName(['id', 'retention_days']))
+                ->from($db->quoteName('#__appointments_calendars'))
+                ->where($db->quoteName('retention_days') . ' > 0')
+                ->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+            $deleted = 0;
+
+            foreach ($calendars as $calendar) {
+                $deleted += $services->objects()->deleteEndedBefore((int) $calendar['id'],
+                    $now->modify('-' . (int) $calendar['retention_days'] . ' days'));
+            }
+
+            return ['calendars' => \count($calendars), 'entries_deleted' => $deleted];
+        });
     }
 
     /**

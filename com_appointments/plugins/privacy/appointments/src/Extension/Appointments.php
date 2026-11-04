@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
+use Advans\Plugin\Privacy\Appointments\Team\TeamPrivacy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
@@ -85,6 +86,11 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // No invitee information lives in the erasure audit, and staff actor IDs
         // must not be exposed in an invitee's domain.
         $event->addResult([$domain, $guestDomain]);
+        // Internet calendars: entries found by their address, and staff data.
+        $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
+        if ($team !== null) {
+            $event->addResult($team->export((string) $event->getRequest()->email, $event->getUser()));
+        }
     }
 
     public function onPrivacyCanRemoveData(CanRemoveDataEvent $event): void
@@ -119,6 +125,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
+        TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
+            ?->remove((string) $event->getRequest()->email, $event->getUser());
     }
 
     private function service(): PrivacyService

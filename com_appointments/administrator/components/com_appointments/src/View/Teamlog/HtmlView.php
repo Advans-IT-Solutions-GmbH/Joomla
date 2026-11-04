@@ -13,12 +13,14 @@ use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
+use Joomla\CMS\Toolbar\Toolbar;
 use Joomla\CMS\Toolbar\ToolbarHelper;
 
 defined('_JEXEC') or die;
 
 /**
- * Team calendars: The team calendar log with the chain check; its checksum is shown here only.
+ * Internet calendars: the log with the chain check. Its checksum (the sealed head of the chain)
+ * is shown here and nowhere on the site. `core.admin` only.
  *
  * Work package F owns this view and its layout.
  *
@@ -33,6 +35,19 @@ class HtmlView extends BaseHtmlView
      */
     protected $enabled = false;
 
+    protected $items = [];
+
+    protected $pagination;
+
+    protected $state;
+
+    /**
+     * Hex checksum of the chain head.
+     *
+     * @var  string
+     */
+    protected $checksum = '';
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -43,8 +58,21 @@ class HtmlView extends BaseHtmlView
 
         $app->setHeader('Cache-Control', 'private, no-store', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
-        $this->enabled = TeamServices::fromApplication()->enabled();
+        $services = TeamServices::fromApplication();
+        $this->enabled = $services->enabled();
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_LOG_TITLE'), 'calendar');
+        $toolbar = Toolbar::getInstance('toolbar');
+
+        if ($this->enabled) {
+            $model = $this->getModel();
+            $this->items = $model->getItems();
+            $this->pagination = $model->getPagination();
+            $this->state = $model->getState();
+            $this->checksum = $services->audit()->headHash();
+            $toolbar->standardButton('checkmark')->text(Text::_('COM_APPOINTMENTS_TEAM_F_LOG_VERIFY'))->task('teamlog.verify');
+        }
+
+        $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
 
         return parent::display($tpl);
     }

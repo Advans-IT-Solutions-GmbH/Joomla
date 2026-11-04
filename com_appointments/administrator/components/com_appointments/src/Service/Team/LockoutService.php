@@ -10,8 +10,11 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Joomla\CMS\Application\CMSApplicationInterface;
+use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\QueryInterface;
 
@@ -22,7 +25,9 @@ defined('_JEXEC') or die;
  *
  * Calling contract: call {@see self::retryAfter()} before the secret is checked at all, refuse
  * when it is above 0 (without checking the secret), and afterwards call exactly one of
- * {@see self::recordFailure()} and {@see self::recordSuccess()}.
+ * {@see self::recordFailure()} and {@see self::recordSuccess()}. On the website the check runs
+ * before Joomla compares the password, in {@see self::guardLogin()} (system plugin, onAfterRoute);
+ * a locked sign-in then fails like a wrong password, so the lock is no oracle.
  *
  * Buckets: a keyed hash (key(TEAM_AUTH_BUCKET)) of the lower-case user name, and one of the
  * address; an IPv6 address counts as its /64 prefix, because a client controls the rest of it, and
@@ -53,6 +58,23 @@ final class LockoutService implements LockoutServiceInterface
     /** The longest lock, in minutes. */
     public const MAX_DELAY_MINUTES = 60;
 
+    /**
+     * Reservations taken by this PHP request (bucket hex => until), so that a
+     * second check within the same sign-in (onUserAuthorisation after
+     * guardLogin()) does not see its own reservation as somebody else's lock.
+     * Lives for one request only.
+     *
+     * @var  array<string, string>
+     */
+    private static $ownClaims = [];
+
+    /**
+     * Sign-ins refused by guardLogin() in this request.
+     *
+     * @var  array<string, bool>
+     */
+    private static $refused = [];
+
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -63,7 +85,7 @@ final class LockoutService implements LockoutServiceInterface
         $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));
         $buckets = self::buckets($this->key(), $username, $ip);
         $rows = $this->load($buckets);
-        $wait = self::waitFor($rows, $now);
+        $wait = self::waitFor($rows, $now, self::$ownClaims);
 
         if ($wait > 0) {
             return $wait;
@@ -73,7 +95,8 @@ final class LockoutService implements LockoutServiceInterface
         $until = $now->modify('+' . self::CLAIM_SECONDS . ' seconds')->format('Y-m-d H:i:s');
 
         foreach ($rows as $hex => $row) {
-            if (self::isStale($row, $now) || (int) $row['failures'] < TeamStates::LOCK_THRESHOLD - 1) {
+            if (self::isStale($row, $now) || (int) $row['failures'] < TeamStates::LOCK_THRESHOLD - 1
+                || self::isOwnClaim((string) $hex, $row, self::$ownClaims)) {
                 continue;
             }
 
@@ -88,22 +111,63 @@ final class LockoutService implements LockoutServiceInterface
                 // Another request holds the attempt (or just failed): wait for it.
                 foreach ($claimed as $own) {
                     $this->release($own, $until);
+                    unset(self::$ownClaims[$own]);
                 }
 
-                return max(1, self::waitFor($this->load($buckets), $now));
+                return max(1, self::waitFor($this->load($buckets), $now, self::$ownClaims));
             }
 
             $claimed[] = $hex;
+            self::$ownClaims[$hex] = $until;
         }
 
         return 0;
     }
 
-    public function wasRefused(string $username, string $ip): bool
+    public function guardLogin(CMSApplicationInterface $app): void
     {
-        throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
-    }
+        $input = $app->getInput();
 
+        if (strtoupper((string) $input->getMethod()) !== 'POST') {
+            return;
+        }
+
+        $option = strtolower($input->getCmd('option', ''));
+        $task = strtolower($input->getCmd('task', ''));
+        $site = $app->isClient('site') && $option === 'com_users' && $task === 'user.login';
+        $admin = $app->isClient('administrator') && $option === 'com_login' && $task === 'login';
+
+        if (!$site && !$admin) {
+            return;
+        }
+
+        $username = (string) $input->post->get('username', '', 'username');
+        $ip = (string) $input->server->getString('REMOTE_ADDR', '');
+        $userId = (int) UserHelper::getUserId($username);
+
+        // Only accounts with a calendar right are counted, so only they are locked.
+        if ($userId <= 0 || $this->services->grants()->audienceOf($userId) === 'none' || $this->retryAfter($username, $ip) === 0) {
+            return;
+        }
+
+        // Locked: let Joomla answer the sign-in exactly as it answers a wrong
+        // password (same message, same redirect or page, same password hashing
+        // time), by replacing the submitted password with one that matches
+        // nothing. The real password is never compared, and this refusal is
+        // not counted as another failure.
+        $unmatchable = bin2hex(random_bytes(32));
+
+        foreach (['password', 'passwd'] as $field) {
+            if ($input->post->exists($field)) {
+                $input->post->set($field, $unmatchable);
+                $input->set($field, $unmatchable);
+                $_POST[$field] = $_REQUEST[$field] = $unmatchable;
+            }
+        }
+
+        self::$refused[self::refusalKey($username, $ip)] = true;
+        $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
+    }
     public function recordFailure(string $username, string $ip): void
     {
         $db = $this->db();
@@ -114,7 +178,21 @@ final class LockoutService implements LockoutServiceInterface
         $last = $db->quoteName('last_failure_utc');
         $locked = $db->quoteName('locked_until_utc');
 
-        foreach (self::buckets($this->key(), $username, $ip) as $bucket) {
+        $buckets = self::buckets($this->key(), $username, $ip);
+
+        foreach ($buckets as $bucket) {
+            unset(self::$ownClaims[bin2hex($bucket)]);
+        }
+
+        // A sign-in that guardLogin() refused was never checked: it is not
+        // another failure, and the lock does not grow by a retry while locked.
+        if (isset(self::$refused[self::refusalKey($username, $ip)])) {
+            unset(self::$refused[self::refusalKey($username, $ip)]);
+
+            return;
+        }
+
+        foreach ($buckets as $bucket) {
             // One statement: concurrent failures can neither be lost nor
             // computed from the same old count. The assignments run left to
             // right, so the lock is computed from the new count and the reset
@@ -135,6 +213,11 @@ final class LockoutService implements LockoutServiceInterface
         $db = $this->db();
         $buckets = self::buckets($this->key(), $username, $ip);
         $table = $db->quoteName('#__appointments_auth_failures');
+
+        foreach ($buckets as $bucket) {
+            unset(self::$ownClaims[bin2hex($bucket)]);
+        }
+
         $db->setQuery($this->query()->delete($table)
             ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote(bin2hex($buckets['user'])) . ')'))->execute();
 
@@ -219,14 +302,15 @@ final class LockoutService implements LockoutServiceInterface
     /**
      * Seconds until every given bucket allows an attempt.
      *
-     * @param   array<string, array<string, mixed>>  $rows
+     * @param   array<string, array<string, mixed>>  $rows       By hex bucket.
+     * @param   array<string, string>                $ownClaims  Reservations of this request, which do not count.
      */
-    public static function waitFor(array $rows, \DateTimeImmutable $now): int
+    public static function waitFor(array $rows, \DateTimeImmutable $now, array $ownClaims = []): int
     {
         $wait = 0;
 
-        foreach ($rows as $row) {
-            if (self::isStale($row, $now) || empty($row['locked_until_utc'])) {
+        foreach ($rows as $hex => $row) {
+            if (self::isStale($row, $now) || empty($row['locked_until_utc']) || self::isOwnClaim((string) $hex, $row, $ownClaims)) {
                 continue;
             }
 
@@ -235,6 +319,20 @@ final class LockoutService implements LockoutServiceInterface
         }
 
         return $wait;
+    }
+
+    /**
+     * @param   array<string, mixed>   $row
+     * @param   array<string, string>  $ownClaims
+     */
+    private static function isOwnClaim(string $hex, array $row, array $ownClaims): bool
+    {
+        return isset($ownClaims[$hex]) && (string) ($row['locked_until_utc'] ?? '') === $ownClaims[$hex];
+    }
+
+    private static function refusalKey(string $username, string $ip): string
+    {
+        return mb_strtolower(trim($username), 'UTF-8') . "\0" . (self::normaliseAddress($ip) ?? '');
     }
 
     /**

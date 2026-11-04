@@ -9,18 +9,51 @@
 
 namespace Advans\Component\Appointments\Administrator\Controller;
 
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
+use Joomla\CMS\Router\Route;
+use Joomla\CMS\Session\Session;
 
 defined('_JEXEC') or die;
 
 /**
- * Team calendars. Team calendar log: verify the chain. Checks the form token and `core.admin`.
+ * Internet calendars: verify the hash chain of the log. A POST with the form token, `core.admin`.
+ * Verifying reads only and is not logged itself.
  *
- * Work package F adds the tasks. Until then the controller has none, so no
- * request can change anything through it.
+ * Work package F.
  *
  * @since  1.4.0
  */
 class TeamlogController extends BaseController
 {
+    public function verify(): bool
+    {
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get(Session::getFormToken(), '', 'alnum') !== '1') {
+            throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
+        }
+
+        if (!$this->app->getIdentity()->authorise('core.admin', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        $services = TeamServices::fromApplication();
+
+        if (!$services->enabled()) {
+            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+        }
+
+        $result = $services->audit()->verify();
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=teamlog', false));
+
+        if ($result->intact) {
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_LOG_INTACT', $result->checkedRows, $result->headHash), 'message');
+
+            return true;
+        }
+
+        $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_LOG_BROKEN', (int) $result->firstBrokenId), 'error');
+
+        return false;
+    }
 }
