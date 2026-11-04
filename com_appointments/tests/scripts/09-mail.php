@@ -70,8 +70,8 @@ $inspect = static function (array $before, array $booking, string $method, strin
 };
 
 try {
-    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 54,
-        'All eighteen purposes (eight, six guest and four host templates) have editable defaults in all three languages');
+    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 69,
+        'All twenty-three purposes (eight, six guest, four host and five internet calendar templates) have editable defaults in all three languages');
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];

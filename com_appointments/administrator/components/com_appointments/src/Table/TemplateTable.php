@@ -18,7 +18,11 @@ class TemplateTable extends Table
 {
     public const PURPOSES = ['confirmation', 'pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice',
         'guest_confirmation', 'guest_pending', 'guest_approved', 'guest_reschedule', 'guest_cancellation', 'guest_reminder',
-        'host_approved', 'host_reschedule', 'host_cancellation', 'host_reminder'];
+        'host_approved', 'host_reschedule', 'host_cancellation', 'host_reminder',
+        'team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended'];
+
+    /** Mails of the internet calendars: site-wide only, an event type has no say in them. */
+    public const SITE_WIDE_PURPOSES = ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended'];
 
     public function __construct(DatabaseDriver $db)
     {
@@ -36,6 +40,12 @@ class TemplateTable extends Table
             || trim((string) $this->body) === ''
             || !in_array((int) $this->published, [0, 1], true)) {
             $this->setError(Text::_('COM_APPOINTMENTS_TEMPLATE_ERROR_REQUIRED'));
+
+            return false;
+        }
+
+        if (in_array($this->purpose, self::SITE_WIDE_PURPOSES, true) && (int) $this->eventtype_id !== 0) {
+            $this->setError(Text::_('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_SITE_WIDE'));
 
             return false;
         }

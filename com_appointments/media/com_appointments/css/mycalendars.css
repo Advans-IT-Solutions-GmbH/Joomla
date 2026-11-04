@@ -1,0 +1,194 @@
+/**
+ * @package     Appointments Component
+ *
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * «My calendars» and the account activation of the internet calendars. Built on appointments.css:
+ * the same fields, buttons, cards and summaries as the booking pages, so a site template restyles
+ * these pages with the same custom properties. The few properties added here are listed below;
+ * markup changes go into template overrides of the layouts. Mobile first, no external resource.
+ */
+
+.com-appointments-mycalendars {
+    --appointments-mycal-swatch-size: 0.875rem;
+    --appointments-mycal-swatch-default: var(--appointments-muted);
+    --appointments-mycal-notice-background: var(--appointments-surface-alt);
+    --appointments-mycal-notice-border-color: var(--appointments-border-color);
+    --appointments-mycal-secret-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --appointments-mycal-secret-size: 1.125rem;
+    --appointments-mycal-section-gap: 2rem;
+}
+
+.com-appointments-mycalendars .com-appointments-container {
+    max-width: var(--appointments-narrow-width);
+}
+
+.com-appointments-mycal-section {
+    margin-block: var(--appointments-mycal-section-gap);
+}
+
+.com-appointments-mycalendars .com-appointments-notice {
+    margin-block: 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--appointments-mycal-notice-border-color);
+    border-radius: var(--appointments-radius);
+    background: var(--appointments-mycal-notice-background);
+}
+
+.com-appointments-mycalendars .com-appointments-notice > :last-child {
+    margin-bottom: 0;
+}
+
+.com-appointments-mycal-list,
+.com-appointments-mycal-devices,
+.com-appointments-mycal-rule-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.com-appointments-mycal-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.625rem;
+    padding-block: 0.625rem;
+    border-bottom: var(--appointments-border);
+}
+
+.com-appointments-mycal-swatch {
+    flex: none;
+    width: var(--appointments-mycal-swatch-size);
+    height: var(--appointments-mycal-swatch-size);
+    border-radius: 50%;
+    background: var(--appointments-mycal-swatch-default);
+}
+
+.com-appointments-mycal-name {
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-weight: var(--appointments-strong-weight);
+}
+
+.com-appointments-mycal-meta {
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
+}
+
+.com-appointments-mycal-devices {
+    display: grid;
+    gap: var(--appointments-gap);
+}
+
+.com-appointments-mycal-device-name {
+    margin: 0 0 0.5rem;
+    font-size: var(--appointments-step-title-size);
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-mycal-device .com-appointments-summary {
+    margin-block: 0.5rem;
+}
+
+.com-appointments-mycal-device-actions {
+    margin: 0;
+}
+
+.com-appointments-mycal-device-actions a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--appointments-target);
+}
+
+.com-appointments-mycal-rule-list {
+    display: grid;
+    gap: 0.375rem;
+    margin-block: 0.5rem;
+}
+
+.com-appointments-mycal-rule-list li {
+    position: relative;
+    padding-inline-start: 1.25rem;
+}
+
+.com-appointments-mycal-rule-list li::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: 0.25rem;
+    top: 0.6em;
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.com-appointments-mycal-secret {
+    margin-block: 1.5rem;
+}
+
+.com-appointments-mycal-password-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+}
+
+.com-appointments-mycal-password {
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--appointments-radius);
+    background: var(--appointments-surface-alt);
+    color: var(--appointments-text);
+    font-family: var(--appointments-mycal-secret-font);
+    font-size: var(--appointments-mycal-secret-size);
+    letter-spacing: 0.04em;
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+.com-appointments-mycal-copy-status {
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
+}
+
+.com-appointments-mycalendars .com-appointments-summary code {
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-mycal-steps {
+    display: grid;
+    gap: 0.375rem;
+    padding-inline-start: 1.5rem;
+}
+
+.com-appointments-mycal-guide {
+    border-bottom: var(--appointments-border);
+}
+
+.com-appointments-mycal-guide > summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--appointments-target);
+    cursor: pointer;
+    font-weight: var(--appointments-strong-weight);
+}
+
+.com-appointments-mycal-guide > summary:focus-visible {
+    outline: 2px solid var(--appointments-focus);
+    outline-offset: 2px;
+}
+
+@container appointments (min-width: 36rem) {
+    .com-appointments-mycal-device .com-appointments-summary {
+        grid-template-columns: max-content 1fr;
+        column-gap: 1rem;
+    }
+
+    .com-appointments-mycal-device .com-appointments-summary dd {
+        margin: 0;
+    }
+}
