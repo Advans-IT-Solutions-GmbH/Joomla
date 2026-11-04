@@ -83,6 +83,16 @@ class DevicesController extends BaseController
             return $this->locked();
         }
 
+        // The lock-out of failed sign-ins also stops «Add device» (fail closed, LockoutServiceInterface):
+        // a locked account gets no new device, and a check that cannot be made adds none either.
+        try {
+            if ($services->lockout()->retryAfter((string) $user->username, (string) $this->input->server->getString('REMOTE_ADDR', '')) > 0) {
+                return $this->back('COM_APPOINTMENTS_TEAM_D_ERROR_LOCKED');
+            }
+        } catch (\Throwable $e) {
+            return $this->failed($e);
+        }
+
         try {
             $keys = $services->keySession()->requireUnlocked();
         } catch (TeamException $e) {

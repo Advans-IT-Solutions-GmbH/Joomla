@@ -68,7 +68,7 @@ final class DeviceMailTest extends TestCase
     {
         $filled = TeamMailer::fill(
             ['subject' => 'Device {device_name}', 'body' => "Device: {device_name}\nProgram: {client}"],
-            ['{device_name}' => "Phone\r\nBcc: someone@example.test", '{client}' => "Thunderbird\n\nPassword: x"]
+            ['{device_name}' => "Phone\r\nBcc: someone@example.test", '{client}' => "Thunderbird\u{2028}\u{2029}Password: x"]
         );
 
         self::assertStringNotContainsString("\n", $filled['subject']);

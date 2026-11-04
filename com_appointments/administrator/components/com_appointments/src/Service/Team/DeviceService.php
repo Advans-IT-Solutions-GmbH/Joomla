@@ -515,22 +515,20 @@ final class DeviceService implements DeviceServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_DEVICE', 404);
         }
 
-        if ((int) $device->state === TeamStates::DEVICE_REVOKED) {
-            return;
-        }
-
         $reason = preg_match('/^[a-z][a-z0-9_]{0,31}$/D', $reason) === 1 ? $reason : 'other';
         $now = $this->services->now()->format('Y-m-d H:i:s');
 
-        $extra = ['revoked_utc' => $now, 'revoked_by' => $actorUserId, 'revoke_reason' => $reason];
         $state = (int) $device->state;
 
-        // The clean-up may move the device between the read and the locked write: read
-        // again and retry, so an emergency stop never fails silently.
-        for ($attempt = 0; !$this->transition($deviceId, $state, TeamStates::DEVICE_REVOKED, $extra); $attempt++) {
+        // A revocation always runs the full state change, also over a row that already says
+        // «revoked»: the state column is not proof (a database writer can set it and later play
+        // back the active row), the new secret hash and the raised epoch are. The clean-up may
+        // move the device between the read and the locked write: read again and retry, so an
+        // emergency stop never fails silently. The first revocation keeps its time and actor.
+        for ($attempt = 0; !$this->transition($deviceId, $state, TeamStates::DEVICE_REVOKED, $state === TeamStates::DEVICE_REVOKED ? [] : ['revoked_utc' => $now, 'revoked_by' => $actorUserId, 'revoke_reason' => $reason]); $attempt++) {
             $current = $this->device($deviceId);
 
-            if ($current === null || (int) $current->state === TeamStates::DEVICE_REVOKED) {
+            if ($current === null) {
                 return;
             }
 
@@ -612,11 +610,9 @@ final class DeviceService implements DeviceServiceInterface
             $query = $this->query()
                 ->select($db->quoteName(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state', 'row_mac']))
                 ->from($db->quoteName('#__' . self::TABLE))
-                ->where($db->quoteName('user_id') . ' = :user')
-                ->where('(' . $db->quoteName('state') . ' <> :revoked OR ' . $db->quoteName('id') . ' = :id)')
-                ->bind(':user', $owner, ParameterType::INTEGER)
-                ->bind(':revoked', $revoked, ParameterType::INTEGER)
-                ->bind(':id', $deviceId, ParameterType::INTEGER);
+                // Integers inline: a bound query loses its bindings when turned into a string for FOR UPDATE.
+                ->where($db->quoteName('user_id') . ' = ' . (int) $owner)
+                ->where('(' . $db->quoteName('state') . ' <> ' . (int) $revoked . ' OR ' . $db->quoteName('id') . ' = ' . (int) $deviceId . ')');
             $rows = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssocList('id');
             $target = $rows[$deviceId] ?? null;
 
@@ -692,8 +688,7 @@ final class DeviceService implements DeviceServiceInterface
         $query = $this->query()
             ->select('*')
             ->from($db->quoteName('#__appointments_user_keys'))
-            ->where($db->quoteName('user_id') . ' = :user')
-            ->bind(':user', $userId, ParameterType::INTEGER);
+            ->where($db->quoteName('user_id') . ' = ' . (int) $userId);
 
         return $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
     }

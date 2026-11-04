@@ -29,6 +29,8 @@ use Advans\Component\Appointments\Administrator\Service\Team\CleanupService;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
 use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
+use Advans\Component\Appointments\Administrator\Service\Team\InvitationService;
+use Advans\Component\Appointments\Administrator\Service\Team\LockoutService;
 use Advans\Component\Appointments\Administrator\Service\Team\KeyService;
 use Advans\Component\Appointments\Administrator\Service\Team\KeySession;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
@@ -360,7 +362,7 @@ return static function (TeamSuite $suite): void {
 
         $stubs = [];
 
-        foreach (['B' => [KeySession::class, KeyService::class, EpochAnchor::class], 'C' => [GrantService::class, CalendarService::class], 'F' => [AuditService::class, CleanupService::class]] as $package => $classes) {
+        foreach (['B' => [KeySession::class, KeyService::class, EpochAnchor::class], 'C' => [GrantService::class, CalendarService::class, InvitationService::class], 'F' => [AuditService::class, CleanupService::class, LockoutService::class]] as $package => $classes) {
             foreach ($classes as $class) {
                 if ($suite->isStub($class)) {
                     $stubs[$package] = true;
@@ -369,7 +371,7 @@ return static function (TeamSuite $suite): void {
         }
 
         $flow = [
-            'D: «Add device» needs a calendar shared with the user',
+            'D: «Add device» from a form issued earlier is refused once the grant is gone',
             'D: «Add device» needs the confirmed usage rule',
             'D: «Add device» after sign-in with password and second factor shows the app password once, no-store',
             'D: The confirmation and its rule version are in the device row and the log',
@@ -379,6 +381,11 @@ return static function (TeamSuite $suite): void {
             'D: Without the key in the session «Add device» answers 423',
             'D: «Remove device» starts the clean-up and raises the device epoch',
             'D: A failing security check during «Add device» creates no device and shows only a general message',
+            'D: The activation link is exchanged for a session value and the browser continues without the token',
+            'D: The form value of the exchange is useless in another session',
+            'D: The activation refuses a password that breaks the rules or does not match',
+            'D: The activation sets the password and continues at the sign-in',
+            'D: A used activation link answers 404',
         ];
 
         if ($stubs !== []) {
@@ -454,16 +461,31 @@ return static function (TeamSuite $suite): void {
         $createdPage = '';
         $mails = [];
 
-        $suite->test($flow[0], static function () use ($browser, $page, $submit, $signedIn, $suite, $p, $member) {
-            $html = $page($browser);
-            $submit($browser, $html, ['name' => 'Ungranted', 'client' => 'davx5', 'rule' => 1]);
-
-            return $signedIn && str_contains($html, 'devices.create') === false
-                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === 0;
-        });
-
         $calendar = $services->calendars()->create($admin, ['title' => $tag . ' calendar', 'owner_user_id' => $member]);
         $state['calendars'][] = $calendar;
+
+        $suite->test($flow[0], static function () use ($browser, $page, $signedIn, $suite, $db, $p, $member, $calendar) {
+            // The page offered the form while the grant existed; the grant goes before it is sent.
+            $form = $signedIn ? TeamDBrowser::form($page($browser), 'devices.create') : null;
+            $grant = $db->query("SELECT * FROM {$p}appointments_calendar_grants WHERE calendar_id = {$calendar} AND user_id = {$member}")->fetch_assoc();
+
+            if ($form === null || $grant === null) {
+                return false;
+            }
+
+            $db->query("DELETE FROM {$p}appointments_calendar_grants WHERE id = " . (int) $grant['id']);
+
+            try {
+                $browser->request($form['action'], $form['fields'] + ['name' => 'Ungranted', 'client' => 'davx5', 'rule' => 1]);
+                $count = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+            } finally {
+                // The same row back, byte for byte, so its MAC stays valid for the next tests.
+                $values = array_map(static fn ($v): string => $v === null ? 'NULL' : "'" . $db->real_escape_string((string) $v) . "'", $grant);
+                $db->query("INSERT INTO {$p}appointments_calendar_grants (" . implode(',', array_map(static fn (string $k): string => '`' . $k . '`', array_keys($grant))) . ') VALUES (' . implode(',', $values) . ')');
+            }
+
+            return $count === 0;
+        });
 
         $suite->test($flow[1], static function () use ($browser, $page, $submit, $suite, $p, $member, $deviceName) {
             $html = $page($browser);
@@ -600,6 +622,91 @@ return static function (TeamSuite $suite): void {
                 && !preg_match('/id="appointments-app-password"/', $html)
                 && !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
         });
+
+        // ------------------------------------------------------------------
+        // Account activation (an administrator created the account)
+        // ------------------------------------------------------------------
+
+        $fresh = $user('fresh', 'Unused-' . bin2hex(random_bytes(12)) . '!', [$teamGroup]);
+        $hashBefore = (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password'];
+        $mailsBefore = AppointmentsMail::snapshot();
+        $services->invitations()->invite($admin, $fresh);
+        $link = '';
+
+        foreach (AppointmentsMail::messagesSince($mailsBefore) as $mime) {
+            if (preg_match('#https?://[^\s"<>]*view=activation(?:&amp;|&)token=([A-Za-z0-9_-]{43})#', AppointmentsMail::decoded($mime), $m) === 1) {
+                $link = html_entity_decode($m[0]);
+            }
+        }
+
+        $activation = new TeamDBrowser($suite->base);
+        $activationForm = null;
+
+        $suite->test($flow[10], static function () use ($activation, $link, &$activationForm) {
+            if ($link === '') {
+                return false;
+            }
+
+            $activation->request($link, null, 0);
+            $location = $activation->header('Location');
+
+            if ($activation->status < 300 || $activation->status >= 400 || $location === '' || str_contains($location, 'token=')) {
+                return false;
+            }
+
+            $html = $activation->request($location);
+            $activationForm = TeamDBrowser::form($html, 'activation.complete');
+
+            return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
+                && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
+        });
+
+        $suite->test($flow[11], static function () use ($suite, &$activationForm, $db, $p, $fresh, $hashBefore) {
+            if ($activationForm === null) {
+                return false;
+            }
+
+            $other = new TeamDBrowser($suite->base);
+            $otherForm = TeamDBrowser::form($other->request('/index.php?option=com_users&view=login'), 'user.login');
+            $token = array_key_first(array_filter($otherForm['fields'] ?? [], static fn ($v, $k): bool => $v === '1' && preg_match('/^[a-f0-9]{32}$/', (string) $k) === 1, ARRAY_FILTER_USE_BOTH));
+            $strong = 'Strong-' . bin2hex(random_bytes(10)) . '!Aa1';
+            $other->request($activationForm['action'], [(string) $token => 1, 'nonce' => $activationForm['fields']['nonce'], 'password1' => $strong, 'password2' => $strong], 0);
+
+            return $other->status === 404 && (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password'] === $hashBefore;
+        });
+
+        $suite->test($flow[12], static function () use ($activation, &$activationForm, $db, $p, $fresh, $hashBefore) {
+            if ($activationForm === null) {
+                return false;
+            }
+
+            foreach ([['0', '0'], ['Strong-' . bin2hex(random_bytes(10)) . '!Aa1', 'Different-' . bin2hex(random_bytes(10)) . '!Aa1']] as [$one, $two]) {
+                $html = $activation->request($activationForm['action'], $activationForm['fields'] + ['password1' => $one, 'password2' => $two]);
+                $activationForm = TeamDBrowser::form($html, 'activation.complete') ?? $activationForm;
+            }
+
+            return (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password'] === $hashBefore;
+        });
+
+        $suite->test($flow[13], static function () use ($activation, &$activationForm, $db, $p, $fresh) {
+            if ($activationForm === null) {
+                return false;
+            }
+
+            $strong = 'Strong-' . bin2hex(random_bytes(10)) . '!Aa1';
+            $activation->request($activationForm['action'], $activationForm['fields'] + ['password1' => $strong, 'password2' => $strong], 0);
+            $location = $activation->header('Location');
+
+            return $activation->status >= 300 && $activation->status < 400 && (str_contains($location, 'com_users') || str_contains($location, 'login'))
+                && password_verify($strong, (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password']);
+        });
+
+        $suite->test($flow[14], static function () use ($suite, $link) {
+            $again = new TeamDBrowser($suite->base);
+            $again->request($link);
+
+            return $link !== '' && $again->status === 404;
+        });
     } finally {
         // Own rows only; the log keeps its rows so that the chain of part F still verifies.
         foreach ($state['calendars'] as $id) {
@@ -612,6 +719,7 @@ return static function (TeamSuite $suite): void {
             $db->query("DELETE FROM {$p}appointments_user_keys WHERE user_id = {$id}");
             $db->query("DELETE FROM {$p}appointments_calendar_grants WHERE user_id = {$id}");
             $db->query("DELETE FROM {$p}user_mfa WHERE user_id = {$id}");
+            $db->query("DELETE FROM {$p}appointments_invitations WHERE user_id = {$id}");
             $db->query("DELETE FROM {$p}user_usergroup_map WHERE user_id = {$id}");
             $db->query("DELETE FROM {$p}session WHERE userid = {$id}");
             $db->query("DELETE FROM {$p}users WHERE id = {$id}");

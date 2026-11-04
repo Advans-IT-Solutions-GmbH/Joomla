@@ -214,13 +214,13 @@ final class TeamMailer implements TeamMailerInterface
     public static function fill(array $template, array $values, array $links = []): array
     {
         $values = array_map(static function (string $value) use ($links): string {
-            $value = trim((string) preg_replace('/[\r\n\t]+/', ' ', $value));
+            $value = trim((string) preg_replace('/[\r\n\t\x{0B}\x{0C}\x{85}\x{2028}\x{2029}]+/u', ' ', $value));
 
             return \in_array($value, $links, true) ? $value : str_replace('://', ":\u{2060}//", $value);
         }, $values);
 
         return [
-            'subject' => trim((string) preg_replace('/[\r\n]+/', ' ', strtr($template['subject'], $values))),
+            'subject' => trim((string) preg_replace('/[\r\n\x{0B}\x{0C}\x{85}\x{2028}\x{2029}]+/u', ' ', strtr($template['subject'], $values))),
             'body' => strtr($template['body'], $values),
         ];
     }

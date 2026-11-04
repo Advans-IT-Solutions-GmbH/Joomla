@@ -54,6 +54,14 @@ class TemplateTable extends Table
             return false;
         }
 
+        // The stored purpose counts as well as the submitted one: a team template cannot be
+        // turned into another purpose by somebody who may not edit team templates.
+        $stored = (int) $this->id > 0 ? $this->storedPurposes([(int) $this->id]) : [];
+
+        if (array_intersect($stored, self::SITE_WIDE_PURPOSES) !== [] && !$this->mayEditTeamTemplates()) {
+            return false;
+        }
+
         if (in_array($this->purpose, self::SITE_WIDE_PURPOSES, true) && !$this->teamTemplateAllowed()) {
             return false;
         }
@@ -74,11 +82,7 @@ class TemplateTable extends Table
      */
     private function teamTemplateAllowed(): bool
     {
-        $app = Factory::getApplication();
-
-        if ($app->isClient('administrator') && !$app->getIdentity()?->authorise('core.admin', 'com_appointments')) {
-            $this->setError(Text::_('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_ADMIN'));
-
+        if (!$this->mayEditTeamTemplates()) {
             return false;
         }
 
@@ -92,6 +96,75 @@ class TemplateTable extends Table
         }
 
         return true;
+    }
+
+    /**
+     * Publishing, unpublishing and deleting a team template need core.admin too.
+     */
+    public function publish($pks = null, $state = 1, $userId = 0)
+    {
+        if (array_intersect($this->storedPurposes($this->keysOf($pks)), self::SITE_WIDE_PURPOSES) !== [] && !$this->mayEditTeamTemplates()) {
+            return false;
+        }
+
+        return parent::publish($pks, $state, $userId);
+    }
+
+    public function delete($pk = null)
+    {
+        if (array_intersect($this->storedPurposes($this->keysOf($pk)), self::SITE_WIDE_PURPOSES) !== [] && !$this->mayEditTeamTemplates()) {
+            return false;
+        }
+
+        return parent::delete($pk);
+    }
+
+    /**
+     * In the backend only a user with core.admin on the component changes team templates.
+     * The installer and the command line (no backend user) are not restricted here.
+     */
+    private function mayEditTeamTemplates(): bool
+    {
+        $app = Factory::getApplication();
+
+        if ($app->isClient('administrator') && !$app->getIdentity()?->authorise('core.admin', 'com_appointments')) {
+            $this->setError(Text::_('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_ADMIN'));
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param   mixed  $pks  A key, a list of keys or null for the loaded row.
+     *
+     * @return  int[]
+     */
+    private function keysOf($pks): array
+    {
+        $pks = $pks === null ? [$this->id] : (array) $pks;
+
+        return array_values(array_filter(array_map('intval', $pks), static fn (int $id): bool => $id > 0));
+    }
+
+    /**
+     * @param   int[]  $ids
+     *
+     * @return  string[]  The stored purposes of these rows.
+     */
+    private function storedPurposes(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('purpose'))->from($db->quoteName('#__appointments_templates'))
+            ->where($db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')');
+
+        return array_map('strval', $db->setQuery($query)->loadColumn());
     }
 
     private function duplicate(): bool
