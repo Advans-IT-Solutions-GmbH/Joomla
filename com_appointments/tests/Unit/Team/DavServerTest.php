@@ -1,0 +1,466 @@
+<?php
+/**
+ * @package     Appointments Tests
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+require_once __DIR__ . '/DavTestKit.php';
+
+use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Advans\Component\Appointments\Administrator\Service\Team\CleanupServiceInterface;
+use Advans\Component\Appointments\Vendor\Sabre\HTTP\Request;
+use Advans\Component\Appointments\Vendor\Sabre\HTTP\ResponseInterface;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * The CalDAV server end to end with the real sabre/dav copy and in-memory
+ * services: transport and authentication rules, discovery, default deny, the
+ * roles of specification 7, sync, ETag preconditions and the clean-up views.
+ */
+final class DavServerTest extends TestCase
+{
+    private DavWorld $world;
+    private string $alice;
+    private string $teamUri;
+    private string $otherUri;
+
+    protected function setUp(): void
+    {
+        $this->world = new DavWorld($this);
+        $this->teamUri = $this->world->calendar(1, 'Team');
+        $this->otherUri = $this->world->calendar(2, 'Board');
+        $this->alice = $this->world->device(5, 'Alice');
+    }
+
+    private static function ics(string $uid, string $summary = 'Planning with client', string $start = '20261110T090000Z', string $end = '20261110T100000Z'): string
+    {
+        return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:{$uid}\r\nDTSTAMP:20261104T100000Z\r\n"
+            . "DTSTART:{$start}\r\nDTEND:{$end}\r\nSUMMARY:{$summary}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    }
+
+    /**
+     * @param   array<string, string>  $headers
+     */
+    private function send(string $method, string $path, array $headers = [], string $body = '', ?string $password = null, string $user = 'alice', bool $https = true): ResponseInterface
+    {
+        if (!array_key_exists('Authorization', $headers)) {
+            $headers['Authorization'] = 'Basic ' . base64_encode($user . ':' . ($password ?? $this->alice));
+        }
+
+        if ($headers['Authorization'] === null) {
+            unset($headers['Authorization']);
+        }
+
+        return $this->world->gateway($https)->handle(new Request($method, $path, $headers, $body));
+    }
+
+    private function propfind(string $path, string $depth, string $props = '<d:resourcetype/><d:getetag/>'): ResponseInterface
+    {
+        return $this->send('PROPFIND', $path, ['Depth' => $depth, 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"><d:prop>' . $props . '</d:prop></d:propfind>');
+    }
+
+    private function sync(string $calendarUri, string $token = ''): ResponseInterface
+    {
+        return $this->send('REPORT', '/dav/calendars/u5/' . $calendarUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>' . htmlspecialchars($token) . '</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>');
+    }
+
+    private static function body(ResponseInterface $response): string
+    {
+        return $response->getBodyAsString();
+    }
+
+    private static function assertNoStore(ResponseInterface $response): void
+    {
+        self::assertSame('private, no-store', $response->getHeader('Cache-Control'));
+        self::assertSame('noindex, nofollow', $response->getHeader('X-Robots-Tag'));
+        self::assertNull($response->getHeader('Set-Cookie'));
+
+        foreach (array_keys($response->getHeaders()) as $name) {
+            self::assertStringStartsNotWith('x-sabre', strtolower((string) $name));
+        }
+    }
+
+    // Transport and authentication.
+
+    public function testPlainHttpIsRefusedWithoutBodyOrRedirect(): void
+    {
+        foreach (['/dav/', '/.well-known/caldav'] as $path) {
+            $response = $this->send('PROPFIND', $path, [], '', null, 'alice', false);
+
+            self::assertSame(403, $response->getStatus());
+            self::assertSame('', self::body($response));
+            self::assertNull($response->getHeader('Location'));
+            self::assertNoStore($response);
+        }
+
+        self::assertSame([], $this->world->lockout->calls);
+    }
+
+    public function testWellKnownRedirectsEveryMethodToTheDavAddress(): void
+    {
+        foreach (['GET', 'PROPFIND', 'OPTIONS', 'PUT'] as $method) {
+            $response = $this->send($method, '/.well-known/caldav', ['Authorization' => null]);
+
+            self::assertSame(301, $response->getStatus());
+            self::assertSame('https://www.example.org/dav/', $response->getHeader('Location'));
+            self::assertNoStore($response);
+        }
+
+        $response = $this->world->gateway(true, 'https://cal.example.org/calendars/')->handle(new Request('PROPFIND', '/.well-known/caldav/'));
+        self::assertSame('https://cal.example.org/calendars/', $response->getHeader('Location'));
+    }
+
+    public function testEveryMethodIsAuthenticatedFirst(): void
+    {
+        foreach (['OPTIONS', 'PROPFIND', 'REPORT', 'PUT', 'DELETE', 'MKCALENDAR'] as $method) {
+            $response = $this->send($method, '/dav/', ['Authorization' => null]);
+
+            self::assertSame(401, $response->getStatus(), $method);
+            self::assertSame('Basic realm="Test site", charset="UTF-8"', $response->getHeader('WWW-Authenticate'));
+            self::assertNull($response->getHeader('X-Appointments-Authorization'));
+            self::assertNoStore($response);
+        }
+
+        self::assertSame([], $this->world->lockout->calls, 'A request without credentials is no failed sign-in.');
+    }
+
+    public function testEveryRefusedCredentialGetsTheSameAnswer(): void
+    {
+        $answers = [
+            'Joomla password'        => $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '', 'correct horse battery staple'),
+            'wrong app password'     => $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '', 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567'),
+            'unknown user'           => $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '', null, 'mallory'),
+            'other scheme'           => $this->send('PROPFIND', '/dav/', ['Depth' => '0', 'Authorization' => 'Bearer abc']),
+            'broken Base64'          => $this->send('PROPFIND', '/dav/', ['Depth' => '0', 'Authorization' => 'Basic ***']),
+        ];
+
+        foreach ($answers as $case => $response) {
+            self::assertSame(401, $response->getStatus(), $case);
+            self::assertSame('', self::body($response), $case);
+            self::assertSame('received', $response->getHeader('X-Appointments-Authorization'), $case);
+            self::assertSame(
+                ['Cache-Control', 'Pragma', 'X-Robots-Tag', 'X-Content-Type-Options', 'WWW-Authenticate', 'X-Appointments-Authorization'],
+                array_keys($response->getHeaders()),
+                $case
+            );
+        }
+
+        // The Joomla password never reached a lookup; the other two well-formed attempts did.
+        self::assertSame(2, $this->world->authenticateCalls);
+        self::assertSame(['retry:alice', 'failure:alice', 'retry:alice', 'failure:alice', 'retry:mallory', 'failure:mallory'], $this->world->lockout->calls);
+        self::assertSame(['malformed', 'invalid', 'invalid'], array_map(static fn (array $e) => $e[1]['details']['reason'], $this->world->audit->events));
+    }
+
+    public function testALockIsAnsweredWith429AlsoForTheCorrectPassword(): void
+    {
+        $this->world->lockout->retryAfter = 240;
+        $response = $this->propfind('/dav/', '0');
+
+        self::assertSame(429, $response->getStatus());
+        self::assertSame('240', $response->getHeader('Retry-After'));
+        self::assertSame(0, $this->world->authenticateCalls);
+        self::assertSame([AuditEvent::DAV_LOCKED], $this->world->audit->names());
+    }
+
+    public function testSuccessIsRecordedAndTheUserNameIsCaseInsensitiveForTheLock(): void
+    {
+        $response = $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '', null, 'ALICE');
+
+        self::assertSame(207, $response->getStatus());
+        self::assertSame(['retry:alice', 'success:alice'], $this->world->lockout->calls);
+    }
+
+    public function testAnActiveDeviceWithoutSecondFactorIsRefused(): void
+    {
+        $password = $this->world->device(6, 'bob', TeamStates::DEVICE_ACTIVE, false);
+        $this->world->grant(6, 1, CalendarRole::Write);
+
+        $response = $this->send('PROPFIND', '/dav/calendars/u6/', ['Depth' => '1'], '', $password, 'bob');
+
+        self::assertSame(403, $response->getStatus());
+        self::assertSame('', self::body($response));
+        self::assertSame('no_mfa', $this->world->audit->events[0][1]['details']['reason']);
+    }
+
+    public function testBodiesAboveOneMebibyteAndXmlEntitiesAreRefused(): void
+    {
+        self::assertSame(413, $this->send('PUT', '/dav/calendars/u5/' . $this->teamUri . '/a.ics', ['Content-Length' => '1048577'])->getStatus());
+        self::assertSame(413, $this->send('PUT', '/dav/calendars/u5/' . $this->teamUri . '/a.ics', [], str_repeat('x', 1048577))->getStatus());
+
+        $xxe = '<?xml version="1.0"?><!DOCTYPE d [<!ENTITY x SYSTEM "file:///etc/passwd">]><d:propfind xmlns:d="DAV:"><d:prop><d:displayname>&x;</d:displayname></d:prop></d:propfind>';
+        self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], $xxe)->getStatus());
+    }
+
+    public function testMethodsOutsideTheCalDavSubsetAreForbidden(): void
+    {
+        foreach (['MKCALENDAR', 'MKCOL', 'ACL', 'POST', 'MOVE', 'COPY', 'LOCK', 'UNLOCK', 'TRACE'] as $method) {
+            $response = $this->send($method, '/dav/calendars/u5/x/');
+
+            self::assertSame(403, $response->getStatus(), $method);
+            self::assertNoStore($response);
+        }
+    }
+
+    public function testAServiceThatIsNotReadyGivesNoInternalDetail(): void
+    {
+        $this->world->notReady = true;
+        $response = $this->propfind('/dav/', '0');
+
+        self::assertSame(503, $response->getStatus());
+        self::assertSame('', self::body($response));
+    }
+
+    // Discovery and default deny.
+
+    public function testDiscoveryLeadsToTheOwnPrincipalAndHome(): void
+    {
+        $root = $this->propfind('/dav/', '0', '<d:current-user-principal/>');
+        self::assertSame(207, $root->getStatus());
+        self::assertStringContainsString('<d:href>/dav/principals/u5/</d:href>', self::body($root));
+
+        $principal = $this->propfind('/dav/principals/u5/', '0', '<c:calendar-home-set/><d:displayname/>');
+        self::assertStringContainsString('<d:href>/dav/calendars/u5/</d:href>', self::body($principal));
+        self::assertNoStore($principal);
+    }
+
+    public function testNoOtherPrincipalOrHomeExists(): void
+    {
+        self::assertSame(404, $this->propfind('/dav/principals/u6/', '0')->getStatus());
+        self::assertSame(404, $this->propfind('/dav/calendars/u6/', '0')->getStatus());
+
+        $list = $this->propfind('/dav/principals/', '1');
+        self::assertSame(1, substr_count(self::body($list), '/dav/principals/u'));
+
+        $search = $this->send('REPORT', '/dav/principals/', ['Depth' => '0', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:principal-property-search xmlns:d="DAV:"><d:property-search><d:prop><d:displayname/></d:prop><d:match>a</d:match></d:property-search><d:prop><d:displayname/></d:prop></d:principal-property-search>');
+        self::assertSame(403, $search->getStatus());
+    }
+
+    public function testWithoutAGrantTheHomeIsEmptyAndACalendarIsNotFound(): void
+    {
+        $home = $this->propfind('/dav/calendars/u5/', '1');
+
+        self::assertSame(207, $home->getStatus());
+        self::assertStringNotContainsString($this->teamUri, self::body($home));
+        self::assertSame(404, $this->propfind('/dav/calendars/u5/' . $this->teamUri . '/', '0')->getStatus());
+    }
+
+    public function testTheHomeListsExactlyTheGrantedCalendars(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $home = self::body($this->propfind('/dav/calendars/u5/', '1', '<d:displayname/><cs:getctag/><d:sync-token/><c:supported-calendar-component-set/>'));
+
+        self::assertStringContainsString($this->teamUri, $home);
+        self::assertStringNotContainsString($this->otherUri, $home);
+        self::assertStringContainsString('<cs:getctag>1</cs:getctag>', $home);
+        self::assertStringContainsString('http://sabre.io/ns/sync/1', $home);
+        self::assertStringContainsString('<cal:comp name="VEVENT"/>', $home);
+        self::assertStringNotContainsString('VTODO', $home);
+        self::assertSame(404, $this->propfind('/dav/calendars/u5/' . $this->otherUri . '/', '0')->getStatus());
+    }
+
+    // Roles.
+
+    public function testReadRoleReadsButNeverWrites(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->world->store->seed(1, 'one.ics', self::ics('one'));
+        $base = '/dav/calendars/u5/' . $this->teamUri . '/';
+
+        $get = $this->send('GET', $base . 'one.ics');
+        self::assertSame(200, $get->getStatus());
+        self::assertStringContainsString('Planning with client', self::body($get));
+        self::assertNoStore($get);
+
+        self::assertSame(403, $this->send('PUT', $base . 'two.ics', ['Content-Type' => 'text/calendar'], self::ics('two'))->getStatus());
+        self::assertSame(403, $this->send('DELETE', $base . 'one.ics')->getStatus());
+        self::assertCount(1, $this->world->store->objects[1]);
+    }
+
+    public function testWriteRoleCreatesChangesAndDeletesWithEtagPreconditions(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $base = '/dav/calendars/u5/' . $this->teamUri . '/';
+
+        $created = $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-None-Match' => '*'], self::ics('new'));
+        self::assertSame(201, $created->getStatus());
+        $etag = (string) $created->getHeader('ETag');
+        self::assertMatchesRegularExpression('/^"[0-9a-f]{32}"$/', $etag);
+
+        self::assertSame(412, $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-None-Match' => '*'], self::ics('new'))->getStatus());
+        self::assertSame(412, $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-Match' => '"0000"'], self::ics('new', 'Changed'))->getStatus());
+
+        $changed = $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-Match' => $etag], self::ics('new', 'Changed'));
+        self::assertSame(204, $changed->getStatus());
+        self::assertStringContainsString('Changed', $this->world->store->objects[1]['new.ics']['ics']);
+
+        $conflict = $this->send('PUT', $base . 'copy.ics', ['Content-Type' => 'text/calendar'], self::ics('new'));
+        self::assertSame(403, $conflict->getStatus());
+        self::assertStringContainsString('no-uid-conflict', self::body($conflict));
+        self::assertStringNotContainsString('new.ics', self::body($conflict));
+
+        self::assertSame(412, $this->send('DELETE', $base . 'new.ics', ['If-Match' => '"0000"'])->getStatus());
+        self::assertSame(204, $this->send('DELETE', $base . 'new.ics')->getStatus());
+        self::assertSame([], $this->world->store->objects[1]);
+    }
+
+    public function testObjectRulesAreEnforced(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $base = '/dav/calendars/u5/' . $this->teamUri . '/';
+
+        $todo = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20261104T100000Z\r\nSUMMARY:x\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        self::assertSame(403, $this->send('PUT', $base . 'todo.ics', ['Content-Type' => 'text/calendar'], $todo)->getStatus());
+        self::assertSame(415, $this->send('PUT', $base . 'bad.ics', ['Content-Type' => 'text/calendar'], 'not a calendar')->getStatus());
+        self::assertSame(400, $this->send('PUT', $base . 'bad%20name.ics', ['Content-Type' => 'text/calendar'], self::ics('n'))->getStatus());
+        self::assertSame([], $this->world->store->objects[1]);
+    }
+
+    public function testFreeBusyServesRedactedBlocksWithoutAKeyAndWithoutTheOriginalAddresses(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::FreeBusy);
+        $this->world->store->seed(1, 'secret-uid-123.ics', self::ics('secret-uid-123', 'Salary review with Eve'));
+        $base = '/dav/calendars/u5/' . $this->teamUri . '/';
+
+        $list = self::body($this->propfind($base, '1'));
+        self::assertStringNotContainsString('secret-uid-123', $list);
+        self::assertSame(1, preg_match('#' . preg_quote($base, '#') . '(fb-[0-9a-f]{40}\.ics)#', $list, $match));
+
+        $get = self::body($this->send('GET', $base . $match[1]));
+        self::assertStringContainsString('SUMMARY:Busy', $get);
+        self::assertStringContainsString('CLASS:CONFIDENTIAL', $get);
+        self::assertStringContainsString('DTSTART:20261110T090000Z', $get);
+        self::assertStringNotContainsString('Salary', $get);
+        self::assertStringNotContainsString('secret-uid-123', $get);
+
+        $query = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"/></c:comp-filter></c:filter></c:calendar-query>'));
+        self::assertStringNotContainsString('Salary', $query);
+
+        self::assertSame(403, $this->send('PUT', $base . 'x.ics', ['Content-Type' => 'text/calendar'], self::ics('x'))->getStatus());
+        self::assertSame(0, $this->world->keyringOpened);
+    }
+
+    public function testOnlyTheOwnDisplayPropertiesCanBeChanged(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $base = '/dav/calendars/u5/' . $this->teamUri . '/';
+        $patch = static fn (string $set): string => '<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:" xmlns:a="http://apple.com/ns/ical/"><d:set><d:prop>' . $set . '</d:prop></d:set></d:propertyupdate>';
+
+        $ok = $this->send('PROPPATCH', $base, ['Content-Type' => 'application/xml'], $patch('<a:calendar-color>#ff0000</a:calendar-color><a:calendar-order>3</a:calendar-order>'));
+        self::assertSame(207, $ok->getStatus());
+        self::assertStringContainsString('200 OK', self::body($ok));
+        self::assertSame(['colour' => '#FF0000', 'order' => 3], $this->world->clientProps[1]);
+
+        $refused = $this->send('PROPPATCH', $base, ['Content-Type' => 'application/xml'], $patch('<d:displayname>Mine</d:displayname>'));
+        self::assertStringContainsString('403 Forbidden', self::body($refused));
+        self::assertSame('Team', $this->world->calendars[1]['title']);
+
+        $bad = $this->send('PROPPATCH', $base, ['Content-Type' => 'application/xml'], $patch('<a:calendar-color>red;drop</a:calendar-color>'));
+        self::assertStringContainsString('403 Forbidden', self::body($bad));
+
+        $home = self::body($this->propfind('/dav/calendars/u5/', '1', '<a:calendar-color xmlns:a="http://apple.com/ns/ical/"/>'));
+        self::assertStringContainsString('#FF0000', $home);
+    }
+
+    public function testCalendarsCannotBeCreatedOrDeletedOverCalDav(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Manage);
+
+        self::assertSame(403, $this->send('DELETE', '/dav/calendars/u5/' . $this->teamUri . '/')->getStatus());
+        self::assertSame(403, $this->send('MKCALENDAR', '/dav/calendars/u5/new/')->getStatus());
+        self::assertArrayHasKey(1, $this->world->calendars);
+    }
+
+    // Sync.
+
+    public function testSyncCollectionIsIncrementalAndTheCtagFollowsTheToken(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $this->world->store->seed(1, 'b.ics', self::ics('b'));
+
+        $first = self::body($this->sync($this->teamUri));
+        self::assertStringContainsString('a.ics', $first);
+        self::assertStringContainsString('b.ics', $first);
+        self::assertStringContainsString('<d:sync-token>http://sabre.io/ns/sync/3</d:sync-token>', $first);
+
+        $this->world->store->delete(1, 'a.ics', null, null);
+        $this->world->store->seed(1, 'c.ics', self::ics('c'));
+
+        $next = self::body($this->sync($this->teamUri, 'http://sabre.io/ns/sync/3'));
+        self::assertStringContainsString('c.ics', $next);
+        self::assertStringNotContainsString('b.ics', $next);
+        self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $next);
+        self::assertStringContainsString('http://sabre.io/ns/sync/5', $next);
+
+        $this->world->store->oldest[1] = 4;
+        $expired = $this->sync($this->teamUri, 'http://sabre.io/ns/sync/2');
+        self::assertSame(403, $expired->getStatus());
+        self::assertStringContainsString('valid-sync-token', self::body($expired));
+
+        self::assertSame(403, $this->sync($this->teamUri, 'urn:other:1')->getStatus());
+    }
+
+    public function testASuccessfulRequestTouchesTheDeviceAndCalendar(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->propfind('/dav/calendars/u5/' . $this->teamUri . '/', '1');
+        $this->propfind('/dav/principals/u5/', '0');
+
+        self::assertSame([1, null], $this->world->touched);
+    }
+
+    // Clean-up.
+
+    public function testCleanupEmptyServesTheKnownCalendarsWithoutObjectsAndReportsEverythingDeleted(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $password = $this->world->device(7, 'carol', TeamStates::DEVICE_CLEANUP_EMPTY, false);
+        $this->world->grant(7, 1, CalendarRole::Read);
+        $this->world->inCleanup = [1];
+        $base = '/dav/calendars/u7/' . $this->teamUri . '/';
+
+        $home = self::body($this->send('PROPFIND', '/dav/calendars/u7/', ['Depth' => '1'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/></d:prop></d:propfind>', $password, 'carol'));
+        self::assertStringContainsString('<cs:getctag>2-c</cs:getctag>', $home);
+
+        $list = $this->send('PROPFIND', $base, ['Depth' => '1'], '', $password, 'carol');
+        self::assertSame(207, $list->getStatus());
+        self::assertStringNotContainsString('a.ics', self::body($list));
+        self::assertSame([1], $this->world->delivered);
+
+        $sync = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/1</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
+        self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $sync);
+        self::assertStringContainsString('http://sabre.io/ns/sync/2-c', $sync);
+
+        self::assertSame(403, $this->send('PUT', $base . 'n.ics', ['Content-Type' => 'text/calendar'], self::ics('n'), $password, 'carol')->getStatus());
+        self::assertSame(404, $this->send('GET', $base . 'a.ics', [], '', $password, 'carol')->getStatus());
+        self::assertSame(0, $this->world->keyringOpened);
+    }
+
+    public function testCleanupHiddenListsNothingAndMarksTheHomeSeen(): void
+    {
+        $password = $this->world->device(8, 'dave', TeamStates::DEVICE_CLEANUP_HIDDEN, false);
+        $this->world->grant(8, 1, CalendarRole::Read);
+
+        $home = $this->send('PROPFIND', '/dav/calendars/u8/', ['Depth' => '1'], '', $password, 'dave');
+        self::assertSame(207, $home->getStatus());
+        self::assertStringNotContainsString($this->teamUri, self::body($home));
+        self::assertSame(1, $this->world->homeSeen);
+        self::assertSame(404, $this->send('PROPFIND', '/dav/calendars/u8/' . $this->teamUri . '/', ['Depth' => '0'], '', $password, 'dave')->getStatus());
+    }
+
+    public function testAViewOfEmptyForOneCalendarOfAnActiveDevice(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $this->world->views[1] = CleanupServiceInterface::VIEW_EMPTY;
+
+        $list = self::body($this->propfind('/dav/calendars/u5/' . $this->teamUri . '/', '1'));
+        self::assertStringNotContainsString('a.ics', $list);
+        self::assertSame(403, $this->send('PUT', '/dav/calendars/u5/' . $this->teamUri . '/b.ics', ['Content-Type' => 'text/calendar'], self::ics('b'))->getStatus());
+    }
+}

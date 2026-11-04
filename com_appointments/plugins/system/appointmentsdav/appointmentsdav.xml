@@ -27,4 +27,21 @@
         <language tag="fr-FR">fr-FR/plg_system_appointmentsdav.ini</language>
         <language tag="fr-FR">fr-FR/plg_system_appointmentsdav.sys.ini</language>
     </languages>
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="dav_base_url"
+                    type="url"
+                    label="PLG_SYSTEM_APPOINTMENTSDAV_FIELD_DAV_BASE_URL_LABEL"
+                    description="PLG_SYSTEM_APPOINTMENTSDAV_FIELD_DAV_BASE_URL_DESC"
+                    filter="url"
+                    validate="url"
+                    scheme="https"
+                    default=""
+                    hint="https://www.example.org/dav/"
+                />
+            </fieldset>
+        </fields>
+    </config>
 </extension>
