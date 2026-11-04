@@ -157,8 +157,9 @@ final class LockoutService implements LockoutServiceInterface
         }
 
         // A request without a valid form token never reaches the password
-        // check, so it must not take an attempt either.
-        if (!Session::checkToken('post')) {
+        // check, so it must not take an attempt either. Compared directly:
+        // Session::checkToken() would redirect a new session itself.
+        if ($post->get(Session::getFormToken(), '', 'alnum') !== '1') {
             return;
         }
 

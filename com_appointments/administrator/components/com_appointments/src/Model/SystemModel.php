@@ -436,7 +436,7 @@ class SystemModel extends BaseDatabaseModel
         // POST with its token, never from a link.
         $input = Factory::getApplication()->getInput();
         $this->setState('probe', $input->getMethod() === 'POST' && $input->post->getInt('probe', 0) === 1
-            && \Joomla\CMS\Session\Session::checkToken('post'));
+            && $input->post->get(\Joomla\CMS\Session\Session::getFormToken(), '', 'alnum') === '1');
     }
 
     private function query(): \Joomla\Database\QueryInterface

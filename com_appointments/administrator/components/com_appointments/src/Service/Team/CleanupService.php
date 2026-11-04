@@ -69,7 +69,7 @@ final class CleanupService implements CleanupServiceInterface
         }
 
         $db = $this->db();
-        $this->startPhase($deviceId);
+        $this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY);
         $db->setQuery($this->query()->update($db->quoteName('#__appointments_device_calendars'))
             ->set($db->quoteName('cleanup_delivered_utc') . ' = NULL')
             ->where($db->quoteName('device_id') . ' = ' . $deviceId))->execute();
@@ -187,7 +187,7 @@ final class CleanupService implements CleanupServiceInterface
 
             if ($device['cleanup_started_utc'] === null) {
                 // A state set without a phase start: the phase starts now.
-                $this->startPhase($id);
+                $this->startPhase($id, (int) $device['state'], true);
 
                 continue;
             }
@@ -412,7 +412,14 @@ final class CleanupService implements CleanupServiceInterface
         // state with the old (expired) start and revoke at once. If the state
         // change does not happen, the old start is put back.
         $before = $this->device($deviceId);
-        $this->startPhase($deviceId);
+
+        // Only a device that is still in the empty phase gets the new start: a
+        // stale run that read the empty state never moves a hidden device's
+        // start (and with it its revocation) further out.
+        if ($before === null || (int) $before['state'] !== TeamStates::DEVICE_CLEANUP_EMPTY
+            || !$this->startPhase($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY)) {
+            return false;
+        }
 
         try {
             $changed = $this->services->devices()->changeState($deviceId, TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN);
@@ -467,14 +474,27 @@ final class CleanupService implements CleanupServiceInterface
 
     /**
      * `cleanup_started_utc` is outside the device's row MAC: it only decides
-     * when a phase may end, and a phase only ever moves towards revoked.
+     * when a phase may end, and a phase only ever moves towards revoked. Set
+     * only while the device is in the given state (and, with $onlyIfEmpty,
+     * only when no start is set), so a stale caller cannot postpone a phase.
+     *
+     * @return  bool  Whether the start was written.
      */
-    private function startPhase(int $deviceId): void
+    private function startPhase(int $deviceId, int $state, bool $onlyIfEmpty = false): bool
     {
         $db = $this->db();
-        $db->setQuery($this->query()->update($db->quoteName('#__appointments_devices'))
+        $query = $this->query()->update($db->quoteName('#__appointments_devices'))
             ->set($db->quoteName('cleanup_started_utc') . ' = ' . $db->quote($this->time()))
-            ->where($db->quoteName('id') . ' = ' . $deviceId))->execute();
+            ->where($db->quoteName('id') . ' = ' . $deviceId)
+            ->where($db->quoteName('state') . ' = ' . $state);
+
+        if ($onlyIfEmpty) {
+            $query->where($db->quoteName('cleanup_started_utc') . ' IS NULL');
+        }
+
+        $db->setQuery($query)->execute();
+
+        return (int) $db->getAffectedRows() === 1;
     }
 
     private function undelivered(int $deviceId): int
