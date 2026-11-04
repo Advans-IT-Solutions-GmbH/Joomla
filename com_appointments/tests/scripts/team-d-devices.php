@@ -177,7 +177,15 @@ return static function (TeamSuite $suite): void {
     });
 
     $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite) {
-        return $suite->http('GET', '/index.php?option=com_appointments&view=mycalendars')['status'] === 404;
+        // With strict routing Joomla first redirects to the SEF address of the view; follow it.
+        $browser = new TeamDBrowser($suite->base);
+        $browser->request('/index.php?option=com_appointments&view=mycalendars');
+
+        if ($browser->status !== 404) {
+            throw new RuntimeException('HTTP ' . $browser->status);
+        }
+
+        return true;
     });
 
     $suite->test('The activation page answers 404 while the internet calendars are off', static function () use ($suite) {
@@ -185,10 +193,16 @@ return static function (TeamSuite $suite): void {
     });
 
     $suite->test('Device and activation tasks refuse a request without form token', static function () use ($suite) {
+        $statuses = [];
+
         foreach (['devices.create', 'devices.rename', 'devices.remove', 'activation.complete'] as $task) {
-            if ($suite->http('POST', '/index.php?option=com_appointments&task=' . $task, ['Content-Type: application/x-www-form-urlencoded'], 'name=x&rule=1')['status'] !== 403) {
-                return false;
-            }
+            $browser = new TeamDBrowser($suite->base);
+            $browser->request('/index.php?option=com_appointments&task=' . $task, ['name' => 'x', 'rule' => 1], 0);
+            $statuses[$task] = $browser->status . ($browser->header('Location') !== '' ? ' -> ' . $browser->header('Location') : '');
+        }
+
+        if (array_values(array_unique(array_map('intval', $statuses))) !== [403]) {
+            throw new RuntimeException(json_encode($statuses));
         }
 
         return true;
