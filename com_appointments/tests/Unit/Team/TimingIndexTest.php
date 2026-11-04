@@ -188,6 +188,14 @@ final class TimingIndexTest extends TestCase
         } catch (TeamException $e) {
             self::assertSame(400, $e->getCode());
         }
+
+        try {
+            (new TimingIndex())->extract(self::calendar(self::event('DTSTART:20270101T090000Z', 'DTEND:20270101T100000Z',
+                'RDATE;VALUE=PERIOD:20270105T090000Z/PT2H')));
+            self::fail('A period the library cannot expand was dropped silently.');
+        } catch (TeamException $e) {
+            self::assertSame(400, $e->getCode());
+        }
     }
 
     public function testRuleAndExtraDatesAreBothExpanded(): void

@@ -168,11 +168,19 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             return;
         }
 
+        $db = $this->services->db();
+        // The booking row stays locked while its copy is written: two refreshes of the same
+        // booking (a reschedule, a new conference link, a guest removal) are serialised, and
+        // each writes the row as it is at that moment, so an older one never overwrites a newer
+        // copy. Lock order as everywhere: booking row, then calendar.
+        $db->transactionStart(true);
+
         try {
-            $row = $this->booking($bookingId);
+            $row = $this->booking($bookingId, true);
 
             if ($row === null || $row['anonymised_utc'] !== null || (int) $row['state'] === 2) {
                 $this->remove($bookingId);
+                $db->transactionCommit(true);
 
                 return;
             }
@@ -187,21 +195,14 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $this->remove($bookingId);
             }
 
-            if (!$writable) {
-                return;
+            if ($writable) {
+                $this->services->objects()->putSealed($target, self::objectIcs($row, $event), $bookingId);
+                $this->log(AuditEvent::BOOKING_WRITTEN, $target, $bookingId);
             }
 
-            $this->services->objects()->putSealed($target, self::objectIcs($row, $event), $bookingId);
-            $this->log(AuditEvent::BOOKING_WRITTEN, $target, $bookingId);
-
-            // A cancellation or erasure that committed while the copy was written has
-            // already removed the old copy; do not leave the new one behind.
-            $after = $this->booking($bookingId);
-
-            if ($after === null || $after['anonymised_utc'] !== null || (int) $after['state'] === 2) {
-                $this->remove($bookingId);
-            }
+            $db->transactionCommit(true);
         } catch (\Throwable $e) {
+            $db->transactionRollback(true);
             $this->failure('write', $bookingId, $e);
         }
 
@@ -692,8 +693,9 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
     /**
      * Bookings of other hosts whose event type writes into one of these
-     * calendars, read from the bookings table: they block even before their
-     * calendar copy exists or when writing it failed.
+     * calendars and who may still write there, read from the bookings table:
+     * they block even before their calendar copy exists or when writing it
+     * failed.
      *
      * @param   int[]  $calendarIds
      *
@@ -702,7 +704,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     private function otherHostsBookings(array $calendarIds, int $host, \DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc): array
     {
         $db = $this->services->db();
-        $query = $this->query()->select($db->quoteName(['b.start_utc', 'b.end_utc']))
+        $query = $this->query()->select($db->quoteName(['b.start_utc', 'b.end_utc', 'b.host_user_id', 'e.calendar_id']))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->where($db->quoteName('e.calendar_id') . ' IN (' . implode(',', array_map('intval', $calendarIds)) . ')')
@@ -711,8 +713,18 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             ->where($db->quoteName('b.start_utc') . ' < ' . $db->quote($toUtc->format('Y-m-d H:i:s')))
             ->where($db->quoteName('b.end_utc') . ' > ' . $db->quote($fromUtc->format('Y-m-d H:i:s')));
         $windows = [];
+        $writers = [];
 
         foreach ($db->setQuery($query)->loadAssocList() as $row) {
+            // Only a host who may still write into the calendar puts bookings there; after a
+            // revoked grant that host's bookings are none of this calendar's business.
+            $writer = (int) $row['host_user_id'] . ':' . (int) $row['calendar_id'];
+            $writers[$writer] ??= $this->canWrite((int) $row['host_user_id'], (int) $row['calendar_id']);
+
+            if (!$writers[$writer]) {
+                continue;
+            }
+
             $start = UtcTimestamp::parse((string) $row['start_utc']);
             $end = UtcTimestamp::parse((string) $row['end_utc']);
 
@@ -727,14 +739,14 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     /**
      * @return  array<string, mixed>|null
      */
-    private function booking(int $bookingId): ?array
+    private function booking(int $bookingId, bool $lock = false): ?array
     {
         $db = $this->services->db();
         $query = $this->query()->select($db->quoteName(['id', 'eventtype_id', 'host_user_id', 'uid', 'sequence', 'state',
             'start_utc', 'end_utc', 'modified_utc', 'invitee_name', 'invitee_email', 'guest_emails', 'conference_url', 'anonymised_utc']))
             ->from($db->quoteName('#__appointments_bookings'))
             ->where($db->quoteName('id') . ' = ' . $bookingId);
-        $row = $db->setQuery($query)->loadAssoc() ?: null;
+        $row = $db->setQuery((string) $query . ($lock ? ' FOR UPDATE' : ''))->loadAssoc() ?: null;
 
         // Personal fields are encrypted at rest; one that cannot be decrypted is left out of the copy.
         return $row === null ? null : (new BookingData($this->services->keyProvider()))->openLenient($row);

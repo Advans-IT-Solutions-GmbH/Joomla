@@ -44,7 +44,7 @@ defined('_JEXEC') or die;
  *   recurrence library cannot expand in bounded time is refused (400) instead
  *   of being dropped, because dropping it would hide busy time.
  * - Enumerations (STATUS, TRANSP, X-MICROSOFT-CDO-BUSYSTATUS) only with a
- *   defined value; RDATE of type PERIOD is dropped.
+ *   defined value; RDATE of type PERIOD, which the library cannot expand, is refused (400), because dropping it would hide busy time.
  *
  * The expansion fails closed: a rule that needs more than {@see self::MAX_SKIP_STEPS}
  * steps before the window or {@see self::MAX_STEPS} instances inside it, or
@@ -123,7 +123,7 @@ final class TimingIndex implements TimingIndexInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_E_TIMING_INVALID', 400);
         }
 
-        $calendar = $this->read($ics, Reader::OPTION_FORGIVING);
+        $calendar = $this->read($ics, true);
         $events = $calendar->select('VEVENT');
 
         if ($events === []) {
@@ -153,7 +153,7 @@ final class TimingIndex implements TimingIndexInterface
             return [];
         }
 
-        $events = $this->read($skeleton, 0)->select('VEVENT');
+        $events = $this->read($skeleton, false)->select('VEVENT');
 
         if ($events === []) {
             return [];
@@ -218,7 +218,7 @@ final class TimingIndex implements TimingIndexInterface
     public function redacted(string $skeleton, string $uidSeed, string $summary): string
     {
         // Our own skeleton format: read it once to make sure it is one, then insert lines.
-        $this->read($skeleton, 0);
+        $this->read($skeleton, false);
         $uid = 'busy-' . hash('sha256', 'com_appointments/redacted/v1|' . $uidSeed);
         $added = "BEGIN:VEVENT\r\nUID:" . $uid . "\r\nDTSTAMP:" . self::REDACTED_STAMP . "\r\n"
             . IcsWriter::fold('SUMMARY:' . IcsWriter::escapeText($summary)) . "\r\nCLASS:CONFIDENTIAL\r\n";
@@ -248,7 +248,7 @@ final class TimingIndex implements TimingIndexInterface
     public function lastEnd(string $skeleton, \DateTimeZone $floatingZone): ?\DateTimeImmutable
     {
         $utc = new \DateTimeZone('UTC');
-        $events = $this->read($skeleton, 0)->select('VEVENT');
+        $events = $this->read($skeleton, false)->select('VEVENT');
         $latest = null;
 
         if ($events === []) {
@@ -342,7 +342,7 @@ final class TimingIndex implements TimingIndexInterface
         }
 
         $found = [];
-        $pending = [$this->read($ics, Reader::OPTION_FORGIVING)];
+        $pending = [$this->read($ics, true)];
 
         while ($pending !== []) {
             $component = array_pop($pending);
@@ -471,14 +471,18 @@ final class TimingIndex implements TimingIndexInterface
         return $seconds % 60 === 0 ? $text : $text . sprintf('%02d', $seconds % 60);
     }
 
-    private function read(string $text, int $options): VCalendar
+    /**
+     * The only place that names a class of the library before the library is
+     * registered: every public method reads through here first.
+     */
+    private function read(string $text, bool $forgiving): VCalendar
     {
         if (!VendorAutoloader::register() && !class_exists(Reader::class)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_E_LIBRARY_MISSING', 503);
         }
 
         try {
-            $calendar = Reader::read($text, $options);
+            $calendar = Reader::read($text, $forgiving ? Reader::OPTION_FORGIVING : 0);
         } catch (\Throwable $e) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_E_TIMING_INVALID', 400, $e);
         }
@@ -542,6 +546,12 @@ final class TimingIndex implements TimingIndexInterface
         $type = isset($property['VALUE']) ? strtoupper((string) $property['VALUE']) : '';
 
         if ($type !== '' && $type !== 'DATE' && $type !== 'DATE-TIME') {
+            // RDATE;VALUE=PERIOD cannot be expanded by the library. Dropping it would hide
+            // busy time, so the object is refused like an RRULE outside the standard.
+            if ($name === 'RDATE' && $type === 'PERIOD') {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_E_TIMING_INVALID', 400);
+            }
+
             return null;
         }
 

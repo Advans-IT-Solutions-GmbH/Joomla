@@ -380,7 +380,10 @@ final class BookingStore
             throw $e;
         }
 
-        // The calendar copy lists the guests as attendees: rewrite it without the address.
+        // The calendar copy lists the guests as attendees. It is removed first, also while the
+        // feature is off (a later switch-on must not bring the address back), and written again
+        // without the address when the feature is on.
+        $this->mirror('erased', ['id' => $bookingId]);
         $this->mirror('saved', ['id' => $bookingId]);
 
         return ['changed' => true, 'guest' => $address];
