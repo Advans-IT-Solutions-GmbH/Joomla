@@ -64,8 +64,9 @@ summary() {
     exit $?
 }
 
-CORE=(lib CalendarObjectStore:A KeyService:B CalendarService:C GrantService:C DeviceService:D TeamMailer:D AuditService:F LockoutService:F CleanupService:F)
-BOOKING=(BookingCalendarBridge:E TimingIndex:E)
+# TimingIndex is core: every PUT extracts the time skeleton, and the free/busy view needs it.
+CORE=(lib CalendarObjectStore:A KeyService:B CalendarService:C GrantService:C DeviceService:D TeamMailer:D TimingIndex:E AuditService:F LockoutService:F CleanupService:F)
+BOOKING=(BookingCalendarBridge:E)
 
 # The client image is built and its versions printed even while phases are
 # pending, so the image itself is always tested.
@@ -74,7 +75,11 @@ if ! docker build -q -t "$IMAGE" "$HERE" >/dev/null; then
     failed=$((failed + 1))
     summary
 fi
-docker run --rm --entrypoint python "$IMAGE" -I -c 'import caldav, importlib.metadata as m; print("Clients: caldav", caldav.__version__, "vdirsyncer", m.version("vdirsyncer"))'
+if ! docker run --rm --entrypoint python "$IMAGE" -I -c 'import caldav, vdirsyncer, importlib.metadata as m; print("Clients: caldav", caldav.__version__, "vdirsyncer", m.version("vdirsyncer"))'; then
+    echo "✗ The client image does not start its clients"
+    failed=$((failed + 1))
+    summary
+fi
 
 if missing="$(stubbed "${CORE[@]}")"; then
     pending_line "CalDAV clients: discovery, sync, roles, vdirsyncer, revocation and clean-up" "$missing"

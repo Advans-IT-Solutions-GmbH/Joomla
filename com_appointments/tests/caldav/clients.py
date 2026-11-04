@@ -119,8 +119,11 @@ def propfind(path: str, who: str, depth: str, props: str) -> niquests.Response:
 def collection_props(path: str, who: str) -> dict:
     root = multistatus(propfind(path, who, "0", "<cs:getctag/><d:sync-token/><d:displayname/><d:current-user-privilege-set/>"))
     found = {}
-    for prop in root.iterfind(".//d:propstat[d:status]/d:prop/*", NS):
-        found[prop.tag] = prop
+    for propstat in root.iterfind(".//d:propstat", NS):
+        # Only properties the server returned (200); a 404 propstat lists unsupported ones.
+        if " 200 " in f" {propstat.findtext('d:status', '', NS)} ":
+            for prop in propstat.iterfind("d:prop/*", NS):
+                found[prop.tag] = prop
     return {
         "ctag": (found.get("{http://calendarserver.org/ns/}getctag").text or "") if "{http://calendarserver.org/ns/}getctag" in found else None,
         "token": (found.get("{DAV:}sync-token").text or "") if "{DAV:}sync-token" in found else None,
@@ -484,7 +487,11 @@ def phase_booking() -> None:
     sync = vdirsyncer("sync")
     check("vdirsyncer fetches the booking", sync.returncode == 0 and any(booking["uid"] in p.read_text() for p in local_items()))
     busy = "\n".join(get(h, "busy").text for h in objects(calendar("busy", "T"), "busy"))
-    check("The booking is a busy block for BUSY, without the invitee", "CI Guest" not in busy and "ci-guest@" not in busy)
+    check("The booking is a busy block for BUSY, without the invitee",
+          "Guest" not in busy and "ci-guest@" not in busy and "ATTENDEE" not in busy)
+    writer_text = get(found[booking["uid"]], "writer").text if booking["uid"] in found else ""
+    check("The invitee reached the booking object itself (so the BUSY check is meaningful)",
+          "CI Guest" in writer_text and "ci-guest@" in writer_text, "invitee not in the object")
     save({"booking_uid": booking["uid"]})
 
 
@@ -524,8 +531,9 @@ def phase_cleanup_empty() -> None:
     check("The clean-up deleted vdirsyncer's local copy", local_items() == [], str(len(local_items())))
     check("vdirsyncer's status holds no object of CAL-T any more", status_items() == 0, str(status_items()))
     owner_after = objects(calendar("owner", "T"), "owner")
-    check("Nothing was deleted on the server and nothing uploaded again",
-          set(owner_after) == set(owner_before), f"{len(owner_before)} -> {len(owner_after)}")
+    changed = {h for h in owner_before.keys() | owner_after.keys() if owner_before.get(h) != owner_after.get(h)}
+    check("Nothing was deleted, changed or uploaded on the server (same hrefs and ETags)",
+          owner_after == owner_before, f"{sorted(changed)}")
 
 
 def phase_cleanup_hidden() -> None:

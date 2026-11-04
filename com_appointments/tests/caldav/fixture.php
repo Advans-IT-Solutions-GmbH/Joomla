@@ -260,7 +260,7 @@ function book(): void
     $calendar = (int) $state['calendars']['T']['id'];
     db()->query("UPDATE " . prefix() . "appointments_eventtypes SET calendar_id={$calendar} WHERE id={$event}");
     $start = gmdate('Y-m-d', strtotime('+3 days')) . ' 10:00:00';
-    $booking = $fixture->booking($event, $start, ['name' => 'CI Guest', 'email' => 'ci-guest@example.invalid'])['booking'];
+    $booking = $fixture->booking($event, $start, ['first_name' => 'CI', 'last_name' => 'Guest', 'email' => 'ci-guest@example.invalid'])['booking'];
     $state['event'] = $event;
     $state['booking'] = (int) $booking['id'];
     saveState($state);
