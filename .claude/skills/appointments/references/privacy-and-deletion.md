@@ -77,7 +77,7 @@ guest's own, `task=guest.confirm&id=…&signature=…`:
 - GET shows the appointment and the guest's own address, nothing of the invitee or the other
   guests, and a POST form with the CSRF token (task `guest.remove`). Both are rate limited
   (bucket `guest`, 60 per 15 minutes).
-- POST removes exactly that address from `guest_emails`, in the host and booking lock, and writes
+- POST removes exactly that address from `guest_emails`, under a lock of the booking row only (no host lock: it changes no availability, and a mail delivery holding the row with a shared lock makes it wait without stalling the host's other bookings), and writes
   an audit row `remove_guest` / `self_service` without the address. The booking, the invitee's data
   and the other guests stay.
 - `modified_utc` is deliberately **not** changed, so the invitee's and the other guests' links keep
