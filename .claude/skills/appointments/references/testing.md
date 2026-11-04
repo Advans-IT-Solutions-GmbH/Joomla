@@ -83,6 +83,15 @@ is engine independent and already covered.
 No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape of
 `com_dmarcreports`, which is also J2Commerce-free and has both lanes.
 
+**HTTPS in every lane.** CalDAV answers over HTTPS only, so both Dockerfiles run
+`tests/caldav/tls/setup-tls.sh` at build time: a throw-away test CA signs a server certificate for
+`localhost`, `joomla` (the compose service name) and `127.0.0.1`, and Apache serves the site on
+port 443 next to the unchanged port 80. The CA is at `/etc/ssl/appointments-test/ca.pem` in the
+image and trusted by the image itself; clients verify against it rather than disabling
+verification. The images set `TEAM_BASE_URL=https://localhost`, which `21-teamcalendars.php` reads;
+every other suite keeps using `http://localhost`. Host ports: 8443 (J5), 8444 (J6), 8445 (MariaDB).
+The workflow checks the TLS handshake against the CA right after each container is ready.
+
 ```
 com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, both Scheduler tasks created once (never re-enabled), no signing secret stored
