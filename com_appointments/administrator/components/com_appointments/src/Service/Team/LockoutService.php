@@ -574,7 +574,10 @@ final class LockoutService implements LockoutServiceInterface
 
     /**
      * Log `login.locked` and mail the administrators, at most once per account
-     * in LOCKED_LOG_MINUTES.
+     * in LOCKED_LOG_MINUTES. The window is claimed atomically in a counter row
+     * of its own (a keyed bucket per account, not a sign-in counter), so it
+     * neither depends on the log row being written nor lets parallel
+     * refusals each send a mail: one conditional update wins.
      */
     private function announceLock(int $userId, string $ip, int $wait): void
     {
@@ -582,42 +585,29 @@ final class LockoutService implements LockoutServiceInterface
             return;
         }
 
-        // One request per account wins the window: a named database lock
-        // around the check and the log row, so parallel refusals send one mail.
         $db = $this->db();
-        $name = $db->quote('com_appointments.lock.' . $userId);
+        $table = $db->quoteName('#__appointments_auth_failures');
+        $hex = bin2hex(hash_hmac('sha256', CipherSuite::associatedData('lockout-notice', $userId), $this->key(), true));
+        $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));
+        $since = $now->modify('-' . self::LOCKED_LOG_MINUTES . ' minutes')->format('Y-m-d H:i:s');
+        $db->setQuery('INSERT IGNORE INTO ' . $table . ' (' . implode(',', $db->quoteName(['bucket', 'failures', 'locked_until_utc', 'last_failure_utc']))
+            . ') VALUES (UNHEX(' . $db->quote($hex) . '), 0, NULL, ' . $db->quote($now->modify('-1 day')->format('Y-m-d H:i:s')) . ')')->execute();
+        $db->setQuery($this->query()->update($table)
+            ->set($db->quoteName('last_failure_utc') . ' = ' . $db->quote($now->format('Y-m-d H:i:s')))
+            ->where($db->quoteName('bucket') . ' = UNHEX(' . $db->quote($hex) . ')')
+            ->where($db->quoteName('last_failure_utc') . ' < ' . $db->quote($since)))->execute();
 
-        if ((int) $db->setQuery('SELECT GET_LOCK(' . $name . ', 0)')->loadResult() !== 1) {
+        if ((int) $db->getAffectedRows() !== 1) {
             return;
         }
 
-        try {
-            if ($this->lockedLoggedRecently($userId)) {
-                return;
-            }
-
-            $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
-        } finally {
-            $db->setQuery('SELECT RELEASE_LOCK(' . $name . ')')->loadResult();
-        }
+        $this->services->audit()->log(AuditEvent::LOGIN_LOCKED, ['subject_user_id' => $userId, 'ip' => $ip]);
 
         try {
             $this->services->mailer()->accountLocked($userId, $wait);
         } catch (\Throwable $e) {
             Log::add('Team calendars: the lock mail could not be sent (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
-    }
-
-    private function lockedLoggedRecently(int $userId): bool
-    {
-        $db = $this->db();
-        $since = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))
-            ->modify('-' . self::LOCKED_LOG_MINUTES . ' minutes')->format('Y-m-d H:i:s');
-
-        return (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog'))
-            ->where($db->quoteName('event') . ' = ' . $db->quote(AuditEvent::LOGIN_LOCKED))
-            ->where($db->quoteName('subject_user_id') . ' = ' . $userId)
-            ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote($since)))->loadResult() > 0;
     }
 
     /**
