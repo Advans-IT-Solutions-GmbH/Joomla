@@ -151,6 +151,8 @@ class GuestController extends BaseController
         $this->app->setHeader('Referrer-Policy', 'no-referrer', true);
         $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $this->app->setHeader('Cache-Control', 'private, no-store', true);
+        // Neither Joomla's page cache may keep it: the page carries a form token and the guest's address.
+        $this->app->allowCache(false);
         $document = $this->app->getDocument();
         $title = Text::_('COM_APPOINTMENTS_GUEST_TITLE');
         $document->setTitle(match ((int) $this->app->get('sitename_pagetitles', 0)) {

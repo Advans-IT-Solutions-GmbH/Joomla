@@ -333,7 +333,9 @@ final class BookingStore
         $db->transactionStart();
 
         try {
-            $this->lockHost($host);
+            // Only the booking row: a removal changes one column and no availability, so it takes no
+            // host lock. While a mail delivery holds the row (NotificationService::send), the removal
+            // waits without stalling the host's other bookings, and no lock is held in the other order.
             $booking = $this->lockedBooking($bookingId);
             $guests = PrivacyAddress::guestList($booking['guest_emails'] ?? null);
             if ($links !== null) {
