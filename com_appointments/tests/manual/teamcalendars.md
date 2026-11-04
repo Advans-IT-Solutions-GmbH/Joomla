@@ -243,11 +243,13 @@ same points in the CI; this confirms them on the installation the clients use.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | SV-01 | POS | `curl -i https://<test-site>/.well-known/caldav` | `301` to `/dav/`. |
-| SV-02 | NEG | `curl -i http://<test-site>/dav/` | `403` without body and without redirect. |
+| SV-02 | NEG | `curl -i http://<test-site>/dav/`, once without credentials and once with made-up ones (`-u test:test`), never a real app password. | `403` without body, without redirect and without `WWW-Authenticate` in both cases: plain HTTP is refused before the `Authorization` header is read. |
 | SV-03 | NEG | Ten requests with a wrong app password for one user, then one with the correct one. | The request after the tenth failure gets `429` with `Retry-After`, also with the correct password; after the delay the correct password works again. |
 | SV-04 | NEG | `MKCALENDAR` and `ACL` on the calendar home with a valid device. | `403`. |
 | SV-05 | POS | Response headers of an authenticated `PROPFIND`. | `Cache-Control: private, no-store`, `X-Robots-Tag: noindex, nofollow`, no session cookie. |
 | SV-06 | POS | In the backend log view, «verify chain» after the whole run. | The chain verifies; the log holds sign-ins, device and grant changes and object changes, no reads and no content. |
+| SV-07 | POS | Open **System checks** on the test installation without HSTS, then with HSTS enabled in Joomla's HTTP headers plugin. | Without HSTS the check recommends it; with HSTS the recommendation disappears. The other internet calendar checks (HTTPS, methods, `Authorization` header, well-known, libsodium with Argon2id, `memory_limit`) report their state with a remedy. |
+| SV-08 | NEG | Set the CalDAV base address of the plugin to `http://<test-site>/dav/`, to `https://<test-site>/administrator/` and to an address with a query, one after the other. | Each invalid address is ignored and the default `https://<test-site>/dav/` stays in effect (client instructions and well-known redirect). Restore the setting afterwards. |
 
 ## 7. Acceptance
 

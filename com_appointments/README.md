@@ -355,7 +355,8 @@ and names the remedy.
 
 | Requirement | Remedy when the system check fails |
 |---|---|
-| HTTPS. CalDAV answers over HTTPS only; plain HTTP gets `403`. | Enable TLS for the site. |
+| HTTPS. CalDAV answers over HTTPS only; a plain HTTP request gets `403` without a body or redirect, before its `Authorization` header is even read. | Enable TLS for the site. |
+| HSTS (`Strict-Transport-Security`), recommended rather than required. | Enable HSTS in Joomla's HTTP headers plugin or in the web server. |
 | The WebDAV methods `OPTIONS`, `PROPFIND`, `REPORT`, `PUT`, `DELETE` and `MKCALENDAR` reach PHP. | Allow them in the web server or firewall rules (ModSecurity or another web application firewall). |
 | The `Authorization` header reaches PHP. | Keep the rule `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` from Joomla's `htaccess.txt`, or use the host's equivalent setting. |
 | `/.well-known/caldav` reaches Joomla. | Add the rewrite, or configure clients with the full CalDAV address; only automatic discovery is lost. |
@@ -413,7 +414,11 @@ it.
 
 The CalDAV plugin holds the **CalDAV base address**, an absolute `https://` address (default: the
 site address plus `/dav/`). The CalDAV path, the well-known redirect, the client instructions, the
-mails and the system check all derive from it. The permission **Share with
+mails and the system check all derive from it. A configured address is used only when it is valid:
+`https://` with a host, no user name, password, query or fragment, at most 255 characters, and a
+path below the site's own path that adds 1 to 3 plain segments (letters, digits, `.`, `_`, `~`,
+`-`), the first of which is not a Joomla folder such as `administrator`, `media` or `images`.
+Otherwise the default applies. The permission **Share with
 external users** (`appointments.team.external`) is granted to nobody by default; Super Users have
 it implicitly.
 
@@ -496,10 +501,23 @@ possible with CalDAV clients.
 
 #### Privacy requests and retention
 
-Joomla's privacy component (**Users → Privacy**) handles export and removal requests for calendar
-entries too: a keyed index of the e-mail addresses in every entry finds them without a calendar
-key. The result names every calendar it could not search completely or could not decrypt. Each
-calendar has its own **retention**; the Scheduler deletes older entries and logs only their number.
+Joomla's privacy component (**Users → Privacy**) handles export and removal requests. There is no
+index of e-mail addresses anywhere, because whoever holds the server key could test known
+addresses against it.
+
+- **Bookings** are decrypted on the server in batches and matched by the invitee's and guests'
+  addresses.
+- **Calendar entries** are searched only in the session of the person handling the request, and
+  only in the calendars that person can unlock (owner, manager, or keys recovered with the recovery
+  key). Removal deletes the matching entries as normal changes, so clients drop them at the next
+  synchronisation.
+- **Never silently incomplete:** every calendar that could not be searched is named in the export
+  and in the removal result, with the way to search it (sign in as a key holder, or use the
+  recovery key).
+- Searches, exports and removals are logged with counts only, never the address or content.
+
+Each calendar has its own **retention**; the Scheduler deletes older entries and logs only their
+number.
 
 #### Replacing the token feeds
 
