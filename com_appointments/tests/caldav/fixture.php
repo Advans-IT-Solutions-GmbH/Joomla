@@ -125,6 +125,31 @@ function setPlugins(int $enabled): void
 {
     db()->query("UPDATE " . prefix() . "extensions SET enabled={$enabled} WHERE type='plugin'"
         . " AND ((folder='system' AND element='appointmentsdav') OR (folder='user' AND element='appointments'))");
+    resetPluginCache();
+}
+
+/**
+ * The client container reaches the site as https://joomla (the compose service
+ * name, which the test certificate names), so the CalDAV base address is set to
+ * it; TeamServices::davBaseUrl() is then what every part and the clients use.
+ * An empty value restores the default (site root plus /dav/).
+ */
+function setDavBaseUrl(string $url): void
+{
+    $prefix = prefix();
+    $row = db()->query("SELECT params FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='appointmentsdav'")->fetch_assoc();
+    $params = json_decode((string) ($row['params'] ?? ''), true) ?: [];
+    $params['dav_base_url'] = $url;
+    $json = db()->real_escape_string(json_encode($params));
+    db()->query("UPDATE {$prefix}extensions SET params='{$json}' WHERE type='plugin' AND folder='system' AND element='appointmentsdav'");
+    resetPluginCache();
+}
+
+function resetPluginCache(): void
+{
+    // PluginHelper keeps the plugin list of the request.
+    $reflection = new ReflectionProperty(\Joomla\CMS\Plugin\PluginHelper::class, 'plugins');
+    $reflection->setValue(null, null);
 }
 
 /**
@@ -160,6 +185,7 @@ function setup(): void
     $params['teamcal_enabled'] = 1;
     setComponentParams($params);
     setPlugins(1);
+    setDavBaseUrl('https://joomla/dav/');
     $team = services();
 
     if (!$team->enabled()) {
@@ -212,7 +238,7 @@ function setup(): void
 
     saveState($state);
 
-    $public = ['base' => 'https://joomla', 'dav' => '/dav/', 'users' => [], 'calendars' => $state['calendars']];
+    $public = ['dav_url' => $team->davBaseUrl(), 'users' => [], 'calendars' => $state['calendars']];
 
     foreach ($state['users'] as $name => $user) {
         $public['users'][$name] = [
@@ -337,6 +363,7 @@ function teardown(): void
     $params = componentParams();
     $params['teamcal_enabled'] = 0;
     setComponentParams($params);
+    setDavBaseUrl('');
     setPlugins(0);
     unlink(STATE_FILE);
 

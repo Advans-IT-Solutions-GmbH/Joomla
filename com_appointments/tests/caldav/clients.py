@@ -35,8 +35,10 @@ import niquests
 WORK = pathlib.Path("/work")
 CA = str(WORK / "ca.pem")
 STATE = json.loads((WORK / "state.json").read_text())
-BASE = STATE["base"]
-DAV = STATE["dav"]
+# TeamServices::davBaseUrl() of the site, for example https://joomla/dav/.
+_DAV_URL = urlparse(STATE["dav_url"])
+BASE = f"{_DAV_URL.scheme}://{_DAV_URL.netloc}"
+DAV = _DAV_URL.path if _DAV_URL.path.endswith("/") else _DAV_URL.path + "/"
 CLIENT_STATE = WORK / "clients.json"
 VDIR = WORK / "vdirsyncer"
 NS = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav", "cs": "http://calendarserver.org/ns/"}
