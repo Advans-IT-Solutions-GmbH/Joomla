@@ -488,8 +488,10 @@ somebody executes code on the server.** It is encryption at rest; end-to-end enc
 possible with CalDAV clients.
 
 - **Protected:** a copy of the database alone (dump, database backup, SQL injection in any
-  extension) shows no calendar content, no times, no app password and no key, and the personal
-  fields of bookings are encrypted as well. A row added or changed in the database without the site
+  extension) shows no content and no times of calendar entries, no app password and no key. Of
+  the bookings, the personal fields (names, addresses, phone, answers) are encrypted, while their
+  dates, times, event types and states stay readable, because reminders and the slot calculation
+  need them. A row added or changed in the database without the site
   secret grants nothing. A Super User without a grant sees calendar lists and the log, never
   contents; granting oneself access is possible, but it is logged and mailed to the calendar's
   owner and managers.

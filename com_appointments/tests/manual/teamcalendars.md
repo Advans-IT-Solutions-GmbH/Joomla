@@ -254,11 +254,17 @@ same points in the CI; this confirms them on the installation the clients use.
 ## 7. Acceptance
 
 - Every case of section 4 for every client of section 2.1, every case of section 5 and every case
-  of section 6 is **PASS**.
+  of section 6 is **PASS**, with exactly two exceptions below. Nothing else may be skipped.
+- **Not applicable:** a case whose procedure starts with a condition on the client («where the
+  client allows it», «in clients that accept a calendar address», «where the client imports mail
+  invitations»: `IC-04`, `IC-19`, `IC-23`) is recorded as **NOT APPLICABLE** when the client offers
+  no such function, with the client's version and where this was checked. It does not block
+  acceptance. If the client offers the function, the case is mandatory.
+- **Observed behaviour:** a behaviour that the specification leaves to the client (`IC-23`,
+  `IC-26`, `IC-28`, `OL-08`, `OL-11`) is recorded as observed and counts as **PASS**, unless data
+  is lost on the server, data stays visible to a user without a grant, or deleted events come back;
+  then it is a **FAIL**.
 - **BLOCKED** or **NOT RUN** blocks acceptance. A missing device or licence is not a pass.
-- A behaviour that the specification leaves to the client (`IC-23`, `IC-26`, `IC-28`, `OL-08`,
-  `OL-11`) is recorded as observed. It is a **FAIL** only when data is lost on the server, data
-  stays visible to a user without a grant, or deleted events come back.
 - Record per client the measured refresh time (`IC-11`, `IC-22`) next to the configured interval.
 - The README's client instructions are checked against what the clients really show; a deviation
   is a documentation defect.
