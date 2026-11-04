@@ -976,9 +976,8 @@
     .com-appointments-summary dd {
         margin: 0;
     }
-}
 
-@container appointments (min-width: 46rem) {
+    /* The list of event types (at most --appointments-narrow-width wide): title and duration in one row. */
     .com-appointments-list-item {
         flex-direction: row;
         align-items: baseline;
