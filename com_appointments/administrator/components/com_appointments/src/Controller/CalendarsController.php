@@ -278,6 +278,10 @@ class CalendarsController extends BaseController
 
         return $this->attempt(function () use ($services, &$secret, $id, $grantee, $role, $owner): void {
             try {
+                // Like creating and replacing the recovery key: only in a session
+                // that signed in with password and second factor (spec 5.3), so
+                // a remember-me or passkey session cannot use it.
+                $services->keySession()->requireUnlocked();
                 $keyring = $services->keys()->recoverKeyring($id, $secret);
             } finally {
                 $this->wipe($secret);
@@ -318,10 +322,13 @@ class CalendarsController extends BaseController
 
         return $this->attempt(function () use ($services, $userId): void {
             // Destructive (grants suspended, devices cleaned up): only an
-            // administrator who has a second factor set up.
+            // administrator with a second factor, in a session that signed in
+            // with password and second factor.
             if (!$services->grants()->hasSecondFactor($this->actor())) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
+
+            $services->keySession()->requireUnlocked();
 
             $services->keys()->discardUserKey($this->actor(), $userId);
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_KEY_DISCARDED'), 'message');
