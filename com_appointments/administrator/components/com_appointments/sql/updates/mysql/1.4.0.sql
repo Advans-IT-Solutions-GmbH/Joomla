@@ -167,7 +167,6 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_objects` (
     `payload` MEDIUMBLOB NOT NULL,
     `timing` BLOB NOT NULL,
     `booking_id` INT UNSIGNED DEFAULT NULL,
-    `emails_indexed` TINYINT(1) NOT NULL DEFAULT 1,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     PRIMARY KEY (`id`),
@@ -175,19 +174,6 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_objects` (
     UNIQUE KEY `idx_object_uid` (`calendar_id`, `uid_hash`),
     KEY `idx_object_booking` (`booking_id`),
     FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Blind index of the e-mail addresses in a calendar object (organizer,
--- attendees, free text): keyed hashes only, never the addresses. It lets the
--- privacy plugin find and delete objects without any user key.
---
-CREATE TABLE IF NOT EXISTS `#__appointments_calendar_object_emails` (
-    `object_id` BIGINT UNSIGNED NOT NULL,
-    `email_hash` BINARY(32) NOT NULL,
-    PRIMARY KEY (`object_id`, `email_hash`),
-    KEY `idx_object_email_hash` (`email_hash`),
-    FOREIGN KEY (`object_id`) REFERENCES `#__appointments_calendar_objects` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 --
 -- Change journal for WebDAV sync (RFC 6578) and the CTag. `operation`: 1 added,

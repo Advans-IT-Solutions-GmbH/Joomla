@@ -51,11 +51,11 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Retention per calendar:** entries older than the calendar's retention are deleted by the
   Scheduler; the log records the count, never content.
 - **Privacy requests through Joomla's own privacy component** (com_privacy, export and removal
-  requests) via `plg_privacy_appointments`: a blind index of every e-mail address in calendar entries
-  finds them without a key (section 9.1). No separate search in the administrator.
+  requests) via `plg_privacy_appointments` (section 9.1). No separate search in the administrator and no
+  blind index of e-mail addresses (whoever holds the server key could test known addresses against it).
 - **Booking rows at rest:** the personal fields of bookings (names, e-mail, phone, guests, answers)
-  are encrypted with a server key like the times; reminders, links, exports keep working; a blind
-  index finds bookings by e-mail address (section 5.10).
+  are encrypted with a server key like the times; reminders, links, exports keep working; a search by
+  e-mail address decrypts on the server (section 5.10).
 - **Any host:** the component runs wherever Joomla 5.4 or 6 runs, at any hosting provider, without
   provider-specific code. Everything a host can block is checked by the system check and reported with
   a remedy; the README lists the prerequisites (section 8.3).
@@ -294,8 +294,8 @@ times); history and the time beyond the horizon are the additional exposure.
 1. **Bookings table.** Resolved by the maintainer: the personal fields are encrypted with a server key
    (5.10), so reminders, links, the privacy workflow and retention keep working without a user key.
 2. **Privacy requests of invitees.** Resolved by the maintainer: Joomla's privacy workflow finds
-   bookings through the blind index, and calendar entries through the blind index of their e-mail
-   addresses (section 9.1); old entries go by the per-calendar retention.
+   bookings by decrypting them on the server, and calendar entries by decrypting them in the session of
+   a key holder (section 9.1); old entries go by the per-calendar retention.
 3. **Sign-in without password** (passkeys) cannot unlock keys; such users need a password sign-in
    for key operations (adding a device, granting). Normal CalDAV use is unaffected.
 4. **Free/busy and the booking page** need server-readable times: section 5.8.
@@ -307,20 +307,22 @@ times); history and the time beyond the horizon are the additional exposure.
   Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, column))`;
   the booking `uid` exists before the insert, so the row id is not needed. Readers accept a value without
   the prefix as clear text during the migration only.
-- Blind index: table `#__appointments_booking_emails` (booking_id, email_hash, role 1 invitee / 2 guest),
-  `email_hash = hash_hmac('sha256', mb_strtolower(trim(email)), key(PURPOSE_BOOKING_EMAIL_INDEX), true)`.
-  Every lookup by address (privacy plugin, booking list filter, guest removal) goes through it.
-  Free-text search over names in the booking list is replaced by an exact address search.
+- **No blind index** (maintainer's decision): a keyed hash of an address could be tested against known
+  addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)
+  decrypts the candidate rows on the server in batches and compares in memory. Free-text search over
+  names in the booking list works the same way, paged.
 - One place reads and writes these columns (a booking record class of E); no other code selects them
   directly. CSV export, mails, reminders, signed links, the privacy plugin and the anonymiser use it.
 - Migration in 1.4.0: column types become TEXT/MEDIUMTEXT (`custom_fields` no longer JSON), the
-  e-mail index on `invitee_email` is dropped, the index table is created; then `script.php` encrypts
+  e-mail index on `invitee_email` is dropped; then `script.php` encrypts
   the existing rows in batches (idempotent, rows with `v1:` are skipped) through E's helper. The SQL
   is written by the coordinator from E's exact proposal, after the booking page branch is final.
 
 ## 6. Authentication
 
-- CalDAV: HTTPS only (plain HTTP → 403, no body, no redirect), HTTP Basic, user name = Joomla user
+- CalDAV: HTTPS only. A plain HTTP request is refused with 403, without a body and without a redirect,
+  **before the Authorization header is read**. The header and the password are never logged and never
+  appear in an error message or a response. The system check recommends HSTS for the site. HTTP Basic, user name = Joomla user
   name (case-insensitive), password = app password. `AppPassword::parse()` rejects anything that is
   not 32 Base32 characters before any database access, so a Joomla password is never even looked up.
   Lookup by `secret_hash` (unique), then the user name must match, the account must not be blocked
@@ -443,11 +445,15 @@ the prerequisites:
 | `/.well-known/caldav` reaches Joomla | loopback request | rewrite rule, or configure clients with the full DAV address |
 | libsodium with Argon2id | `CipherSuite::available()` and a test `sodium_crypto_pwhash` | PHP with the sodium extension |
 | Memory for Argon2id INTERACTIVE (64 MiB) | `memory_limit` | raise `memory_limit` to at least 128M |
+| HSTS | `Strict-Transport-Security` on the site's own answer | recommendation: enable HSTS in Joomla's HTTP headers plugin or the web server |
 
 The CalDAV base address is the system plugin's parameter `dav_base_url` (absolute https URL; default:
 the site root plus `/dav/`), read by everybody only through `TeamServices::davBaseUrl()`, which always
 ends in `/`; the routing path, the well-known redirect, the client instructions, mails and the system
-check derive from it. There is no separate path parameter. A 401 of the CalDAV handler carries
+check derive from it. There is no separate path parameter. A configured address is used only when it
+passes `TeamServices::acceptDavBaseUrl()` (https, host, no credentials, query or fragment, at most 255
+characters, below the site root's path with 1 to 3 safe segments, the first not a Joomla folder);
+otherwise the default applies. A 401 of the CalDAV handler carries
 `X-Appointments-Authorization: received` when an `Authorization` header reached PHP, so the system
 check can test the header path anonymously; every method authenticates first. Calendar data is reached only through
 the `Service/Team` interfaces; the booking page reads busy times only through
@@ -484,20 +490,23 @@ verifies. The backend log view shows the events, a «verify chain» button and t
 
 ### 9.1 Privacy requests (work package F, with the booking page's privacy part)
 
-- On every write of a calendar object (CalDAV PUT, booking flow) the store extracts every e-mail
-  address (`TimingIndexInterface::emails()`: organizer, attendees, free text) and stores only its
-  keyed hash in `#__appointments_calendar_object_emails` (`key(PURPOSE_EMAIL_INDEX)`, the same key as the
-  booking blind index). An object whose addresses could not be extracted gets `emails_indexed = 0`.
-- `plg_privacy_appointments` answers Joomla's export and removal requests for these entries:
-  removal deletes the found objects (no key needed, a normal change with sync token); export includes
-  the content only of objects whose calendar the person handling the request can unlock in their
-  session, and otherwise metadata (calendar title, date from the time skeleton) with a clear note.
-  It names explicitly every calendar it could not search completely
-  (`calendarsWithUnindexedObjects()`) or could not decrypt: never silently incomplete.
-- Staff data (devices, grants, log rows of a staff member) is exported and removed by the same plugin.
-- The plugin's event handlers belong to the booking page's privacy part; F adds its calls there in
-  agreement with that work.
+`plg_privacy_appointments` answers Joomla's export and removal requests (com_privacy). There is no
+index of e-mail addresses anywhere (maintainer's decision, see 5.10).
 
+- **Bookings:** encrypted with the server key, so the plugin decrypts them on the server in batches and
+  matches invitee and guest addresses; export and removal as before.
+- **Calendar entries:** searched only in the session of the person handling the request, and only in
+  the calendars that person can unlock (`KeySessionInterface::current()` and `openKeyring()`; the owner,
+  a manager, or keys recovered with the recovery key). The objects are decrypted in memory and matched
+  with `TimingIndexInterface::emails()`. Removal deletes the matching objects as normal changes.
+- **Never silently incomplete:** every calendar that could not be searched (no key in this session) is
+  listed by title in the export and in the removal result, with the note that it was not searched and
+  how to search it (sign in as a key holder, or use the recovery key).
+- Staff data (devices, grants, log rows of a staff member) is exported and removed by the same plugin.
+- Every search, export and removal is logged (`privacy.search`, `privacy.export`, `privacy.delete`)
+  with counts only, never the address and never content.
+- The plugin's event handlers belong to the booking page's privacy part; F adds its calls there with
+  that work's consent.
 ## 10. Devices and «My calendars» (work package D)
 
 Site view `mycalendars` (signed in, feature on; otherwise 404): calendars with role, devices with
@@ -625,8 +634,7 @@ Assigned later by the coordinator: E also owns `Field/TeamcalendarField.php` and
 the `mycalendars` view registration in the site `Router.php` and `media/com_appointments/{css,js}/mycalendars.*`.
 The internet calendar mails are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS)
 with the purposes `team_device_added`, `team_invitation`, `team_invitation_accepted`,
-`team_grant_changed`, `team_access_suspended`. Round 2 (04.11.2026): A also writes the e-mail blind index, `findByEmailHash()`,
-`calendarsWithUnindexedObjects()`, `deleteEndedBefore()` and the DAV base address setting; C turns
+`team_grant_changed`, `team_access_suspended`. Round 2 (04.11.2026): A also owns `deleteEndedBefore()` and the DAV base address setting; C turns
 invitations into account activation with the revoke page; D owns the site view `activation` (instead
 of `invitation`); E owns `TimingIndex::emails()` and, as its second part, the booking rows at rest (5.10:
 the booking record class and every reader of those columns); F owns `guardLogin()`, the Scheduler
@@ -645,7 +653,7 @@ files: each package adds keys only inside its own `[team-x]` block.
 ## 19. Open questions for the maintainer
 
 Decided on 04.11.2026: encryption at rest stays (no end-to-end), booking rows encrypted with a server
-key (5.10), privacy requests through com_privacy with a blind index (9.1), per-calendar retention,
+key (5.10), privacy requests through com_privacy without any blind index (9.1), per-calendar retention,
 accounts only by administrators with an activation link and no confirmation step, one recovery key
 per site in two printouts, the new Outlook is not supported, runs on any Joomla host (8.3).
 

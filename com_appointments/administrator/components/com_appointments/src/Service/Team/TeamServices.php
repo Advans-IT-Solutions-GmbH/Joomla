@@ -86,21 +86,69 @@ final class TeamServices
 
     /**
      * The CalDAV base address, absolute, always ending in "/": the system plugin's
-     * parameter `dav_base_url` when it is a valid https URL, otherwise the site
-     * root plus "dav/". The routing path, the well-known redirect, the client
-     * instructions and the system check all derive from this one value.
+     * parameter `dav_base_url` when it passes {@see self::acceptDavBaseUrl()},
+     * otherwise the site root plus "dav/". The routing path, the well-known
+     * redirect, the client instructions and the system check all derive from
+     * this one value.
      */
     public function davBaseUrl(): string
     {
         $plugin = PluginHelper::getPlugin('system', 'appointmentsdav');
         $params = new Registry(\is_object($plugin) ? ($plugin->params ?? '') : '');
-        $url = trim((string) $params->get('dav_base_url', ''));
+        $root = rtrim(Uri::root(), '/') . '/';
 
-        if ($url !== '' && filter_var($url, FILTER_VALIDATE_URL) && str_starts_with(strtolower($url), 'https://')) {
-            return rtrim($url, '/') . '/';
+        return self::acceptDavBaseUrl(trim((string) $params->get('dav_base_url', '')), $root) ?? $root . 'dav/';
+    }
+
+    /**
+     * The configured base address, normalised, or null when it is not usable:
+     * https, a host, no user, password, query or fragment, at most 255
+     * characters without blanks or control characters; the path lies below the
+     * site root's path and adds 1 to 3 segments of [A-Za-z0-9_~-][A-Za-z0-9._~-]{0,63},
+     * the first of which is not a Joomla folder or entry point. Pure function.
+     */
+    public static function acceptDavBaseUrl(string $url, string $siteRoot): ?string
+    {
+        if ($url === '' || \strlen($url) > 255 || preg_match('/[\s\x00-\x1f\x7f]/', $url)) {
+            return null;
         }
 
-        return rtrim(Uri::root(), '/') . '/dav/';
+        $parts = parse_url($url);
+
+        if (!\is_array($parts) || strtolower($parts['scheme'] ?? '') !== 'https' || ($parts['host'] ?? '') === ''
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return null;
+        }
+
+        $rootPath = rtrim((string) (parse_url($siteRoot, PHP_URL_PATH) ?? ''), '/') . '/';
+        $path = (string) ($parts['path'] ?? '/');
+
+        if (!str_starts_with($path, $rootPath)) {
+            return null;
+        }
+
+        $segments = array_values(array_filter(explode('/', substr($path, \strlen($rootPath))), 'strlen'));
+
+        if ($segments === [] || \count($segments) > 3) {
+            return null;
+        }
+
+        foreach ($segments as $segment) {
+            if (!preg_match('/^[A-Za-z0-9_~-][A-Za-z0-9._~-]{0,63}$/', $segment)) {
+                return null;
+            }
+        }
+
+        $reserved = ['administrator', 'api', 'bin', 'cache', 'cli', 'components', 'files', 'images', 'includes', 'index.php',
+            'language', 'layouts', 'libraries', 'media', 'modules', 'plugins', 'templates', 'tmp', '.well-known'];
+
+        if (\in_array(strtolower($segments[0]), $reserved, true)) {
+            return null;
+        }
+
+        $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+
+        return 'https://' . strtolower($parts['host']) . $port . $rootPath . implode('/', $segments) . '/';
     }
 
     public function now(): \DateTimeImmutable

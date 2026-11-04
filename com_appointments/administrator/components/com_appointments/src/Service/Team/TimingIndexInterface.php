@@ -54,7 +54,8 @@ interface TimingIndexInterface
     /**
      * Every e-mail address in the object: ORGANIZER and ATTENDEE (mailto:), and
      * addresses in SUMMARY, LOCATION and DESCRIPTION. Lower case, trimmed,
-     * unique. Only their keyed hashes are stored (blind index), never the addresses.
+     * unique. Used in memory only (privacy search in a key holder's session);
+     * the addresses are never stored, not even as hashes.
      *
      * @return  string[]
      */

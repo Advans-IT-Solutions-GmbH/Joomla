@@ -34,7 +34,6 @@ class StructureTest
         'appointments_calendar_grants',
         'appointments_calendar_key_wraps',
         'appointments_calendar_objects',
-        'appointments_calendar_object_emails',
         'appointments_calendar_changes',
         'appointments_calendar_busy',
         'appointments_devices',

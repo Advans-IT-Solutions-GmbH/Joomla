@@ -63,11 +63,10 @@ final class KeyProvider
 
     /**
      * Personal data of bookings at rest (encryption), see team-calendars.md,
-     * section 5.10, and the blind index of e-mail addresses in bookings and in
-     * calendar objects, so the privacy plugin finds them without any user key.
+     * section 5.10. There is deliberately no blind index of e-mail addresses:
+     * whoever holds the server key could test known addresses against it.
      */
     public const PURPOSE_BOOKING_DATA = 'booking-data';
-    public const PURPOSE_EMAIL_INDEX = 'email-index';
 
     /**
      * @var  string

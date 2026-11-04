@@ -16,7 +16,6 @@ DROP TABLE IF EXISTS `#__appointments_device_calendars`;
 DROP TABLE IF EXISTS `#__appointments_devices`;
 DROP TABLE IF EXISTS `#__appointments_calendar_busy`;
 DROP TABLE IF EXISTS `#__appointments_calendar_changes`;
-DROP TABLE IF EXISTS `#__appointments_calendar_object_emails`;
 DROP TABLE IF EXISTS `#__appointments_calendar_objects`;
 DROP TABLE IF EXISTS `#__appointments_calendar_key_wraps`;
 DROP TABLE IF EXISTS `#__appointments_calendar_grants`;
