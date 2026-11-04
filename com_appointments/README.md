@@ -338,6 +338,144 @@ rows and rate-limit windows per invocation. Run additional batches or increase t
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
 
+### Internet calendars
+
+An internet calendar is a calendar on your own site that every authorised user reads and writes
+with a CalDAV client, signed in with an app password. Calendars are created in the administrator
+and shared per user; **nothing is visible that was not explicitly granted** (default deny), and
+there are no secret addresses. Bookings of an event type land in its target calendar, and busy
+times in a calendar block the booking page's slots. The binding specification is
+[`team-calendars.md`](../.claude/skills/appointments/references/team-calendars.md).
+
+#### Requirements
+
+- HTTPS. CalDAV answers over HTTPS only; plain HTTP gets `403`.
+- PHP with libsodium (bundled with PHP since 7.2). Without it the feature stays off.
+- The `Authorization` header must reach PHP. Joomla's `htaccess.txt` passes it on with
+  `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`; keep that line.
+- `/.well-known/caldav` must reach Joomla. If the host serves `/.well-known/` itself, clients still
+  work with the full address `https://<site>/dav/`; only automatic discovery is lost.
+- Some hosts' web application firewalls block WebDAV methods (`PROPFIND`, `REPORT`, `MKCALENDAR`)
+  or XML bodies. The system check reports what it can test; ask the host to allow the methods for
+  the CalDAV path.
+- A second factor for every calendar user (Joomla's multi-factor authentication).
+
+#### Setting up
+
+1. In **Options → Internet calendars**, switch **Internet calendars** on. While it is off, no
+   calendar address answers and no key is handled at sign-in.
+2. Enable the plugins **System - Appointments CalDAV** and **User - Appointments internet
+   calendars**. Both are installed disabled.
+3. Check the groups. With **Create user groups** on, installation and update create the groups
+   «Internet calendars internal» and «Internet calendars external» below the registration group,
+   the access level «Internet calendars», and add both groups to **Users → Options →
+   Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
+   groups that skip MFA; the system check reports that as an error.
+4. As a Super User, create the **recovery key** in **Internet calendars**. Its secret is shown once:
+   print it and keep it offline. It is never stored, and without it no calendar can be created.
+5. Create a calendar, name its owner (the owner gets the manage role) and grant access to users.
+6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
+   adds one device per client and receives the app password and the instructions for that client.
+
+Every calendar user signs in on the site once with password and second factor before a grant
+becomes usable: that sign-in creates the user's key pair.
+
+#### Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| Internet calendars | off | The single switch of the feature. |
+| Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
+| Group of external users | the group created by the installer | Invited external users are created here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
+| Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
+| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
+| Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
+
+The CalDAV plugin has one parameter, the **path** of the CalDAV address (default `dav`, so
+`https://<site>/dav/`). The permission **Share with external users** (`appointments.team.external`)
+is granted to nobody by default; Super Users have it implicitly.
+
+#### Roles
+
+| Role | In the client | Web |
+|---|---|---|
+| Free/busy | read-only calendar of busy blocks titled «Busy», without any content | sees the calendar in «My calendars» |
+| Read | read | same |
+| Write | view, create, change and delete events | same |
+| Manage | as write | shares with team members, revokes, edits title, colour and description |
+
+#### Devices and app passwords
+
+In **My calendars → Add device**, the user names the device, picks the client and confirms the usage
+rule: a lock code on the device, no forwarding to iCloud or Google calendars, report a loss at once.
+Private smartphones are allowed under that rule. Adding a device requires a password sign-in with
+the second factor in the same session and at least one grant. The app password is shown once and
+stored only as a keyed hash; the user receives a mail for every new device. The Joomla password
+never works for CalDAV. **Remove device** starts the clean-up.
+
+#### Client instructions
+
+The user name is the Joomla user name, the password is the device's app password.
+
+| Client | Address | Refresh |
+|---|---|---|
+| Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| Apple Calendar (iOS, iPadOS) | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
+| Apple Calendar (macOS) | Other CalDAV account, account type manual, `https://<site>/dav/` | account → refresh every 5 minutes |
+| DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
+| Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
+| eM Client | account → CalDAV, `https://<site>/dav/` | account → synchronisation every 5 minutes |
+
+Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
+refresh without changes transfers no events. Menu paths can differ between client versions.
+
+#### Blocking and clean-up
+
+A device to be blocked first gets its calendars **empty**, so the client deletes its local copy;
+then the calendars are **no longer listed**, so the client removes them; then every request is
+refused. Each phase ends when the device has fetched it, at the latest after **Days per clean-up
+phase**. Writes are refused during the clean-up, so a client cannot upload the deleted events
+again. Triggers: «Remove device», an administrator blocking a device or a user's calendar access,
+a blocked Joomla account and a password reset. A device that never connects again keeps its local
+copy; that is why the usage rule asks for a lock code.
+
+#### What the encryption protects, and what not
+
+Calendar contents are encrypted on the server so that only users with a grant can decrypt them.
+
+- **Protected:** a copy of the database alone (dump, backup, SQL injection in any extension)
+  shows no content, no times, no app password and no key. A row added or changed in the database
+  without the site secret grants nothing. A Super User without a grant sees calendar lists and the
+  log, never contents; granting oneself access is possible, but it is logged and mailed to the
+  calendar's owner and managers.
+- **Not protected:** a compromised running server, because the calendar key is in memory while a
+  key holder's request runs (this is encryption at rest, not end-to-end encryption; CalDAV clients
+  cannot do end-to-end encryption). A copy of database **and** files together reveals when events
+  take place, never their content. Devices that never connect again. Bookings, booking mails and
+  their ICS, which stay as before, outside the calendar encryption.
+- **Changing the site secret** in `configuration.php` invalidates every app password and every
+  server-side key. Recovery then needs the recovery key and new devices.
+- **Password reset:** a reset by mail or a password set by an administrator gives a new key pair;
+  the user's grants are suspended and the devices go into clean-up. A manager grants again, or an
+  administrator uses the recovery key. A password reset alone never gives anybody calendar access.
+- **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
+  design.
+
+#### Replacing the token feeds
+
+The internet calendars replace the token feeds of the next section, whose secret addresses
+contradict default deny. From 1.4.0 the option **Subscription feeds with token** controls them: off
+on a new installation, on after an update (never overwritten). Off, the feed address answers `404`
+and the Calendar feeds view explains the replacement; on, the feeds work unchanged with a
+deprecation notice. Version 2.0.0 removes the feeds. Move each feed user to an internet calendar
+before that.
+
+#### Testing with real clients
+
+The [manual test plan for internet calendars](tests/manual/teamcalendars.md) checks every client
+above, including the clean-up and the refresh interval. It runs only against a test installation.
+
 ### Calendar subscriptions
 
 Open **Components → Appointments → Calendar feeds** with component management and options
