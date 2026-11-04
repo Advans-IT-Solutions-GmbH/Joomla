@@ -200,7 +200,8 @@ class DevicesController extends BaseController
      */
     private function guard(): TeamServices
     {
-        if ($this->input->getMethod() !== 'POST' || !Session::checkToken('post')) {
+        // Checked here, not with Session::checkToken(): that one redirects a new session instead of refusing.
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get(Session::getFormToken(), '', 'alnum') !== '1') {
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
 
