@@ -91,11 +91,10 @@ image and in the image's system trust store. The images set `TEAM_BASE_URL=https
 which `21-teamcalendars.php` reads; every other suite keeps using `http://localhost`. Host ports:
 8443 (J5), 8444 (J6), 8445 (MariaDB).
 
-Which requests verify the certificate: the workflow's `curl --cacert` probe right after each
-container is ready does, so a broken TLS set-up fails before any suite runs. `TeamSuite::http()` in
-`21-teamcalendars.php` does **not**: it sets `CURLOPT_SSL_VERIFYPEER` and `CURLOPT_SSL_VERIFYHOST`
-off, so the internet calendar suites test the HTTPS behaviour of the server, not the certificate.
-A client outside the container verifies against `ca.pem` (copy it out with `docker cp`).
+Certificates are verified, never switched off: the workflow's `curl --cacert` probe right after
+each container is ready, so a broken TLS set-up fails before any suite runs, and `TeamSuite::http()`
+in `21-teamcalendars.php`, which sets `CURLOPT_CAINFO` to `ca.pem`. A client outside the container
+verifies against `ca.pem` too (copy it out with `docker cp`).
 
 ```
 com_appointments/tests/scripts/
