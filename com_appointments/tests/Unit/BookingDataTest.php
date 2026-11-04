@@ -133,6 +133,11 @@ final class BookingDataTest extends TestCase
         self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 30 * 86400, $now), $keys, $now), 'Longer than allowed');
         self::assertNull(BookingData::migrationCutoff(BookingData::migrationToken($keys, $now + 86400, $now + 60), $keys, $now), 'Update in the future');
         self::assertNull(BookingData::migrationCutoff('', $keys, $now));
+
+        $done = BookingData::migrationDoneMarker($keys);
+        self::assertTrue(BookingData::migrationDone($done, $keys));
+        self::assertFalse(BookingData::migrationDone($done, new KeyProvider('another-site-secret')), 'The end marker is keyed');
+        self::assertNull(BookingData::migrationCutoff($done, $keys, $now), 'The end marker opens nothing');
     }
 
     public function testNoUidNoSeal(): void

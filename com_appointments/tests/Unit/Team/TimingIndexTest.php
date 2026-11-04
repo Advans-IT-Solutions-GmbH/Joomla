@@ -311,6 +311,13 @@ final class TimingIndexTest extends TestCase
         $twoDays = $index->extract(self::calendar(self::event('DTSTART;VALUE=DATE:20270328', 'DTEND;VALUE=DATE:20270330')));
         self::assertSame('2027-03-29T22:00Z', $index->lastEnd($twoDays, new \DateTimeZone('Europe/Zurich'))?->format('Y-m-d\TH:i\Z'));
 
+        // Two dates although the zone skipped one (Pacific/Apia, 30 December 2011): every instance keeps two days.
+        $apia = new \DateTimeZone('Pacific/Apia');
+        $skipped = $index->extract(self::calendar(self::event('DTSTART;VALUE=DATE:20111229', 'DTEND;VALUE=DATE:20111231', 'RRULE:FREQ=YEARLY;COUNT=2')));
+        $local = static fn (string $day): string => (new \DateTimeImmutable($day . ' 00:00:00', $apia))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i\Z');
+        self::assertSame([$local('2012-12-29') . '/' . $local('2012-12-31')], self::spans($index->expand($skipped,
+            self::utc('2012-12-01 00:00:00'), self::utc('2013-01-15 00:00:00'), $apia)));
+
         $future = $index->extract(self::calendar(
             self::event('DTSTART:20270101T090000Z', 'DTEND:20270101T100000Z', 'RRULE:FREQ=DAILY;COUNT=5'),
             self::event('RECURRENCE-ID;RANGE=THISANDFUTURE:20270103T090000Z', 'DTSTART:20270110T090000Z', 'DTEND:20270110T100000Z')

@@ -240,8 +240,11 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
     /**
      * Remove calendar copies whose booking is cancelled, anonymised or gone: the
-     * retry of a removal that failed earlier. Called after every booking change
-     * and meant for the Scheduler as well. Needs no key.
+     * retry of a removal that failed earlier. While the feature is off, every
+     * booking copy goes: changes are not mirrored then, so a copy would be stale
+     * (old times, a removed guest) when the feature is switched on again; the
+     * next change of a booking writes it anew. Called after every booking change
+     * and by the Scheduler. Needs no key.
      *
      * @return  int  Bookings whose copies were removed.
      */
@@ -255,9 +258,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 ->from($db->quoteName('#__appointments_calendar_objects', 'o'))
                 ->join('LEFT', $db->quoteName('#__appointments_bookings', 'b'), $db->quoteName('b.id') . ' = ' . $db->quoteName('o.booking_id'))
                 ->where($db->quoteName('o.booking_id') . ' IS NOT NULL')
-                ->where('(' . $db->quoteName('b.id') . ' IS NULL OR ' . $db->quoteName('b.state') . ' = 2 OR '
-                    . $db->quoteName('b.anonymised_utc') . ' IS NOT NULL)')
                 ->setLimit(max(1, min(500, $limit)));
+
+            if ($this->services->enabled()) {
+                $query->where('(' . $db->quoteName('b.id') . ' IS NULL OR ' . $db->quoteName('b.state') . ' = 2 OR '
+                    . $db->quoteName('b.anonymised_utc') . ' IS NOT NULL)');
+            }
 
             foreach (array_map('intval', $db->setQuery($query)->loadColumn()) as $bookingId) {
                 if ($bookingId > 0 && $this->remove($bookingId)) {
@@ -474,7 +480,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             if (microtime(true) - $began > self::MAX_SECONDS) {
                 $this->failure('budget', $calendarId, new \OverflowException('Busy time budget exceeded.'));
 
-                return [[$whole], true, true];
+                return [[$whole], $complete, true];
             }
 
             try {

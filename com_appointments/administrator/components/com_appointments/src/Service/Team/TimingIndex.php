@@ -336,9 +336,13 @@ final class TimingIndex implements TimingIndexInterface
             $days = 1;
 
             if (isset($event->DTEND)) {
-                $days = max(1, (int) round(($event->DTEND->getDateTime($floatingZone)->getTimestamp() - $start->getTimestamp()) / 86400));
+                // Count the dates, not the hours: a zone can skip a date (Pacific/Apia, 2011-12-30).
+                $utc = new \DateTimeZone('UTC');
+                $from = new \DateTimeImmutable($event->DTSTART->getDateTime($floatingZone)->format('Y-m-d'), $utc);
+                $to = new \DateTimeImmutable($event->DTEND->getDateTime($floatingZone)->format('Y-m-d'), $utc);
+                $days = $to > $from ? max(1, (int) $from->diff($to)->days) : 1;
             } elseif (isset($event->DURATION)) {
-                $days = max(1, (int) round(($start->add($event->DURATION->getDateInterval())->getTimestamp() - $start->getTimestamp()) / 86400));
+                $days = max(1, (int) $event->DURATION->getDateInterval()->d);
             }
 
             return static fn (\DateTimeImmutable $at): \DateTimeImmutable => $at->setTimezone($floatingZone)->setTime(0, 0)->modify('+' . $days . ' days');

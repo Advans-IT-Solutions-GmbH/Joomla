@@ -112,6 +112,17 @@ final class BookingData
             $keys->key(KeyProvider::PURPOSE_BOOKING_DATA));
     }
 
+    /** The keyed marker the migration leaves when it is over (or there was nothing to migrate). */
+    public static function migrationDoneMarker(KeyProvider $keys): string
+    {
+        return 'done.' . hash_hmac('sha256', 'com_appointments/booking-migration/v2|done', $keys->key(KeyProvider::PURPOSE_BOOKING_DATA));
+    }
+
+    public static function migrationDone(string $value, KeyProvider $keys): bool
+    {
+        return hash_equals(self::migrationDoneMarker($keys), $value);
+    }
+
     /**
      * The update time of a token made with this site's key that has not expired,
      * null for any other value.

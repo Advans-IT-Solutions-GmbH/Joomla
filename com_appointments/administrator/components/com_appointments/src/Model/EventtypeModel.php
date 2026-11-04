@@ -104,7 +104,11 @@ class EventtypeModel extends AdminModel
         sort($sortedBusy);
         sort($sortedStored);
         $keep = $id > 0 && $oldHost === $newHost && $target === $storedTarget && $sortedBusy === $sortedStored;
-        [$visible, $writable] = self::reachable($newHost, (int) Factory::getApplication()->getIdentity()->id);
+        [$visible, $writable, , $unknown] = self::reachable($newHost, (int) Factory::getApplication()->getIdentity()->id);
+
+        if ($unknown && !$keep) {
+            throw new \DomainException('Access to the calendars cannot be established.');
+        }
 
         if ($target > 0 && !isset($writable[$target]) && !($keep && $target === $storedTarget)) {
             throw new \DomainException('The target calendar is not writable for the host.');
@@ -119,10 +123,11 @@ class EventtypeModel extends AdminModel
         // Removing a link changes the public free times too: comparing the page before and after
         // would show the removed calendar's busy times. Only who reaches that calendar removes it.
         $removed = array_diff(array_filter(array_merge($storedBusy, [$storedTarget])), array_merge($busy, [$target]));
-        $hidden = $removed === [] || $oldHost < 1 ? [] : self::reachable($oldHost, (int) Factory::getApplication()->getIdentity()->id)[2];
+        $before = $removed === [] || $oldHost < 1 ? [[], [], [], false] : self::reachable($oldHost, (int) Factory::getApplication()->getIdentity()->id);
 
         foreach ($removed as $calendar) {
-            if (isset($hidden[(int) $calendar])) {
+            // Without the grant service nobody can tell who reaches the calendar: refuse.
+            if ($before[3] || isset($before[2][(int) $calendar])) {
                 throw new \DomainException('A linked calendar the editor cannot reach was removed.');
             }
         }
@@ -140,17 +145,18 @@ class EventtypeModel extends AdminModel
      * themselves, and nobody links a calendar the host may not see. A user
      * without a grant (also a Super User) links nothing until a manager grants.
      *
-     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, true>} Visible and writable calendars
-     *               (id => title), and the calendars the host reaches but the actor does not.
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, true>, 3: bool} Visible and writable calendars
+     *               (id => title), the calendars the host reaches but the actor does not, and whether the lookup failed.
      */
     public static function reachable(int $host, int $actor): array
     {
         $visible = [];
         $writable = [];
         $hidden = [];
+        $failed = false;
 
         if ($host < 1 || $actor < 1) {
-            return [$visible, $writable, $hidden];
+            return [$visible, $writable, $hidden, $failed];
         }
 
         try {
@@ -182,9 +188,10 @@ class EventtypeModel extends AdminModel
             }
         } catch (\Throwable $e) {
             // Without the grant service no calendar is reachable; only unchanged values pass.
+            $failed = true;
         }
 
-        return [$visible, $writable, $hidden];
+        return [$visible, $writable, $hidden, $failed];
     }
 
     /** @param int[] $calendars */

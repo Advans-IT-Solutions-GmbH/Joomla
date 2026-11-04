@@ -53,7 +53,15 @@ final class BookingRecords
      */
     public static function begin(DatabaseInterface $db, KeyProvider $keys): void
     {
-        if (self::pending($db) > 0 && !self::anySealed($db) && BookingData::migrationCutoff(self::token($db), $keys, time()) === null) {
+        $token = self::token($db);
+
+        // Once finished (or a new installation), never again: the end marker is keyed, and it
+        // survives the deletion of every booking, unlike the absence of sealed rows.
+        if (BookingData::migrationDone($token, $keys)) {
+            return;
+        }
+
+        if (self::pending($db) > 0 && !self::anySealed($db) && BookingData::migrationCutoff($token, $keys, time()) === null) {
             self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, time()));
         }
     }
@@ -76,9 +84,15 @@ final class BookingRecords
      */
     public static function migrate(DatabaseInterface $db, KeyProvider $keys, int $batch): int
     {
-        $cutoff = BookingData::migrationCutoff(self::token($db), $keys, time());
+        $token = self::token($db);
+        $cutoff = BookingData::migrationCutoff($token, $keys, time());
 
         if ($cutoff === null) {
+            // A new installation, a database without clear rows or an expired token with none left: over.
+            if (!BookingData::migrationDone($token, $keys) && self::pending($db) === 0) {
+                self::setToken($db, BookingData::migrationDoneMarker($keys));
+            }
+
             return 0;
         }
 
@@ -92,7 +106,7 @@ final class BookingRecords
         $rows = $db->setQuery($query)->loadAssocList();
 
         if ($rows === []) {
-            self::setToken($db, null);
+            self::setToken($db, BookingData::migrationDoneMarker($keys));
 
             return 0;
         }
@@ -180,24 +194,22 @@ final class BookingRecords
         return \is_array($params) ? $params : null;
     }
 
-    /** Write or (null) delete the migration token. */
-    private static function setToken(DatabaseInterface $db, ?string $token): void
+    /**
+     * Write the migration option (a token or the end marker), and only that
+     * property, in one statement: no other option an administrator saves at the
+     * same moment is overwritten.
+     */
+    private static function setToken(DatabaseInterface $db, string $value): void
     {
-        $params = self::params($db);
-
-        if ($params === null || ($token === null && !\array_key_exists(BookingData::MIGRATION_OPTION, $params))) {
+        if (self::token($db) === $value) {
             return;
         }
 
-        if ($token === null) {
-            unset($params[BookingData::MIGRATION_OPTION]);
-        } else {
-            $params[BookingData::MIGRATION_OPTION] = $token;
-        }
-
+        $params = $db->quoteName('params');
         $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $update->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('params') . ' = ' . $db->quote(json_encode($params, JSON_THROW_ON_ERROR)))
+            ->set($params . ' = JSON_SET(COALESCE(NULLIF(TRIM(' . $params . '), ' . $db->quote('') . '), ' . $db->quote('{}') . '), '
+                . $db->quote('$.' . BookingData::MIGRATION_OPTION) . ', ' . $db->quote($value) . ')')
             ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
             ->where($db->quoteName('element') . ' = ' . $db->quote('com_appointments'));
         $db->setQuery($update)->execute();

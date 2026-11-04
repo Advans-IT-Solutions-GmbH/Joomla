@@ -47,9 +47,14 @@ final class PrivacyService
 
         $this->reportUnreadable($records);
 
+        $normalised = PrivacyAddress::normalise($address);
+
         foreach (array_chunk($ids, 200) as $chunk) {
             foreach ($this->rows($chunk, ['b.*']) as $row) {
-                yield $row;
+                // Checked again on the row that is returned: it is read a second time.
+                if (is_string($row['invitee_email']) && PrivacyAddress::matches($row['invitee_email'], $normalised)) {
+                    yield $row;
+                }
             }
         }
     }
