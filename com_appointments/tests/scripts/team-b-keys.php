@@ -213,6 +213,33 @@ return static function (TeamSuite $suite): void {
         return $refused && TeamServices::fromApplication()->keys()->openKeyring($st['calendar'], $ownerKeys) !== null;
     });
 
+    $suite->test('B: an object sealed without the server MAC (anybody can seal to the public key) is never read', static function () use ($keys, $row, $p, &$ownerKeys, &$st) {
+        $box = $row("SELECT box_public_key FROM {$p}appointments_calendar_keys WHERE calendar_id = {$st['calendar']} AND key_version = 1")['box_public_key'];
+        $planted = CipherSuite::seal($box, "ACv1\n" . json_encode(['c' => $st['calendar'], 'u' => 'p.ics']) . "\nBEGIN:VCALENDAR planted");
+        $object = new StoredObject(1, $st['calendar'], 'p.ics', str_repeat('e', 32), \strlen($planted), TeamStates::SCHEME_SEALED, 1, $planted, '', null, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+
+        return $keys->decryptObject($keys->openKeyring($st['calendar'], $ownerKeys), $object) === null;
+    });
+
+    $suite->test('B: a key version set back or forward in the calendar row is not followed', static function () use ($db, $p, &$ownerKeys, &$st) {
+        $db->query("UPDATE {$p}appointments_calendars SET key_version = 7 WHERE id = {$st['calendar']}");
+        $ring = TeamServices::fromApplication()->keys()->openKeyring($st['calendar'], $ownerKeys);
+        $db->query("UPDATE {$p}appointments_calendars SET key_version = 1 WHERE id = {$st['calendar']}");
+
+        return $ring !== null && $ring->current()->version() === 1;
+    });
+
+    $suite->test('B: a reset never overwrites a key row that fails its MAC (the old site secret must still find it)', static function () use ($db, $keys, $member, $p, $refusal, $row) {
+        $flip = "UPDATE {$p}appointments_user_keys SET public_key = CONCAT(LEFT(public_key, 31), CHAR(ASCII(RIGHT(public_key, 1)) ^ 1)) WHERE user_id = {$member}";
+        $db->query($flip);
+        $before = $row("SELECT HEX(public_key) AS k, key_version FROM {$p}appointments_user_keys WHERE user_id = {$member}");
+        $code = $refusal(static fn () => $keys->resetUserKey($member));
+        $after = $row("SELECT HEX(public_key) AS k, key_version FROM {$p}appointments_user_keys WHERE user_id = {$member}");
+        $db->query($flip);
+
+        return $code === 409 && $before === $after && $keys->hasUserKey($member);
+    });
+
     $suite->test('B: the recovery secret opens the calendar, another secret does not', static function () use ($keys, &$recovery, &$ownerKeys, &$st) {
         $ring = $keys->recoverKeyring($st['calendar'], $recovery);
         $own = $keys->openKeyring($st['calendar'], $ownerKeys);
@@ -381,7 +408,7 @@ return static function (TeamSuite $suite): void {
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
             $db->query("UPDATE {$p}extensions SET enabled = 0 WHERE type='plugin' AND folder='user' AND element='appointments'");
 
-            preg_match('/^Set-Cookie:\s*appointments_keys_site=([0-9a-f]{64});([^\r\n]*)/mi', $headers, $cookie);
+            preg_match('/^Set-Cookie:\s*(?:__Host-)?appointments_keys_site=([0-9a-f]{64});([^\r\n]*)/mi', $headers, $cookie);
             $session = teamBSession($db, $p, $member);
             $escrow = $session?->get('com_appointments.team_keys.site');
             $escrow = \is_object($escrow) ? (array) $escrow : $escrow;

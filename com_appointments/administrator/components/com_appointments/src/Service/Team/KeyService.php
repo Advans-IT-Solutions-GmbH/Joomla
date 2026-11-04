@@ -156,6 +156,14 @@ final class KeyService implements KeyServiceInterface
         $db->transactionStart(true);
 
         try {
+            // Under the lock of the recovery row nobody seals a new key version to
+            // the old public key while the existing ones are moved to the new one.
+            $locked = $this->recoveryRow(true);
+
+            if ($locked === null || !hash_equals((string) $locked['public_key'], (string) $oldPublic)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_RECOVERY_INVALID', 409);
+            }
+
             $query = $this->query()
                 ->select($db->quoteName(['calendar_id', 'key_version', 'box_public_key', 'box_secret_wrapped', 'recovery_wrapped', 'recovery_fingerprint', 'row_mac']))
                 ->from($db->quoteName('#__appointments_calendar_keys'));
@@ -323,10 +331,18 @@ final class KeyService implements KeyServiceInterface
 
         try {
             $query = $this->query()
-                ->select($db->quoteName(['key_version']))
+                ->select($db->quoteName(['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'row_mac']))
                 ->from($db->quoteName('#__appointments_user_keys'))
                 ->where($db->quoteName('user_id') . ' = ' . $userId);
-            $current = $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+            $stored = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+            $current = $stored === null ? null : (int) $stored['key_version'];
+
+            // A row that fails its MAC is left alone: after a change of the site
+            // secret every row fails, and the way back (the old secret) must still
+            // find the user's key and wraps.
+            if ($stored !== null && !$this->verifyStoredRow('user_keys', $stored)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_TAMPERED', 409);
+            }
 
             if ($current !== null) {
                 // A new key pair whose secret is discarded at once: nothing can be
@@ -361,6 +377,12 @@ final class KeyService implements KeyServiceInterface
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
+
+            if ($e instanceof TeamException && $e->getCode() === 409) {
+                $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
+
+                throw $e;
+            }
 
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
@@ -410,12 +432,6 @@ final class KeyService implements KeyServiceInterface
 
     public function createCalendarKeys(int $calendarId, int $ownerUserId): void
     {
-        $recovery = $this->recoveryRow();
-
-        if ($recovery === null) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
-        }
-
         $owner = $this->usableUserKey($ownerUserId);
 
         if ($owner === null) {
@@ -423,19 +439,27 @@ final class KeyService implements KeyServiceInterface
         }
 
         $db = $this->services->db();
-        $exists = $db->setQuery(
-            $this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_calendar_keys'))
-                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-        )->loadResult();
-
-        if ((int) $exists > 0) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_EXISTS', 409);
-        }
-
         $calendarKey = CipherSuite::randomKey();
         $db->transactionStart(true);
 
         try {
+            // The recovery row is locked, so a recovery key rotation cannot run
+            // between reading its public key and sealing to it.
+            $recovery = $this->recoveryRow(true);
+
+            if ($recovery === null) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
+            }
+
+            $exists = $db->setQuery(
+                $this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_calendar_keys'))
+                    ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            )->loadResult();
+
+            if ((int) $exists > 0) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_EXISTS', 409);
+            }
+
             $this->insertKeyVersion($calendarId, 1, $calendarKey, $recovery);
             $this->writeWrap($calendarId, 1, $ownerUserId, (int) $owner['key_version'], (string) $owner['public_key'], $calendarKey);
             $db->setQuery(
@@ -447,7 +471,7 @@ final class KeyService implements KeyServiceInterface
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
 
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+            throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         } finally {
             CipherSuite::wipe($calendarKey);
             unset($this->calendarKeyRows[$calendarId . ':1']);
@@ -529,6 +553,10 @@ final class KeyService implements KeyServiceInterface
      * Also re-encrypts a batch of objects of older versions and sealed objects
      * (`CalendarObjectStoreInterface::reencrypt()`), so a rotation completes
      * over the next key holders' requests.
+     *
+     * Writing happens under a lock of the calendar row and with the holders
+     * determined again inside it, so a revocation that runs at the same time
+     * (it locks the same row) never receives a wrap.
      */
     public function completePendingWraps(CalendarKeyring $keyring): int
     {
@@ -536,24 +564,28 @@ final class KeyService implements KeyServiceInterface
         $current = $keyring->current()->version();
         $written = 0;
 
-        foreach ($this->keyHolders($calendarId, false) ?? [] as $holder) {
-            $have = $this->wrappedVersions($calendarId, $holder['user_id'], $holder['key_version']);
-            $completed = 0;
+        // A cheap look without a lock first: most requests have nothing to complete.
+        if ($this->missingWraps($calendarId, $keyring, $this->keyHolders($calendarId, false) ?? []) !== []) {
+            $db = $this->services->db();
+            $db->transactionStart(true);
 
-            for ($version = 1; $version <= $current; $version++) {
-                $key = $keyring->version($version);
+            try {
+                $this->lockCalendar($calendarId);
 
-                if ($key === null || isset($have[$version])) {
-                    continue;
+                foreach ($this->missingWraps($calendarId, $keyring, $this->keyHolders($calendarId, false) ?? []) as $userId => $missing) {
+                    foreach ($missing['versions'] as $version) {
+                        $this->writeWrap($calendarId, $version, $userId, $missing['key_version'], $missing['public_key'], $keyring->version($version)->key());
+                        $written++;
+                    }
+
+                    $this->log(AuditEvent::GRANT_KEY_COMPLETED, ['subject_user_id' => $userId, 'calendar_id' => $calendarId]);
                 }
 
-                $this->writeWrap($calendarId, $version, $holder['user_id'], $holder['key_version'], $holder['public_key'], $key->key());
-                $completed++;
-            }
-
-            if ($completed > 0) {
-                $written += $completed;
-                $this->log(AuditEvent::GRANT_KEY_COMPLETED, ['subject_user_id' => $holder['user_id'], 'calendar_id' => $calendarId]);
+                $db->transactionCommit(true);
+            } catch (\Throwable $e) {
+                $db->transactionRollback(true);
+                $this->warn('pending wraps could not be completed', $e);
+                $written = 0;
             }
         }
 
@@ -581,32 +613,21 @@ final class KeyService implements KeyServiceInterface
     public function rotateCalendarKey(CalendarKeyring $keyring): CalendarKeyring
     {
         $calendarId = $keyring->calendarId();
-        $recovery = $this->recoveryRow();
-
-        if ($recovery === null) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
-        }
-
-        // Every remaining holder must be known before a version nobody else can
-        // open is created; an account that cannot be judged now postpones the rotation.
-        $holders = $this->keyHolders($calendarId, true);
-
-        if ($holders === null || $holders === []) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
-        }
-
         $db = $this->services->db();
         $newKey = CipherSuite::randomKey();
         $db->transactionStart(true);
 
         try {
-            $query = $this->query()
-                ->select($db->quoteName('key_version'))
-                ->from($db->quoteName('#__appointments_calendars'))
-                ->where($db->quoteName('id') . ' = ' . $calendarId);
-            $stored = $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+            $this->lockCalendar($calendarId);
+            $recovery = $this->recoveryRow(true);
 
-            if ($stored === null || (int) $stored !== $keyring->current()->version()) {
+            if ($recovery === null) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_RECOVERY_KEY', 409);
+            }
+
+            $current = $this->currentVersion($calendarId);
+
+            if ($current === null || $current !== $keyring->current()->version()) {
                 // Somebody rotated in the meantime; the caller keeps its keyring.
                 $db->transactionCommit(true);
                 CipherSuite::wipe($newKey);
@@ -614,7 +635,17 @@ final class KeyService implements KeyServiceInterface
                 return $keyring;
             }
 
-            $version = (int) $stored + 1;
+            // Every remaining holder must be known before a version nobody else
+            // can open is created; an account that cannot be judged now, or no
+            // holder at all, postpones the rotation. Determined under the lock, so
+            // a revocation running at the same time is either fully before or after.
+            $holders = $this->keyHolders($calendarId, true);
+
+            if ($holders === null || $holders === []) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
+            }
+
+            $version = $current + 1;
             $this->insertKeyVersion($calendarId, $version, $newKey, $recovery);
 
             foreach ($holders as $holder) {
@@ -631,7 +662,7 @@ final class KeyService implements KeyServiceInterface
             $db->transactionRollback(true);
             CipherSuite::wipe($newKey);
 
-            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
+            throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
 
         $keys = [CalendarKey::create($calendarId, $version, $newKey)];
@@ -717,7 +748,9 @@ final class KeyService implements KeyServiceInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NO_CALENDAR_KEY', 409);
         }
 
-        $envelope = self::ENVELOPE . json_encode(['c' => $calendarId, 'u' => $uri], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . $ics;
+        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ROW_MAC);
+        $envelope = self::sealEnvelope($calendarId, $uri, $ics, $macKey);
+        CipherSuite::wipe($macKey);
 
         return [
             'scheme'  => TeamStates::SCHEME_SEALED,
@@ -757,7 +790,15 @@ final class KeyService implements KeyServiceInterface
         $plain = CipherSuite::open($boxSecret, (string) $keyRow['box_public_key'], $object->payload);
         CipherSuite::wipe($boxSecret);
 
-        return $plain === null ? null : self::openEnvelope($plain, $object->calendarId, $object->uri);
+        if ($plain === null) {
+            return null;
+        }
+
+        $macKey = $this->serverKey(KeyProvider::PURPOSE_TEAM_ROW_MAC);
+        $ics = self::openEnvelope($plain, $object->calendarId, $object->uri, $macKey);
+        CipherSuite::wipe($macKey);
+
+        return $ics;
     }
 
     public function sealTiming(int $calendarId, string $uri, string $skeleton): string
@@ -861,7 +902,7 @@ final class KeyService implements KeyServiceInterface
     /**
      * The password key of specification 5.2 (the caller wipes it).
      */
-    public function passwordKek(string $password, string $salt, int $opslimit, int $memlimit): string
+    public function passwordKek(#[\SensitiveParameter] string $password, string $salt, int $opslimit, int $memlimit): string
     {
         $server = $this->serverKey(KeyProvider::PURPOSE_TEAM_PASSWORD_KEK);
 
@@ -875,7 +916,7 @@ final class KeyService implements KeyServiceInterface
     /**
      * Unwrap the user's secret with an already derived password key.
      */
-    public function unlockWithKek(int $userId, string $kek): ?KeyContext
+    public function unlockWithKek(int $userId, #[\SensitiveParameter] string $kek): ?KeyContext
     {
         $row = $this->usableUserKey($userId);
 
@@ -893,7 +934,7 @@ final class KeyService implements KeyServiceInterface
      * A key pair wrapped with an already derived password key. Replaces only a
      * row in state `reset`; a usable or tampered row is refused with 409.
      */
-    public function createUserKeyWithKek(int $userId, string $kek, string $salt, int $opslimit, int $memlimit): KeyContext
+    public function createUserKeyWithKek(int $userId, #[\SensitiveParameter] string $kek, string $salt, int $opslimit, int $memlimit): KeyContext
     {
         if ($userId <= 0) {
             throw new \InvalidArgumentException('A key pair belongs to a user.');
@@ -994,7 +1035,7 @@ final class KeyService implements KeyServiceInterface
      * The printed form of a recovery secret: the 32 secret bytes and a 3-byte
      * typing check, Base32, 14 groups of four characters.
      */
-    public static function formatRecoverySecret(string $secret): string
+    public static function formatRecoverySecret(#[\SensitiveParameter] string $secret): string
     {
         if (\strlen($secret) !== CipherSuite::KEY_BYTES) {
             throw new \InvalidArgumentException('A recovery secret has exactly 32 bytes.');
@@ -1024,7 +1065,7 @@ final class KeyService implements KeyServiceInterface
      * (wrong length, wrong character, failed typing check). Case, spaces and
      * hyphens are ignored; 0, 1 and 8 are read as O, I and B.
      */
-    public static function parseRecoverySecret(string $input): ?string
+    public static function parseRecoverySecret(#[\SensitiveParameter] string $input): ?string
     {
         $text = strtr(strtoupper(preg_replace('/[\s\-]+/', '', $input) ?? ''), ['0' => 'O', '1' => 'I', '8' => 'B']);
         $chars = (int) ceil((CipherSuite::KEY_BYTES + self::RECOVERY_CHECK_BYTES) * 8 / 5);
@@ -1061,10 +1102,25 @@ final class KeyService implements KeyServiceInterface
     }
 
     /**
-     * The iCalendar text of an opened scheme-2 envelope, null when it was
-     * written for another calendar or URI.
+     * The scheme-2 envelope: `"ACv1\n" . json_encode(['c' => calendarId, 'u' => uri, 'm' => mac]) . "\n" . ics`.
+     * Anybody can seal to the public sealing key, so the envelope carries
+     * `m = base64(HMAC-SHA256(key(TEAM_ROW_MAC), associatedData('envelope', calendarId, uri, ics)))`:
+     * only the server (the booking flow) can write an envelope that opens, and
+     * an object planted by somebody who can write the database alone is never
+     * read, nor re-encrypted into scheme 1.
      */
-    public static function openEnvelope(string $plain, int $calendarId, string $uri): ?string
+    public static function sealEnvelope(int $calendarId, string $uri, string $ics, #[\SensitiveParameter] string $macKey): string
+    {
+        $mac = hash_hmac('sha256', CipherSuite::associatedData('envelope', $calendarId, $uri, $ics), $macKey, true);
+
+        return self::ENVELOPE . json_encode(['c' => $calendarId, 'u' => $uri, 'm' => base64_encode($mac)], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n" . $ics;
+    }
+
+    /**
+     * The iCalendar text of an opened scheme-2 envelope, null when it was
+     * written for another calendar or URI or does not carry the server's MAC.
+     */
+    public static function openEnvelope(string $plain, int $calendarId, string $uri, #[\SensitiveParameter] string $macKey): ?string
     {
         if (!str_starts_with($plain, self::ENVELOPE)) {
             return null;
@@ -1078,11 +1134,14 @@ final class KeyService implements KeyServiceInterface
 
         $meta = json_decode(substr($plain, \strlen(self::ENVELOPE), $end - \strlen(self::ENVELOPE)), true);
 
-        if (!\is_array($meta) || ($meta['c'] ?? null) !== $calendarId || ($meta['u'] ?? null) !== $uri) {
+        if (!\is_array($meta) || ($meta['c'] ?? null) !== $calendarId || ($meta['u'] ?? null) !== $uri || !\is_string($meta['m'] ?? null)) {
             return null;
         }
 
-        return substr($plain, $end + 1);
+        $ics = substr($plain, $end + 1);
+        $expected = hash_hmac('sha256', CipherSuite::associatedData('envelope', $calendarId, $uri, $ics), $macKey, true);
+
+        return hash_equals($expected, (string) base64_decode($meta['m'], true)) ? $ics : null;
     }
 
     // ------------------------------------------------------------------
@@ -1110,7 +1169,7 @@ final class KeyService implements KeyServiceInterface
         return "X'" . bin2hex($bytes) . "'";
     }
 
-    private function contextFrom(int $userId, int $version, ?string $secret, string $publicKey): ?KeyContext
+    private function contextFrom(int $userId, int $version, #[\SensitiveParameter] ?string $secret, string $publicKey): ?KeyContext
     {
         if ($secret === null || \strlen($secret) !== CipherSuite::KEY_BYTES || !hash_equals($publicKey, CipherSuite::publicKeyOf($secret))) {
             CipherSuite::wipe($secret);
@@ -1185,24 +1244,25 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  array<string, mixed>|null
      */
-    private function rawRecoveryRow(): ?array
+    private function rawRecoveryRow(bool $forUpdate = false): ?array
     {
         $db = $this->services->db();
+        $query = $this->query()
+            ->select($db->quoteName(['purpose', 'public_key', 'fingerprint', 'row_mac', 'created_by', 'created_utc']))
+            ->from($db->quoteName('#__appointments_keyring'))
+            ->where($db->quoteName('purpose') . ' = ' . $db->quote(self::RECOVERY));
 
-        return $db->setQuery(
-            $this->query()
-                ->select($db->quoteName(['purpose', 'public_key', 'fingerprint', 'row_mac', 'created_by', 'created_utc']))
-                ->from($db->quoteName('#__appointments_keyring'))
-                ->where($db->quoteName('purpose') . ' = ' . $db->quote(self::RECOVERY))
-        )->loadAssoc() ?: null;
+        return $db->setQuery((string) $query . ($forUpdate ? ' FOR UPDATE' : ''))->loadAssoc() ?: null;
     }
 
     /**
+     * @param   bool  $forUpdate  Lock the row (inside a transaction) against a concurrent rotation.
+     *
      * @return  array<string, mixed>|null  The recovery row after its MAC is verified.
      */
-    private function recoveryRow(): ?array
+    private function recoveryRow(bool $forUpdate = false): ?array
     {
-        $row = $this->rawRecoveryRow();
+        $row = $this->rawRecoveryRow($forUpdate);
 
         if ($row === null) {
             return null;
@@ -1276,8 +1336,82 @@ final class KeyService implements KeyServiceInterface
                 ->from($db->quoteName('#__appointments_calendars'))
                 ->where($db->quoteName('id') . ' = ' . $calendarId)
         )->loadAssoc();
+        $current = $row ? $this->currentVersion($calendarId) : null;
 
-        return $row ? ['key_version' => (int) $row['key_version'], 'rotation_due' => (int) $row['rotation_due'] === 1] : null;
+        if ($current === null) {
+            return null;
+        }
+
+        // `calendars.key_version` carries no MAC; the newest verified key row
+        // decides, so a version set back in the database is not followed.
+        if ($current !== (int) $row['key_version']) {
+            $this->macFailure('calendars', 'version', ['calendar_id' => $calendarId]);
+        }
+
+        return ['key_version' => $current, 'rotation_due' => (int) $row['rotation_due'] === 1];
+    }
+
+    /**
+     * The newest key version of a calendar whose `calendar_keys` row verifies,
+     * null when there is none.
+     */
+    private function currentVersion(int $calendarId): ?int
+    {
+        $db = $this->services->db();
+        $versions = $db->setQuery(
+            $this->query()
+                ->select($db->quoteName('key_version'))
+                ->from($db->quoteName('#__appointments_calendar_keys'))
+                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+                ->order($db->quoteName('key_version') . ' DESC')
+        )->loadColumn() ?: [];
+
+        foreach ($versions as $version) {
+            if ($this->calendarKeyRow($calendarId, (int) $version) !== null) {
+                return (int) $version;
+            }
+        }
+
+        return null;
+    }
+
+    private function lockCalendar(int $calendarId): void
+    {
+        $db = $this->services->db();
+        $query = $this->query()
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__appointments_calendars'))
+            ->where($db->quoteName('id') . ' = ' . $calendarId);
+        $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+    }
+
+    /**
+     * The versions of a keyring each holder still lacks a wrap of.
+     *
+     * @param   array<int, array{user_id: int, key_version: int, public_key: string}>  $holders
+     *
+     * @return  array<int, array{key_version: int, public_key: string, versions: int[]}>
+     */
+    private function missingWraps(int $calendarId, CalendarKeyring $keyring, array $holders): array
+    {
+        $missing = [];
+
+        foreach ($holders as $holder) {
+            $have = $this->wrappedVersions($calendarId, $holder['user_id'], $holder['key_version']);
+            $versions = [];
+
+            for ($version = 1; $version <= $keyring->current()->version(); $version++) {
+                if ($keyring->version($version) !== null && !isset($have[$version])) {
+                    $versions[] = $version;
+                }
+            }
+
+            if ($versions !== []) {
+                $missing[$holder['user_id']] = ['key_version' => $holder['key_version'], 'public_key' => $holder['public_key'], 'versions' => $versions];
+            }
+        }
+
+        return $missing;
     }
 
     /**
@@ -1314,7 +1448,7 @@ final class KeyService implements KeyServiceInterface
      *
      * @param   array<string, mixed>  $keyRow
      */
-    private function boxSecret(int $calendarId, int $version, string $calendarKey, array $keyRow): ?string
+    private function boxSecret(int $calendarId, int $version, #[\SensitiveParameter] string $calendarKey, array $keyRow): ?string
     {
         $secret = CipherSuite::decrypt($calendarKey, (string) $keyRow['box_secret_wrapped'], self::boxAd($calendarId, $version));
 
@@ -1332,7 +1466,7 @@ final class KeyService implements KeyServiceInterface
      *
      * @param   array<string, mixed>  $keyRow  The verified row.
      */
-    private function opensBox(int $calendarId, int $version, string $calendarKey, array $keyRow): bool
+    private function opensBox(int $calendarId, int $version, #[\SensitiveParameter] string $calendarKey, array $keyRow): bool
     {
         if (\strlen($calendarKey) !== CipherSuite::KEY_BYTES) {
             return false;
@@ -1370,7 +1504,7 @@ final class KeyService implements KeyServiceInterface
     /**
      * @param   array<string, mixed>  $recovery  The verified recovery row.
      */
-    private function insertKeyVersion(int $calendarId, int $version, string $calendarKey, array $recovery): void
+    private function insertKeyVersion(int $calendarId, int $version, #[\SensitiveParameter] string $calendarKey, array $recovery): void
     {
         $box = CipherSuite::keyPair();
         $fields = [
@@ -1412,7 +1546,7 @@ final class KeyService implements KeyServiceInterface
         )->execute();
     }
 
-    private function writeWrap(int $calendarId, int $version, int $userId, int $userKeyVersion, string $publicKey, string $calendarKey): void
+    private function writeWrap(int $calendarId, int $version, int $userId, int $userKeyVersion, string $publicKey, #[\SensitiveParameter] string $calendarKey): void
     {
         $db = $this->services->db();
         $wrapped = CipherSuite::seal($publicKey, $calendarKey);

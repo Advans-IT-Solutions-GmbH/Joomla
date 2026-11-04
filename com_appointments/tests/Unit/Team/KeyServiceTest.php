@@ -218,16 +218,22 @@ final class KeyServiceTest extends TestCase
         self::assertNotSame(KeyService::fingerprintOf($public), KeyService::fingerprintOf(CipherSuite::keyPair()['public']));
     }
 
-    public function testEnvelopeOpensOnlyForItsCalendarAndUri(): void
+    public function testEnvelopeOpensOnlyForItsCalendarAndUriWithTheServerMac(): void
     {
-        $plain = "ACv1\n" . json_encode(['c' => 7, 'u' => 'booking-1.ics']) . "\nBEGIN:VCALENDAR";
+        $key = str_repeat("\x31", 32);
+        $plain = KeyService::sealEnvelope(7, 'booking-1.ics', 'BEGIN:VCALENDAR', $key);
+        $mac = base64_encode(hash_hmac('sha256', CipherSuite::associatedData('envelope', 7, 'booking-1.ics', 'BEGIN:VCALENDAR'), $key, true));
 
-        self::assertSame('BEGIN:VCALENDAR', KeyService::openEnvelope($plain, 7, 'booking-1.ics'));
-        self::assertNull(KeyService::openEnvelope($plain, 8, 'booking-1.ics'));
-        self::assertNull(KeyService::openEnvelope($plain, 7, 'other.ics'));
-        self::assertNull(KeyService::openEnvelope("ACv2\n" . substr($plain, 5), 7, 'booking-1.ics'));
-        self::assertNull(KeyService::openEnvelope("ACv1\n" . json_encode(['c' => '7', 'u' => 'booking-1.ics']) . "\nX", 7, 'booking-1.ics'), 'the id is an integer');
-        self::assertNull(KeyService::openEnvelope("ACv1\nno newline", 7, 'booking-1.ics'));
+        self::assertSame("ACv1\n" . json_encode(['c' => 7, 'u' => 'booking-1.ics', 'm' => $mac], JSON_UNESCAPED_SLASHES) . "\nBEGIN:VCALENDAR", $plain);
+        self::assertSame('BEGIN:VCALENDAR', KeyService::openEnvelope($plain, 7, 'booking-1.ics', $key));
+        self::assertNull(KeyService::openEnvelope($plain, 8, 'booking-1.ics', $key));
+        self::assertNull(KeyService::openEnvelope($plain, 7, 'other.ics', $key));
+        self::assertNull(KeyService::openEnvelope($plain, 7, 'booking-1.ics', str_repeat("\x32", 32)), 'another server key');
+        self::assertNull(KeyService::openEnvelope($plain . 'X', 7, 'booking-1.ics', $key), 'content changed');
+        self::assertNull(KeyService::openEnvelope("ACv2\n" . substr($plain, 5), 7, 'booking-1.ics', $key));
+        self::assertNull(KeyService::openEnvelope("ACv1\n" . json_encode(['c' => 7, 'u' => 'booking-1.ics']) . "\nBEGIN:VCALENDAR", 7, 'booking-1.ics', $key), 'without MAC, as anybody can seal it');
+        self::assertNull(KeyService::openEnvelope("ACv1\n" . json_encode(['c' => '7', 'u' => 'booking-1.ics', 'm' => $mac]) . "\nBEGIN:VCALENDAR", 7, 'booking-1.ics', $key), 'the id is an integer');
+        self::assertNull(KeyService::openEnvelope("ACv1\nno newline", 7, 'booking-1.ics', $key));
     }
 
     public function testNoStubMarkerIsLeftInTheImplementation(): void

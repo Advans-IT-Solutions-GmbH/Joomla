@@ -62,6 +62,9 @@ final class KeySession implements KeySessionInterface
     /** The password signed in but no longer opens the stored key: reset and create at release. */
     private const MODE_REPLACE = 'replace';
 
+    /** MFA methods that do not count as a second factor for keys. */
+    private const NOT_A_SECOND_FACTOR = ['backupcodes', 'email'];
+
     /** Joomla's response types of sign-ins without a password. */
     private const SILENT_TYPES = ['cookie', 'passwordless'];
 
@@ -119,19 +122,31 @@ final class KeySession implements KeySessionInterface
         try {
             $keys = $this->keyService();
             $status = $keys->userKeyStatus($userId)['status'];
+            $actor = $this->identityId();
+            $reason = $actor !== null && $actor !== $userId ? 'password_set' : 'password_reset';
+            $actorUserId = $actor !== $userId ? $actor : null;
 
-            // An account without a usable key pair has nothing to protect: the
-            // activation of a new account sets its first password this way, and a
-            // reset account is reset already. Nothing is reset, nothing is mailed.
-            if ($status === 'none' || $status === 'reset') {
+            // A new account has no key pair yet: its activation sets the first
+            // password this way. Nothing to reset, nothing to mail.
+            if ($status === 'none') {
                 $this->forgetIfOwnedBy($userId);
+
+                return;
+            }
+
+            // Reset already (grants given again since then wait for a key), or a
+            // row that fails its MAC (after a change of the site secret every row
+            // does): suspend and clean up, but never destroy key material.
+            if ($status === 'reset' || $status === 'tampered') {
+                $this->forgetIfOwnedBy($userId);
+                $this->suspendFlow($userId, $reason, $actorUserId);
 
                 return;
             }
 
             $context = $this->current();
 
-            if ($context !== null && $context->userId() === $userId && $status === 'usable') {
+            if ($context !== null && $context->userId() === $userId) {
                 try {
                     $keys->rewrapForPassword($context, $clearPassword);
                 } finally {
@@ -145,9 +160,18 @@ final class KeySession implements KeySessionInterface
                 $context->wipe();
             }
 
-            $actor = $this->identityId();
+            // The same password saved again (for example in a passkey session)
+            // changes nothing.
+            $same = $keys->unlockWithPassword($userId, $clearPassword);
+
+            if ($same !== null) {
+                $same->wipe();
+
+                return;
+            }
+
             $this->forgetIfOwnedBy($userId);
-            $this->resetFlow($userId, $actor !== null && $actor !== $userId ? 'password_set' : 'password_reset', $actor !== $userId ? $actor : null);
+            $this->resetFlow($userId, $reason, $actorUserId);
         } catch (\Throwable $e) {
             $this->warn('a password change could not be applied to the keys', $e);
         }
@@ -220,6 +244,17 @@ final class KeySession implements KeySessionInterface
 
             if ($context !== null) {
                 $this->store($app, $client, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', $secondFactor, $context->secretKey());
+
+                // A row from before a raise of the default limits is rewrapped
+                // with the current ones (same key pair, same password).
+                if ($status['opslimit'] < CipherSuite::PWHASH_OPSLIMIT || $status['memlimit'] < CipherSuite::PWHASH_MEMLIMIT) {
+                    try {
+                        $keys->rewrapForPassword($context, $password);
+                    } catch (\Throwable $e) {
+                        $this->warn('the password wrap could not be strengthened', $e);
+                    }
+                }
+
                 $context->wipe();
 
                 return;
@@ -257,6 +292,7 @@ final class KeySession implements KeySessionInterface
         $identity = $app->getIdentity();
 
         if ($identity === null || $identity->guest || (int) $identity->id !== $userId || (int) $identity->block !== 0
+            || !$this->accountActive($userId)
             || empty($escrow['mfa'])
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
@@ -272,10 +308,12 @@ final class KeySession implements KeySessionInterface
         }
 
         $nonce = (string) base64_decode((string) $escrow['nonce'], true);
+        $observedPublic = (string) base64_decode((string) ($escrow['pub'] ?? ''), true);
+        $salt = (string) base64_decode((string) ($escrow['salt'] ?? ''), true);
         $payload = CipherSuite::decrypt(
             $sessionKey,
             (string) base64_decode((string) $escrow['box'], true),
-            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce)
+            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'])
         );
 
         if ($payload === null || \strlen($payload) !== CipherSuite::KEY_BYTES) {
@@ -287,7 +325,6 @@ final class KeySession implements KeySessionInterface
 
         $keys = $this->keyService();
         $status = $keys->userKeyStatus($userId);
-        $observedPublic = (string) base64_decode((string) ($escrow['pub'] ?? ''), true);
         $unchanged = $status['version'] === (int) $escrow['version'] && hash_equals($status['public_key'], $observedPublic);
         $context = null;
 
@@ -302,15 +339,16 @@ final class KeySession implements KeySessionInterface
 
                 case self::MODE_CREATE:
                     if (($status['status'] === 'none' || $status['status'] === 'reset') && $unchanged) {
-                        $context = $keys->createUserKeyWithKek($userId, $payload, (string) base64_decode((string) ($escrow['salt'] ?? ''), true), CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT);
+                        $context = $keys->createUserKeyWithKek($userId, $payload, $salt, CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT);
                     }
 
                     break;
 
                 case self::MODE_REPLACE:
-                    if ($status['status'] === 'usable' && $unchanged) {
-                        $this->resetFlow($userId, 'key_unreachable', null);
-                        $context = $keys->createUserKeyWithKek($userId, $payload, (string) base64_decode((string) ($escrow['salt'] ?? ''), true), CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT);
+                    // A new pair only after the old one is reset and the grants are
+                    // suspended together; otherwise nothing, and the escrow goes.
+                    if ($status['status'] === 'usable' && $unchanged && $this->resetFlow($userId, 'key_unreachable', null)) {
+                        $context = $keys->createUserKeyWithKek($userId, $payload, $salt, CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT);
                     }
 
                     break;
@@ -338,23 +376,70 @@ final class KeySession implements KeySessionInterface
 
     /**
      * Password reset, password set by somebody else, or a key the password no
-     * longer opens: new key pair, wraps gone, grants suspended, devices into
-     * clean-up, mail. Each step on its own, so a failing one does not stop the others.
+     * longer opens: new key pair and wraps gone together with the suspension of
+     * every grant, in one transaction, so a reset never leaves grants active
+     * that the next key pair would receive again. Then devices into clean-up
+     * (also when the reset failed) and the mail (only when it succeeded).
+     *
+     * @return  bool  Whether key and grants were reset.
      */
-    private function resetFlow(int $userId, string $reason, ?int $actorUserId): void
+    private function resetFlow(int $userId, string $reason, ?int $actorUserId): bool
     {
-        foreach ([
-            fn () => $this->keyService()->resetUserKey($userId),
-            fn () => $this->services->grants()->suspendAllForUser($userId, $reason),
-            fn () => $this->services->cleanup()->startForUser($userId, $reason, $actorUserId),
-            fn () => $this->services->mailer()->accessSuspended($userId, $reason),
-        ] as $step) {
-            try {
-                $step();
-            } catch (\Throwable $e) {
-                $this->warn('a step of a key reset failed', $e);
-            }
+        $db = $this->services->db();
+        $db->transactionStart(true);
+
+        try {
+            $this->keyService()->resetUserKey($userId);
+            $this->services->grants()->suspendAllForUser($userId, $reason);
+            $db->transactionCommit(true);
+            $done = true;
+        } catch (\Throwable $e) {
+            $db->transactionRollback(true);
+            $this->warn('a key reset was refused', $e);
+            $done = false;
         }
+
+        $this->step(fn () => $this->services->cleanup()->startForUser($userId, $reason, $actorUserId));
+
+        if ($done) {
+            $this->step(fn () => $this->services->mailer()->accessSuspended($userId, $reason));
+        }
+
+        return $done;
+    }
+
+    /**
+     * Grants suspended, devices into clean-up, mail; the key row is not touched.
+     */
+    private function suspendFlow(int $userId, string $reason, ?int $actorUserId): void
+    {
+        $this->step(fn () => $this->services->grants()->suspendAllForUser($userId, $reason));
+        $this->step(fn () => $this->services->cleanup()->startForUser($userId, $reason, $actorUserId));
+        $this->step(fn () => $this->services->mailer()->accessSuspended($userId, $reason));
+    }
+
+    private function step(callable $operation): void
+    {
+        try {
+            $operation();
+        } catch (\Throwable $e) {
+            $this->warn('a step of a key reset failed', $e);
+        }
+    }
+
+    /**
+     * Whether the account exists and is not blocked, read from the database
+     * (the identity in the session may be older).
+     */
+    private function accountActive(int $userId): bool
+    {
+        $db = $this->services->db();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $block = $db->setQuery(
+            $query->select($db->quoteName('block'))->from($db->quoteName('#__users'))->where($db->quoteName('id') . ' = ' . $userId)
+        )->loadResult();
+
+        return $block !== null && (int) $block === 0;
     }
 
     private function store(CMSApplicationInterface $app, string $client, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $payload): void
@@ -380,17 +465,19 @@ final class KeySession implements KeySessionInterface
             'salt'    => base64_encode($salt),
             'mfa'     => $secondFactor,
             'nonce'   => base64_encode($nonce),
-            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce))),
+            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor))),
         ]);
     }
 
     /**
      * Associated data of the escrow: bound to user, client, mode, user key
-     * version and a fresh nonce, so a box cannot be replayed in another place.
+     * version, a fresh nonce and every other field of the session entry
+     * (observed public key, salt, second factor at sign-in), so neither a box
+     * nor a field can be replayed or changed in the session table unnoticed.
      */
-    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce): string
+    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor): string
     {
-        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce));
+        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0);
     }
 
     private function forget(): void
@@ -439,7 +526,7 @@ final class KeySession implements KeySessionInterface
      */
     private function cookieKey(CMSApplicationInterface $app, string $client, bool $decode = true): ?string
     {
-        $value = (string) $app->getInput()->cookie->get(self::COOKIE[$client], '', 'ALNUM');
+        $value = (string) $app->getInput()->cookie->get($this->cookieName($app, $client), '', 'ALNUM');
 
         if (\strlen($value) !== 2 * CipherSuite::KEY_BYTES || !ctype_xdigit($value)) {
             return null;
@@ -448,9 +535,20 @@ final class KeySession implements KeySessionInterface
         return $decode ? (string) hex2bin($value) : $value;
     }
 
+    /**
+     * `__Host-` when the site cookie settings allow it (path `/`, no domain):
+     * the browser then never sends the cookie to another host or subdomain.
+     */
+    private function cookieName(CMSApplicationInterface $app, string $client): string
+    {
+        $hostOnly = ((string) ($app->get('cookie_path') ?: '/')) === '/' && (string) $app->get('cookie_domain', '') === '';
+
+        return ($hostOnly ? '__Host-' : '') . self::COOKIE[$client];
+    }
+
     private function setCookie(CMSApplicationInterface $app, string $client, string $value, int $expires): void
     {
-        $app->getInput()->cookie->set(self::COOKIE[$client], $value, [
+        $app->getInput()->cookie->set($this->cookieName($app, $client), $value, [
             'expires'  => $expires,
             'path'     => (string) ($app->get('cookie_path') ?: '/'),
             'domain'   => (string) $app->get('cookie_domain', ''),
@@ -485,10 +583,23 @@ final class KeySession implements KeySessionInterface
 
     /**
      * Joomla's own test of its captive page: a record of a method that is
-     * enabled now, backup codes not counted.
+     * enabled now. Not counted: backup codes, and the code by e-mail, which
+     * travels the same way as the password reset link, so a reset by e-mail
+     * plus that code would be one factor twice. An account for which Joomla
+     * disallows MFA (a group in `neverMFAUserGroups` and none in
+     * `forceMFAUserGroups`) never passes a second factor, records or not.
      */
     private function joomlaSecondFactor(int $userId): bool
     {
+        $options = \Joomla\CMS\Component\ComponentHelper::getParams('com_users');
+        $groups = array_map('intval', \Joomla\CMS\Access\Access::getGroupsByUser($userId, true));
+        $never = array_map('intval', (array) $options->get('neverMFAUserGroups', []));
+        $force = array_map('intval', (array) $options->get('forceMFAUserGroups', []));
+
+        if (array_intersect($never, $groups) !== [] && array_intersect($force, $groups) === []) {
+            return false;
+        }
+
         $methods = [];
 
         foreach (MfaHelper::getMfaMethods() as $method) {
@@ -496,7 +607,7 @@ final class KeySession implements KeySessionInterface
         }
 
         foreach (MfaHelper::getUserMfaRecords($userId) as $record) {
-            if ($record->method !== 'backupcodes' && \in_array($record->method, $methods, true)) {
+            if (!\in_array($record->method, self::NOT_A_SECOND_FACTOR, true) && \in_array($record->method, $methods, true)) {
                 return true;
             }
         }

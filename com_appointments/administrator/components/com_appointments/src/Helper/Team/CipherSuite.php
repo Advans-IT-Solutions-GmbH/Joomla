@@ -42,6 +42,14 @@ final class CipherSuite
     /** SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE (64 MiB), chosen because shared hosts limit memory. */
     public const PWHASH_MEMLIMIT = 67108864;
 
+    /**
+     * Lower bounds accepted from a stored row (a weaker row is a downgrade). They
+     * stay at today's INTERACTIVE values when the defaults above are raised later,
+     * so existing rows keep working and are rewrapped with the new defaults.
+     */
+    public const PWHASH_OPSLIMIT_MIN = 2;
+    public const PWHASH_MEMLIMIT_MIN = 67108864;
+
     /** Upper bounds accepted from a stored row, so a row can never make one sign-in exhaust the server. */
     public const PWHASH_OPSLIMIT_MAX = 16;
     public const PWHASH_MEMLIMIT_MAX = 1073741824;
@@ -180,7 +188,7 @@ final class CipherSuite
      * @throws  \InvalidArgumentException  On a wrong salt, server key or limits outside the accepted range.
      * @throws  \SodiumException           When the server cannot allocate the memory (never a wrong password).
      */
-    public static function passwordKey(string $password, string $salt, int $opslimit, int $memlimit, string $serverKey): string
+    public static function passwordKey(#[\SensitiveParameter] string $password, string $salt, int $opslimit, int $memlimit, #[\SensitiveParameter] string $serverKey): string
     {
         self::assertKey($serverKey);
 
@@ -207,8 +215,8 @@ final class CipherSuite
      */
     public static function acceptableLimits(int $opslimit, int $memlimit): bool
     {
-        return $opslimit >= self::PWHASH_OPSLIMIT && $opslimit <= self::PWHASH_OPSLIMIT_MAX
-            && $memlimit >= self::PWHASH_MEMLIMIT && $memlimit <= self::PWHASH_MEMLIMIT_MAX;
+        return $opslimit >= self::PWHASH_OPSLIMIT_MIN && $opslimit <= self::PWHASH_OPSLIMIT_MAX
+            && $memlimit >= self::PWHASH_MEMLIMIT_MIN && $memlimit <= self::PWHASH_MEMLIMIT_MAX;
     }
 
     /**

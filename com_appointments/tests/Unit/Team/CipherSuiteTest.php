@@ -102,6 +102,9 @@ final class CipherSuiteTest extends TestCase
     public function testPasswordKeyRefusesADowngradeOfTheLimits(): void
     {
         self::assertTrue(CipherSuite::acceptableLimits(CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_MEMLIMIT));
+        self::assertTrue(CipherSuite::acceptableLimits(CipherSuite::PWHASH_OPSLIMIT_MIN, CipherSuite::PWHASH_MEMLIMIT_MIN));
+        self::assertLessThanOrEqual(CipherSuite::PWHASH_OPSLIMIT, CipherSuite::PWHASH_OPSLIMIT_MIN);
+        self::assertLessThanOrEqual(CipherSuite::PWHASH_MEMLIMIT, CipherSuite::PWHASH_MEMLIMIT_MIN);
         self::assertFalse(CipherSuite::acceptableLimits(1, CipherSuite::PWHASH_MEMLIMIT));
         self::assertFalse(CipherSuite::acceptableLimits(CipherSuite::PWHASH_OPSLIMIT, 8192));
         self::assertFalse(CipherSuite::acceptableLimits(CipherSuite::PWHASH_OPSLIMIT_MAX + 1, CipherSuite::PWHASH_MEMLIMIT));
