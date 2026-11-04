@@ -331,6 +331,10 @@ play back an older, validly signed grant, calendar, device or invitation row.
 - Known residual risk, low: a database writer can put back an older, validly sealed envelope at the
   same URI (the envelope binds no revision). The booking row stays the source of truth and the next
   booking change rewrites the copy.
+- A restore of the database alone from a backup older than the last rotation, revocation or device
+  block keeps the affected calendars and users closed until `data/epochs.php` is deleted, which resets
+  the protection on purpose; the system check warns when an anchor value lies below the MAC-verified
+  database value. The log head is anchored with `record()` after an intact chain check only.
 - Activation links cannot be anchored; `complete()` therefore works only for an account that has never
   signed in, and every completion mails the administrators with the revoke link.
 
@@ -404,7 +408,9 @@ play back an older, validly signed grant, calendar, device or invitation row.
   `onUserAuthorisation` refuses with Joomla's JLIB_LOGIN_DENIED, which shows that the password was
   right. The README advises to keep the API's Basic authentication plugin off (Joomla's default).
   Administrators get a mail when an account with a calendar right is locked (`accountLocked()`) and
-  can lift a lock in the devices view (`login.unlocked`). The website subject is the account
+  can lift a lock in the devices view (`login.unlocked`). Accepted residual risks: a POST that looks like a sign-in (`username`
+  and `password` at the top level with a valid form token) counts as an attempt for that account; the
+  aggregated `dav.*` log rows carry no count; lock mails are limited per account, not across accounts. The website subject is the account
   (F maps the sign-in name to the user id); the CalDAV subject is `dav:<name>@<address>`, so CalDAV and
   website lock independently, and an address bucket counts both. Repeated log events of one bucket
   (`dav.auth_failure`, `dav.locked`) are aggregated per minute, `key.mac_failure` per calendar and
