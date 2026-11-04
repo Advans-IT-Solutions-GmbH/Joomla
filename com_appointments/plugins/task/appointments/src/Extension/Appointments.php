@@ -161,8 +161,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if (class_exists($records) && method_exists($records, 'migrate')) {
             $encrypted = 0;
 
-            // Batches of 200 until nothing is left, at most 50 per run.
-            for ($round = 0; $round < 50; $round++) {
+            // Batches of 200 until nothing is left, within 20 seconds per run.
+            $until = microtime(true) + 20;
+
+            while (microtime(true) < $until) {
                 $done = (int) $records::migrate($services->db(), $services->keyProvider(), 200);
                 $encrypted += $done;
 

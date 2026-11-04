@@ -86,6 +86,11 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // No invitee information lives in the erasure audit, and staff actor IDs
         // must not be exposed in an invitee's domain.
         $event->addResult([$domain, $guestDomain]);
+        // Booking rows that could not be decrypted: the export says it is incomplete, with the count only.
+        $incomplete = TeamPrivacy::unreadableBookings($service, $this->getApplication());
+        if ($incomplete !== null) {
+            $event->addResult([$incomplete]);
+        }
         // Internet calendars: entries found by their address, and staff data.
         $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
         if ($team !== null) {
@@ -113,8 +118,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     {
         // The request address remains authoritative even if a preceding core
         // plugin has already pseudonymised the event's shared User object.
-        $result = $this->service()->remove((string) $event->getRequest()->email,
+        $service = $this->service();
+        $result = $service->remove((string) $event->getRequest()->email,
             new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        TeamPrivacy::unreadableBookings($service, $this->getApplication());
         $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_REMOVED', $result['removed']), 'message');
         if ($result['guest_removed']) {
             $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_GUEST_REMOVED', $result['guest_removed']), 'message');

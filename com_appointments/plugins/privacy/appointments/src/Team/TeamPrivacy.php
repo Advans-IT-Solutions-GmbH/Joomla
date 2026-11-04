@@ -83,6 +83,38 @@ final class TeamPrivacy
         }
     }
 
+    /**
+     * Booking rows the booking privacy part could not decrypt during this
+     * request (`PrivacyService::unreadable()`, work package E): the request is
+     * reported as incomplete with the number only, never with content. Works
+     * whether the internet calendars are on or off. Returns the export domain,
+     * or null when every row could be read; the administrator gets a warning.
+     */
+    public static function unreadableBookings(object $service, CMSApplicationInterface $app): ?Domain
+    {
+        $count = method_exists($service, 'unreadable') ? (int) $service->unreadable() : 0;
+
+        if ($count <= 0) {
+            return null;
+        }
+
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR)
+            || $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments');
+        $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_BOOKINGS_UNREADABLE_ADMIN', $count), 'warning');
+        $domain = new Domain();
+        $domain->name = 'appointments_bookings_incomplete';
+        $domain->description = Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_BOOKINGS_UNREADABLE');
+        $item = new Item();
+        $item->id = 0;
+        $field = new Field();
+        $field->name = 'bookings';
+        $field->value = (string) $count;
+        $item->addField($field);
+        $domain->addItem($item);
+
+        return $domain;
+    }
+
     /** Properties of an entry that the export keeps: its times and its title and place. */
     private const KEPT = ['BEGIN', 'END', 'VERSION', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE',
         'RECURRENCE-ID', 'STATUS', 'TRANSP', 'TZID', 'TZOFFSETFROM', 'TZOFFSETTO', 'TZNAME', 'SUMMARY', 'LOCATION'];

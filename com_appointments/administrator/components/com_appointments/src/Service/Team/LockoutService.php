@@ -235,10 +235,11 @@ final class LockoutService implements LockoutServiceInterface
         // administrators (at most every LOCKED_LOG_MINUTES per account), also
         // when nobody is refused yet, so a lock by somebody else is visible.
         if (str_starts_with($identity, 'uid:')) {
-            $wait = self::waitFor([$this->row(bin2hex($buckets['user']))], $now);
+            $row = $this->row(bin2hex($buckets['user']));
 
-            if ($wait > 0) {
-                $this->announceLock((int) substr($identity, 4), $ip, $wait);
+            // A real lock only (last failure + delay), not a parallel request's reservation.
+            if (self::isRealLock($row)) {
+                $this->announceLock((int) substr($identity, 4), $ip, self::waitFor([$row], $now));
             }
         }
     }
@@ -522,6 +523,25 @@ final class LockoutService implements LockoutServiceInterface
             . $locked . ' = IF(' . $failures . ' >= ' . TeamStates::LOCK_THRESHOLD
             . ', DATE_ADD(' . $time . ', INTERVAL ' . self::delaySql($failures) . ' MINUTE), NULL), '
             . $last . ' = ' . $time)->execute();
+    }
+
+    /**
+     * Whether a counter row holds a lock set by failures (exactly last failure
+     * plus the delay of its count), not a reservation.
+     *
+     * @param   array<string, mixed>  $row
+     */
+    public static function isRealLock(array $row): bool
+    {
+        $delay = self::delayMinutes((int) ($row['failures'] ?? 0));
+
+        if ($delay === 0 || empty($row['locked_until_utc']) || empty($row['last_failure_utc'])) {
+            return false;
+        }
+
+        $last = new \DateTimeImmutable((string) $row['last_failure_utc'], new \DateTimeZone('UTC'));
+
+        return $last->modify('+' . $delay . ' minutes')->format('Y-m-d H:i:s') === (string) $row['locked_until_utc'];
     }
 
     /**

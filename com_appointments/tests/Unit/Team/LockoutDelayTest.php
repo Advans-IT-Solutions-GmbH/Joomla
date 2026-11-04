@@ -81,6 +81,14 @@ final class LockoutDelayTest extends TestCase
         self::assertSame(3600, LockoutService::waitFor($two, $now), 'The longer of the two buckets counts');
     }
 
+    public function testARealLockIsToldApartFromAReservation(): void
+    {
+        self::assertTrue(LockoutService::isRealLock(['failures' => 12, 'locked_until_utc' => '2026-11-04 12:04:00', 'last_failure_utc' => '2026-11-04 12:00:00']));
+        self::assertFalse(LockoutService::isRealLock(['failures' => 12, 'locked_until_utc' => '2026-11-04 12:00:30', 'last_failure_utc' => '2026-11-04 12:00:00']), 'Reservation');
+        self::assertFalse(LockoutService::isRealLock(['failures' => 9, 'locked_until_utc' => '2026-11-04 12:00:30', 'last_failure_utc' => '2026-11-04 11:59:00']), 'Below the threshold');
+        self::assertFalse(LockoutService::isRealLock(['failures' => 12, 'locked_until_utc' => null, 'last_failure_utc' => '2026-11-04 12:00:00']));
+    }
+
     public function testOwnReservationIsNoLockForTheSameRequest(): void
     {
         $now = new \DateTimeImmutable('2026-11-04 12:00:00', new \DateTimeZone('UTC'));
