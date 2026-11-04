@@ -19,7 +19,8 @@ defined('_JEXEC') or die;
  * the chosen time and the way back to the times of its day.
  *
  * One column of fields; only name and email share a row on a wider column. Every required
- * field carries the same mark after its label (decorative: the control itself is required).
+ * field carries the same mark after its label (decorative: the control itself is required, and a
+ * required group of checkboxes names the requirement in its legend for screen readers).
  */
 $id = (int) $this->item->id;
 $values = $this->inputData;
@@ -102,7 +103,7 @@ $mark = '<span class="com-appointments-required" aria-hidden="true">*</span>';
                 ?>
                 <?php if (in_array($field['type'], ['radio', 'checkboxes'], true)) : ?>
                     <fieldset class="com-appointments-field com-appointments-field-group" id="booking-field-<?php echo $fieldId; ?>"<?php echo trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) !== '' ? ' aria-describedby="' . trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) . '"' : ''; ?>>
-                        <legend class="form-label"><?php echo $labelText; ?></legend>
+                        <legend class="form-label"><?php echo $labelText; ?><?php if ($required && $field['type'] === 'checkboxes') : ?><span class="visually-hidden"> <?php echo Text::_('COM_APPOINTMENTS_BOOKING_REQUIRED_CHOICE'); ?></span><?php endif; ?></legend>
                         <?php echo $descriptionHtml; ?>
                         <?php foreach (array_values($options) as $index => $choice) : ?>
                             <div class="form-check">
