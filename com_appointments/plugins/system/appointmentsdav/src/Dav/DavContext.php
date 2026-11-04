@@ -339,8 +339,12 @@ final class DavContext
         try {
             $step();
         } catch (\Throwable $e) {
-            if ($this->onError !== null) {
-                ($this->onError)($e);
+            try {
+                if ($this->onError !== null) {
+                    ($this->onError)($e);
+                }
+            } catch (\Throwable $ignored) {
+                // Reporting must never change the answer either.
             }
         }
     }

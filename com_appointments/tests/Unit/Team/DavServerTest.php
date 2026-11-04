@@ -208,6 +208,11 @@ final class DavServerTest extends TestCase
         self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], $utf16)->getStatus());
         self::assertSame(400, $this->send('REPORT', '/dav/', ['Depth' => '0'], "<?xml version=\"1.0\"?>\0<x/>")->getStatus());
         self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '<?xml version="1.0" encoding="UTF-7"?>+ADw-!DOCTYPE d+AD4-<d:propfind xmlns:d="DAV:"/>')->getStatus());
+        self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], "\xEF\xBB\xBF" . '<?xml version="1.0" encoding="ISO-8859-1"?><d:propfind xmlns:d="DAV:"/>')->getStatus());
+        self::assertSame(400, $this->send('REPORT', '/dav/', ['Depth' => '0'], '')->getStatus(), 'An empty REPORT is the client\'s fault.');
+        $broken = $this->send('REPORT', '/dav/', ['Depth' => '0'], '<d:sync-collection xmlns:d="DAV:"><unclosed>');
+        self::assertSame(400, $broken->getStatus());
+        self::assertStringNotContainsString('unclosed', self::body($broken));
         self::assertSame(207, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>')->getStatus());
     }
 
@@ -350,8 +355,11 @@ final class DavServerTest extends TestCase
 
         $todo = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20261104T100000Z\r\nSUMMARY:x\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
         self::assertSame(403, $this->send('PUT', $base . 'todo.ics', ['Content-Type' => 'text/calendar'], $todo)->getStatus());
-        self::assertSame(415, $this->send('PUT', $base . 'bad.ics', ['Content-Type' => 'text/calendar'], 'not a calendar')->getStatus());
+        self::assertSame(400, $this->send('PUT', $base . 'bad.ics', ['Content-Type' => 'text/calendar'], 'not a calendar')->getStatus());
         self::assertSame(400, $this->send('PUT', $base . 'bad%20name.ics', ['Content-Type' => 'text/calendar'], self::ics('n'))->getStatus());
+        // sabre would repair the first calendar (no PRODID) and drop the rest; the original is checked first.
+        $repairable = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:r1\r\nDTSTAMP:20261104T100000Z\r\nDTSTART:20261110T090000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        self::assertSame(400, $this->send('PUT', $base . 'r.ics', ['Content-Type' => 'text/calendar'], $repairable . self::ics('hidden'))->getStatus());
         self::assertSame([], $this->world->store->objects[1]);
     }
 
@@ -501,6 +509,11 @@ final class DavServerTest extends TestCase
         self::assertStringNotContainsString('after-cleanup', $guess);
 
         self::assertSame(403, $this->send('PUT', $base . 'n.ics', ['Content-Type' => 'text/calendar'], self::ics('n'), $password, 'carol')->getStatus());
+
+        // A filtered query says nothing about deleting everything: no delivery mark.
+        $this->world->delivered = [];
+        $this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/></d:prop><c:filter><c:comp-filter name="VCALENDAR"/></c:filter></c:calendar-query>', $password, 'carol');
+        self::assertSame([], $this->world->delivered);
         self::assertSame(404, $this->send('GET', $base . 'a.ics', [], '', $password, 'carol')->getStatus());
         self::assertSame(0, $this->world->keyringOpened);
     }

@@ -92,9 +92,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
         }
 
-        // The reader stops after the first calendar; a second one, or anything after
-        // its end, would be stored without being checked.
-        if (preg_match_all('/^BEGIN:VCALENDAR\r?$/mi', $ics) !== 1 || preg_match('/^END:VCALENDAR\s*\z/mi', $ics) !== 1) {
+        if (!self::singleCalendar($ics)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_A_OBJECT_INVALID', 400);
         }
 
@@ -137,6 +135,20 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         } finally {
             $calendar->destroy();
         }
+    }
+
+    /**
+     * Whether the text is exactly one VCALENDAR: one BEGIN, one END, nothing
+     * after it, read on unfolded lines. The reader stops after the first calendar,
+     * so a second one, or anything after its end, would be stored unchecked.
+     */
+    public static function singleCalendar(string $ics): bool
+    {
+        $unfolded = (string) preg_replace('/\r?\n[ \t]/', '', $ics);
+
+        return preg_match_all('/^BEGIN:VCALENDAR\r?$/mi', $unfolded) === 1
+            && preg_match_all('/^END:VCALENDAR\r?$/mi', $unfolded) === 1
+            && preg_match('/^END:VCALENDAR\s*\z/mi', $unfolded) === 1;
     }
 
     /**

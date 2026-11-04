@@ -13,11 +13,13 @@ use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\DeviceSession;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception as DavException;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Server;
 use Advans\Component\Appointments\Vendor\Sabre\HTTP\RequestInterface;
 use Advans\Component\Appointments\Vendor\Sabre\HTTP\Response;
 use Advans\Component\Appointments\Vendor\Sabre\HTTP\ResponseInterface;
+use Advans\Component\Appointments\Vendor\Sabre\Xml\ParseException as XmlParseException;
 
 defined('_JEXEC') or die;
 
@@ -130,6 +132,12 @@ final class DavGateway
             return new Response(400);
         }
 
+        // sabre repairs and re-serialises a PUT body from its first calendar only, so the
+        // boundaries are checked on what the client sent, before anything normalises it.
+        if ($method === 'PUT' && $body !== '' && !CalendarObjectStore::singleCalendar($body)) {
+            return new Response(400);
+        }
+
         $request->setBody($body);
         $context = new DavContext($this->services, $session, $this->env->busySummary, $this->env->onError);
         $context->setRequest($request);
@@ -222,7 +230,8 @@ final class DavGateway
     public static function plainXml(string $body): bool
     {
         // An XML declaration may only name UTF-8: UTF-7 would hide a declaration in plain ASCII.
-        if (preg_match('/^\s*<\?xml[^>]*\bencoding\s*=\s*["\']([^"\']*)["\']/i', $body, $declared) === 1 && strcasecmp($declared[1], 'UTF-8') !== 0) {
+        // A UTF-8 byte-order mark may stand before it, so it is skipped for the check.
+        if (preg_match('/^(?:\xEF\xBB\xBF)?\s*<\?xml[^>]*\bencoding\s*=\s*["\']([^"\']*)["\']/i', $body, $declared) === 1 && strcasecmp($declared[1], 'UTF-8') !== 0) {
             return false;
         }
 
@@ -240,6 +249,9 @@ final class DavGateway
 
         try {
             $server->invokeMethod($request, $response, false);
+        } catch (XmlParseException $e) {
+            // Malformed XML of the client: its fault, said without the parser's words.
+            return new Response(400, ['Content-Type' => 'application/xml; charset=utf-8'], '<?xml version="1.0" encoding="utf-8"?>' . "\n" . '<d:error xmlns:d="DAV:"/>' . "\n");
         } catch (DavException $e) {
             $dom = new \DOMDocument('1.0', 'utf-8');
             $error = $dom->createElementNS('DAV:', 'd:error');

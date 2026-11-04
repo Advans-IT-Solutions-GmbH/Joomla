@@ -56,6 +56,8 @@ final class DavObjectRulesTest extends TestCase
             'not iCalendar'  => 'hello',
             'two calendars'  => self::ics(self::event('u1')) . self::ics(self::event('u2')),
             'trailing data'  => self::ics(self::event('u1')) . "BEGIN:VEVENT\r\nUID:u2\r\nEND:VEVENT\r\n",
+            'a second end'   => self::ics(self::event('u1')) . "BEGIN:VEVENT\r\nUID:u2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            'a folded begin' => self::ics(self::event('u1')) . "BEGIN:VCAL\r\n ENDAR\r\nBEGIN:VEVENT\r\nUID:u2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
             'a vCard'        => "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:x\r\nEND:VCARD\r\n",
         ];
 

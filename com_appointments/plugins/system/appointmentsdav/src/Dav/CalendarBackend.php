@@ -145,9 +145,17 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         $calendar = $this->calendar($calendarId);
 
         if ($calendar->isEmptyView()) {
-            $this->context->markEmptyServed($calendar->id);
+            // Only a listing of the collection says «nothing here»; a filtered query does not.
+            if ($this->context->request()?->getMethod() === 'PROPFIND') {
+                $this->context->markEmptyServed($calendar->id);
+            }
 
             return [];
+        }
+
+        // A calendar-query lists the calendar as it is now: the device has seen this token.
+        if ($this->context->wantsData()) {
+            $this->context->recordDelivered($calendar->id, $calendar->synctoken);
         }
 
         $rows = [];
