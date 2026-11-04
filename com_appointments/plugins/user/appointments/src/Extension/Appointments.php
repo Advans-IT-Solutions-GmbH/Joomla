@@ -149,8 +149,21 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // Only accounts with a calendar right are counted and logged here; the
         // site's other accounts are outside the internet calendars.
         if ($userId > 0 && $this->isCalendarUser($services, $userId)) {
+            // A sign-in the lock-out refused before the password check is no
+            // failure of its own: F counts nothing for it, and nothing is logged
+            // here (`login.locked` is logged by the lock-out). Asked before
+            // recordFailure(), which clears the mark.
+            $refused = false;
+
+            $this->guard(static function () use ($services, $username, $ip, &$refused): void {
+                $lockout = $services->lockout();
+                $refused = method_exists($lockout, 'refused') && $lockout->refused($username, $ip);
+            });
             $this->guard(static fn () => $services->lockout()->recordFailure($username, $ip));
-            $this->guard(static fn () => $services->audit()->log(AuditEvent::LOGIN_FAILURE, ['subject_user_id' => $userId, 'ip' => $ip]));
+
+            if (!$refused) {
+                $this->guard(static fn () => $services->audit()->log(AuditEvent::LOGIN_FAILURE, ['subject_user_id' => $userId, 'ip' => $ip]));
+            }
         }
     }
 

@@ -996,7 +996,10 @@ final class KeyService implements KeyServiceInterface
                 'password_salt'    => $salt,
                 'pwhash_opslimit'  => $opslimit,
                 'pwhash_memlimit'  => $memlimit,
-                'device_epoch'     => $stored === null ? 1 : (int) $stored['device_epoch'],
+                // Never below what the anchor knows: a row deleted in the database
+                // must not come back with an epoch that would refuse it (and every
+                // device of the user) for good.
+                'device_epoch'     => $stored === null ? max(1, $this->anchorMinimum(EpochAnchorInterface::KIND_USER, $userId)) : (int) $stored['device_epoch'],
             ];
             $mac = $this->rowMac('user_keys', $fields);
             $now = $this->nowSql();
@@ -1304,6 +1307,17 @@ final class KeyService implements KeyServiceInterface
         // refused once the anchor outside the database knows a newer one.
         return self::canonicalTable($table) !== 'appointments_user_keys'
             || $this->anchorAccepts(EpochAnchorInterface::KIND_USER, (int) $row['user_id'], (int) $row['device_epoch']);
+    }
+
+    private function anchorMinimum(string $kind, int $id): int
+    {
+        try {
+            return $this->services->anchor()->minimum($kind, $id);
+        } catch (\Throwable $e) {
+            $this->warn('the epoch anchor could not be read', $e);
+
+            return 0;
+        }
     }
 
     private function anchorAccepts(string $kind, int $id, int $epoch): bool
@@ -1710,17 +1724,33 @@ final class KeyService implements KeyServiceInterface
      */
     private function keyHolders(int $calendarId, bool $strict, bool $locking = false): ?array
     {
-        if (!method_exists(GrantService::class, 'rowValid')) {
+        if (!method_exists(GrantService::class, 'rowValid') || !method_exists(CalendarService::class, 'rowValid')) {
             return $strict ? null : [];
         }
 
         $db = $this->services->db();
         $lock = $locking ? ' FOR UPDATE' : '';
-        $epochQuery = $this->query()
-            ->select($db->quoteName('grant_epoch'))
+        $calendarQuery = $this->query()
+            ->select('*')
             ->from($db->quoteName('#__appointments_calendars'))
             ->where($db->quoteName('id') . ' = ' . $calendarId);
-        $epoch = (int) $db->setQuery((string) $epochQuery . $lock)->loadResult();
+        $calendar = $db->setQuery((string) $calendarQuery . $lock)->loadObject();
+
+        // The calendar row first (its MAC and its grant epoch against the
+        // anchor): a grant is only as fresh as the epoch it is checked against.
+        try {
+            $calendarValid = $calendar !== null && CalendarService::rowValid($this->services, $calendar);
+        } catch (\Throwable $e) {
+            return $strict ? null : [];
+        }
+
+        if (!$calendarValid) {
+            $this->macFailure('calendars', 'mismatch', ['calendar_id' => $calendarId]);
+
+            return $strict ? null : [];
+        }
+
+        $epoch = (int) $calendar->grant_epoch;
         // The grant table holds no secret; every column is read so that the
         // grant service alone decides which ones its MAC covers.
         $grantQuery = $this->query()
