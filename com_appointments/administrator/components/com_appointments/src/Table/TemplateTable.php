@@ -26,7 +26,7 @@ class TemplateTable extends Table
     public const SITE_WIDE_PURPOSES = ['team_device_added', 'team_invitation', 'team_invitation_accepted', 'team_grant_changed', 'team_access_suspended', 'team_calendar_deleted', 'team_account_locked'];
 
     /** The link each of these mails must carry, alone on its line. */
-    private const LINK_PLACEHOLDERS = ['team_invitation' => '{activation_url}', 'team_invitation_accepted' => '{revoke_url}'];
+    public const LINK_PLACEHOLDERS = ['team_invitation' => '{activation_url}', 'team_invitation_accepted' => '{revoke_url}'];
 
     public function __construct(DatabaseDriver $db)
     {
@@ -86,16 +86,39 @@ class TemplateTable extends Table
             return false;
         }
 
-        $link = self::LINK_PLACEHOLDERS[$this->purpose] ?? null;
-        $lines = array_map('trim', preg_split('/\R/', (string) $this->body) ?: []);
-
-        if ($link !== null && (!in_array($link, $lines, true) || substr_count((string) $this->body, $link) !== 1)) {
-            $this->setError(Text::sprintf('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_LINK', $link));
+        if (!self::linksSafe((string) $this->purpose, (string) $this->subject, (string) $this->body)) {
+            $this->setError(Text::sprintf('COM_APPOINTMENTS_TEAM_D_TEMPLATE_ERROR_LINK', self::LINK_PLACEHOLDERS[$this->purpose] ?? '{activation_url}'));
 
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * Whether a team template keeps its one-time links safe: the link of its purpose exactly
+     * once in the body, alone on its line, so no text can wrap it into another address; no
+     * secret link in the subject (subjects end up in previews and logs); and no secret link of
+     * another purpose at all. The mailer applies the same rule to what it reads from the
+     * database, so a template changed there directly is not used either. Pure.
+     */
+    public static function linksSafe(string $purpose, string $subject, string $body): bool
+    {
+        foreach (self::LINK_PLACEHOLDERS as $owner => $placeholder) {
+            if (str_contains($subject, $placeholder) || ($owner !== $purpose && str_contains($body, $placeholder))) {
+                return false;
+            }
+        }
+
+        $link = self::LINK_PLACEHOLDERS[$purpose] ?? null;
+
+        if ($link === null) {
+            return true;
+        }
+
+        $lines = array_map('trim', preg_split('/\R/u', $body) ?: []);
+
+        return in_array($link, $lines, true) && substr_count($body, $link) === 1;
     }
 
     /**

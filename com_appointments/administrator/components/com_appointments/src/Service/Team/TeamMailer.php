@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
+use Advans\Component\Appointments\Administrator\Table\TemplateTable;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
 use Joomla\CMS\Application\ConsoleApplication;
@@ -318,7 +319,9 @@ final class TeamMailer implements TeamMailerInterface
                 ->bind(':language', $candidate);
             $row = $db->setQuery($query)->loadAssoc();
 
-            if ($row && trim((string) $row['subject']) !== '' && trim((string) $row['body']) !== '') {
+            if ($row && trim((string) $row['subject']) !== '' && trim((string) $row['body']) !== ''
+                && TemplateTable::linksSafe($purpose, (string) $row['subject'], (string) $row['body'])
+            ) {
                 return ['subject' => (string) $row['subject'], 'body' => (string) $row['body']];
             }
         }

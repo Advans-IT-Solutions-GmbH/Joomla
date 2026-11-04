@@ -135,10 +135,6 @@ final class DeviceService implements DeviceServiceInterface
         try {
             // One name per device and user: two devices with the same name could not be told
             // apart in the list, and a form sent twice must not create a second device.
-            if ($this->nameTaken($userId, $name, 0)) {
-                throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
-            }
-
             $now = $this->services->now();
             $nowSql = $now->format('Y-m-d H:i:s');
             $salt = random_bytes(AppPassword::SALT_BYTES);
@@ -166,6 +162,12 @@ final class DeviceService implements DeviceServiceInterface
                 // gone while this request waited. (A grant revoked after this point still leaves the
                 // device without data: every CalDAV request checks the effective grants anew.)
                 $this->requireEligible($userId);
+
+                // One name per device and user: two devices with the same name could not be told
+                // apart in the list, and a form sent twice must not create a second device.
+                if ($this->nameTaken($userId, $name, 0)) {
+                    throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
+                }
 
                 $query = $this->query()
                     ->insert($db->quoteName('#__' . self::TABLE))
@@ -507,17 +509,29 @@ final class DeviceService implements DeviceServiceInterface
         }
 
         try {
-            if ($this->nameTaken($actorUserId, $name, $deviceId)) {
-                throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
-            }
+            $db->transactionStart(true);
 
-            $query = $this->query()
-                ->update($db->quoteName('#__' . self::TABLE))
-                ->set($db->quoteName('name') . ' = :name')
-                ->where($db->quoteName('id') . ' = :id')
-                ->bind(':name', $name)
-                ->bind(':id', $deviceId, ParameterType::INTEGER);
-            $db->setQuery($query)->execute();
+            try {
+                // Same lock order as create(): the user key row, then the device rows.
+                $this->lockUserKey($actorUserId);
+
+                if ($this->nameTaken($actorUserId, $name, $deviceId)) {
+                    throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN', 409);
+                }
+
+                $query = $this->query()
+                    ->update($db->quoteName('#__' . self::TABLE))
+                    ->set($db->quoteName('name') . ' = :name')
+                    ->where($db->quoteName('id') . ' = :id')
+                    ->bind(':name', $name)
+                    ->bind(':id', $deviceId, ParameterType::INTEGER);
+                $db->setQuery($query)->execute();
+                $db->transactionCommit(true);
+            } catch (\Throwable $e) {
+                $db->transactionRollback(true);
+
+                throw $e;
+            }
         } finally {
             $db->setQuery('SELECT RELEASE_LOCK(' . $db->quote($lock) . ')')->execute();
         }
@@ -898,19 +912,19 @@ final class DeviceService implements DeviceServiceInterface
         $db = $this->services->db();
         $revoked = TeamStates::DEVICE_REVOKED;
         $lower = mb_strtolower($name);
+        // A locking read inside the caller's transaction: it sees every committed device, also
+        // one committed after this transaction's snapshot, and the user's rows stay locked until
+        // the commit, so two requests can never both find the name free. Values inline, because
+        // a bound query loses its bindings when turned into a string for FOR UPDATE.
         $query = $this->query()
-            ->select('COUNT(*)')
+            ->select($db->quoteName('id'))
             ->from($db->quoteName('#__' . self::TABLE))
-            ->where($db->quoteName('user_id') . ' = :user')
-            ->where($db->quoteName('state') . ' <> :revoked')
-            ->where('LOWER(' . $db->quoteName('name') . ') = :name')
-            ->where($db->quoteName('id') . ' <> :except')
-            ->bind(':user', $userId, ParameterType::INTEGER)
-            ->bind(':revoked', $revoked, ParameterType::INTEGER)
-            ->bind(':name', $lower)
-            ->bind(':except', $exceptId, ParameterType::INTEGER);
+            ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
+            ->where($db->quoteName('state') . ' <> ' . (int) $revoked)
+            ->where('LOWER(' . $db->quoteName('name') . ') = ' . $db->quote($lower))
+            ->where($db->quoteName('id') . ' <> ' . (int) $exceptId);
 
-        return (int) $db->setQuery($query)->loadResult() > 0;
+        return $db->setQuery((string) $query . ' FOR UPDATE')->loadColumn() !== [];
     }
 
     private function account(int $userId): ?object
