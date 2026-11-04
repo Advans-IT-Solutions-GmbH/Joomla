@@ -364,10 +364,12 @@ and names the remedy.
 | PHP with libsodium, including Argon2id (`sodium_crypto_pwhash`). Required for the whole component, not only for the internet calendars: the installer refuses without it, because bookings are stored encrypted. | Enable the sodium extension. |
 | `memory_limit` of at least 128M (Argon2id uses 64 MiB per sign-in). | Raise `memory_limit`. |
 
-Every calendar user also needs a second factor (Joomla's multi-factor authentication) other than
-codes by e-mail and backup codes: e-mail is the same channel as a password reset, so it would let a
-reset by mail alone reach the calendars. An account in a group that Joomla exempts from MFA holds no
-effective grant.
+Every calendar user also needs a second factor in Joomla's multi-factor authentication. Only these
+count, each with its Joomla plugin enabled: an **authenticator app** (TOTP), a **passkey**
+(WebAuthn) and a **YubiKey**. Codes by e-mail, the fixed code and backup codes give no effective
+grant: e-mail is the same channel as a password reset, so it would let a reset by mail alone reach
+the calendars. Neither does an account in a group listed under «Never use MFA for these user
+groups».
 
 Keep Joomla's **API Authentication - Basic Auth** plugin disabled, as Joomla ships it. The lock-out
 after failed sign-ins guards Joomla's sign-in forms before the password is checked. Sign-ins
@@ -510,6 +512,17 @@ possible with CalDAV clients.
   administrator uses the recovery key. A password reset alone never gives anybody calendar access.
 - **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
   design.
+- **Known residual risk:** while a calendar connected to an event type cannot be read at all, a
+  forged booking request (a crafted POST, not the booking page) for a time the page did not offer
+  is accepted, because the busy times of that calendar are unknown. The booking page itself offers
+  only free times.
+
+#### Updating to 1.4.0
+
+The update encrypts the personal fields of existing bookings in batches, within a limited migration
+window of at most 30 days; whatever the update itself does not finish is encrypted by the Scheduler
+task. **System checks** shows how many bookings are still unencrypted. Keep the
+Scheduler running until that number is zero.
 
 #### Restoring a backup
 
