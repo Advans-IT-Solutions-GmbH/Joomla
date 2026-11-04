@@ -112,6 +112,12 @@ final class DavServerTest extends TestCase
 
         $response = $this->world->gateway(true, 'https://cal.example.org/calendars/')->handle(new Request('PROPFIND', '/.well-known/caldav/'));
         self::assertSame('https://cal.example.org/calendars/', $response->getHeader('Location'));
+
+        // On the same host only the path, so a Host header never comes back in the answer.
+        $response = $this->world->gateway()->handle(new Request('GET', '/.well-known/caldav', ['Host' => 'WWW.example.org']));
+        self::assertSame('/dav/', $response->getHeader('Location'));
+        $response = $this->world->gateway()->handle(new Request('GET', '/.well-known/caldav', ['Host' => 'evil.example']));
+        self::assertSame('https://www.example.org/dav/', $response->getHeader('Location'));
     }
 
     public function testEveryMethodIsAuthenticatedFirst(): void
@@ -151,7 +157,8 @@ final class DavServerTest extends TestCase
 
         // The Joomla password never reached a lookup; the other two well-formed attempts did.
         self::assertSame(2, $this->world->authenticateCalls);
-        self::assertSame(['retry:alice', 'failure:alice', 'retry:alice', 'failure:alice', 'retry:mallory', 'failure:mallory'], $this->world->lockout->calls);
+        $alice = 'dav:alice@192.0.2.10';
+        self::assertSame(['retry:' . $alice, 'failure:' . $alice, 'retry:' . $alice, 'failure:' . $alice, 'retry:dav:mallory@192.0.2.10', 'failure:dav:mallory@192.0.2.10'], $this->world->lockout->calls);
         self::assertSame(['malformed', 'invalid', 'invalid'], array_map(static fn (array $e) => $e[1]['details']['reason'], $this->world->audit->events));
     }
 
@@ -171,7 +178,7 @@ final class DavServerTest extends TestCase
         $response = $this->send('PROPFIND', '/dav/', ['Depth' => '0'], '', null, 'ALICE');
 
         self::assertSame(207, $response->getStatus());
-        self::assertSame(['retry:alice', 'success:alice'], $this->world->lockout->calls);
+        self::assertSame(['retry:dav:alice@192.0.2.10', 'success:dav:alice@192.0.2.10'], $this->world->lockout->calls);
     }
 
     public function testAnActiveDeviceWithoutSecondFactorIsRefused(): void
@@ -193,6 +200,11 @@ final class DavServerTest extends TestCase
 
         $xxe = '<?xml version="1.0"?><!DOCTYPE d [<!ENTITY x SYSTEM "file:///etc/passwd">]><d:propfind xmlns:d="DAV:"><d:prop><d:displayname>&x;</d:displayname></d:prop></d:propfind>';
         self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], $xxe)->getStatus());
+
+        // The same declaration in UTF-16 would pass a byte search; only plain UTF-8 is accepted.
+        $utf16 = "\xFF\xFE" . mb_convert_encoding('<?xml version="1.0" encoding="UTF-16"?>' . substr($xxe, 21), 'UTF-16LE', 'UTF-8');
+        self::assertSame(400, $this->send('PROPFIND', '/dav/', ['Depth' => '0'], $utf16)->getStatus());
+        self::assertSame(400, $this->send('REPORT', '/dav/', ['Depth' => '0'], "<?xml version=\"1.0\"?>\0<x/>")->getStatus());
     }
 
     public function testMethodsOutsideTheCalDavSubsetAreForbidden(): void
@@ -205,13 +217,24 @@ final class DavServerTest extends TestCase
         }
     }
 
-    public function testAServiceThatIsNotReadyGivesNoInternalDetail(): void
+    public function testAFailingDeviceLookupCountsAndAnswersLikeAnyRefusal(): void
     {
         $this->world->notReady = true;
         $response = $this->propfind('/dav/', '0');
 
+        self::assertSame(401, $response->getStatus());
+        self::assertSame('', self::body($response));
+        self::assertSame(['retry:dav:alice@192.0.2.10', 'failure:dav:alice@192.0.2.10'], $this->world->lockout->calls);
+    }
+
+    public function testAFailingLockOutGivesNoInternalDetail(): void
+    {
+        $this->world->lockout->fail = true;
+        $response = $this->propfind('/dav/', '0');
+
         self::assertSame(503, $response->getStatus());
         self::assertSame('', self::body($response));
+        self::assertSame(0, $this->world->authenticateCalls);
     }
 
     // Discovery and default deny.
@@ -301,6 +324,11 @@ final class DavServerTest extends TestCase
         self::assertSame(403, $conflict->getStatus());
         self::assertStringContainsString('no-uid-conflict', self::body($conflict));
         self::assertStringNotContainsString('new.ics', self::body($conflict));
+
+        $etag = (string) $changed->getHeader('ETag') ?: '"' . $this->world->store->objects[1]['new.ics']['etag'] . '"';
+        self::assertSame(412, $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-Match' => '"aaaa", "bbbb"'], self::ics('new', 'Lost'))->getStatus());
+        self::assertSame(204, $this->send('PUT', $base . 'new.ics', ['Content-Type' => 'text/calendar', 'If-Match' => '"aaaa", ' . $etag], self::ics('new', 'Listed'))->getStatus());
+        self::assertStringContainsString('Listed', $this->world->store->objects[1]['new.ics']['ics']);
 
         self::assertSame(412, $this->send('DELETE', $base . 'new.ics', ['If-Match' => '"0000"'])->getStatus());
         self::assertSame(204, $this->send('DELETE', $base . 'new.ics')->getStatus());
@@ -432,13 +460,27 @@ final class DavServerTest extends TestCase
         self::assertStringNotContainsString('a.ics', self::body($list));
         self::assertSame([1], $this->world->delivered);
 
-        $sync = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/1</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
+        $sync = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
         self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $sync);
         self::assertStringContainsString('http://sabre.io/ns/sync/2-c', $sync);
 
         self::assertSame(403, $this->send('PUT', $base . 'n.ics', ['Content-Type' => 'text/calendar'], self::ics('n'), $password, 'carol')->getStatus());
         self::assertSame(404, $this->send('GET', $base . 'a.ics', [], '', $password, 'carol')->getStatus());
         self::assertSame(0, $this->world->keyringOpened);
+    }
+
+    public function testCleanupWithoutAKnownRoleReportsOnlyOpaqueAddresses(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Write);
+        $this->world->store->seed(1, 'uid-of-a-meeting.ics', self::ics('uid-of-a-meeting'));
+        $password = $this->world->device(9, 'erin', TeamStates::DEVICE_CLEANUP_EMPTY, false);
+        $this->world->inCleanup = [1];
+        $this->world->store->seed(1, 'later.ics', self::ics('later'));
+
+        $sync = self::body($this->send('REPORT', '/dav/calendars/u9/' . $this->teamUri . '/', ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'erin'));
+
+        self::assertStringNotContainsString('uid-of-a-meeting', $sync);
+        self::assertSame(1, preg_match_all('#/fb-[0-9a-f]{40}\.ics</d:href>#', $sync), 'Only the object that existed at the token, never the later one.');
     }
 
     public function testCleanupHiddenListsNothingAndMarksTheHomeSeen(): void

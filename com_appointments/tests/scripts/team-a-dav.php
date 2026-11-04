@@ -149,7 +149,8 @@ return static function (TeamSuite $suite): void {
                 foreach (['GET', 'PROPFIND', 'OPTIONS', 'PUT'] as $method) {
                     $response = $request($method, $suite->base . '/.well-known/caldav', ['Depth: 0']);
 
-                    if ($response['status'] !== 301 || $header($response, 'Location') !== $suite->base . '/dav/' || !$headersOk($response)) {
+                    // Same host: the path only, so no Host header comes back in the answer.
+                    if ($response['status'] !== 301 || $header($response, 'Location') !== '/dav/' || !$headersOk($response)) {
                         return false;
                     }
                 }

@@ -244,7 +244,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw new Forbidden('This calendar is read-only for you.');
         }
 
-        [$ifMatch] = $this->preconditions();
+        [$ifMatch] = $this->preconditions($calendar, (string) $objectUri);
 
         try {
             $this->context->services->objects->delete($calendar->id, (string) $objectUri, $ifMatch, $this->context->session->deviceId);
@@ -292,41 +292,41 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
 
     /**
      * Every address the device may hold for a calendar of the clean-up: the
-     * current objects and every change since its token, in the form of the
-     * role it had (free/busy addresses for free/busy, else the originals; both
-     * when the role is no longer known).
+     * objects that existed at its token (current ones not added since, plus
+     * the ones deleted since), or every current object when the token is no
+     * longer in the journal. In the form of the role it had: the free/busy
+     * addresses for free/busy, the originals for a key-holding role. When the
+     * role is no longer known, only the free/busy addresses, so an original
+     * address (often the UID) never reaches a device that may not have known it.
      *
      * @return  string[]
      */
     private function knownToDevice(DavCalendar $calendar, string $token): array
     {
-        $uris = [];
-
         try {
-            foreach ($this->context->services->objects->all($calendar->id) as $object) {
-                $uris[] = $object->uri;
-            }
-
-            $since = rtrim($token, '-c');
-
-            if (ctype_digit($since)) {
-                $changes = $this->context->services->objects->changesSince($calendar->id, $since, null);
-                $uris = array_merge($uris, $changes->added, $changes->modified, $changes->deleted);
-            }
+            $current = array_map(static fn ($object): string => $object->uri, $this->context->services->objects->all($calendar->id));
         } catch (TeamException $e) {
-            // A token beyond the journal: the current objects are what the device can still hold.
+            throw DavErrors::fromTeam($e);
+        }
+
+        $since = (string) preg_replace('/-c$/', '', $token);
+        $known = $current;
+
+        if (preg_match('/^\d{1,19}$/', $since) === 1) {
+            try {
+                $changes = $this->context->services->objects->changesSince($calendar->id, $since, null);
+                $known = array_merge(array_diff($current, $changes->added), $changes->deleted);
+            } catch (TeamException $e) {
+                // A token beyond the journal: the current objects are what the device can still hold.
+            }
         }
 
         $reported = [];
 
-        foreach (array_unique($uris) as $uri) {
-            if ($calendar->role === null || $calendar->isFreeBusy()) {
-                $reported[] = $this->context->freeBusyUri($calendar->id, $uri);
-            }
-
-            if ($calendar->role === null || !$calendar->isFreeBusy()) {
-                $reported[] = $uri;
-            }
+        foreach (array_unique($known) as $uri) {
+            $reported[] = $calendar->role !== null && !$calendar->isFreeBusy()
+                ? $uri
+                : $this->context->freeBusyUri($calendar->id, $uri);
         }
 
         return array_values(array_unique($reported));
@@ -358,7 +358,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         }
 
         $keyring = $this->context->keyring($calendar);
-        [$ifMatch, $ifNoneMatch] = $this->preconditions();
+        [$ifMatch, $ifNoneMatch] = $this->preconditions($calendar, $uri);
 
         try {
             $etag = $this->context->services->objects->put($keyring, $uri, $data, $ifMatch, $ifNoneMatch, $this->context->session->deviceId);
@@ -373,10 +373,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
      * The conditions of the current request for the store's atomic check. sabre
      * has checked them already against the current state; the store checks
      * again inside its transaction, so two concurrent writes cannot both win.
+     * A list of ETags in If-Match is narrowed to the current one (sabre accepted
+     * the request, so it is in the list), and the store checks exactly that.
      *
      * @return  array{0: string|null, 1: bool}  If-Match (one ETag or `*`), If-None-Match `*`.
      */
-    private function preconditions(): array
+    private function preconditions(DavCalendar $calendar, string $uri): array
     {
         $request = $this->context->request();
 
@@ -387,8 +389,16 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         $ifMatch = trim((string) $request->getHeader('If-Match'));
         $ifNoneMatch = trim((string) $request->getHeader('If-None-Match')) === '*';
 
-        if ($ifMatch === '' || str_contains($ifMatch, ',')) {
+        if ($ifMatch === '') {
             return [null, $ifNoneMatch];
+        }
+
+        if (str_contains($ifMatch, ',')) {
+            $current = $this->store(fn () => $this->context->services->objects->get($calendar->id, $uri));
+            $listed = array_map(static fn (string $tag): string => trim((string) preg_replace('/^W\//', '', trim($tag)), '"'), explode(',', $ifMatch));
+
+            // Not in the list (any more): a value no object ever has, so the store refuses with 412.
+            return [$current !== null && \in_array($current->etag, $listed, true) ? $current->etag : '"-"', $ifNoneMatch];
         }
 
         return [$ifMatch === '*' ? '*' : trim(preg_replace('/^W\//', '', $ifMatch) ?? '', '"'), $ifNoneMatch];

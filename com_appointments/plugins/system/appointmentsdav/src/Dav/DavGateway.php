@@ -30,12 +30,14 @@ defined('_JEXEC') or die;
  * 4. HTTP Basic with an app password. Every refusal of the credentials is the
  *    same 401; the lock-out is asked first (429 with Retry-After, also for a
  *    correct password), and every check of a secret ends in exactly one
- *    recordFailure() or recordSuccess(). A Joomla password is refused before
+ *    recordFailure() or recordSuccess(), in a bucket of its own per user name
+ *    and address ({@see bucket()}). A Joomla password is refused before
  *    any lookup, because it is not an app password.
  * 5. An active device whose account has no second factor: 403.
  * 6. Only OPTIONS, GET, HEAD, PROPFIND, PROPPATCH, REPORT, PUT and DELETE reach
  *    sabre/dav; MKCALENDAR, MKCOL, ACL, POST (sharing), COPY, MOVE, LOCK and
- *    everything else get 403. XML bodies with a DOCTYPE or an entity: 400.
+ *    everything else get 403. XML bodies other than plain UTF-8, or with a
+ *    DOCTYPE or an entity: 400.
  * 7. The sabre/dav server ({@see DavServerFactory}); afterwards the throttled
  *    «last synchronised» and the clean-up delivery marks.
  *
@@ -88,7 +90,10 @@ final class DavGateway
         }
 
         if ($kind === DavAddress::KIND_WELL_KNOWN) {
-            return new Response(301, ['Location' => $this->env->address->url]);
+            // A path on the same host, so the answer never repeats a Host header; another host as configured.
+            $sameHost = strcasecmp((string) $request->getHeader('Host'), $this->env->address->host) === 0;
+
+            return new Response(301, ['Location' => $sameHost ? $this->env->address->path : $this->env->address->url]);
         }
 
         $length = $request->getHeader('Content-Length');
@@ -121,7 +126,7 @@ final class DavGateway
             return new Response(413);
         }
 
-        if (\in_array($method, self::XML_METHODS, true) && preg_match('/<!\s*(DOCTYPE|ENTITY)/i', $body) === 1) {
+        if (\in_array($method, self::XML_METHODS, true) && !self::plainXml($body)) {
             return new Response(400);
         }
 
@@ -149,7 +154,7 @@ final class DavGateway
     private function authenticate(BasicCredentials $credentials): DeviceSession|ResponseInterface
     {
         $lockout = $this->services->lockout;
-        $bucket = mb_strtolower($credentials->username, 'UTF-8');
+        $bucket = self::bucket($credentials->username, $this->env->ip);
         $retryAfter = $lockout->retryAfter($bucket, $this->env->ip);
 
         if ($retryAfter > 0) {
@@ -160,7 +165,16 @@ final class DavGateway
 
         // Anything that is not an app password (a Joomla password) is refused before any lookup.
         $wellFormed = AppPassword::parse($credentials->password) !== null;
-        $session = $wellFormed ? $this->services->devices->authenticate($credentials->username, $credentials->password) : null;
+        $session = null;
+
+        if ($wellFormed) {
+            try {
+                $session = $this->services->devices->authenticate($credentials->username, $credentials->password);
+            } catch (\Throwable $e) {
+                // A failing lookup counts and answers like any other refusal.
+                $this->report($e);
+            }
+        }
 
         if ($session === null) {
             $lockout->recordFailure($bucket, $this->env->ip);
@@ -183,6 +197,29 @@ final class DavGateway
         }
 
         return $session;
+    }
+
+    /**
+     * The user-name bucket of the lock-out for CalDAV. It is bound to the
+     * address and kept apart from the website sign-in: app passwords have 160
+     * random bits and cannot be guessed, so the lock only has to stop one
+     * client, and nobody can lock another person's devices or website sign-in
+     * by sending their user name with wrong passwords.
+     */
+    public static function bucket(string $username, string $ip): string
+    {
+        return 'dav:' . mb_strtolower($username, 'UTF-8') . '@' . $ip;
+    }
+
+    /**
+     * An XML body sabre may parse: UTF-8 without NUL and without a document
+     * type declaration or entity, so no other encoding hides one from the check.
+     */
+    public static function plainXml(string $body): bool
+    {
+        return mb_check_encoding($body, 'UTF-8')
+            && !str_contains($body, "\0")
+            && preg_match('/<!\s*(DOCTYPE|ENTITY)/i', $body) !== 1;
     }
 
     private function run(Server $server, RequestInterface $request): ResponseInterface

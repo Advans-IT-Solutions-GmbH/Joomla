@@ -33,11 +33,13 @@ final class DavAddress
      * @param   string  $url       Absolute address, ends with a slash.
      * @param   string  $path      Its path, ends with a slash.
      * @param   string  $sitePath  Path of the site root without trailing slash (empty at the domain root).
+     * @param   string  $host      Host of the address, with the port when it has one.
      */
     private function __construct(
         public readonly string $url,
         public readonly string $path,
-        public readonly string $sitePath
+        public readonly string $sitePath,
+        public readonly string $host
     ) {
     }
 
@@ -54,7 +56,9 @@ final class DavAddress
         $url = TeamServices::acceptDavBaseUrl(trim($baseUrl), $siteRoot)
             ?? (string) preg_replace('#^http://#i', 'https://', $siteRoot) . 'dav/';
 
-        return new self($url, (string) parse_url($url, PHP_URL_PATH), $sitePath);
+        $port = parse_url($url, PHP_URL_PORT);
+
+        return new self($url, (string) parse_url($url, PHP_URL_PATH), $sitePath, strtolower((string) parse_url($url, PHP_URL_HOST)) . ($port ? ':' . $port : ''));
     }
 
     /**

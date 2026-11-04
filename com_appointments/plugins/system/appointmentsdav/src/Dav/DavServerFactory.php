@@ -50,6 +50,8 @@ final class DavServerFactory
         $acl->hideNodesFromListings = true;
         $acl->principalCollectionSet = ['principals'];
         $acl->principalSearchPropertySet = [];
+        // Nodes without an ACL of their own (the root) can be read, nothing else.
+        $acl->setDefaultAcl([['principal' => '{DAV:}authenticated', 'privilege' => '{DAV:}read', 'protected' => true]]);
         $server->addPlugin($acl);
 
         $server->addPlugin(new CalDavPlugin());

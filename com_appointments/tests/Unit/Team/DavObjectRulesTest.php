@@ -120,6 +120,11 @@ final class DavObjectRulesTest extends TestCase
             CalendarObjectStore::lastEnd(self::ics("BEGIN:VEVENT\r\nUID:d\r\nDTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260101\r\nEND:VEVENT\r\n"))
         );
 
+        self::assertEquals(
+            new \DateTimeImmutable('2036-12-13 10:00:00', new \DateTimeZone('UTC')),
+            CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=DAILY;COUNT=4000\r\n"))),
+            'A finite series beyond the 3500 occurrences of vObject still ends.'
+        );
         self::assertNull(CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=DAILY\r\n"))), 'An open series is never deleted.');
         self::assertNull(CalendarObjectStore::lastEnd('garbage'));
         self::assertNull(CalendarObjectStore::lastEnd(self::ics(self::event('a', "RRULE:FREQ=SECONDLY;COUNT=100000\r\n"))), 'Too many occurrences are kept.');

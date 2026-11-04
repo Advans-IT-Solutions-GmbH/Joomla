@@ -20,6 +20,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\VendorAutoloader;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Component\VCalendar;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Reader;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Recur\EventIterator;
+use Advans\Component\Appointments\Vendor\Sabre\VObject\Settings;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 
@@ -49,6 +50,14 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
 
     /** Occurrences read at most to find the end of a finite series. */
     private const MAX_OCCURRENCES = 20000;
+
+    /**
+     * Objects and bytes one calendar holds at most through CalDAV writes, so no
+     * writer can make listing or synchronising the calendar fail for everybody.
+     * Booking objects are always written.
+     */
+    public const MAX_OBJECTS_PER_CALENDAR = 20000;
+    public const MAX_BYTES_PER_CALENDAR = 33554432;
 
     private const COLUMNS = ['id', 'calendar_id', 'uri', 'etag', 'size', 'enc_scheme', 'key_version', 'payload', 'timing', 'booking_id', 'modified_utc'];
 
@@ -206,6 +215,9 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 return null;
             }
 
+            // vObject stops at 3500 occurrences by default; a longer finite series must still end.
+            $maxRecurrences = Settings::$maxRecurrences;
+            Settings::$maxRecurrences = self::MAX_OCCURRENCES + 1;
             $iterator = new EventIterator(array_values($events), null, new \DateTimeZone('UTC'));
 
             if ($iterator->isInfinite()) {
@@ -230,6 +242,10 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         } catch (\Throwable $e) {
             return null;
         } finally {
+            if (isset($maxRecurrences)) {
+                Settings::$maxRecurrences = $maxRecurrences;
+            }
+
             $calendar->destroy();
         }
     }
@@ -315,6 +331,8 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             if ($this->uidTakenElsewhere($calendarId, $uidHash, $uri)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_A_UID_CONFLICT', 409);
             }
+
+            $this->assertRoom($calendarId, $existing === null ? 1 : 0, \strlen($ics), $existing['id'] ?? null);
 
             $etag = bin2hex(random_bytes(16));
             $objectId = $this->store($calendarId, $uri, $existing, [
@@ -439,12 +457,15 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 . ' OR ' . $db->quoteName('key_version') . ' <> ' . (int) $current->version() . ')')
             ->order($db->quoteName('id'));
         $done = 0;
+        $refused = 0;
 
         foreach ($db->setQuery($query->setLimit($limit))->loadAssocList() ?: [] as $row) {
             $object = $this->toObject($row);
             $ics = $this->services->keys()->decryptObject($keyring, $object);
 
             if ($ics === null) {
+                // A sealed envelope without a valid MAC is never opened (specification 5.2); it stays as it is.
+                $refused += $object->scheme === TeamStates::SCHEME_SEALED ? 1 : 0;
                 continue;
             }
 
@@ -468,6 +489,10 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 ->bind(':etag', $object->etag);
             $db->setQuery($update)->execute();
             $done += $db->getAffectedRows() > 0 ? 1 : 0;
+        }
+
+        if ($refused > 0) {
+            $this->log(AuditEvent::ROW_MAC_FAILURE, $calendarId, null, null, ['table' => 'calendar_objects', 'reason' => 'sealed_envelope', 'count' => $refused]);
         }
 
         return $done;
@@ -661,6 +686,29 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             'etag'       => (string) $row['etag'],
             'booking_id' => $row['booking_id'] === null ? null : (int) $row['booking_id'],
         ] : null;
+    }
+
+    /**
+     * @throws  TeamException  507 when the write would exceed the calendar's limits.
+     */
+    private function assertRoom(int $calendarId, int $newObjects, int $newBytes, ?int $replacedId): void
+    {
+        $db = $this->db();
+        $query = $this->query()
+            ->select(['COUNT(*) AS ' . $db->quoteName('objects'), 'COALESCE(SUM(' . $db->quoteName('size') . '), 0) AS ' . $db->quoteName('bytes')])
+            ->from($db->quoteName('#__appointments_calendar_objects'))
+            ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId);
+
+        if ($replacedId !== null) {
+            $query->where($db->quoteName('id') . ' <> ' . (int) $replacedId);
+        }
+
+        $usage = $db->setQuery($query)->loadAssoc() ?: ['objects' => 0, 'bytes' => 0];
+
+        if ((int) $usage['objects'] + $newObjects + ($replacedId !== null ? 1 : 0) > self::MAX_OBJECTS_PER_CALENDAR
+            || (int) $usage['bytes'] + $newBytes > self::MAX_BYTES_PER_CALENDAR) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_A_CALENDAR_FULL', 507);
+        }
     }
 
     private function uidTakenElsewhere(int $calendarId, string $uidHash, string $uri): bool

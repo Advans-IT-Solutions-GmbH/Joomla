@@ -227,11 +227,17 @@ final class DavLockout implements LockoutServiceInterface
 {
     public int $retryAfter = 0;
 
+    public bool $fail = false;
+
     /** @var string[] */
     public array $calls = [];
 
     public function retryAfter(string $username, string $ip): int
     {
+        if ($this->fail) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
+        }
+
         $this->calls[] = 'retry:' . $username;
 
         return $this->retryAfter;
