@@ -408,8 +408,9 @@ it.
 | Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
-The CalDAV plugin holds the **CalDAV base address** (default: the site address plus `/dav/`). The
-well-known redirect, the client instructions and the mails use it. The permission **Share with
+The CalDAV plugin holds the **CalDAV base address**, an absolute `https://` address (default: the
+site address plus `/dav/`). The CalDAV path, the well-known redirect, the client instructions, the
+mails and the system check all derive from it. The permission **Share with
 external users** (`appointments.team.external`) is granted to nobody by default; Super Users have
 it implicitly.
 
