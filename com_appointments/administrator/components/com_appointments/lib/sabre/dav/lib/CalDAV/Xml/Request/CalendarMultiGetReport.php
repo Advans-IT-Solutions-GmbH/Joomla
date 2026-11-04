@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Xml\Request;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\CalDAV\Plugin;
 use Advans\Component\Appointments\Vendor\Sabre\Uri;

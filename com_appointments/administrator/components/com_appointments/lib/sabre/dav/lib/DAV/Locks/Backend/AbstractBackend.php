@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Locks\Backend;
+\defined('_JEXEC') or die;
 
 /**
  * This is an Abstract clas for lock backends.

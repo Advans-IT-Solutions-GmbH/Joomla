@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Xml;
+\defined('_JEXEC') or die;
 
 /**
  * XML service for WebDAV.

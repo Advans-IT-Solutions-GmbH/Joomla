@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor;
+\defined('_JEXEC') or die;
 
 /**
  * A list of PHP timezones that were supported until 5.5.9, removed in

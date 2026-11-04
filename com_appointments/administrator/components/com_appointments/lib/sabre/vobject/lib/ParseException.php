@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject;
+\defined('_JEXEC') or die;
 
 /**
  * Exception thrown by Reader if an invalid object was attempted to be parsed.

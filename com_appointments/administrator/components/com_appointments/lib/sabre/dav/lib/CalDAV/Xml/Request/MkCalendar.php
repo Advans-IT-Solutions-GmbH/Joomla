@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Xml\Request;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\Xml\Reader;
 use Advans\Component\Appointments\Vendor\Sabre\Xml\XmlDeserializable;

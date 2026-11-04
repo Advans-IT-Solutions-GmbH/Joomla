@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV;
+\defined('_JEXEC') or die;
 
 use DateTimeZone;
 use Advans\Component\Appointments\Vendor\Sabre\CalDAV\Xml\Request\CalendarMultiGetReport;

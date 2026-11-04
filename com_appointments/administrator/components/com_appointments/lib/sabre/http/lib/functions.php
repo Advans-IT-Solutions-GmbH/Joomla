@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\HTTP;
+\defined('_JEXEC') or die;
 
 /**
  * A collection of useful helpers for parsing or generating various HTTP

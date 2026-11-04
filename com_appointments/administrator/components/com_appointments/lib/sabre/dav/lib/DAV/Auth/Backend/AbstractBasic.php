@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Auth\Backend;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\HTTP;
 use Advans\Component\Appointments\Vendor\Sabre\HTTP\RequestInterface;

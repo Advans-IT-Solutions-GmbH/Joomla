@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV;
+\defined('_JEXEC') or die;
 
 /**
  * By implementing this interface, a collection can effectively say "other

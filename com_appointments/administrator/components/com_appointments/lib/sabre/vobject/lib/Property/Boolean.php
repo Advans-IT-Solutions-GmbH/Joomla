@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Property;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Property;
 /**

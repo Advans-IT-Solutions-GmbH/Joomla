@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Xml;
+\defined('_JEXEC') or die;
 
 /**
  * Implementing the XmlDeserializable interface allows you to use a class as a

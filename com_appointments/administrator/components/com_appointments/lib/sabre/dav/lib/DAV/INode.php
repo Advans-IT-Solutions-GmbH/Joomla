@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV;
+\defined('_JEXEC') or die;
 
 /**
  * The INode interface is the base interface, and the parent class of both ICollection and IFile.

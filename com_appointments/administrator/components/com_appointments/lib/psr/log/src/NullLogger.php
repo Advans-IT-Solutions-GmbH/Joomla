@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Psr\Log;
+\defined('_JEXEC') or die;
 
 /**
  * This Logger can be used to avoid conditional log calls.

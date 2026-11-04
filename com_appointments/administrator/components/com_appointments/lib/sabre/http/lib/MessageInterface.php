@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\HTTP;
+\defined('_JEXEC') or die;
 
 /**
  * The MessageInterface is the base interface that's used by both

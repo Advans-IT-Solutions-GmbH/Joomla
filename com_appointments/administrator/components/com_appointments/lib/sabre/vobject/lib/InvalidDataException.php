@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject;
+\defined('_JEXEC') or die;
 
 /**
  * This exception is thrown whenever an invalid value is found anywhere in a

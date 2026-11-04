@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject;
+\defined('_JEXEC') or die;
 
 /**
  * This class provides a list of global defaults for vobject.

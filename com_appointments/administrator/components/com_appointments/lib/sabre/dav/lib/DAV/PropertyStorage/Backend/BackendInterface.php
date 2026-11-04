@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\PropertyStorage\Backend;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV\PropFind;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\PropPatch;

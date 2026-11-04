@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Uri;
+\defined('_JEXEC') or die;
 
 /**
  * This class contains the version number for this package.

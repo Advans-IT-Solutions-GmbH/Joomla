@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Xml\Element;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Xml\Property\Complex;
 use Advans\Component\Appointments\Vendor\Sabre\Xml\Reader;

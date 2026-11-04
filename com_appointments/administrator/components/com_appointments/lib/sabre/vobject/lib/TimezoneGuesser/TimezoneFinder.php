@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\TimezoneGuesser;
+\defined('_JEXEC') or die;
 
 use DateTimeZone;
 interface TimezoneFinder

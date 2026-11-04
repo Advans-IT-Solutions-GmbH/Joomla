@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Browser;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\Uri;
 use Advans\Component\Appointments\Vendor\Sabre\Xml\Service as XmlService;

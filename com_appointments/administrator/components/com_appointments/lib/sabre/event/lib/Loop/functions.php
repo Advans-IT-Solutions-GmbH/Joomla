@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Event\Loop;
+\defined('_JEXEC') or die;
 
 /**
  * Executes a function after x seconds.

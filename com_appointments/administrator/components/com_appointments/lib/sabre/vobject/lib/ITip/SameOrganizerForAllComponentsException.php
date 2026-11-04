@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\ITip;
+\defined('_JEXEC') or die;
 
 /**
  * SameOrganizerForAllComponentsException.

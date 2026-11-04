@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Event;
+\defined('_JEXEC') or die;
 
 use Exception;
 /**

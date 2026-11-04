@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Xml;
+\defined('_JEXEC') or die;
 
 /**
  * Objects implementing XmlSerializable can control how they are represented in

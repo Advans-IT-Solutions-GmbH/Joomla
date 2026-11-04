@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Psr\Log;
+\defined('_JEXEC') or die;
 
 /**
  * Basic Implementation of LoggerAwareInterface.

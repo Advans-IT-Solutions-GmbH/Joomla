@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject;
+\defined('_JEXEC') or die;
 
 /**
  * iCalendar/vCard/jCal/jCard/xCal/xCard reader object.

@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Xml\Serializer;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\Xml\Writer;
 use Advans\Component\Appointments\Vendor\Sabre\Xml\XmlSerializable;

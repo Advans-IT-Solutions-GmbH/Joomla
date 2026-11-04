@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV;
+\defined('_JEXEC') or die;
 
 /**
  * The CalendarObject represents a single VEVENT or VTODO within a Calendar.

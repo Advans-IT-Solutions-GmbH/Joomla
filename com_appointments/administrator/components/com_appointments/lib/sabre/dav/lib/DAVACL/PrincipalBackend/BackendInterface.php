@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAVACL\PrincipalBackend;
+\defined('_JEXEC') or die;
 
 /**
  * Implement this interface to create your own principal backends.

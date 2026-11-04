@@ -104,6 +104,25 @@ return [
                 $contents
             );
         },
+        /*
+         * Joomla's guard against a direct call of a shipped PHP file through the
+         * web server: right after the namespace (or the strict types
+         * declaration, or the opening tag), so the file ends before it runs
+         * anything when Joomla did not load it.
+         */
+        static function (string $filePath, string $prefix, string $contents): string {
+            $guard = "\\defined('_JEXEC') or die;\n";
+
+            if (preg_match('/^namespace [^;{]+;\n/m', $contents, $match, PREG_OFFSET_CAPTURE) === 1) {
+                $at = $match[0][1] + \strlen($match[0][0]);
+            } elseif (preg_match('/^declare ?\(strict_types ?= ?1\);\n/m', $contents, $match, PREG_OFFSET_CAPTURE) === 1) {
+                $at = $match[0][1] + \strlen($match[0][0]);
+            } else {
+                $at = strpos($contents, "<?php\n") === 0 ? 6 : 0;
+            }
+
+            return substr($contents, 0, $at) . $guard . substr($contents, $at);
+        },
     ],
     'exclude-namespaces' => [],
     'exclude-classes'    => [],

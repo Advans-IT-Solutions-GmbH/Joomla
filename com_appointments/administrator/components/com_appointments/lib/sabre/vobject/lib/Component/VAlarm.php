@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Component;
+\defined('_JEXEC') or die;
 
 use DateTimeImmutable;
 use DateTimeInterface;

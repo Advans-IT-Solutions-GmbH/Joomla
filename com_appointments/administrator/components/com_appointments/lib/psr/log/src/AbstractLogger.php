@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Psr\Log;
+\defined('_JEXEC') or die;
 
 /**
  * This is a simple Logger implementation that other Loggers can inherit from.

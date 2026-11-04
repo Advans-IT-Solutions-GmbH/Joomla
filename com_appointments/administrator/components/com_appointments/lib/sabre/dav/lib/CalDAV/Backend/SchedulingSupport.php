@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Backend;
+\defined('_JEXEC') or die;
 
 /**
  * Implementing this interface adds CalDAV Scheduling support to your caldav

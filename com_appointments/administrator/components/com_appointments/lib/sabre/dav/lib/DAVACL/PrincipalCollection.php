@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAVACL;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\InvalidResourceType;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\IExtendedCollection;

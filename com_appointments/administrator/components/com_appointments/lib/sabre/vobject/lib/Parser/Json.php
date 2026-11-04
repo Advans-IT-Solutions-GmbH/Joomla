@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Parser;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Component\VCalendar;
 use Advans\Component\Appointments\Vendor\Sabre\VObject\Component\VCard;

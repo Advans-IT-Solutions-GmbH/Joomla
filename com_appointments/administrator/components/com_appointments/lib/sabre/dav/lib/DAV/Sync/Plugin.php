@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Sync;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Xml\Request\SyncCollectionReport;

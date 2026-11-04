@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\HTTP;
+\defined('_JEXEC') or die;
 
 /**
  * This is the abstract base class for both the Request and Response objects.

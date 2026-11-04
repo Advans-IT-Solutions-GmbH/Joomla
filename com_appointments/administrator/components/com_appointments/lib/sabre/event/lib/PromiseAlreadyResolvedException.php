@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Event;
+\defined('_JEXEC') or die;
 
 /**
  * This exception is thrown when the user tried to reject or fulfill a promise,

@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Browser;
+\defined('_JEXEC') or die;
 
 /**
  * WebDAV properties that implement this interface are able to generate their

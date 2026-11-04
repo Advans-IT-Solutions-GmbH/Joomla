@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAVACL;
+\defined('_JEXEC') or die;
 
 /**
  * This trait is a default implementation of the IACL interface.

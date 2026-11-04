@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Property\VCard;
+\defined('_JEXEC') or die;
 
 /**
  * DateTime property.

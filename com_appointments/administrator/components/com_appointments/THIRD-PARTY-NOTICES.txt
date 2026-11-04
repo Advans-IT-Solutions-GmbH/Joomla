@@ -14,7 +14,8 @@ The CalDAV server of the internet calendars uses sabre/dav and its
 dependencies. They are bundled with every PHP symbol moved below the namespace
 Advans\Component\Appointments\Vendor\ (php-scoper), so the copy never collides
 with another extension that ships the same libraries. Apart from that prefix,
-and the omission of parts the component never loads (the SQL storage backends,
+Joomla's guard against a direct call (defined('_JEXEC') or die) at the top of
+each file, and the omission of parts the component never loads (the SQL storage backends,
 CardDAV, the HTML browser plugin, the file system nodes and the command line
 tool), the code is the unchanged upstream release. Each library folder holds
 the upstream licence text in LICENSE. tests/tools/sabre/ in the source

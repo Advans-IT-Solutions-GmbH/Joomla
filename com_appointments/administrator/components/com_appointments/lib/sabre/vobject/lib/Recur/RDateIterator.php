@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Recur;
+\defined('_JEXEC') or die;
 
 use DateTimeInterface;
 use Iterator;

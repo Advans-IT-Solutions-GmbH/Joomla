@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Property\ICalendar;
+\defined('_JEXEC') or die;
 
 use DateTimeInterface;
 use DateTimeZone;

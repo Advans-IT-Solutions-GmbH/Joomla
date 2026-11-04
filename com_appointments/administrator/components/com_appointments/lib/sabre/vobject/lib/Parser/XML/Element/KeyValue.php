@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Parser\XML\Element;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\Xml as SabreXml;
 /**

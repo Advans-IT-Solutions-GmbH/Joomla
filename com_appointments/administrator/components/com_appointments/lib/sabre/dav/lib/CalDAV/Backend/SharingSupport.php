@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Backend;
+\defined('_JEXEC') or die;
 
 /**
  * Adds support for sharing features to a CalDAV server.

@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\VObject\Splitter;
+\defined('_JEXEC') or die;
 
 /**
  * VObject splitter.

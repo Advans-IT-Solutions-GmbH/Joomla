@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Auth\Backend;
+\defined('_JEXEC') or die;
 
 /**
  * This is an authentication backend that uses a database to manage passwords.

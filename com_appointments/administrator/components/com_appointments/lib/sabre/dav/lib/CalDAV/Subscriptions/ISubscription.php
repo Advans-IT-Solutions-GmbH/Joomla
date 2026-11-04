@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Subscriptions;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV\ICollection;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\IProperties;

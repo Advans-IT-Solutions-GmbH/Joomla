@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor;
+\defined('_JEXEC') or die;
 
 /**
  * A list of additional PHP timezones that are returned by

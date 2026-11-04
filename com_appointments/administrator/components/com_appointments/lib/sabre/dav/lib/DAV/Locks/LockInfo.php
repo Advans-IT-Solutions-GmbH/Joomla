@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Locks;
+\defined('_JEXEC') or die;
 
 /**
  * LockInfo class.

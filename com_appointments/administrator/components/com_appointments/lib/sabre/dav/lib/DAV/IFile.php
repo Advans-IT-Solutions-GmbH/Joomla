@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV;
+\defined('_JEXEC') or die;
 
 /**
  * This interface represents a file in the directory tree.

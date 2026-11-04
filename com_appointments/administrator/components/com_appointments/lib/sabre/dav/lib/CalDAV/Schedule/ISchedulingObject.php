@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\CalDAV\Schedule;
+\defined('_JEXEC') or die;
 
 /**
  * The SchedulingObject represents a scheduling object in the Inbox collection.

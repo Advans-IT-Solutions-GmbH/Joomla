@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV;
+\defined('_JEXEC') or die;
 
 /**
  * This class holds all the information about a PROPFIND request.

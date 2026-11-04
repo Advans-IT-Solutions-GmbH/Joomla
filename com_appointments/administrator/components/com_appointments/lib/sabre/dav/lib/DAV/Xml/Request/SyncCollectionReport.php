@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\DAV\Xml\Request;
+\defined('_JEXEC') or die;
 
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\BadRequest;
 use Advans\Component\Appointments\Vendor\Sabre\Xml\Element\KeyValue;

@@ -145,6 +145,9 @@ final class DavVendorTest extends TestCase
         }
     }
 
+    /**
+     * Every file is prefixed and stops at once when the web server calls it directly.
+     */
     public function testNoStringStartsWithAnUnprefixedSabreOrPsrName(): void
     {
         $found = [];
@@ -162,6 +165,10 @@ final class DavVendorTest extends TestCase
 
             if (preg_match('/^\s*(?:namespace|use)\s+\\\\?(?:Sabre|Psr)\\\\/m', $code)) {
                 $found[] = $file->getFilename() . ': unprefixed namespace or import';
+            }
+
+            if (preg_match("/^\\\\?defined\('_JEXEC'\) or die;$/m", $code) !== 1) {
+                $found[] = $file->getFilename() . ': no direct-access guard';
             }
         }
 

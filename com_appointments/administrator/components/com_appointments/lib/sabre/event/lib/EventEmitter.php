@@ -2,6 +2,7 @@
 
 declare (strict_types=1);
 namespace Advans\Component\Appointments\Vendor\Sabre\Event;
+\defined('_JEXEC') or die;
 
 /**
  * This is the old name for the Emitter class.

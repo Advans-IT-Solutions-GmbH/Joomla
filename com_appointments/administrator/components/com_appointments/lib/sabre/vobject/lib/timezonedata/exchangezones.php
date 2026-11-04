@@ -1,6 +1,7 @@
 <?php
 
 namespace Advans\Component\Appointments\Vendor;
+\defined('_JEXEC') or die;
 
 /**
  * Microsoft exchange timezones
