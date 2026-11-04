@@ -19,6 +19,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\MVC\View\HtmlView;
+use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\Database\DatabaseInterface;
@@ -151,8 +152,6 @@ class GuestController extends BaseController
         $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $this->app->setHeader('Cache-Control', 'private, no-store', true);
         $document = $this->app->getDocument();
-        $document->getWebAssetManager()->getRegistry()->addExtensionRegistryFile('com_appointments');
-        $document->getWebAssetManager()->useStyle('com_appointments.site');
         $title = Text::_('COM_APPOINTMENTS_GUEST_TITLE');
         $document->setTitle(match ((int) $this->app->get('sitename_pagetitles', 0)) {
             1 => Text::sprintf('JPAGETITLE', $this->app->get('sitename'), $title),
@@ -161,9 +160,18 @@ class GuestController extends BaseController
         });
 
         $view = new class (['name' => 'guest', 'base_path' => JPATH_SITE . '/components/com_appointments']) extends HtmlView {
+            // The stylesheet with the checksum of the served file, like every other site page.
+            use AssetsTrait;
+
             /** @var array<string, mixed> */
             public array $page = [];
+
+            public function useAssets(): void
+            {
+                $this->useAppointmentsAssets(false);
+            }
         };
+        $view->useAssets();
         $view->page = $data + ['heading' => $title];
         $view->display();
     }
