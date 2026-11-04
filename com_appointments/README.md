@@ -526,15 +526,20 @@ Scheduler running until that number is zero.
 
 #### Restoring a backup
 
-Grants, calendars and devices carry counters (epochs) that every revocation raises. A signed anchor
-file below the Joomla directory keeps the highest value, so a row from an older database copy no
-longer counts.
+Grants, calendars and devices carry counters (epochs) that every key rotation, revocation and
+device block raises. A signed anchor file,
+`administrator/components/com_appointments/data/epochs.php`, keeps the highest value, so a row
+from an older database copy no longer counts. This is the protection against played-back rows.
 
-- **Database only restored** (or an older row written back into it): detected; revoked grants and
-  devices stay revoked. If the anchor file cannot be written, this protection is off and the system
-  check says so.
+- **Database only restored**, from a backup older than the last key rotation, revocation or device
+  block (or an older row written back into it): the affected calendars and users **stay closed**, on
+  purpose; revoked grants and devices cannot come back this way. To open them, delete
+  `data/epochs.php`, which deliberately resets the protection, and then revoke again every device
+  and grant that was revoked after the backup was taken.
 - **Files and database restored together** is a legitimate rollback, and the anchor goes back too.
   Revoke again every device and grant that was revoked after the backup was taken.
+- **System checks** reports when the anchor file cannot be written or is not kept up to date; the
+  protection is then off.
 
 #### Privacy requests and retention
 
