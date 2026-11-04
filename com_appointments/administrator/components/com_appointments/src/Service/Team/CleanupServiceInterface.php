@@ -62,7 +62,11 @@ interface CleanupServiceInterface
      * DeviceService::touch()), so the empty view reports exactly the URIs that role
      * could see, also after the grant row is gone.
      *
-     * @return  array<int, int>  Calendar id => CalendarRole value.
+     * The sync token is the highest one delivered to the device before the
+     * clean-up; the handler ignores any client token above it, so the device
+     * learns nothing about objects created after the clean-up started.
+     *
+     * @return  array<int, array{role: int, synctoken: int}>  Calendar id => role and last delivered sync token.
      */
     public function calendarsInCleanup(DeviceSession $session): array;
 

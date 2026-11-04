@@ -50,9 +50,11 @@ interface DeviceServiceInterface
      * Record a synchronisation: `last_sync_utc` of the device and, when given,
      * of the device and calendar pair. The pair row is written at the first
      * synchronisation of a calendar always, with the device's current role on it;
-     * later updates at most once per device and minute.
+     * later updates at most once per device and minute. `$syncToken` is the
+     * highest sync token delivered to the device for that calendar; it only rises
+     * and is always written (not throttled) while the device is active.
      */
-    public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null): void;
+    public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null): void;
 
     /**
      * @return  object[]  The user's devices: id, name, client, state, created_utc, last_sync_utc. Never a hash or salt.

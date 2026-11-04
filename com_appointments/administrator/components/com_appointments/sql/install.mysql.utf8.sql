@@ -568,6 +568,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_device_calendars` (
     `device_id` INT UNSIGNED NOT NULL,
     `calendar_id` INT UNSIGNED NOT NULL,
     `role` TINYINT UNSIGNED NOT NULL,
+    `synctoken` BIGINT UNSIGNED NOT NULL DEFAULT 0,
     `last_sync_utc` DATETIME NOT NULL,
     `cleanup_delivered_utc` DATETIME DEFAULT NULL,
     PRIMARY KEY (`device_id`, `calendar_id`),

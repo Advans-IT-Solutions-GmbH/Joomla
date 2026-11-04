@@ -38,7 +38,7 @@ final class DeviceService implements DeviceServiceInterface
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
 
-    public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null): void
+    public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null): void
     {
         throw new TeamException('COM_APPOINTMENTS_TEAM_NOT_READY', 501);
     }
