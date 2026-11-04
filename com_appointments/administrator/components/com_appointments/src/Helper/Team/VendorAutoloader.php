@@ -66,7 +66,8 @@ final class VendorAutoloader
         }
 
         spl_autoload_register(static function (string $class) use ($namespaces): void {
-            if (!str_starts_with($class, self::PREFIX)) {
+            // A class name never holds a dot or a slash, so a crafted name cannot leave lib/.
+            if (!str_starts_with($class, self::PREFIX) || preg_match('/^[A-Za-z0-9_\\\\]+$/', $class) !== 1) {
                 return;
             }
 

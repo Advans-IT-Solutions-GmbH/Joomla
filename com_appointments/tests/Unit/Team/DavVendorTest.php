@@ -43,6 +43,17 @@ final class DavVendorTest extends TestCase
         self::assertTrue(interface_exists(self::PREFIX . 'Psr\\Log\\LoggerInterface'));
     }
 
+    public function testACraftedClassNameNeverLeavesTheBundle(): void
+    {
+        VendorAutoloader::register();
+        $before = get_included_files();
+
+        self::assertFalse(class_exists(self::PREFIX . 'Sabre/../../autoload', true));
+        self::assertFalse(class_exists(self::PREFIX . 'Sabre\\..\\..\\autoload', true));
+        self::assertFalse(class_exists('Sabre\\DAV\\Server', true));
+        self::assertSame($before, get_included_files());
+    }
+
     public function testTheMapClaimsOnlyThePrefixedNamespace(): void
     {
         $map = self::map();
