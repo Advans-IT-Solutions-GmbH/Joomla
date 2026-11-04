@@ -46,6 +46,16 @@ $user = Factory::getApplication()->getIdentity();
                 <input type="date" class="form-control" id="filter_<?php echo $key; ?>" name="filter_<?php echo $key; ?>" value="<?php echo $this->escape($this->state->get('filter.' . $key)); ?>">
             </div>
         <?php endforeach; ?>
+        <?php $ordering = $this->state->get('list.ordering', 'b.start_utc') . ' ' . strtoupper((string) $this->state->get('list.direction', 'DESC')); ?>
+        <div class="col-md-2">
+            <label for="list_fullordering"><?php echo Text::_('COM_APPOINTMENTS_BOOKINGS_ORDER'); ?></label>
+            <select id="list_fullordering" class="form-select" name="list[fullordering]">
+                <?php foreach (['b.start_utc DESC' => 'COM_APPOINTMENTS_BOOKINGS_ORDER_START_DESC', 'b.start_utc ASC' => 'COM_APPOINTMENTS_BOOKINGS_ORDER_START_ASC',
+                    'b.invitee_last_name ASC' => 'COM_APPOINTMENTS_BOOKINGS_ORDER_NAME_ASC', 'b.invitee_last_name DESC' => 'COM_APPOINTMENTS_BOOKINGS_ORDER_NAME_DESC'] as $value => $label) : ?>
+                    <option value="<?php echo $value; ?>" <?php echo $ordering === $value ? 'selected' : ''; ?>><?php echo Text::_($label); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
         <div><button class="btn btn-primary" type="submit"><?php echo Text::_('JSEARCH_FILTER_SUBMIT'); ?></button></div>
     </fieldset>
     <?php if (!$this->items) : ?>

@@ -22,9 +22,13 @@
  *
  * After each change the focus moves to the new content and a live region announces it. The
  * details typed into step 2 are kept when the visitor goes back to choose another time. The
- * browser's time zone is applied once on arrival. The script writes no text of its own:
- * everything it shows or announces comes from the server-rendered page. When a request
- * fails, it falls back to the normal page request. No inline code, no third-party request.
+ * browser's time zone is applied once on arrival. It also turns the time-zone select into a
+ * field with a searchable list and the 12/24-hour switch, the further guests into chips, and
+ * shows the browser's check of the details at the fields like a refusal of the server. The
+ * script writes no text of its own: everything it shows or announces comes from the
+ * server-rendered page, the browser (zone names, times, validation messages) or the visitor.
+ * When a request fails, it falls back to the normal page request. No inline code, no
+ * third-party request.
  */
 (() => {
     'use strict';
@@ -70,12 +74,520 @@
             }
         };
 
+        /*
+         * The time-zone field: the select of the page gives way to a button with the zone and its
+         * current time, which opens a panel with a search field (ARIA combobox) over the list of
+         * zones (ARIA listbox) and the switch between the 12-hour and the 24-hour clock. The list
+         * is built from the options of the select; names and times of the zones come from the
+         * browser (Intl). Choosing a zone changes the select, which loads the times as before.
+         */
+        const zoneView = (() => {
+            let zones = null;
+            let shown = [];
+            let active = -1;
+            let ticking = false;
+            const language = document.documentElement.lang || undefined;
+            const parts = () => {
+                const box = root.querySelector('[data-appointments-zone]');
+
+                return box ? {
+                    box,
+                    select: root.querySelector('#appointment-zone'),
+                    button: box.querySelector('[data-appointments-zone-button]'),
+                    current: box.querySelector('[data-appointments-zone-current]'),
+                    now: box.querySelector('[data-appointments-zone-now]'),
+                    panel: box.querySelector('[data-appointments-zone-panel]'),
+                    search: box.querySelector('[data-appointments-zone-search]'),
+                    list: box.querySelector('[data-appointments-zone-list]'),
+                    empty: box.querySelector('[data-appointments-zone-empty]'),
+                } : null;
+            };
+            const formats = new Map();
+            const timeIn = (zone, clock) => {
+                const key = zone + '|' + clock;
+
+                try {
+                    if (!formats.has(key)) {
+                        formats.set(key, new Intl.DateTimeFormat(language, { timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: clock === '12' }));
+                    }
+
+                    return formats.get(key).format(new Date());
+                } catch (error) {
+                    return '';
+                }
+            };
+            const longName = (zone) => {
+                try {
+                    const part = new Intl.DateTimeFormat(language, { timeZone: zone, timeZoneName: 'long' })
+                        .formatToParts(new Date()).find((item) => item.type === 'timeZoneName');
+
+                    return part ? part.value : '';
+                } catch (error) {
+                    return '';
+                }
+            };
+            const list = (p) => {
+                if (!zones) {
+                    zones = Array.prototype.map.call(p.select.options, (option) => ({
+                        value: option.value, text: option.text, long: longName(option.value),
+                    }));
+                }
+
+                return zones;
+            };
+            const setActive = (p, index) => {
+                const items = p.list.children;
+
+                Array.prototype.forEach.call(items, (item, i) => item.classList.toggle('is-active', i === index));
+                active = index;
+
+                if (index >= 0 && items[index]) {
+                    p.search.setAttribute('aria-activedescendant', items[index].id);
+                    items[index].scrollIntoView({ block: 'nearest' });
+                } else {
+                    p.search.removeAttribute('aria-activedescendant');
+                }
+            };
+            const render = (p) => {
+                const query = p.search.value.trim().toLowerCase().replace(/[_/]/g, ' ');
+                const clock = p.box.dataset.clock;
+
+                shown = list(p).filter((zone) => query === ''
+                    || (zone.text + ' ' + zone.value + ' ' + zone.long).toLowerCase().replace(/[_/]/g, ' ').includes(query));
+                p.list.textContent = '';
+                shown.forEach((zone, index) => {
+                    const item = document.createElement('li');
+                    const name = document.createElement('span');
+                    const meta = document.createElement('span');
+
+                    item.id = 'appointment-zone-option-' + index;
+                    item.className = 'com-appointments-zone-option';
+                    item.setAttribute('role', 'option');
+                    item.setAttribute('aria-selected', zone.value === p.select.value ? 'true' : 'false');
+                    item.dataset.value = zone.value;
+                    name.className = 'com-appointments-zone-option-name';
+                    name.textContent = zone.text;
+                    meta.className = 'com-appointments-zone-option-meta';
+                    meta.textContent = [zone.long, timeIn(zone.value, clock)].filter(Boolean).join(' · ');
+                    item.append(name, meta);
+                    p.list.appendChild(item);
+                });
+                p.empty.hidden = shown.length > 0;
+                p.search.setAttribute('aria-expanded', shown.length > 0 ? 'true' : 'false');
+                setActive(p, shown.length ? Math.max(0, shown.findIndex((zone) => zone.value === p.select.value)) : -1);
+            };
+            const refresh = () => {
+                const p = parts();
+
+                if (!p || !p.select) {
+                    return;
+                }
+
+                const option = p.select.options[p.select.selectedIndex];
+
+                p.current.textContent = option ? option.text : p.select.value;
+                p.now.textContent = timeIn(p.select.value, p.box.dataset.clock);
+                p.box.querySelectorAll('[data-clock]').forEach((button) => {
+                    if (button.tagName === 'BUTTON') {
+                        button.setAttribute('aria-pressed', button.dataset.clock === p.box.dataset.clock ? 'true' : 'false');
+                    }
+                });
+
+                if (!p.panel.hidden) {
+                    render(p);
+                }
+            };
+            const close = (p, returnFocus) => {
+                p.panel.hidden = true;
+                p.button.setAttribute('aria-expanded', 'false');
+
+                if (returnFocus) {
+                    p.button.focus();
+                }
+            };
+            const open = (p) => {
+                p.panel.hidden = false;
+                p.button.setAttribute('aria-expanded', 'true');
+                p.search.value = '';
+                render(p);
+                p.search.focus();
+            };
+            const choose = (p, value) => {
+                close(p, true);
+
+                if (value && value !== p.select.value) {
+                    p.select.value = value;
+                    refresh();
+                    p.select.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            };
+            const init = () => {
+                const p = parts();
+
+                if (!p || !p.select || p.box.dataset.ready) {
+                    return;
+                }
+
+                p.box.dataset.ready = '1';
+                p.box.hidden = false;
+                refresh();
+                p.button.addEventListener('click', () => (p.panel.hidden ? open(p) : close(p, false)));
+                p.search.addEventListener('input', () => render(p));
+                p.search.addEventListener('keydown', (event) => {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        if (shown.length) {
+                            setActive(p, (active + (event.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length);
+                        }
+                    } else if (event.key === 'PageDown' || event.key === 'PageUp') {
+                        event.preventDefault();
+                        if (shown.length) {
+                            setActive(p, Math.min(shown.length - 1, Math.max(0, active + (event.key === 'PageDown' ? 8 : -8))));
+                        }
+                    } else if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (active >= 0 && shown[active]) {
+                            choose(p, shown[active].value);
+                        }
+                    }
+                });
+                p.panel.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        close(p, true);
+                    }
+                });
+                p.list.addEventListener('click', (event) => {
+                    const item = event.target.closest('[role="option"]');
+
+                    if (item) {
+                        choose(p, item.dataset.value);
+                    }
+                });
+                p.box.addEventListener('focusout', (event) => {
+                    if (!p.panel.hidden && event.relatedTarget && !p.box.contains(event.relatedTarget)) {
+                        close(p, false);
+                    }
+                });
+                document.addEventListener('click', (event) => {
+                    if (!p.panel.hidden && !p.box.contains(event.target)) {
+                        close(p, false);
+                    }
+                });
+                p.box.querySelectorAll('button[data-clock]').forEach((button) => {
+                    button.addEventListener('click', () => {
+                        if (button.dataset.clock === p.box.dataset.clock) {
+                            return;
+                        }
+
+                        p.box.dataset.clock = button.dataset.clock;
+                        refresh();
+                        // The times of the page follow the clock: the same part again, in that clock.
+                        loadPart(zoneAddress(p.select.value), 'replace', null);
+                    });
+                });
+                if (!ticking) {
+                    ticking = true;
+                    window.setInterval(() => {
+                        const q = parts();
+
+                        if (q && q.select) {
+                            q.now.textContent = timeIn(q.select.value, q.box.dataset.clock);
+                        }
+                    }, 30000);
+                }
+            };
+
+            return { init, refresh };
+        })();
+
+        /*
+         * Further guests as chips: an address typed into the entry field becomes a chip with Enter,
+         * a space, a comma or a semicolon, and when the field loses the focus; pasted text becomes
+         * one chip per address. Backspace in the empty field removes the last chip. An address that
+         * is no e-mail address, or one beyond the maximum, is marked. The text field of the form
+         * stays the value that is sent (the addresses separated by commas) and the server checks
+         * it as before. The texts (hint, "remove", "invalid") come from data attributes.
+         */
+        const guestsView = (form) => {
+            const area = form.querySelector('[data-appointments-guests]');
+
+            if (!area) {
+                return null;
+            }
+
+            if (area.appointmentsCommit) {
+                return area.appointmentsCommit;
+            }
+
+            const max = parseInt(area.dataset.max, 10) || 0;
+            const field = area.closest('.com-appointments-field');
+            const label = field ? field.querySelector('label[for="booking-guests"]') : null;
+            const hint = form.querySelector('#booking-guests-hint');
+            const box = document.createElement('div');
+            const chips = document.createElement('ul');
+            const entry = document.createElement('input');
+            const addresses = [];
+            const pattern = /^[^\s@,;<>()"]+@[^\s@,;<>()"]+\.[^\s@,;<>()".]{2,}$/;
+            const text = (template, value) => (template || '').replace('%s', value);
+
+            box.className = 'com-appointments-chips' + (area.classList.contains('is-invalid') ? ' is-invalid' : '');
+            chips.className = 'com-appointments-chip-list';
+            entry.className = 'form-control com-appointments-chip-entry';
+            entry.id = 'booking-guests-entry';
+            entry.type = 'text';
+            entry.inputMode = 'email';
+            entry.autocomplete = 'off';
+            entry.spellcheck = false;
+            ['aria-describedby', 'aria-invalid'].forEach((name) => {
+                if (area.hasAttribute(name)) {
+                    entry.setAttribute(name, area.getAttribute(name));
+                }
+            });
+            box.append(chips, entry);
+            area.after(box);
+            area.hidden = true;
+            area.tabIndex = -1;
+
+            if (label) {
+                label.htmlFor = entry.id;
+                chips.setAttribute('aria-label', label.textContent.trim());
+            }
+
+            if (hint && area.dataset.hint) {
+                hint.textContent = area.dataset.hint;
+            }
+
+            const invalid = (address, index) => !pattern.test(address) || (max > 0 && index >= max);
+            const draw = () => {
+                chips.textContent = '';
+                addresses.forEach((address, index) => {
+                    const chip = document.createElement('li');
+                    const label = document.createElement('span');
+                    const remove = document.createElement('button');
+                    const bad = invalid(address, index);
+
+                    chip.className = 'com-appointments-chip' + (bad ? ' is-invalid' : '');
+                    label.className = 'com-appointments-chip-text';
+                    label.textContent = address;
+
+                    if (bad) {
+                        const note = document.createElement('span');
+
+                        note.className = 'visually-hidden';
+                        note.textContent = ' ' + text(area.dataset.invalid, address);
+                        label.appendChild(note);
+                        chip.title = text(area.dataset.invalid, address);
+                    }
+
+                    remove.type = 'button';
+                    remove.className = 'com-appointments-chip-remove';
+                    remove.setAttribute('aria-label', text(area.dataset.remove, address));
+                    remove.innerHTML = '<svg class="com-appointments-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+                    remove.addEventListener('click', () => {
+                        addresses.splice(index, 1);
+                        draw();
+                        entry.focus();
+                    });
+                    chip.append(label, remove);
+                    chips.appendChild(chip);
+                });
+                area.value = addresses.join(', ');
+
+                const first = addresses.find((address, index) => invalid(address, index));
+
+                box.classList.toggle('is-invalid', first !== undefined || area.classList.contains('is-invalid'));
+                entry.setCustomValidity(first !== undefined ? text(area.dataset.invalid, first) : '');
+            };
+            const commit = (value) => {
+                (value || '').split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean).forEach((address) => {
+                    if (!addresses.some((known) => known.toLowerCase() === address.toLowerCase())) {
+                        addresses.push(address);
+                    }
+                });
+                entry.value = '';
+                draw();
+            };
+
+            entry.addEventListener('keydown', (event) => {
+                if ((event.key === 'Enter' || event.key === ',' || event.key === ';' || event.key === ' ') && entry.value.trim() !== '') {
+                    event.preventDefault();
+                    commit(entry.value);
+                } else if (event.key === 'Enter') {
+                    // An empty entry field never sends the booking by accident.
+                    event.preventDefault();
+                } else if (event.key === 'Backspace' && entry.value === '' && addresses.length) {
+                    event.preventDefault();
+                    addresses.pop();
+                    draw();
+                }
+            });
+            entry.addEventListener('paste', (event) => {
+                const pasted = event.clipboardData ? event.clipboardData.getData('text') : '';
+
+                if (pasted) {
+                    event.preventDefault();
+                    commit(entry.value + ' ' + pasted);
+                }
+            });
+            entry.addEventListener('blur', () => commit(entry.value));
+            box.addEventListener('click', (event) => {
+                if (event.target === box || event.target === chips) {
+                    entry.focus();
+                }
+            });
+            commit(area.value);
+
+            if (area.hasAttribute('autofocus')) {
+                entry.focus();
+            }
+
+            area.appointmentsCommit = () => commit(entry.value);
+
+            return area.appointmentsCommit;
+        };
+
+        /*
+         * The browser's own check of the details before sending, shown like a refusal of the
+         * server: the message of each invalid control below it, the control marked invalid and
+         * described by the message, the focus on the first one. The message is the browser's
+         * (validationMessage), so it is in the visitor's language.
+         */
+        const validation = (form) => {
+            if (form.appointmentsCheck) {
+                return form.appointmentsCheck;
+            }
+
+            form.noValidate = true;
+
+            const clear = (element) => {
+                const message = element.id ? form.querySelector('#' + CSS.escape(element.id) + '-check') : null;
+
+                if (message) {
+                    message.remove();
+                }
+
+                if (element.dataset.checked) {
+                    const group = element.closest('.com-appointments-tel');
+
+                    delete element.dataset.checked;
+                    element.removeAttribute('aria-invalid');
+                    element.classList.remove('is-invalid');
+
+                    // The line of a telephone field is drawn by its group.
+                    if (group && group.dataset.checked) {
+                        delete group.dataset.checked;
+                        group.classList.remove('is-invalid');
+                    }
+                    element.setAttribute('aria-describedby', (element.getAttribute('aria-describedby') || '')
+                        .split(' ').filter((id) => id && id !== element.id + '-check').join(' '));
+
+                    if (!element.getAttribute('aria-describedby')) {
+                        element.removeAttribute('aria-describedby');
+                    }
+                }
+            };
+            const show = (element) => {
+                const holder = element.closest('fieldset.com-appointments-field, .com-appointments-field, .form-check') || element.parentElement;
+                const message = document.createElement('div');
+
+                clear(element);
+                message.id = element.id + '-check';
+                message.className = 'invalid-feedback com-appointments-field-error';
+                // The page's own wording for the two common cases, the browser's for the rest.
+                message.textContent = (element.validity.valueMissing && form.dataset.messageRequired)
+                    || (element.validity.typeMismatch && element.type === 'email' && form.dataset.messageEmail)
+                    || element.validationMessage;
+                holder.appendChild(message);
+
+                if (element.getAttribute('aria-invalid') !== 'true') {
+                    const group = element.closest('.com-appointments-tel');
+
+                    element.dataset.checked = '1';
+                    element.setAttribute('aria-invalid', 'true');
+                    element.classList.add('is-invalid');
+
+                    if (group && !group.classList.contains('is-invalid')) {
+                        group.dataset.checked = '1';
+                        group.classList.add('is-invalid');
+                    }
+                }
+
+                element.setAttribute('aria-describedby', ((element.getAttribute('aria-describedby') || '') + ' ' + message.id).trim());
+            };
+
+            form.addEventListener('input', (event) => {
+                if (event.target.id && event.target.validity && event.target.validity.valid) {
+                    clear(event.target);
+                }
+            });
+            form.addEventListener('change', (event) => {
+                if (event.target.id && event.target.validity && event.target.validity.valid) {
+                    clear(event.target);
+                }
+            });
+
+            form.appointmentsCheck = () => {
+                let first = null;
+                const groups = new Set();
+
+                Array.prototype.forEach.call(form.elements, (element) => {
+                    if (!element.id || !element.willValidate || element.type === 'hidden') {
+                        return;
+                    }
+
+                    if (element.validity.valid) {
+                        clear(element);
+
+                        return;
+                    }
+
+                    // A group of radio buttons gets one message, at its first button.
+                    if (element.type === 'radio') {
+                        if (groups.has(element.name)) {
+                            return;
+                        }
+
+                        groups.add(element.name);
+                    }
+
+                    show(element);
+                    first = first || element;
+                });
+
+                if (first) {
+                    focus(first);
+                }
+
+                return first === null;
+            };
+
+            return form.appointmentsCheck;
+        };
+
+        let checkDetails = null;
+        let commitGuests = null;
+
+        const enhanceView = () => {
+            const form = root.querySelector('#appointment-details-form');
+
+            zoneView.init();
+            commitGuests = null;
+            checkDetails = null;
+
+            if (form) {
+                commitGuests = guestsView(form);
+                checkDetails = validation(form);
+            }
+        };
+
         // Keep the controls outside the date-and-time part in step with the part just loaded.
         const sync = () => {
             const part = picker();
             const zoneSelect = root.querySelector('#appointment-zone');
             const zoneForm = root.querySelector('#appointment-zone-form');
             const layout = root.querySelector('#appointment-booking');
+            const zoneBox = root.querySelector('[data-appointments-zone]');
 
             if (!part) {
                 return;
@@ -89,12 +601,20 @@
                 zoneSelect.value = part.dataset.zone;
             }
 
+            if (zoneBox && part.dataset.clock) {
+                zoneBox.dataset.clock = part.dataset.clock;
+            }
+
+            zoneView.refresh();
+
             if (zoneForm) {
-                Array.prototype.slice.call(zoneForm.querySelectorAll('input[name="month"], input[name="day"]')).forEach((input) => {
+                Array.prototype.slice.call(zoneForm.querySelectorAll('input[name="month"], input[name="day"], input[name="clock"]')).forEach((input) => {
                     input.remove();
                 });
 
-                [['month', part.dataset.month], ['day', part.dataset.day]].forEach(([name, value]) => {
+                const clock = zoneBox && zoneBox.dataset.clock !== zoneBox.dataset.defaultClock ? zoneBox.dataset.clock : '';
+
+                [['month', part.dataset.month], ['day', part.dataset.day], ['clock', clock]].forEach(([name, value]) => {
                     if (value) {
                         const input = document.createElement('input');
 
@@ -295,6 +815,7 @@
                     view().replaceWith(adopted);
                     sync();
                     restore();
+                    enhanceView();
                     write(address, history);
 
                     const title = adopted.querySelector('#appointment-step-title');
@@ -363,6 +884,19 @@
 
             // Attributes, not properties: the hidden fields "id" and "option" of a non-SEF address
             // shadow form.id and similar properties of the form element.
+            if (form.getAttribute('id') === 'appointment-details-form') {
+                // A typed guest address counts, and the browser's check comes first.
+                if (commitGuests) {
+                    commitGuests();
+                }
+
+                if (checkDetails && !checkDetails()) {
+                    event.preventDefault();
+                }
+
+                return;
+            }
+
             if (form.getAttribute('id') !== 'appointment-time-form') {
                 return;
             }
@@ -382,8 +916,17 @@
             const address = new URL(window.location.href);
             const part = picker();
 
+            const zoneBox = root.querySelector('[data-appointments-zone]');
+
             address.searchParams.delete('start');
             address.searchParams.set('timezone', zone);
+
+            // The clock of the switch; the addresses leave out the clock of the language.
+            if (zoneBox && zoneBox.dataset.clock && zoneBox.dataset.clock !== zoneBox.dataset.defaultClock) {
+                address.searchParams.set('clock', zoneBox.dataset.clock);
+            } else {
+                address.searchParams.delete('clock');
+            }
             address.searchParams.set('month', part ? part.dataset.month : '');
 
             if (part && part.dataset.day) {
@@ -412,6 +955,7 @@
         });
 
         window.history.replaceState({ appointments: true }, '', window.location.href);
+        enhanceView();
 
         // The visitor's own zone, unless the address already names one (a chosen zone, a day
         // link or a refused submission keep theirs) or the step is past the choice of a time.

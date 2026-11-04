@@ -77,6 +77,17 @@ final class AppointmentsFixture
             'signature' => $links->sign((int) $booking['id'], $action, $booking['modified_utc'])]);
     }
 
+    /** The signed link with which one additional guest removes their own address. */
+    public function guestLink(array $booking, string $guest): string
+    {
+        $links = new \Advans\Component\Appointments\Administrator\Helper\SignedLink(
+            new \Advans\Component\Appointments\Administrator\Helper\KeyProvider($this->config->secret)
+        );
+
+        return '/index.php?' . http_build_query(['option' => 'com_appointments', 'task' => 'guest.confirm',
+            'id' => $booking['id'], 'signature' => $links->signGuest((int) $booking['id'], $guest, $booking['modified_utc'])]);
+    }
+
     public function apply(AppointmentsHttp $client, string $link, array $fields = []): string
     {
         $html = $client->request($link);

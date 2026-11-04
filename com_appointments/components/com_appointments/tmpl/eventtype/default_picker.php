@@ -33,7 +33,7 @@ $slotError = $this->errors['start'] ?? null;
 $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
 // The legend shows the day without the year, which stands in the month title above it.
 $dayMonthFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY_MONTH');
-$timeFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
+$timeFormat = $this->timeFormat;
 $withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $selectedDay = new DateTimeImmutable($this->day . ' 00:00:00', $this->zone);
 $first = new DateTimeImmutable($this->days[0], new DateTimeZone('UTC'));
@@ -45,7 +45,7 @@ $chosen = $this->dayChosen;
 $hasSlots = $chosen && !empty($this->slots[$this->day]);
 $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
 ?>
-<div id="appointment-picker" class="com-appointments-picker<?php echo $chosen ? ' com-appointments-picker-day' : ''; ?>" data-appointments-picker data-month="<?php echo $this->escape($month); ?>" data-day="<?php echo $chosen ? $this->escape($this->day) : ''; ?>" data-zone="<?php echo $this->escape($zone); ?>" data-has-slots="<?php echo $hasSlots ? '1' : '0'; ?>">
+<div id="appointment-picker" class="com-appointments-picker<?php echo $chosen ? ' com-appointments-picker-day' : ''; ?>" data-appointments-picker data-month="<?php echo $this->escape($month); ?>" data-day="<?php echo $chosen ? $this->escape($this->day) : ''; ?>" data-zone="<?php echo $this->escape($zone); ?>" data-clock="<?php echo $this->escape($this->clock); ?>" data-has-slots="<?php echo $hasSlots ? '1' : '0'; ?>">
     <?php if ($slotError !== null && !$chosen) : ?>
         <?php /* A refusal without a usable time names no day: the reason stands above the calendar. */ ?>
         <div id="booking-start-error" class="invalid-feedback com-appointments-field-error" role="alert"><?php echo $this->escape(Text::_($slotError)); ?></div>
@@ -133,4 +133,7 @@ $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
         <?php endif; ?>
     </div>
     <input type="hidden" name="timezone" value="<?php echo $this->escape($zone); ?>">
+    <?php if ($this->clock !== $this->defaultClock) : ?>
+        <input type="hidden" name="clock" value="<?php echo $this->escape($this->clock); ?>">
+    <?php endif; ?>
 </div>

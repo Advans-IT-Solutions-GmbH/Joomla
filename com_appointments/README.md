@@ -112,9 +112,10 @@ currently available.
   after the other. Every step has its own address (`month`, `day`, `start`), so a reload and the
   browser's back button keep it, and everything works without JavaScript; the bundled booking
   script loads the next step in the background, writes it into the browser history, moves the
-  focus and announces the step, and applies the browser's time zone. The form collects contact
-  details, the telephone number for telephone appointments, optional guests and configured custom
-  fields. Consent, a honeypot, a session-bound signed render time and a short-lived keyed rate
+  focus and announces the step, and applies the browser's time zone. The form collects first and
+  last name (two required fields), the email address, the telephone number for telephone
+  appointments, optional guests up to the configured maximum and configured custom fields. A privacy
+  notice (optionally an acknowledgement or consent checkbox), a honeypot, a session-bound signed render time and a short-lived keyed rate
   limit protect submission without an external CAPTCHA.
 - **Booking integrity and approval.** Pending and confirmed appointments both hold their slot.
   Submission serialises on the host row, rechecks the exact slot against current availability,
@@ -123,8 +124,9 @@ currently available.
 
 - **Email and calendar invitations.** Confirmations, pending notices, approval and cancellation
   notifications are sent to the invitee, each additional guest and the host through Joomla's
-  configured mail transport. Every message carries both the `text/calendar` and `application/ics`
-  attachments. UTC calendar entries retain their UID and increase their sequence on changes.
+  configured mail transport. Each additional guest receives a guest template of its own with a
+  neutral salutation, never one addressed to the booking person. Every message carries both the
+  `text/calendar` and `application/ics` attachments. UTC calendar entries retain their UID and increase their sequence on changes.
   Notification failure never discards a saved booking: the page explicitly reports the mail problem.
   The mails follow the site's mail templates setting (com_mails): with «Mail Format» set to HTML or
   «HTML and plain text», the text is sent as HTML in the site's mail layout, including a template
@@ -135,8 +137,9 @@ currently available.
   A site with plain-text mails keeps plain-text appointment mails.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
-  reschedule, cancellation and erasure capabilities, including in reminders. Guests and the host
-  receive calendar invitations without these bearer links. Rescheduling updates the existing
+  reschedule, cancellation and erasure capabilities, including in reminders. The host receives
+  calendar invitations without these bearer links. Each additional guest receives only a signed
+  link of their own that removes their address from the booking and changes nothing else. Rescheduling updates the existing
   booking and UID under the host lock; it cannot take an
   overlapping slot from another event type. Cancellation releases the slot. Erasure clears all
   contact data, guests, answers, free text and conference metadata in one transaction, optionally
@@ -156,12 +159,14 @@ currently available.
   remote API requests. Event-specific overrides, separate host/guest JWT links, persistent failure
   diagnostics and an administrator retry action preserve a saved booking even if provisioning fails.
 
-- **Booking administration.** Filter by event, status and UTC date range, search invitee names/email,
+- **Booking administration.** Filter by event, status and UTC date range, search invitee full,
+  first or last name and email, sort by start or last name,
   export a filtered CSV, inspect details and custom answers, and reschedule using the same locked
   lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
 
 - **Joomla privacy integration.** The bundled privacy plugin exports readable booking records and
-  removes matching records through Joomla's formal data-subject workflow, including guest invitees.
+  removes matching records through Joomla's formal data-subject workflow. An address that is an
+  additional guest of someone else's booking is exported and removed as a guest only.
   Email ownership is exact after Unicode case normalisation; accent-insensitive database collations
   cannot expose another person's booking. The minimal accountability audit is excluded from exports.
 
@@ -272,7 +277,16 @@ invitee contact information.
 Installation enables **Privacy - Appointments**; updates retain its enabled state and uninstall
 removes it. Joomla's confirmed export request includes all matching primary-invitee booking
 columns, decoded answers and their current field labels. Additional guests do not gain access to
-the primary invitee's contact details by appearing in a booking.
+the primary invitee's contact details by appearing in a booking: when the request address is a
+guest of another person's booking, a separate domain (`appointments_guest_invitations`) lists only
+the booking ID, the guest address as stored, the event type title, the UTC start and end and the
+state. Guest addresses are matched exactly per line of `guest_emails` (Unicode case folding, no
+substring match), so `notguest@example.com` never matches `guest@example.com`.
+
+Formal removal takes such a guest address out of the other person's guest list and leaves that
+booking, its invitee and the other guests unchanged; each removal writes an audit row with the
+action `remove_guest` and the path `privacy_request`, without the address. A configured legal
+reason blocks guest removals like invitee removals.
 
 Formal removal uses the same transaction, anonymisation/deletion mode and host-only future
 cancellation notice as the signed erase link. A nonempty **Legal reason to block formal removal**
@@ -285,9 +299,14 @@ the associated Joomla user object.
 ### Scheduler, reminders and retention
 
 The component installs and enables **Task - Appointments**. Updates preserve its enabled/disabled
-state; uninstalling the component removes the plugin and its Scheduler tasks. Create two tasks in
-**System → Scheduled Tasks**: **Appointments: reminders**, running every five minutes, and
-**Appointments: retention**, running daily. Configure Joomla's Scheduler execution mechanism or
+state; uninstalling the component removes the plugin and its Scheduler tasks. Installation and
+every update create the two tasks in **System → Scheduled Tasks** through Joomla's Scheduler,
+enabled: **Appointments: reminders**, running every five minutes, and **Appointments: retention**,
+running daily, each with a batch size of 100. A task is only created when no task of its routine
+exists at all, in any state: a task you disabled or trashed is never enabled or created again, and
+its schedule and options are never overwritten. A task that was deleted permanently is created
+again by the next update, so disable a task instead of deleting it. If a task cannot be created,
+the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
 
@@ -353,14 +372,40 @@ permission on that booking's event type; credentials for subscription feeds are 
 In **Options**, configure the booking data information text and your site's privacy notice: a
 **menu item** (optionally with a section anchor such as `privacy`; on a multilingual site the menu
 item's language association is followed) or, without a menu item, a **URL** such as
-`/privacy#booking`. The consent checkbox label then reads "I have read the privacy notice and
-agree …" with the notice as a link that opens in a new window; without either setting the label
-is plain text. The component has no default for either setting, because only the site knows the
+`/privacy#booking`. The privacy notice in the information column of the booking card and, where
+there is one, the checkbox label link to it in a new window; without either setting both are plain
+text. The component has no default for either setting, because only the site knows the
 address of its privacy notice: set one before you publish a booking page. The information text explains what you collect and why; it is not a legal privacy
-notice. The consent checkbox is mandatory. The timing check requires at least two seconds after
+notice. The timing check requires at least two seconds after
 rendering and expires after one hour; reload an expired form.
-Additional guests are optional, deduplicated and limited to ten valid email addresses; the field
-is a closed disclosure ("Invite further guests") that opens when it holds a value or an error.
+
+| Option | Values | Effect |
+|---|---|---|
+| **Privacy notice on the booking form** (`consent_mode`) | `notice` (default) | No checkbox; only the privacy notice with its link. A posted checkbox value is ignored. Unknown values behave the same. |
+| | `acknowledge` | A required checkbox "I have taken note …"; a booking without it is refused at the checkbox. Nothing is stored. |
+| | `consent` | A required consent checkbox. The booking stores `consent_utc` (UTC time of the booking) and `consent_version`, the sha256 of mode, language tag and the exact plain label text, so a changed wording is recognisable. Choose it only if your processing is based on consent. |
+| **Maximum number of additional guests** (`max_guests`) | 0–50, default 10 | See below. |
+| **Preselected calling code** (`phone_default_country`) | digits, for example `41` | See "Telephone". |
+| **Calling code choice** (`phone_country_choice`) | 1 (default) visitor chooses, 0 only the preselected code | See "Telephone". |
+
+The consent proof is shown in the administrator's booking detail, exported in the CSV and in the
+formal privacy export, and kept on an anonymised booking: it is evidence of the consent and holds
+no data of the person. Joomla's **System - Privacy Consent** plugin does not touch this form (it
+extends only the registration and profile forms of com_users), but when enabled it can redirect a
+logged-in user who has not yet accepted the site's privacy policy to their profile before any site
+page, including the booking page.
+**Name.** First name and last name are separate required fields (`booking[first_name]`,
+`booking[last_name]`, at most 127 characters each). The booking stores both parts in
+`invitee_first_name` and `invitee_last_name` and the full name "first last" in `invitee_name`, which
+the calendar entry (`ATTENDEE;CN`), the host notice and `{invitee_name}` keep using. Bookings made
+before version 1.3.0 get both parts derived from the stored full name by the update: the last word
+is the last name, the rest the first name, a single word becomes the first name.
+
+Additional guests are optional, deduplicated and limited by **Options → Maximum number of
+additional guests** (`max_guests`, 0–50, default 10; 0 removes the guest field, and a guest list
+submitted anyway is refused as a tampered form). The server-side check is authoritative; the
+field hint and the error message state the configured number. The field is a closed disclosure
+("Invite further guests") that opens when it holds a value or an error.
 
 **Telephone.** An event type whose location is *Telephone: host calls invitee* or *Telephone:
 invitee calls host* always asks for the invitee's telephone number. It is a fixed, required field
@@ -370,7 +415,10 @@ with the other contact data. Custom telephone fields of other event types keep f
 `invitee_phone` with their first answer as before; on a telephone event type the fixed field takes
 precedence and custom telephone answers are only kept with the other custom answers.
 Every telephone field has a calling-code selector and a number field. **Options → Preselected
-calling code** (digits only, for example `41`) preselects a code. The visitor may also type the
+calling code** (digits only, for example `41`) preselects a code. With **Options → Calling code
+choice** set to *Only the preselected calling code* and a valid preselected code, every telephone
+field accepts only numbers with that code: an empty selector means that code, and another code,
+chosen or typed with `+` or `00`, is refused at the field. The visitor may also type the
 whole international number starting with `+` or `00`; the code is then read from the number.
 Spaces, brackets, dots, slashes and hyphens are ignored, and a single national trunk zero is
 dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
@@ -394,10 +442,16 @@ stated once per page. The patterns are the `COM_APPOINTMENTS_DATE_FORMAT_*` keys
 language file and can be changed with a language override. The reschedule, cancel and erase pages
 show the appointment in the invitee's time zone, like the booking page.
 
-The booking page shows the times in the schedule's zone and says so in one line. The booking script
-switches to the browser's zone on arrival (unless the address names a zone already), and a closed
-"Choose another time zone" disclosure below the times offers every zone; without JavaScript its
-button applies the choice, with JavaScript the selection applies directly.
+The booking page shows the times in the schedule's zone. The **Time zone** field below the calendar
+is always visible and shows the zone of the times. Without JavaScript it is a normal select with a
+button that applies the choice. The booking script switches to the browser's zone on arrival
+(unless the address names a zone already) and turns the field into a button with the zone and its
+current time: it opens a panel with a search field (an ARIA combobox) over the list of zones (an
+ARIA listbox, each zone with its name and current time from the browser) and a switch between the
+12-hour and the 24-hour clock. Arrow keys, Page Up and Page Down move through the list, Enter
+chooses and Escape closes. The clock applies to every time of the page; it starts from the
+language (`COM_APPOINTMENTS_CLOCK_DEFAULT`, `24` in all three bundled languages, 12-hour times use
+`COM_APPOINTMENTS_DATE_FORMAT_TIME_12`) and a switched clock is the address parameter `clock`.
 
 The displayed zone never changes the stored UTC appointment. Public times always come from the
 schedule, including its clock-change conventions. If someone else takes a time while the form is
@@ -436,15 +490,33 @@ it is the one main heading (`h1`) of the page.
 calendar and asks the visitor to choose a day until one is chosen, so the card does not grow when
 the times appear (on a narrow column the calendar and the times stay views of their own). The
 times legend shows the weekday and date without the year, which the month title already names;
-screen readers hear the full "Available times on …" wording. The time zone is one line below the
-times: the zone shown, then **Choose another time zone** as a closed disclosure with the zone list
-(its label is only read by screen readers).
+screen readers hear the full "Available times on …" wording. The time zone field stands below the
+times, with its label **Time zone** in the small size.
 
-**Step 2.** One column of fields, at most `--appointments-field-max-width` wide; only name and
-email share a row on a wider column. Every required field carries the same `*` after its label
+**Step 2.** One field per row, each as wide as the form (at most `--appointments-field-max-width`):
+first name, last name, email, the telephone for telephone appointments, the custom fields and the
+further guests. Every required field carries the same `*` after its label
 (`.com-appointments-required`, hidden from screen readers, which hear that the control is
-required). On a narrow column the information column of step 2 keeps the chosen date, time and
-zone and leaves out the description and the location text.
+required). A telephone field is one input group: the calling code before the number, a select or,
+with **Only the preselected calling code**, a fixed prefix with the flag of the country (the image
+of Joomla's language switcher, when the code belongs to one country). The further guests are a text
+field of addresses separated by commas, with a hint naming the maximum (**Maximum guests**); the
+booking script turns it into chips: an address becomes a chip with Enter, a space, a comma or a
+semicolon, pasted text becomes one chip per address, Backspace in the empty field removes the last
+chip, and an invalid address or one beyond the maximum is marked. The server checks the list either
+way. With the script the browser checks the form before sending and shows its messages at the
+fields like a refusal of the server. On a narrow column the information column of step 2 keeps the
+chosen date, time and zone and leaves out the description and the location text.
+
+**Privacy notice.** With a configured privacy notice (menu item or address) the information
+column ends with one short sentence that links to it, in every step and in the small size. It is
+the only privacy text of the page with the default **Privacy notice on the booking form** *Notice
+only*; the checkbox modes add their checkbox to step 2.
+
+**Stylesheet and script versions.** The page loads the stylesheet and the booking script with the
+CRC32 checksum of the served file as version (`appointments.css?1a2b3c4d`), also for a template
+override of the file. A browser that keeps a static file for days therefore never combines an old
+stylesheet or script with new markup after an update.
 
 **Customisation.** The public pages are template-neutral: Joomla's standard form classes plus
 `com-appointments-*` hooks. The bundled stylesheet draws a neutral look (a card with the
@@ -508,6 +580,7 @@ narrower widths.
 | `--appointments-font-heading` | `inherit` | The main heading (event type title, confirmation) |
 | `--appointments-heading-weight` | `700` | Weight of the main heading |
 | `--appointments-heading-size` | `1.5rem` | Size of the main heading |
+| `--appointments-page-title-gap` | `1.5rem` | Space between the title above the card and the card |
 | `--appointments-font-subheading` | heading font | Step, month and summary titles |
 | `--appointments-subheading-weight` | heading weight | Weight of those titles |
 | `--appointments-label-weight` | `600` | Field labels and the times legend |
@@ -533,6 +606,20 @@ narrower widths.
 | `--appointments-field-radius` | radius | Corner radius of fields |
 | `--appointments-field-max-width` | `none` | Maximum width of a field |
 | `--appointments-field-font-size` | `max(1rem, 16px)` | Text size in fields; below 16 px iOS zooms into the page |
+| `--appointments-field-padding` | `0.5rem 0.75rem` | Inner padding of fields |
+| `--appointments-field-line-height` | `1.5` | Line height in fields |
+| `--appointments-field-min-height` | touch target | Minimum height of fields |
+| `--appointments-field-gap` | `1rem` | Space between the fields of step 2 |
+| `--appointments-label-size` | `inherit` | Text size of field labels |
+| `--appointments-label-gap` | `0.375rem` | Space between a label and its field |
+| `--appointments-error-size` | small size | Text size of field errors |
+| `--appointments-error-weight` | strong weight | Weight of field errors |
+| `--appointments-tel-gap` | `0.5rem` | Space between calling code and number (`0` when the group draws one line) |
+| `--appointments-tel-border-width` | `0` | Border width of the telephone group in the field border colour, for example `0 0 1px` with fields drawn as a line |
+| `--appointments-tel-prefix-background` | surface alt | Background of a fixed calling code |
+| `--appointments-chip-background` | surface alt | Background of a guest chip |
+| `--appointments-chip-radius` | radius | Corner radius of a guest chip |
+| `--appointments-zone-label-weight` | `400` | Weight of the label **Time zone** |
 | `--appointments-check-size` | `1.25rem` | Size of checkboxes and radio buttons |
 | `--appointments-gap` | `0.75rem` | Gap between list entries |
 | `--appointments-target` | `44px` | Minimum size of every touch target |
@@ -554,7 +641,9 @@ Create Overrides → com_appointments**), which copies the files to
 | `eventtype/default_info_logo.php` | Information column, layout *Company logo and appointment* |
 | `eventtype/default_info_person.php` | Information column, layout *Person with photo* |
 | `eventtype/default_info_event.php` | The event details every column layout shows, with the chosen time on step 2; on its own the layout *Appointment only* |
-| `eventtype/default_zone_note.php` | The time zone of the times, at the start of the time-zone line (also sent with the background update) |
+| `eventtype/default_zone.php` | The time zone field below the times: the select and the panel of the booking script |
+| `eventtype/default_zone_note.php` | The sentence naming the zone of the times, read by screen readers with the field (also sent with the background update) |
+| `eventtype/default_privacy_note.php` | The privacy notice at the foot of the information column |
 | `eventtype/default_picker.php` | Step 1: calendar and times; also the whole response of the slot endpoint |
 | `eventtype/default_details.php` | Step 2: the details form |
 | `booking/default.php` | Step 3: the confirmation |
@@ -571,13 +660,14 @@ copies, because the booking script and the server rely on them.
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
 | Date and time | `form#appointment-time-form.com-appointments-time-form` (GET) around `#appointment-picker.com-appointments-picker` (layout `default_picker.php`; `.com-appointments-picker-day` and `data-day` once a day is chosen) with `.com-appointments-picker-grid` (calendar and `#appointment-times.com-appointments-times`), `p.form-text.com-appointments-zone-note#appointment-zone-note` and the hidden `timezone`; while the script loads it carries `aria-busy="true"` (progress cursor, a loading bar as `.com-appointments-calendar-nav::after`, the previous times disabled) |
-| Time zone | `details.com-appointments-zone` with `summary`, `.com-appointments-zone-row` (`label.form-label`, `select.form-select`, `button.btn.btn-secondary.com-appointments-zone-submit`, hidden while the script runs); the select and the button belong to `form#appointment-zone-form`. The manage page keeps `form.com-appointments-zone` |
+| Time zone | `.com-appointments-zone-line` with the visually hidden `p#appointment-zone-note` and `form#appointment-zone-form.com-appointments-zone-form` (GET): `label.com-appointments-zone-label`, `.com-appointments-zone-row` (`select.form-select.com-appointments-zone-select`, `button.btn.btn-secondary.com-appointments-zone-submit`, hidden while the script runs) and `[data-appointments-zone].com-appointments-zone-picker` (hidden until the script shows it: `button.com-appointments-zone-button` with `.com-appointments-zone-current` and `.com-appointments-zone-now`, the panel `.com-appointments-zone-panel[role=dialog]` with `input.com-appointments-zone-search[role=combobox]`, `.com-appointments-clock` of two `button.com-appointments-clock-option[aria-pressed]` and `ul.com-appointments-zone-list[role=listbox]` of `li.com-appointments-zone-option`). The manage page keeps `form.com-appointments-zone` |
 | Calendar | `section.com-appointments-calendar` with `nav.com-appointments-calendar-nav` (arrow buttons `a.btn.btn-outline-secondary.com-appointments-calendar-prev` / `-next` with `aria-label`, an inline chevron `svg.com-appointments-icon`; the way back from the current month is `span.disabled`; `h3.com-appointments-calendar-title`) and `table.com-appointments-calendar-grid` of always six weeks: a `thead` row of `th.com-appointments-weekday > abbr[title]` from Monday, `td.com-appointments-day-cell` (empty cells add `.com-appointments-day-empty`) holding `a.com-appointments-day.com-appointments-day-available` (selected day: `.com-appointments-day-selected`, `aria-current="date"`) or `span.com-appointments-day.com-appointments-day-unavailable` |
 | Times | `a.btn.com-appointments-back.com-appointments-times-back` (back to the calendar, narrow columns only), `fieldset.com-appointments-slots` with `legend.com-appointments-slots-legend` and `.com-appointments-slot-list` of `div.form-check.com-appointments-slot` (`input.form-check-input.com-appointments-slot-input[type=radio][name=start]`, visually hidden; `label.form-check-label.com-appointments-slot-time`, the visible time button; `button.btn.btn-primary.com-appointments-slot-next`, shown for the checked time only), or `p.com-appointments-empty` |
 | Details | `form#appointment-details-form.com-appointments-form.com-appointments-booking` (POST) with `section#appointment-details.com-appointments-step.com-appointments-step-details` and the hidden `booking[start]` and `booking[timezone]` |
-| Form | `form.com-appointments-form` (manage pages `.com-appointments-manage-form`); on the booking page the fields stand in `.com-appointments-fields` (two columns from 36rem: `.com-appointments-field-half` takes one column, every other field the full row), one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields are `div.input-group.com-appointments-tel` with `select.com-appointments-tel-country` and `input.com-appointments-tel-number`, the fixed one in `.com-appointments-field-phone`; guests in `details.com-appointments-guests` |
-| Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
-| Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` |
+| Form | `form.com-appointments-form` (manage pages `.com-appointments-manage-form`); on the booking page the fields stand in `.com-appointments-fields`, one field per row, one `div.com-appointments-field` per field with `label.form-label`, `input.form-control` / `textarea.form-control` / `select.form-select` and `div.form-text.com-appointments-field-description`; choice fields are `fieldset.com-appointments-field.com-appointments-field-group` with `legend.form-label` and `div.form-check` entries; telephone fields are `div.input-group.com-appointments-tel` with `select.com-appointments-tel-country` or, for a fixed code (`.com-appointments-tel-fixed`), `span.input-group-text.com-appointments-tel-prefix` (`img.com-appointments-tel-flag`, `.com-appointments-tel-code`), and `input.com-appointments-tel-number`, the fixed one in `.com-appointments-field-phone`; guests in `details.com-appointments-guests` with `textarea#booking-guests[data-appointments-guests]`, which the script hides behind `.com-appointments-chips` (`ul.com-appointments-chip-list` of `li.com-appointments-chip`, invalid ones `.is-invalid`, each with `button.com-appointments-chip-remove`, and `input.com-appointments-chip-entry`) |
+| Privacy notice | `p.com-appointments-privacy-note` with `a.com-appointments-privacy-link`, the last element of the information column |
+| Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); with a checkbox mode the consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
+| Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` (the browser's check before sending: `<control id>-check`) |
 | Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
 | Confirmation | `.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status`, `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
 | Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-status` |
@@ -613,24 +703,48 @@ normal page request.
 
 ### Email templates
 
-The installer creates eight editable site-wide templates in each shipped language: confirmation,
-pending, approved, reschedule, cancellation, reminder, host notice and erasure notice.
+The installer creates eighteen editable site-wide templates in each shipped language: confirmation,
+pending, approved, reschedule, cancellation, reminder, host notice and erasure notice, plus the six
+guest templates `guest_confirmation`, `guest_pending`, `guest_approved`, `guest_reschedule`,
+`guest_cancellation` and `guest_reminder`, and the four host templates `host_approved`,
+`host_reschedule`, `host_cancellation` and `host_reminder`. Each recipient gets the template written
+for them: the booking person the plain purpose, each additional guest the guest template (greeted
+neutrally, never with the booking person's name), and the host `host_notice` for a new or pending
+booking, the host template for approval, reschedule, cancellation and reminder (host wording with
+the booking person's details, never a mail addressed to the booking person), and the erasure notice.
+An update adds missing templates, including the guest and host templates on an existing
+installation, and never overwrites a template you edited. If you customised the invitee templates
+of those purposes for the host as well, adapt the new host templates.
 An event-specific template takes precedence over the published site-wide template for that purpose
 and language. If neither is available, the corresponding English template is used. Updating the
 component preserves existing templates rather than overwriting operator changes. Notification
 labels are installed privately from the same shipped language files, so a stored recipient
 language does not depend on that Joomla language pack being installed.
 
-Templates are plain text. Common placeholders include `{event_title}`, `{invitee_name}`,
-`{invitee_email}`, `{invitee_phone}`, `{guest_emails}`, `{host_name}`, `{host_email}`, `{location}`,
-`{conference_url}` and `{custom_fields.ID}`. `{start}`, `{end}` and `{timezone}` show the appointment
-in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings;
-`{start_utc}` and `{end_utc}` retain the original UTC values. `{state_label}` is localized.
+Templates are plain text. Placeholders are written `{name}` and replaced in one pass:
+
+| Placeholder | Value |
+|---|---|
+| `{event_title}`, `{description}`, `{location}`, `{location_text}`, `{location_type}` | The event type |
+| `{host_name}`, `{host_email}` | The host |
+| `{invitee_name}` | Full name of the booking person ("first last"), unchanged since earlier versions |
+| `{invitee_first_name}`, `{invitee_last_name}` | First and last name of the booking person |
+| `{invitee_email}`, `{invitee_phone}`, `{invitee_timezone}`, `{invitee_language}` | Contact data of the booking person |
+| `{guest_emails}` | All additional guests, one per line |
+| `{conference_url}` | The joining link (the host's moderator link in the host's mail) |
+| `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
+| `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings |
+| `{state_label}` | The translated status |
+| `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
+| `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
+| `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |
+
 Use only single-line values in subjects.
 
 Only primary-invitee messages append the action-specific reschedule, cancellation and erasure
-links, even if a customized template omits their placeholders. Guests and the host do not receive
-these management capabilities. Feed credentials are never included in mail.
+links, even if a customized template omits their placeholders. Every guest message appends the
+guest's own removal link the same way. The host does not receive these capabilities, and a guest
+never receives the invitee's. Feed credentials are never included in mail.
 
 ### Managing an appointment and deleting data
 
@@ -646,14 +760,25 @@ resets reminder delivery markers. Pending bookings remain pending. A cancellatio
 optional reason of at most 2,000 characters.
 
 **Options → On erasure** selects an anonymised statistical slot (the default) or complete deletion
-of the booking row. Both remove the name, email, phone, invitee zone/language, guest addresses,
+of the booking row. Both remove the full, first and last name, email, phone, invitee zone/language, guest addresses,
 custom answers, cancellation text and conference metadata. A future appointment is cancelled
 first. Its host-only cancellation contains just the slot and calendar identifiers, not the former
 invitee details or the erasure reason. The provider is asked to release its room after the erasure
 transaction commits; teardown failures are reported without undoing erasure.
 
-The deletion audit stores only booking ID, action, path, timestamp and, for administrator actions,
-the acting operator's Joomla user ID. It contains no invitee data, but that staff identifier is
+**Guests.** Every mail to an additional guest carries a signed link
+(`index.php?option=com_appointments&task=guest.confirm&id=…&signature=…`) with its own signing key.
+It is bound to the booking, the guest's address and the booking's current version; the address
+itself is not part of the URL. The page shows the appointment and the guest's address and a
+confirmation button (POST with the Joomla CSRF token, task `guest.remove`); only then is that one
+address removed from `guest_emails`. The booking, the booking person's data, the other guests and
+the booking version stay unchanged, so the other people's links keep working. A used, tampered or
+outdated link and a link of an erased booking answer 404; the same browser sees its receipt again.
+Both steps are rate limited. A calendar entry the guest already accepted stays in their calendar,
+which the page says.
+
+The deletion audit stores only booking ID, action (`anonymise`, `delete` or `remove_guest`), path,
+timestamp and, for administrator actions, the acting operator's Joomla user ID. It contains no invitee data, but that staff identifier is
 accountability data and has its own retention. Staff data-subject requests about `actor_user_id`
 entries must be answered by the operator from `#__appointments_audit`; the invitee privacy export
 deliberately excludes that domain. The system check reports the oldest retained audit timestamp.
@@ -661,7 +786,10 @@ deliberately excludes that domain. The system check reports the oldest retained 
 ### Booking administration and system checks
 
 The booking list and CSV use the same per-event edit permission. Filters combine event type, state
-(including pending `0`), an inclusive UTC start-date range and invitee name/email search. CSV export
+(including pending `0`), an inclusive UTC start-date range and a search in the invitee's full,
+first and last name and email address. The list sorts by start (default, latest first) or by last
+name, then first name. The CSV has the columns `invitee_name`, `invitee_first_name` and
+`invitee_last_name`, and the booking detail shows first and last name. CSV export
 requires a token-protected POST and uses a consistent database snapshot with bounded read batches.
 Its columns include contacts, guest addresses and raw custom answers; protect downloaded files as
 personal data. Spreadsheet-like text is prefixed with an apostrophe to prevent formula execution.

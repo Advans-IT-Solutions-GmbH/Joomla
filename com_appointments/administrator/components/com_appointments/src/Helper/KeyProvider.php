@@ -34,6 +34,13 @@ final class KeyProvider
     public const PURPOSE_SIGNED_LINK = 'signed-link';
 
     /**
+     * Keys the link with which an additional guest removes their own address
+     * from a booking. Separate from the invitee's links, so neither kind of
+     * link can ever verify as the other.
+     */
+    public const PURPOSE_GUEST_LINK = 'guest-link';
+
+    /**
      * Keys the rate limiter hashes a visitor's IP address with, so the
      * rate-limit table never holds a readable address.
      */

@@ -22,12 +22,20 @@ defined('_JEXEC') or die;
 
 class BookingModel extends BaseDatabaseModel
 {
-    public function create(EventtypeModel $events, int $eventId, array $input, \DateTimeImmutable $start, \DateTimeImmutable $now): array
+    /**
+     * $proof is the consent record of the consent mode (consent_utc, consent_version), stored
+     * with the booking; empty in the other modes.
+     */
+    public function create(EventtypeModel $events, int $eventId, array $input, \DateTimeImmutable $start, \DateTimeImmutable $now,
+        array $proof = []): array
     {
         $app = Factory::getApplication();
         $event = $events->getItem($eventId);
+        $params = ComponentHelper::getParams('com_appointments');
         $invitee = (new BookingInput())->validate($input, $events->getFields($eventId), $app->getLanguage()->getTag(),
-            BookingInput::requiresPhone((string) $event->location_type));
+            BookingInput::requiresPhone((string) $event->location_type),
+            BookingInput::maxGuests($params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS)), BookingInput::fixedDialCode($params));
+        $invitee += array_intersect_key($proof, array_flip(['consent_utc', 'consent_version']));
 
         $booking = (new BookingStore($this->getDatabase()))->create(
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()

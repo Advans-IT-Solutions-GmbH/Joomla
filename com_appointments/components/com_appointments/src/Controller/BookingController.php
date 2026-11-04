@@ -10,12 +10,15 @@ namespace Advans\Component\Appointments\Site\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Advans\Component\Appointments\Administrator\Helper\BookingValidationException;
+use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
+use Advans\Component\Appointments\Site\Helper\PrivacyLink;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -62,8 +65,30 @@ class BookingController extends BaseController
             $fieldErrors['start'] = 'COM_APPOINTMENTS_BOOKING_ERROR_SLOT';
         }
 
-        if ($this->input->post->getInt('consent') !== 1) {
-            $fieldErrors['consent'] = 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
+        // The checkbox exists only in the acknowledge and consent modes; in the notice mode a
+        // posted value is ignored and nothing is required or stored.
+        $params = ComponentHelper::getParams('com_appointments');
+        $consentMode = ConsentMode::fromParams($params);
+        $proof = [];
+
+        // The version names the exact label of the current options: the view derives it with the same
+        // helper and sends the version of the label it showed. A tick given to another mode or wording
+        // (the options changed while the form was open) counts as missing, so the visitor confirms the
+        // label now shown.
+        $version = '';
+
+        if (ConsentMode::requiresCheckbox($consentMode)) {
+            $label = ConsentMode::labelText($consentMode, PrivacyLink::resolve($params) !== '',
+                static fn (string $key): string => Text::_($key), Text::_('COM_APPOINTMENTS_BOOKING_PRIVACY_LINK'));
+            $version = ConsentMode::version($consentMode, $this->app->getLanguage()->getTag(), $label);
+        }
+
+        if (ConsentMode::requiresCheckbox($consentMode) && ($this->input->post->getInt('consent') !== 1
+            || !hash_equals($version, $this->input->post->getString('consent_version', '')))) {
+            $fieldErrors['consent'] = $consentMode === ConsentMode::ACKNOWLEDGE
+                ? 'COM_APPOINTMENTS_BOOKING_ERROR_ACKNOWLEDGE' : 'COM_APPOINTMENTS_BOOKING_ERROR_CONSENT';
+        } elseif ($consentMode === ConsentMode::CONSENT) {
+            $proof = ['consent_utc' => $now->format('Y-m-d H:i:s'), 'consent_version' => $version];
         }
 
         if ($fieldErrors !== []) {
@@ -71,7 +96,8 @@ class BookingController extends BaseController
             // everything at once. Nothing is saved on this path.
             try {
                 (new BookingInput())->validate($data, $events->getFields($eventId), $this->app->getLanguage()->getTag(),
-                    BookingInput::requiresPhone((string) $event->location_type));
+                    BookingInput::requiresPhone((string) $event->location_type),
+                    BookingInput::maxGuests($params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS)), BookingInput::fixedDialCode($params));
             } catch (BookingValidationException $e) {
                 if ($e->fieldErrors === []) {
                     return $this->refuse($eventId, $e->languageKey);
@@ -84,7 +110,7 @@ class BookingController extends BaseController
         }
 
         try {
-            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now);
+            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now, $proof);
         } catch (BookingValidationException $e) {
             return $this->refuse($eventId, $e->fieldErrors === [] ? $e->languageKey : '', $e->fieldErrors);
         } catch (SlotTakenException $e) {
@@ -224,7 +250,9 @@ class BookingController extends BaseController
         if ($start !== null && in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $local = $start->setTimezone(new \DateTimeZone($zone));
             $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
-                . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '');
+                . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '')
+                // The clock the visitor switched to stays, like the zone.
+                . (in_array($data['clock'] ?? null, ['12', '24'], true) ? '&clock=' . $data['clock'] : '');
         } else {
             $details = false;
         }

@@ -18,10 +18,17 @@ final class ConfigurationTest extends TestCase
         self::assertFalse(isset($config->fields));
 
         foreach (['erase_mode' => 'anonymise', 'retention_days' => '365', 'audit_retention_years' => '3',
-            'conference_provider' => 'none', 'conference_allow_outbound' => '0', 'reminder_offsets' => '1440,60',
+            'conference_provider' => 'none', 'conference_allow_outbound' => '0', 'reminder_offsets' => '1440,60', 'max_guests' => '10',
             'teamcal_enabled' => '0', 'team_cleanup_days' => '14'] as $name => $default) {
             self::assertSame($default, (string) $config->xpath('//field[@name="' . $name . '"]')[0]['default']);
         }
+    }
+
+    public function testGuestMaximumOptionMatchesTheServerSideBounds(): void
+    {
+        $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
+        $field = $config->xpath('//field[@name="max_guests"]')[0];
+        self::assertSame(['0', '50', '10'], [(string) $field['min'], (string) $field['max'], (string) $field['default']]);
     }
 
     public function testEveryNumericOptionRejectsMalformedAndOutOfRangeRawInput(): void
@@ -29,7 +36,7 @@ final class ConfigurationTest extends TestCase
         $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
         $rule = new RangeRule();
         $fields = $config->xpath('//field[@validate="range"]');
-        self::assertCount(6, $fields);
+        self::assertCount(7, $fields);
 
         foreach ($fields as $field) {
             self::assertSame('raw', (string) $field['filter']);

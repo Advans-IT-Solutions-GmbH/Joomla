@@ -19,6 +19,18 @@ class SitePageTest
     private $baseUrl;
     private $db;
     private $dbPrefix;
+
+    /**
+     * How many required privacy checkboxes the booking form must render: one in the
+     * acknowledge and consent modes, none in the default notice mode (also for unknown values).
+     */
+    private function consentCheckboxes(): int
+    {
+        $row = $this->db->query("SELECT params FROM {$this->dbPrefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc();
+        $mode = (json_decode((string) ($row['params'] ?? ''), true) ?: [])['consent_mode'] ?? 'notice';
+
+        return in_array($mode, ['acknowledge', 'consent'], true) ? 1 : 0;
+    }
     private int $scheduleId = 0;
 
     /** @var array<string, string> */
@@ -250,13 +262,33 @@ class SitePageTest
                     && $xpath->query('//form[@id="appointment-details-form"]')->length === 0
                     && $xpath->query('//*[@id="appointment-picker"][@data-day=""]')->length === 1;
             });
-            $this->test('steps: before a day is chosen the times column holds the hint, the zone stands in one line below', function () use ($xpath) {
+            $this->test('steps: before a day is chosen the times column holds the hint, the time zone field stands visible below', function () use ($xpath) {
                 $line = '//div[contains(@class, "com-appointments-zone-line")]';
+                $form = $line . '/form[@id="appointment-zone-form"][@method="get"]';
 
                 return trim($xpath->query('//*[@id="appointment-picker"]//*[contains(@class, "com-appointments-times-hint")]')->item(0)?->textContent ?? '') === 'Please choose a day'
                     && trim($xpath->query($line . '/p[@id="appointment-zone-note"]')->item(0)?->textContent ?? '') === 'All times are shown in the UTC time zone.'
                     && $xpath->query('//*[@id="appointment-picker"]//*[@id="appointment-zone-note"]')->length === 0
-                    && $xpath->query($line . '/details[contains(@class, "com-appointments-zone")]//label[@for="appointment-zone"][contains(@class, "visually-hidden")]')->length === 1;
+                    // Without JavaScript a labelled select with a button, no disclosure to open first.
+                    && trim($xpath->query($form . '/label[@for="appointment-zone"]')->item(0)?->textContent ?? '') === 'Time zone'
+                    && $xpath->query($form . '//select[@id="appointment-zone"][@name="timezone"]/option[@value="UTC"][@selected]')->length === 1
+                    && $xpath->query($form . '//button[@type="submit"][contains(@class, "com-appointments-zone-submit")]')->length === 1
+                    && $xpath->query($line . '//details')->length === 0
+                    // The enhanced field: hidden until the script shows it, a combobox over a listbox and the clock switch.
+                    && $xpath->query($form . '//*[@data-appointments-zone][@hidden][@data-clock="24"]')->length === 1
+                    && $xpath->query($form . '//input[@role="combobox"][@aria-controls="appointment-zone-list"]')->length === 1
+                    && $xpath->query($form . '//ul[@id="appointment-zone-list"][@role="listbox"]')->length === 1
+                    && $xpath->query($form . '//button[@data-clock="24"][@aria-pressed="true"]')->length === 1
+                    && $xpath->query($form . '//button[@data-clock="12"][@aria-pressed="false"]')->length === 1;
+            });
+            $this->test('steps: clock=12 keeps the 12-hour clock in the day links and the switch', function () use ($base, $month) {
+                $page = $this->request($base . '&month=' . $month . '&clock=12');
+                $xpath = $this->dom($page['body']);
+                $link = html_entity_decode((string) ($xpath->query('//a[contains(@class, "com-appointments-day-available")]')->item(0)?->getAttribute('href') ?? ''));
+
+                return $page['code'] === 200 && str_contains($link, 'clock=12')
+                    && $xpath->query('//*[@data-appointments-zone][@data-clock="12"]')->length === 1
+                    && $xpath->query('//button[@data-clock="12"][@aria-pressed="true"]')->length === 1;
             });
             $this->test('steps: the step title names step 1 of 3 and the event type is the main heading', function () use ($xpath) {
                 $title = preg_replace('/\s+/', ' ', trim($xpath->query('//*[@id="appointment-step-title"]')->item(0)?->textContent ?? ''));
@@ -294,6 +326,19 @@ class SitePageTest
                     && trim($next->item(0)->textContent) === 'Next'
                     && $xpath->query('//form[@id="appointment-details-form"]')->length === 0;
             });
+            $this->test('steps: the 12-hour clock applies to every time of the day and stays in the GET form', function () use ($dayLink, $radios) {
+                $page = $this->request(preg_replace('#^/#', '', parse_url($dayLink, PHP_URL_PATH)) . '?' . parse_url($dayLink, PHP_URL_QUERY) . '&clock=12');
+                $xpath = $this->dom($page['body']);
+                $labels = $xpath->query('//form[@id="appointment-time-form"]//label[contains(@class, "com-appointments-slot-time")]');
+                $all = $labels->length === $radios->length && $labels->length > 0;
+
+                foreach ($labels as $label) {
+                    $all = $all && preg_match('/^\d{1,2}:\d{2} (am|pm)/', trim($label->textContent)) === 1;
+                }
+
+                return $page['code'] === 200 && $all
+                    && $xpath->query('//form[@id="appointment-time-form"]//input[@type="hidden"][@name="clock"][@value="12"]')->length === 1;
+            });
             $this->test('steps: the way back to the calendar of a narrow screen leaves the day out', function () use ($xpath) {
                 $back = $xpath->query('//a[contains(@class, "com-appointments-times-back")]')->item(0);
 
@@ -321,8 +366,10 @@ class SitePageTest
                     && $zone instanceof \DOMElement && $zone->getAttribute('value') === 'UTC'
                     && $title === 'Step 2 of 3: Your details'
                     && $xpath->query('//input[@name="start"]')->length === 0
-                    && $xpath->query('//input[@id="booking-name"][@required]')->length === 1
-                    && $xpath->query('//input[@id="booking-consent"][@required]')->length === 1;
+                    && $xpath->query('//input[@name="booking[first_name]"][@required]')->length === 1
+                    && $xpath->query('//input[@name="booking[last_name]"][@required]')->length === 1
+                    && $xpath->query('//input[@name="booking[name]"]')->length === 0
+                    && $xpath->query('//input[@name="consent"][@required]')->length === $this->consentCheckboxes();
             });
             $this->test('steps: the information column shows the chosen time and its zone', function () use ($xpath, $chosen) {
                 $start = new \DateTimeImmutable($chosen, new \DateTimeZone('UTC'));

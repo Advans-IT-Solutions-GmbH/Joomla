@@ -85,21 +85,21 @@ No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape o
 
 ```
 com_appointments/tests/scripts/
-├── 01-installation.php      # tables created, task plugin registered, no signing secret stored
-├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts
+├── 01-installation.php      # tables created, task plugin registered, both Scheduler tasks created once (never re-enabled), no signing secret stored
+├── 02-structure.php         # manifest files installed, LICENSE.txt present in both parts, name columns and their 1.3.0 migration
 ├── 03-site-page.php         # the public pages really render over HTTP, empty and with seeded rows
 ├── 04-schedules.php         # a schedule is really submitted, stored, reloaded and validated
 ├── 05-blocked.php           # a blocked period is submitted from a non-UTC zone, stored as UTC, and the clock-change refusals hold
 ├── 06-eventtypes.php        # CRUD, ACL, feed token generated and unique
 ├── 07-slots.php             # the site slot endpoint returns what the engine returns
-├── 08-booking.php           # end-to-end booking, both concurrency cases
-├── 09-mail.php              # every e-mail carries a text/calendar part
+├── 08-booking.php           # end-to-end booking, both concurrency cases, first/last name, max_guests
+├── 09-mail.php              # every e-mail carries a text/calendar part, guests get the guest template and link
 ├── 10-lifecycle.php         # reschedule and cancel, UID stable, SEQUENCE raised
-├── 11-erasure.php           # the three deletion paths and the audit table
+├── 11-erasure.php           # the three deletion paths, the audit table, guest links (valid, tampered, replayed)
 ├── 12-feed.php              # token, 304, rotation, 404 on a wrong token
-├── 12-scheduler.php         # real Scheduler CLI, reminders, batches and retention
+├── 12-scheduler.php         # real Scheduler CLI, installed tasks, reminders, batches and retention
 ├── 13-conference.php        # link in mail, ICS and page; provider failure handled
-├── 14-privacy.php           # typed Joomla events, Unicode ownership and legal blocking
+├── 14-privacy.php           # typed Joomla events, Unicode ownership, guest export/removal and legal blocking
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 ├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
 ├── 21-teamcalendars.php     # internet calendars: one runner, one part file team-<letter>-*.php per work package

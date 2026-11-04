@@ -14,7 +14,7 @@ defined('_JEXEC') or die;
 final class Anonymiser
 {
     public const ERASED_FIELDS = [
-        'invitee_name', 'invitee_email', 'invitee_phone', 'invitee_timezone',
+        'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'invitee_timezone',
         'invitee_language', 'guest_emails', 'custom_fields', 'cancel_reason',
         'conference_provider', 'conference_url', 'conference_room',
         'conference_state', 'conference_error',

@@ -15,7 +15,17 @@
             <option value="cancellation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CANCELLATION</option>
             <option value="reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_REMINDER</option>
             <option value="host_notice">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_NOTICE</option>
+            <option value="host_approved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_APPROVED</option>
+            <option value="host_reschedule">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_RESCHEDULE</option>
+            <option value="host_cancellation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_CANCELLATION</option>
+            <option value="host_reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_REMINDER</option>
             <option value="erasure_notice">COM_APPOINTMENTS_TEMPLATE_PURPOSE_ERASURE_NOTICE</option>
+            <option value="guest_confirmation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CONFIRMATION</option>
+            <option value="guest_pending">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_PENDING</option>
+            <option value="guest_approved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_APPROVED</option>
+            <option value="guest_reschedule">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_RESCHEDULE</option>
+            <option value="guest_cancellation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CANCELLATION</option>
+            <option value="guest_reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_REMINDER</option>
         </field>
         <field name="language" type="text" label="JFIELD_LANGUAGE_LABEL" description="COM_APPOINTMENTS_TEMPLATE_LANGUAGE_DESC" required="true" maxlength="7" />
         <field name="subject" type="text" label="COM_APPOINTMENTS_TEMPLATE_SUBJECT" required="true" maxlength="255" filter="raw" />

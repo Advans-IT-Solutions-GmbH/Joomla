@@ -21,7 +21,8 @@ try {
     $db = $fixture->db;
     $prefix = $fixture->prefix;
     $private = [
-        'invitee_name' => 'CANARY-INVITEE-NAME', 'invitee_email' => 'canary-invitee@example.test', 'invitee_phone' => '+41000000000',
+        'invitee_name' => 'CANARY-INVITEE-NAME', 'invitee_first_name' => 'CANARY-FIRST-NAME', 'invitee_last_name' => 'CANARY-LAST-NAME',
+        'invitee_email' => 'canary-invitee@example.test', 'invitee_phone' => '+41000000000',
         'invitee_timezone' => 'Europe/Zurich', 'invitee_language' => 'de-DE', 'guest_emails' => 'canary-guest@example.test',
         'custom_fields' => '{"12":"CANARY-ANSWER"}', 'cancel_reason' => 'CANARY-REASON',
         'conference_provider' => 'fixed', 'conference_url' => 'https://example.test/CANARY-LINK',
@@ -102,6 +103,56 @@ try {
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$id], $token => 1]);
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();
     $check($audit && $audit['path'] === 'admin' && (int) $audit['actor_user_id'] === $fixture->host, 'Administrator erasure records only the acting operator identity');
+
+    // Guest self-removal: the signed link of one guest removes only that guest's address.
+    $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);
+    $guestBooking = $created['booking'];
+    $gid = (int) $guestBooking['id'];
+    $erasedIds[] = $gid;
+    $guestLink = $fixture->guestLink($guestBooking, 'leave@example.test');
+    parse_str((string) parse_url($guestLink, PHP_URL_QUERY), $guestQuery);
+    $check(!str_contains($guestLink, 'example.test') && !str_contains($guestLink, 'example%2Etest') && !str_contains(strtolower($guestLink), 'leave'),
+        'The guest link carries no address');
+    $visitor = new AppointmentsHttp('http://localhost', 'erasure-guest');
+    $html = $visitor->request($guestLink);
+    $check($visitor->status === 200 && str_contains($html, 'Leave@example.test') && str_contains($html, 'Remove my address')
+        && !str_contains($html, 'keep@example.test') && !str_contains($html, 'invitee@example.test') && !str_contains($html, 'Fixture Invitee'),
+        'The guest confirmation page names only the guest address and the appointment, not the booking person or the other guests');
+    $check($fixture->row($gid)['guest_emails'] === $guestBooking['guest_emails'], 'Opening the guest link changes nothing');
+    $tampered = $guestLink . '0';
+    $outsider = new AppointmentsHttp('http://localhost', 'erasure-guest-tampered');
+    $outsider->request($tampered);
+    $tamperedStatus = $outsider->status;
+    $outsider->request(str_replace('id=' . $gid, 'id=' . ($gid + 1000), $guestLink));
+    $check($tamperedStatus === 404 && $outsider->status === 404, 'A tampered guest signature or another booking id answers 404');
+    $outsider->request($fixture->guestLink($guestBooking, 'stranger@example.test'));
+    $check($outsider->status === 404, 'A correctly signed link for an address that is not a guest answers 404');
+    $visitor->request('/index.php?option=com_appointments&task=guest.remove', ['id' => $gid, 'signature' => $guestQuery['signature']]);
+    $check($visitor->status === 403 && $fixture->row($gid)['guest_emails'] === $guestBooking['guest_emails'], 'Guest removal without the form token is refused');
+    $html = $visitor->request('/index.php?option=com_appointments&task=guest.remove', [
+        'id' => $gid, 'signature' => $guestQuery['signature'], $visitor->token($visitor->request($guestLink)) => 1,
+    ]);
+    $after = $fixture->row($gid);
+    $check(str_contains($html, 'Your address has been removed from this appointment.') && $after['guest_emails'] === 'keep@example.test',
+        'The confirmed guest link removes exactly that address from the guest list');
+    $check($after['invitee_email'] === $guestBooking['invitee_email'] && $after['invitee_name'] === $guestBooking['invitee_name']
+        && (int) $after['state'] === (int) $guestBooking['state'] && $after['anonymised_utc'] === null
+        && $after['modified_utc'] === $guestBooking['modified_utc'] && (int) $after['sequence'] === (int) $guestBooking['sequence'],
+        'The booking, the booking person and the row version stay unchanged');
+    $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$gid}")->fetch_all(MYSQLI_ASSOC);
+    $check(count($audit) === 1 && $audit[0]['action'] === 'remove_guest' && $audit[0]['path'] === 'self_service' && $audit[0]['actor_user_id'] === null,
+        'Guest removal writes one audit row without any address');
+    $visitor->request($guestLink);
+    $check($visitor->status === 200 && (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_audit WHERE booking_id={$gid}")->fetch_assoc()['n'] === 1,
+        'The same browser sees its receipt again without a second removal');
+    $replay = new AppointmentsHttp('http://localhost', 'erasure-guest-replay');
+    $replay->request($guestLink);
+    $check($replay->status === 404, 'A used guest link is rejected in another browser');
+    $keep = new AppointmentsHttp('http://localhost', 'erasure-guest-keep');
+    $keep->request($fixture->guestLink($after, 'keep@example.test'));
+    $inviteeLink = new AppointmentsHttp('http://localhost', 'erasure-guest-invitee');
+    $inviteeLink->request($fixture->link($after, 'erase'));
+    $check($keep->status === 200 && $inviteeLink->status === 200, 'The other guest and the booking person keep their working links');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

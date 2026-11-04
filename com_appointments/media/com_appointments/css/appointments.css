@@ -58,6 +58,8 @@
     --appointments-font-heading: inherit;
     --appointments-heading-weight: 700;
     --appointments-heading-size: 1.5rem;
+    /* Space between the title above the card and the card. */
+    --appointments-page-title-gap: 1.5rem;
     --appointments-font-subheading: var(--appointments-font-heading);
     --appointments-subheading-weight: var(--appointments-heading-weight);
     --appointments-label-weight: 600;
@@ -85,7 +87,22 @@
     --appointments-field-radius: var(--appointments-radius);
     --appointments-field-max-width: none;
     --appointments-field-font-size: max(1rem, 16px);
+    --appointments-field-padding: 0.5rem 0.75rem;
+    --appointments-field-line-height: 1.5;
+    --appointments-field-min-height: var(--appointments-target);
+    --appointments-field-gap: 1rem;
+    --appointments-label-size: inherit;
+    --appointments-label-gap: 0.375rem;
+    --appointments-error-size: var(--appointments-small-size);
+    --appointments-error-weight: var(--appointments-strong-weight);
     --appointments-check-size: 1.25rem;
+    /* The telephone group: calling code and number side by side with a gap; a template that
+       draws a field as a line sets the line on the group (--appointments-tel-border-width) and no gap. */
+    --appointments-tel-gap: 0.5rem;
+    --appointments-tel-border-width: 0;
+    --appointments-tel-prefix-background: var(--appointments-surface-alt);
+    --appointments-chip-background: var(--appointments-surface-alt);
+    --appointments-chip-radius: var(--appointments-radius);
 
     /* Sizes */
     --appointments-gap: 0.75rem;
@@ -168,7 +185,7 @@
 
 /* The title above the card, when the event type shows it there. */
 .com-appointments .com-appointments-page-title {
-    margin: 0 auto 1.5rem;
+    margin: 0 auto var(--appointments-page-title-gap);
 }
 
 .com-appointments-step-title {
@@ -486,9 +503,16 @@
 }
 
 /* One step at a time on a narrow column: the chosen day shows its times instead of the
-   calendar, with the way back; from 36rem both stand side by side and the way back goes. */
+   calendar, with the way back; from 36rem both stand side by side and the way back goes. The
+   times take the place of the calendar, which stays invisible in the same cell, so the card keeps
+   at least the height of the calendar when a day is chosen. */
+.com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-calendar,
+.com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-times {
+    grid-area: 1 / 1;
+}
+
 .com-appointments-picker-day .com-appointments-calendar {
-    display: none;
+    visibility: hidden;
 }
 
 .com-appointments-calendar {
@@ -726,37 +750,39 @@
     display: inline-flex !important;
 }
 
-/* The time zone in one line below the times: the zone shown and, as a closed disclosure,
-   another zone. Opened, the disclosure takes a line of its own. */
+/* The time zone below the calendar, always visible like the calendar itself: the label in the
+   small size and the field with the zone of the times. The sentence naming the zone is for
+   screen readers (the field describes itself by it); the field shows the zone already. */
 .com-appointments-zone-line {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 0.4em;
-    align-items: baseline;
+    position: relative;
     margin: 1rem 0 0;
-    color: var(--appointments-muted);
-    font-size: var(--appointments-small-size);
+    max-width: var(--appointments-calendar-width);
 }
 
 .com-appointments-zone-line > .com-appointments-zone-note {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+}
+
+.com-appointments-zone-form {
+    display: grid;
+    gap: var(--appointments-label-gap);
     margin: 0;
-    color: inherit;
-    font-size: inherit;
 }
 
-.com-appointments-zone {
-    margin: 1rem 0 0;
-}
-
-.com-appointments-zone-line > .com-appointments-zone {
+.com-appointments .com-appointments-zone-label {
+    display: block;
     margin: 0;
+    color: var(--appointments-text);
+    font-size: var(--appointments-small-size);
+    font-weight: var(--appointments-zone-label-weight, 400);
 }
 
-.com-appointments-zone-line > .com-appointments-zone[open] {
-    flex: 1 0 100%;
-}
-
-.com-appointments-zone > summary,
 .com-appointments-guests > summary {
     display: inline-flex;
     align-items: center;
@@ -772,20 +798,168 @@
     align-items: center;
 }
 
-.com-appointments-zone-row > .form-label {
-    flex: 1 0 100%;
-    margin: 0;
-}
-
 .com-appointments .com-appointments-zone-row .form-select {
     flex: 1 1 14rem;
     width: auto;
     max-width: min(100%, 320px);
 }
 
-/* With the booking script a new zone applies on selection, without it the button does. */
-.com-appointments-js .com-appointments-zone-submit {
+/* With the booking script the select gives way to the button and its panel; a new zone and a
+   new clock apply at once. */
+.com-appointments-js .com-appointments-zone-row {
     display: none !important;
+}
+
+.com-appointments-zone-picker {
+    position: relative;
+}
+
+.com-appointments .com-appointments-zone-button {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    width: 100%;
+    min-height: var(--appointments-target);
+    margin: 0;
+    padding: 0.25rem 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--appointments-text);
+    font: inherit;
+    font-size: var(--appointments-small-size);
+    text-align: start;
+    cursor: pointer;
+}
+
+.com-appointments .com-appointments-zone-button:hover,
+.com-appointments .com-appointments-zone-button[aria-expanded="true"] {
+    background: transparent;
+    color: var(--appointments-text);
+}
+
+.com-appointments-zone-current {
+    min-width: 0;
+    font-weight: var(--appointments-strong-weight);
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-zone-now {
+    color: var(--appointments-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.com-appointments-zone-chevron {
+    margin-inline-start: auto;
+    transition: transform 0.15s ease;
+}
+
+.com-appointments-zone-button[aria-expanded="true"] .com-appointments-zone-chevron {
+    transform: rotate(180deg);
+}
+
+/* The panel opens below the field, as wide as it, over the content that follows. */
+.com-appointments-zone-panel {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 0;
+    display: grid;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.75rem;
+    border: var(--appointments-border);
+    border-radius: var(--appointments-radius);
+    background: var(--appointments-surface);
+    box-shadow: var(--appointments-shadow);
+}
+
+.com-appointments-zone-panel[hidden] {
+    display: none !important;
+}
+
+.com-appointments-zone-tools {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.com-appointments-clock {
+    display: inline-flex;
+    justify-self: start;
+    border: var(--appointments-border);
+    border-radius: var(--appointments-button-radius);
+}
+
+.com-appointments .com-appointments-clock-option {
+    min-width: var(--appointments-target);
+    min-height: var(--appointments-target);
+    margin: 0;
+    padding: 0.25rem 0.75rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--appointments-text);
+    font: inherit;
+    font-size: var(--appointments-small-size);
+    cursor: pointer;
+}
+
+.com-appointments .com-appointments-clock-option[aria-pressed="true"] {
+    background: var(--appointments-accent);
+    color: var(--appointments-accent-contrast);
+    font-weight: var(--appointments-strong-weight);
+}
+
+.com-appointments .com-appointments-clock-option:focus-visible,
+.com-appointments .com-appointments-zone-button:focus-visible {
+    outline: 2px solid var(--appointments-focus);
+    outline-offset: 2px;
+}
+
+.com-appointments-zone-list {
+    max-height: 16rem;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.com-appointments-zone-option {
+    display: grid;
+    align-content: center;
+    min-height: var(--appointments-target);
+    padding: 0.25rem 0.5rem;
+    font-size: var(--appointments-small-size);
+    cursor: pointer;
+}
+
+.com-appointments-zone-option-name {
+    font-weight: var(--appointments-strong-weight);
+}
+
+.com-appointments-zone-option-meta {
+    color: var(--appointments-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.com-appointments-zone-option[aria-selected="true"] {
+    background: var(--appointments-accent-soft);
+}
+
+.com-appointments-zone-option.is-active {
+    outline: 2px solid var(--appointments-focus);
+    outline-offset: -2px;
+}
+
+.com-appointments-zone-option:hover {
+    background: var(--appointments-slot-hover-background);
+}
+
+.com-appointments-zone-empty {
+    margin: 0;
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
 }
 
 /* Forms */
@@ -794,22 +968,17 @@
     gap: 1.5rem;
 }
 
+/* One field per row, each as wide as the form (at most --appointments-field-max-width). */
 .com-appointments-fields {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 1rem;
-}
-
-/* One column of fields, at most --appointments-field-max-width wide; only name and email
-   share a row on a wider column. Each field starts at the top of its row, so a taller
-   neighbour never moves its label or its control. */
-.com-appointments-fields {
+    gap: var(--appointments-field-gap);
     max-width: var(--appointments-field-max-width);
 }
 
 .com-appointments-field {
     display: grid;
-    gap: 0.375rem;
+    gap: var(--appointments-label-gap);
     align-content: start;
     min-width: 0;
     margin: 0;
@@ -829,6 +998,7 @@
 .com-appointments .form-label {
     display: block;
     margin: 0;
+    font-size: var(--appointments-label-size);
     font-weight: var(--appointments-label-weight);
     letter-spacing: var(--appointments-label-letter-spacing);
 }
@@ -842,8 +1012,8 @@
 .com-appointments .form-select {
     width: 100%;
     max-width: var(--appointments-field-max-width);
-    min-height: var(--appointments-target);
-    padding: 0.5rem 0.75rem;
+    min-height: var(--appointments-field-min-height);
+    padding: var(--appointments-field-padding);
     border-style: solid;
     border-width: var(--appointments-field-border-width);
     border-color: var(--appointments-field-border-color);
@@ -853,6 +1023,7 @@
     font: inherit;
     /* Never below 16 px by default: a smaller field makes iOS zoom into the page on focus. */
     font-size: var(--appointments-field-font-size);
+    line-height: var(--appointments-field-line-height);
 }
 
 .com-appointments .form-control:focus,
@@ -908,15 +1079,19 @@
     flex: 1 0 100%;
 }
 
-/* Telephone: calling code and number share one row and never leave the field's width. */
+/* Telephone: calling code and number share one row and never leave the field's width. The
+   calling code is a select or, when it is fixed, a prefix with the flag of its country. */
 .com-appointments .com-appointments-tel {
     display: flex;
     flex-wrap: nowrap;
-    gap: 0.5rem;
+    gap: var(--appointments-tel-gap);
     align-items: stretch;
     width: 100%;
     max-width: var(--appointments-field-max-width);
     min-width: 0;
+    border-style: solid;
+    border-width: var(--appointments-tel-border-width);
+    border-color: var(--appointments-field-border-color);
 }
 
 .com-appointments .com-appointments-tel .com-appointments-tel-country {
@@ -932,9 +1107,139 @@
     max-width: none;
 }
 
+.com-appointments .com-appointments-tel-prefix {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 0.375rem;
+    align-items: center;
+    padding: 0 0.75rem;
+    border: var(--appointments-field-border-width) solid var(--appointments-field-border-color);
+    border-radius: var(--appointments-field-radius);
+    background: var(--appointments-tel-prefix-background);
+    color: var(--appointments-text);
+    font-size: var(--appointments-field-font-size);
+    white-space: nowrap;
+}
+
+.com-appointments .com-appointments-tel-flag {
+    display: block;
+    width: 18px;
+    height: 12px;
+}
+
+.com-appointments .com-appointments-tel.is-invalid .com-appointments-tel-prefix {
+    border-color: var(--appointments-error);
+}
+
 /* Further guests: a closed disclosure, opened when it holds a value or an error. */
 .com-appointments-guests[open] > summary {
     margin-bottom: 0.5rem;
+}
+
+/* With the booking script: one chip per address and an entry field after the last chip, in a
+   box that looks like a field. The text field with the list stays in the form, hidden. */
+.com-appointments-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    align-items: center;
+    width: 100%;
+    max-width: var(--appointments-field-max-width);
+    min-height: var(--appointments-field-min-height);
+    padding: 0.25rem 0.5rem;
+    border-style: solid;
+    border-width: var(--appointments-field-border-width);
+    border-color: var(--appointments-field-border-color);
+    border-radius: var(--appointments-field-radius);
+    background-color: var(--appointments-field-background);
+    cursor: text;
+}
+
+.com-appointments-chips:focus-within {
+    border-color: var(--appointments-focus);
+    outline: 2px solid var(--appointments-focus);
+    outline-offset: 0;
+}
+
+.com-appointments-chips.is-invalid {
+    border-color: var(--appointments-error);
+}
+
+.com-appointments-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.com-appointments-chip-list:empty {
+    display: none;
+}
+
+.com-appointments-chip {
+    display: inline-flex;
+    gap: 0.25rem;
+    align-items: center;
+    max-width: 100%;
+    margin: 0;
+    padding: 0.125rem 0.125rem 0.125rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: var(--appointments-chip-radius);
+    background: var(--appointments-chip-background);
+    color: var(--appointments-text);
+    font-size: var(--appointments-small-size);
+}
+
+.com-appointments-chip-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-chip.is-invalid {
+    border-color: var(--appointments-error);
+    color: var(--appointments-error);
+    text-decoration: underline wavy;
+    text-underline-offset: 3px;
+}
+
+/* A touch target of its own size in a compact chip: the button overlaps the chip's padding. */
+.com-appointments .com-appointments-chip-remove {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: var(--appointments-target);
+    height: var(--appointments-target);
+    margin: calc((1.75rem - var(--appointments-target)) / 2) calc((1.75rem - var(--appointments-target)) / 4) calc((1.75rem - var(--appointments-target)) / 2) 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--appointments-chip-radius);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.com-appointments .com-appointments-chip-remove:hover {
+    background: var(--appointments-slot-hover-background);
+}
+
+.com-appointments .com-appointments-chips .com-appointments-chip-entry {
+    flex: 1 1 10rem;
+    width: auto;
+    min-width: 8rem;
+    min-height: 0;
+    padding: 0.25rem;
+    border: 0;
+    outline: 0;
+    background: transparent;
+}
+
+.com-appointments .com-appointments-chips .com-appointments-chip-entry:focus {
+    border: 0;
+    outline: 0;
 }
 
 .com-appointments-privacy {
@@ -945,11 +1250,31 @@
     margin: 0;
 }
 
+/* The message of a refused field, from the server or, with the booking script, from the
+   browser's own check before sending: the same element and look either way. */
 .com-appointments .com-appointments-field-error {
     display: block;
+    margin: 0;
     color: var(--appointments-error);
+    font-size: var(--appointments-error-size);
+    font-weight: var(--appointments-error-weight);
+}
+
+/* The privacy notice at the foot of the information column, in every step. */
+.com-appointments-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.com-appointments-info > .com-appointments-back {
+    align-self: flex-start;
+}
+
+.com-appointments-privacy-note {
+    margin: auto 0 0;
+    padding-top: 1rem;
+    color: var(--appointments-muted);
     font-size: var(--appointments-small-size);
-    font-weight: var(--appointments-strong-weight);
 }
 
 .com-appointments .is-invalid {
@@ -1040,18 +1365,6 @@
 }
 
 @container appointments (min-width: 36rem) {
-    .com-appointments-fields {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .com-appointments-fields > .com-appointments-field {
-        grid-column: 1 / -1;
-    }
-
-    .com-appointments-fields > .com-appointments-field-half {
-        grid-column: auto;
-    }
-
     .com-appointments-summary {
         grid-template-columns: max-content 1fr;
         gap: 0.5rem 1.5rem;
@@ -1106,7 +1419,12 @@
     }
 
     .com-appointments-picker-day .com-appointments-calendar {
-        display: block;
+        visibility: visible;
+    }
+
+    .com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-calendar,
+    .com-appointments-picker-day .com-appointments-picker-grid > .com-appointments-times {
+        grid-area: auto;
     }
 
     .com-appointments .com-appointments-times-back {
