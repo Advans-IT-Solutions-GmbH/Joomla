@@ -619,7 +619,11 @@ final class InvitationService implements InvitationServiceInterface
     private function withAccountLock(int $userId, callable $work): mixed
     {
         $db = $this->services->db();
-        $name = $db->quote('com_appointments.activation.' . $userId);
+        // Named locks are server-wide: the name carries this installation
+        // (database and table prefix), so two sites on one server never wait
+        // for each other. At most 64 characters.
+        $site = substr(hash('sha256', (string) $db->setQuery('SELECT DATABASE()')->loadResult() . '|' . $db->getPrefix()), 0, 24);
+        $name = $db->quote('appointments.activation.' . $site . '.' . $userId);
 
         if ((int) $db->setQuery('SELECT GET_LOCK(' . $name . ', 10)')->loadResult() !== 1) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_UNAVAILABLE', 503);
