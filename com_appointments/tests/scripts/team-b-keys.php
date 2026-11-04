@@ -32,7 +32,7 @@ return static function (TeamSuite $suite): void {
     });
 
     $suite->test('libsodium is available on the test server', static function () {
-        return CipherSuite::available() || (function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt') && function_exists('sodium_crypto_box_seal'));
+        return function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt') && function_exists('sodium_crypto_box_seal') && function_exists('sodium_crypto_pwhash');
     });
 
     require_once __DIR__ . '/appointments-joomla.php';
@@ -259,7 +259,7 @@ return static function (TeamSuite $suite): void {
     });
 
     if ($suite->isStub(GrantService::class)) {
-        $suite->pending('B: discarding a damaged key row deletes it and its wraps and raises the device epoch', 'C');
+        $suite->pending('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', 'C');
     } else {
         $suite->test('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', static function () use ($db, $keys, $member, $memberPassword, $p, $superUser) {
             $before = $db->query("SELECT key_version, device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row();
