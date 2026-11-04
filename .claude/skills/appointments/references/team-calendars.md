@@ -344,10 +344,12 @@ play back an older, validly signed grant, calendar, device or invitation row.
   `invitee_email`, `invitee_phone`, `guest_emails`, `custom_fields`, `cancel_reason`, `conference_url`.
   Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, created_utc, column))`;
   `uid` and `created_utc` exist before the insert, so the row id is not needed, and the fields of one booking
-  cannot be copied to another. Readers accept a value without the prefix as clear text only while the
-  keyed migration token written by the update (`booking_data_migration`, expiry plus HMAC with the booking
-  key, 30 days at most) is valid; without it a clear value counts as unreadable and is never encrypted by
-  the migration, so clear text planted by a database writer is not laundered.
+  cannot be copied to another. The update writes a keyed token (`booking_data_migration`) holding the
+  update time and an expiry of at most 7 days; `migrate()` renews it while rows created before the update
+  hold clear text and replaces it by a keyed end marker when none is left; only those rows are ever read
+  in clear or encrypted, so clear text planted later by a database writer counts as unreadable and is
+  never laundered. The option is written with `JSON_SET` only. Residual risk: a database writer who deletes
+  the end marker and every sealed booking can reopen a migration with the next update.
 - **No blind index** (maintainer's decision): a keyed hash of an address could be tested against known
   addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)
   decrypts the candidate rows on the server in batches and compares in memory. Free-text search over
@@ -631,7 +633,8 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
   `BookingCalendarBridgeInterface::lockForBooking()` inside the booking transaction; `busyFor()` also
   reads the bookings of other hosts whose event types write into one of the calendars.
 - `removeOrphans()` removes calendar copies of cancelled, anonymised or deleted bookings (no key
-  needed); the bridge calls it after each booking change and the Scheduler routine of F in batches.
+  needed); with the feature switched off it removes every booking copy, because changes are no longer
+  mirrored; the bridge calls it after each booking change and the Scheduler routine of F in batches.
 - `AvailabilityService` adds `BookingCalendarBridgeInterface::busyFor()` to the host's busy periods,
   also inside the locked booking transaction (`readOnly = true`, no cache write there). An object with
   a `booking_id` is skipped only when that booking has the same host as the asking event type; a
