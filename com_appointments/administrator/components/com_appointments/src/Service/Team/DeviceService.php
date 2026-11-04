@@ -357,6 +357,17 @@ final class DeviceService implements DeviceServiceInterface
                     )->execute();
                 }
             }
+
+            // The highest sync token delivered to an active device, never throttled and never
+            // lowered: the clean-up needs to know what the device may still hold.
+            if ($calendarId !== null && $calendarId > 0 && $syncToken !== null && $syncToken > 0 && $session->isActive()) {
+                $token = $db->quoteName('synctoken');
+                $db->setQuery(
+                    'UPDATE ' . $db->quoteName('#__appointments_device_calendars') . ' SET ' . $token . ' = ' . $syncToken
+                    . ' WHERE ' . $db->quoteName('device_id') . ' = ' . $deviceId . ' AND ' . $db->quoteName('calendar_id') . ' = ' . (int) $calendarId
+                    . ' AND ' . $token . ' < ' . $syncToken
+                )->execute();
+            }
         } catch (\RuntimeException $e) {
             // «Last synchronised» is information, never a reason to fail a synchronisation.
             Log::add('Internet calendar sync time not recorded: device ' . $deviceId, Log::WARNING, 'com_appointments');

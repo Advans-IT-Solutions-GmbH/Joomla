@@ -295,28 +295,31 @@ return static function (TeamSuite $suite): void {
                 && $columns === ['id', 'name', 'client', 'state', 'created_utc', 'last_sync_utc'];
         });
 
-        $suite->test('«Last synchronised» is written at most once a minute, the first sync of a calendar always', static function () use ($enabled, $joomla, $user, $device, $db, $p, $tag, &$state) {
+        $suite->test('«Last synchronised» is written at most once a minute, the first sync of a calendar always, the sync token only rises', static function () use ($enabled, $joomla, $user, $device, $db, $p, $tag, &$state) {
             $id = $user('touch', 'Touch-' . bin2hex(random_bytes(6)) . '!', [2]);
             $deviceId = $device($id, 'Touch phone', TeamStates::DEVICE_ACTIVE);
             $db->query("INSERT INTO {$p}appointments_calendars (uri,title,owner_user_id,row_mac,created_utc,modified_utc) VALUES ('" . bin2hex(random_bytes(16)) . "','{$tag} touch',{$id},X'" . bin2hex(random_bytes(32)) . "',UTC_TIMESTAMP(),UTC_TIMESTAMP())");
             $calendarId = (int) $db->insert_id;
             $state['calendars'][] = $calendarId;
             $session = new DeviceSession($deviceId, $id, $tag . 'touch', TeamStates::DEVICE_ACTIVE, KeyContext::create($id, 1, random_bytes(32), random_bytes(32)));
-            $enabled->devices()->touch($session, $calendarId, 3);
+            $enabled->devices()->touch($session, $calendarId, 3, 7);
             $first = $db->query("SELECT last_sync_utc FROM {$p}appointments_devices WHERE id = {$deviceId}")->fetch_assoc()['last_sync_utc'];
             $pair = $db->query("SELECT last_sync_utc, role FROM {$p}appointments_device_calendars WHERE device_id = {$deviceId} AND calendar_id = {$calendarId}")->fetch_assoc();
             // A time in the past within the minute: a second sync keeps it.
             $db->query("UPDATE {$p}appointments_devices SET last_sync_utc = UTC_TIMESTAMP() - INTERVAL 30 SECOND WHERE id = {$deviceId}");
             $kept = $db->query("SELECT last_sync_utc FROM {$p}appointments_devices WHERE id = {$deviceId}")->fetch_assoc()['last_sync_utc'];
             $later = new TeamServices($joomla, $enabled->keyProvider(), $enabled->params(), static fn (): \DateTimeImmutable => new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
-            $later->devices()->touch($session, null);
+            $later->devices()->touch($session, $calendarId, 4, 5);
+            $tokens = $db->query("SELECT synctoken, role FROM {$p}appointments_device_calendars WHERE device_id = {$deviceId} AND calendar_id = {$calendarId}")->fetch_assoc();
             $same = $db->query("SELECT last_sync_utc FROM {$p}appointments_devices WHERE id = {$deviceId}")->fetch_assoc()['last_sync_utc'];
             $db->query("UPDATE {$p}appointments_devices SET last_sync_utc = UTC_TIMESTAMP() - INTERVAL 2 MINUTE WHERE id = {$deviceId}");
             $old = $db->query("SELECT last_sync_utc FROM {$p}appointments_devices WHERE id = {$deviceId}")->fetch_assoc()['last_sync_utc'];
             (new TeamServices($joomla, $enabled->keyProvider(), $enabled->params(), static fn (): \DateTimeImmutable => new \DateTimeImmutable('now', new \DateTimeZone('UTC'))))->devices()->touch($session, null);
             $updated = $db->query("SELECT last_sync_utc FROM {$p}appointments_devices WHERE id = {$deviceId}")->fetch_assoc()['last_sync_utc'];
 
-            return $first !== null && $pair !== null && (int) $pair['role'] === 3 && $same === $kept && $updated !== $old;
+            return $first !== null && $pair !== null && (int) $pair['role'] === 3 && $same === $kept && $updated !== $old
+                // The sync token only rises, the role stays the first one.
+                && (int) $tokens['synctoken'] === 7 && (int) $tokens['role'] === 3;
         });
 
         // ------------------------------------------------------------------
