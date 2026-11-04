@@ -16,6 +16,7 @@ use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\Component\ComponentHelper;
 
@@ -35,6 +36,9 @@ final class BookingStore
         // Create outside the transaction. The first transactional read must be the
         // host lock, so a REPEATABLE READ snapshot cannot precede a competing commit.
         (new HostStore($db))->ensure($host, $now);
+        // Internet calendar busy times: fill their cache now, because inside the
+        // locked transaction they are only read (a cache write there could deadlock).
+        (new AvailabilityService($db))->warmCalendars($publicEvent, $start, $start->modify('+1 second'));
         $db->transactionStart();
 
         try {
@@ -47,7 +51,7 @@ final class BookingStore
                 throw new SlotTakenException();
             }
 
-            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'));
+            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), 0, true);
 
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
@@ -70,6 +74,7 @@ final class BookingStore
             ]);
             $db->insertObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
+            $this->mirror('saved', (array) $row);
 
             return (array) $row;
         } catch (\Throwable $e) {
@@ -158,6 +163,7 @@ final class BookingStore
             throw $e;
         }
 
+        $this->mirror($state === 2 ? 'cancelled' : 'saved', $booking);
         $cleanup = $state === 2 ? $this->conference()->destroy($booking) : $booking;
 
         return $cleanup + ['_changed' => true];
@@ -170,6 +176,7 @@ final class BookingStore
         }
         $db = $this->db;
         $host = $this->bookingHost($bookingId);
+        $this->warmForBooking($bookingId, $start);
         $db->transactionStart();
 
         try {
@@ -186,7 +193,7 @@ final class BookingStore
             if (!$event || (int) $event['host_user_id'] !== $host || (int) $event['published'] !== 1) {
                 throw new SlotTakenException();
             }
-            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId);
+            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId, true);
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
             }
@@ -220,6 +227,8 @@ final class BookingStore
             throw $e;
         }
 
+        // Same UID, new times. A new conference link rewrites the object once more.
+        $this->mirror('saved', $booking);
         $cleared = $this->conference()->destroy($previous);
         if (!empty($cleared['_conference_missing']) || !empty($cleared['_conference_error'])) {
             return $cleared;
@@ -297,6 +306,7 @@ final class BookingStore
             throw $e;
         }
 
+        $this->mirror('erased', ['id' => $bookingId]);
         $cleanup = $this->conference()->destroy($booking);
 
         return ['changed' => true, 'notification' => $notification,
@@ -374,6 +384,49 @@ final class BookingStore
         }
 
         return $host;
+    }
+
+    /**
+     * Mirror a committed booking change into the internet calendar of its event
+     * type. Never throws: a calendar error must not fail a booking.
+     */
+    private function mirror(string $action, array $booking): void
+    {
+        try {
+            $team = TeamServices::fromApplication();
+
+            if (!$team->enabled()) {
+                return;
+            }
+
+            $bridge = $team->bookings();
+            match ($action) {
+                'saved' => $bridge->onBookingSaved($booking),
+                'cancelled' => $bridge->onBookingCancelled($booking),
+                'erased' => $bridge->onBookingErased((int) ($booking['id'] ?? 0)),
+            };
+        } catch (\Throwable $e) {
+            // The bridge logs its own failures; this only catches a missing runtime.
+        }
+    }
+
+    /** Fill the busy cache for a reschedule before the locked transaction reads it. */
+    private function warmForBooking(int $bookingId, \DateTimeImmutable $start): void
+    {
+        try {
+            $db = $this->db;
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select('e.*')->from($db->quoteName('#__appointments_eventtypes', 'e'))
+                ->join('INNER', $db->quoteName('#__appointments_bookings', 'b'), $db->quoteName('b.eventtype_id') . ' = ' . $db->quoteName('e.id'))
+                ->where($db->quoteName('b.id') . ' = ' . $bookingId);
+            $event = $db->setQuery($query)->loadAssoc();
+
+            if ($event) {
+                (new AvailabilityService($db))->warmCalendars($event, $start, $start->modify('+1 second'));
+            }
+        } catch (\Throwable $e) {
+            // Warming is an optimisation only.
+        }
     }
 
     private function conference(): ConferenceService
