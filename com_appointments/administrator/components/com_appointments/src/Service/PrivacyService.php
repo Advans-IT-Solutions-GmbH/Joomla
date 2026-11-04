@@ -81,7 +81,7 @@ final class PrivacyService
         $this->reportUnreadable($records);
 
         foreach (array_chunk($ids, 200) as $chunk) {
-            foreach ($this->rows($chunk, ['b.id', 'b.uid', 'b.created_utc', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.guest_emails']) as $row) {
+            foreach ($this->rows($chunk, array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state'], BookingData::readColumns('b'))) as $row) {
                 foreach (PrivacyAddress::guestList($row['guest_emails']) as $guest) {
                     if (PrivacyAddress::isGuest($guest, $normalised)) {
                         yield ['id' => (int) $row['id'], 'eventtype_id' => (int) $row['eventtype_id'],

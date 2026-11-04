@@ -160,7 +160,7 @@ final class BookingStore
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
-            $row = (object) $this->data()->seal((string) $booking['uid'], (string) $booking['created_utc'], ['id' => $bookingId, 'state' => $state,
+            $row = (object) $this->data()->sealChange($booking, ['id' => $bookingId, 'state' => $state,
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
@@ -368,7 +368,7 @@ final class BookingStore
 
                 return ['changed' => false, 'guest' => null];
             }
-            $row = (object) $this->data()->seal((string) $booking['uid'], (string) $booking['created_utc'],
+            $row = (object) $this->data()->sealChange($booking,
                 ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $audit = (object) ['booking_id' => $bookingId, 'action' => 'remove_guest', 'path' => $path, 'actor_user_id' => null,
@@ -412,11 +412,8 @@ final class BookingStore
         try {
             $team = TeamServices::fromApplication();
 
-            // Removal needs no key and also runs while the feature is off.
-            if ($action === 'saved' && !$team->enabled()) {
-                return;
-            }
-
+            // Every action also runs while the feature is off: the bridge then removes the copy
+            // instead of writing it (removal needs no key).
             $bridge = $team->bookings();
             match ($action) {
                 'saved' => $bridge->onBookingSaved($booking),

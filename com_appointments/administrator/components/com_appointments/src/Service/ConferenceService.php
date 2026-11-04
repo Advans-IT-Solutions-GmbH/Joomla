@@ -478,7 +478,7 @@ final class ConferenceService
     private function write(array $current, array $fields): void
     {
         // The link is a personal field of the booking: stored encrypted (null stays null).
-        $fields = $this->bookingData()->seal((string) $current['uid'], (string) $current['created_utc'], $fields);
+        $fields = $this->bookingData()->sealChange($current, $fields);
         $update = (object) (['id' => (int) $current['id']] + $fields);
 
         if (!$this->db->updateObject('#__appointments_bookings', $update, 'id', true)) {

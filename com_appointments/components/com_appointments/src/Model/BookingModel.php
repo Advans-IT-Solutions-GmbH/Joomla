@@ -82,7 +82,8 @@ class BookingModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.start_utc', 'b.end_utc', 'b.state', 'b.invitee_timezone', 'b.conference_url', 'b.conference_state', 'b.modified_utc']))
+        $query->select($db->quoteName(array_merge(['b.id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.invitee_timezone', 'b.conference_state', 'b.modified_utc'],
+            \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))->select($db->quoteName('e.location_text'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
@@ -96,7 +97,10 @@ class BookingModel extends BaseDatabaseModel
 
         // The conference link is encrypted at rest; one that cannot be decrypted is not shown.
         $item = \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($item);
-        unset($item->uid, $item->created_utc);
+        // The page shows the conference link only; the other personal fields were read to open the row.
+        foreach (array_diff(\Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns(), ['conference_url']) as $column) {
+            unset($item->$column);
+        }
 
         return $item;
     }

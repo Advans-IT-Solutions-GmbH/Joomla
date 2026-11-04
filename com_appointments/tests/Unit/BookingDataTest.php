@@ -111,7 +111,13 @@ final class BookingDataTest extends TestCase
 
         // While the migration runs: clear text of a row created before the update reads as it is, of a later row not.
         $update = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
-        self::assertSame($this->row() + [BookingData::OPENED => true], $this->data($update)->open($this->row()));
+        self::assertSame($this->row() + [BookingData::CLEAR => true, BookingData::OPENED => true], $this->data($update)->open($this->row()));
+
+        // A read that selected only some personal columns cannot tell whether the row holds a sealed field.
+        $partial = array_diff_key($this->row(), ['invitee_email' => true]);
+        $opened = $this->data($update)->openLenient($partial, $failed);
+        self::assertNull($opened['guest_emails'], 'Clear text is decided on the whole row');
+        self::assertCount(7, $failed);
         $later = array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']);
         $this->data($update)->openLenient($later, $failed);
         self::assertCount(8, $failed, 'Clear text in a row made after the update is never data');
@@ -123,6 +129,28 @@ final class BookingDataTest extends TestCase
         self::assertContains('invitee_email', $failed);
         self::assertFalse(BookingData::isSealed('v1:short'));
         self::assertFalse(BookingData::isSealed('anna@example.test'));
+    }
+
+    public function testAChangeToARowOf13SealsTheWholeRow(): void
+    {
+        $update = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        $data = $this->data($update);
+        $current = $data->open($this->row());
+        $change = $data->sealChange($current, ['id' => 7, 'state' => 2, 'cancel_reason' => 'Termin passt nicht']);
+
+        foreach (BookingData::COLUMNS as $column) {
+            if ($this->row()[$column] !== null || $column === 'cancel_reason') {
+                self::assertTrue(BookingData::isSealed($change[$column]), $column);
+            }
+        }
+
+        self::assertArrayNotHasKey(BookingData::CLEAR, $change);
+        self::assertArrayNotHasKey(BookingData::OPENED, $change);
+        self::assertSame('anna@example.test', $this->data()->open(array_replace($this->row(), $change))['invitee_email'], 'Readable once the migration is over');
+
+        // A sealed row: only the fields that change are written.
+        $sealed = $this->data()->open($this->data()->seal($this->row()['uid'], $this->row()['created_utc'], $this->row()));
+        self::assertSame(['id', 'guest_emails'], array_keys($this->data()->sealChange($sealed, ['id' => 7, 'guest_emails' => 'one@example.test'])));
     }
 
     public function testTheMigrationTokenIsKeyedAndExpires(): void

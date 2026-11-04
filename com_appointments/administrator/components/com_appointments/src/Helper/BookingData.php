@@ -63,6 +63,9 @@ final class BookingData
     /** The key an opened row carries. */
     public const OPENED = '_opened';
 
+    /** The key an opened row carries when its clear values (a row of 1.3) were read as they are. */
+    public const CLEAR = '_clear';
+
     /** The component option that holds the migration token while clear rows are encrypted. */
     public const MIGRATION_OPTION = 'booking_data_migration';
 
@@ -149,6 +152,19 @@ final class BookingData
         return hash_equals(self::migrationToken($keys, (int) $match[1], (int) $match[2]), $token) ? (int) $match[2] : null;
     }
 
+    /**
+     * The columns a read selects to open personal fields: UID, creation time and
+     * every personal column, also those it does not need, because whether a
+     * clear value is read (a row of 1.3) is decided on the whole row.
+     *
+     * @return  string[]
+     */
+    public static function readColumns(string $alias = ''): array
+    {
+        return array_map(static fn (string $column): string => ($alias === '' ? '' : $alias . '.') . $column,
+            array_merge(['uid', 'created_utc'], self::COLUMNS));
+    }
+
     /** Whether a stored value has the form of a sealed value. */
     public static function isSealed(mixed $value): bool
     {
@@ -173,7 +189,7 @@ final class BookingData
             throw new \InvalidArgumentException('A booking without UID or creation time cannot be sealed.');
         }
 
-        unset($row[self::OPENED]);
+        unset($row[self::OPENED], $row[self::CLEAR]);
 
         foreach (self::COLUMNS as $column) {
             if (!\array_key_exists($column, $row) || $row[$column] === null) {
@@ -248,6 +264,8 @@ final class BookingData
                 if (!$clearAccepted) {
                     $failed[] = $column;
                     $row[$column] = null;
+                } else {
+                    $row[self::CLEAR] = true;
                 }
 
                 continue;
@@ -266,6 +284,28 @@ final class BookingData
         $row[self::OPENED] = true;
 
         return $row;
+    }
+
+    /**
+     * The sealed fields of a change to a stored booking. `$current` is the row
+     * as opened right before (locked), `$fields` are the clear values that
+     * change. When `$current` was a row of 1.3 read in clear text, every other
+     * personal field of it is sealed in the same write, so a row is never left
+     * half sealed (it would then be read neither as a row of 1.3 nor taken up by
+     * the migration).
+     *
+     * @param   array<string, mixed>  $current
+     * @param   array<string, mixed>  $fields
+     *
+     * @return  array<string, mixed>
+     */
+    public function sealChange(array $current, array $fields): array
+    {
+        if (!empty($current[self::CLEAR])) {
+            $fields += array_intersect_key($current, array_flip(self::COLUMNS));
+        }
+
+        return $this->seal((string) ($current['uid'] ?? ''), (string) ($current['created_utc'] ?? ''), $fields);
     }
 
     /**
@@ -288,6 +328,9 @@ final class BookingData
      * runs, in a row created before the update that holds no sealed field (a row
      * of 1.3 has none, and the migration seals all fields of a row at once; a
      * row with a backdated creation time and one clear field put in is refused).
+     * Decided on the whole row: a read that selected only some personal columns
+     * cannot tell, so its clear values are refused (readers select all of
+     * {@see self::COLUMNS}).
      */
     private function clearAccepted(array $row): bool
     {
@@ -296,7 +339,7 @@ final class BookingData
         }
 
         foreach (self::COLUMNS as $column) {
-            if (self::isSealed($row[$column] ?? null)) {
+            if (!\array_key_exists($column, $row) || self::isSealed($row[$column])) {
                 return false;
             }
         }

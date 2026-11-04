@@ -13,10 +13,12 @@
  * because it is site-wide key material other parts may rely on.
  */
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Helper\Team\VendorAutoloader;
+use Advans\Component\Appointments\Administrator\Service\BookingRecords;
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
 use Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridge;
 use Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore;
@@ -81,6 +83,48 @@ return static function (TeamSuite $suite): void {
     };
 
     try {
+        $suite->test('The migration seals whole rows of 1.3 and leaves a row with a sealed field alone', static function () use ($suite, $fixture) {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $keys = new KeyProvider((string) (new JConfig())->secret);
+            $event = $fixture->event();
+            $created = '2026-01-05 08:00:00';
+            $insert = static function (array $fields) use ($suite, $event, $created): int {
+                $row = ['uid' => bin2hex(random_bytes(32)), 'eventtype_id' => $event, 'start_utc' => '2026-01-10 09:00:00',
+                    'end_utc' => '2026-01-10 09:30:00', 'state' => 2, 'created_utc' => $created, 'modified_utc' => $created];
+                $row = array_replace($row, $fields);
+                $suite->db->query("INSERT INTO {$suite->prefix}appointments_bookings (`" . implode('`,`', array_keys($row)) . "`) VALUES ('"
+                    . implode("','", array_map([$suite->db, 'real_escape_string'], array_map('strval', $row))) . "')");
+
+                return (int) $suite->db->insert_id;
+            };
+            $legacy = $insert(['invitee_name' => 'Legacy Invitee', 'invitee_email' => 'legacy@example.test', 'guest_emails' => 'guest@example.test']);
+            $mixedUid = bin2hex(random_bytes(32));
+            $sealedName = (new BookingData($keys))->seal($mixedUid, $created, ['invitee_name' => 'Sealed Invitee'])['invitee_name'];
+            $mixed = $insert(['uid' => $mixedUid, 'invitee_name' => $sealedName, 'invitee_email' => 'planted@example.test']);
+
+            // A migration that runs (the token of an update one minute ago).
+            $params = json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
+            $params[BookingData::MIGRATION_OPTION] = BookingData::migrationToken($keys, time() + 86400, time() - 60);
+            $suite->db->query("UPDATE {$suite->prefix}extensions SET params='" . $suite->db->real_escape_string(json_encode($params))
+                . "' WHERE type='component' AND element='com_appointments'");
+
+            for ($round = 0; $round < 50 && BookingRecords::migrate($db, $keys, 500) > 0; $round++) {
+            }
+
+            $data = new BookingData($keys);
+            $stored = $fixture->stored($legacy);
+            $sealed = BookingData::isSealed($stored['invitee_name']) && BookingData::isSealed($stored['invitee_email']) && BookingData::isSealed($stored['guest_emails']);
+            $opened = $data->open($stored);
+            $failed = [];
+            $planted = $fixture->stored($mixed);
+            $mixedOpened = $data->openLenient($planted, $failed);
+            $token = (string) ((json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [])[BookingData::MIGRATION_OPTION] ?? '');
+
+            return $sealed && $opened['invitee_email'] === 'legacy@example.test' && $opened['guest_emails'] === 'guest@example.test'
+                && $planted['invitee_email'] === 'planted@example.test' && $mixedOpened['invitee_email'] === null && $failed === ['invitee_email']
+                && $mixedOpened['invitee_name'] === 'Sealed Invitee' && BookingData::migrationDone($token, $keys);
+        });
+
         $suite->test('Switched on, a calendar error never fails a booking', static function () use ($suite, $fixture, $switch) {
             $switch(true);
             $event = $fixture->event();

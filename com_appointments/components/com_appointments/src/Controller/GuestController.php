@@ -121,7 +121,8 @@ class GuestController extends BaseController
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.guest_emails', 'b.modified_utc']))
+        $query->select($db->quoteName(array_merge(['b.id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc'],
+            \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))

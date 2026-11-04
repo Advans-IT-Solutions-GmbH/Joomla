@@ -100,7 +100,7 @@ final class BookingRecords
         $columns = BookingData::COLUMNS;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))->from($db->quoteName('#__appointments_bookings'))
-            ->where(self::clearCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
+            ->where(self::clearCondition($db))->where('NOT ' . self::anySealedCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
             ->where($db->quoteName('created_utc') . ' < ' . $db->quote(gmdate('Y-m-d H:i:s', $cutoff)))
             ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
         $rows = $db->setQuery($query)->loadAssocList();
@@ -112,21 +112,28 @@ final class BookingRecords
         }
 
         foreach ($rows as $row) {
-            // Only the clear values: seal() encrypts everything it is given.
-            $clear = array_filter(array_intersect_key($row, array_flip($columns)),
-                static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
+            // A row of 1.3 holds no sealed field (the query takes no other), so every value present is clear.
+            $fields = array_intersect_key($row, array_flip($columns));
+            $clear = array_filter($fields, static fn ($value): bool => $value !== null);
 
-            if ($clear === []) {
+            if ($clear === [] || array_filter($clear, [BookingData::class, 'isSealed']) !== []) {
                 continue;
             }
 
             $sealed = $data->seal((string) $row['uid'], (string) $row['created_utc'], $clear);
             $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $update->update($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . (int) $row['id']);
+            $update->update($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . (int) $row['id'])
+                ->where($db->quoteName('uid') . ' = ' . $db->quote((string) $row['uid']))
+                ->where($db->quoteName('created_utc') . ' = ' . $db->quote((string) $row['created_utc']));
 
             foreach ($clear as $column => $value) {
-                $update->set($db->quoteName($column) . ' = ' . $db->quote($sealed[$column]))
-                    ->where($db->quoteName($column) . ' <=> ' . $db->quote($value));
+                $update->set($db->quoteName($column) . ' = ' . $db->quote($sealed[$column]));
+            }
+
+            // Compare-and-set on the whole row as read: a field that changed meanwhile (also one
+            // that was null, or one sealed by a concurrent write) leaves the row for the next call.
+            foreach ($fields as $column => $value) {
+                $update->where($db->quoteName($column) . ' COLLATE utf8mb4_bin <=> ' . ($value === null ? 'NULL' : $db->quote($value)));
             }
 
             $db->setQuery($update)->execute();
@@ -146,9 +153,19 @@ final class BookingRecords
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select('COUNT(*)')->from($db->quoteName('#__appointments_bookings'))
             ->where($db->quoteName('anonymised_utc') . ' IS NULL')
-            ->where(self::clearCondition($db));
+            ->where(self::clearCondition($db))->where('NOT ' . self::anySealedCondition($db));
 
         return (int) $db->setQuery($query)->loadResult();
+    }
+
+    /**
+     * True for a row that holds any sealed field (never NULL in SQL, so it can be negated). Such
+     * a row is no row of 1.3: a clear value in it was put in later and is neither read nor migrated.
+     */
+    private static function anySealedCondition(DatabaseInterface $db): string
+    {
+        return '(' . implode(' OR ', array_map(static fn (string $column): string => '(' . $db->quoteName($column) . ' IS NOT NULL AND '
+            . self::sealedCondition($db, $column) . ')', BookingData::COLUMNS)) . ')';
     }
 
     /** A value is clear unless it has the form of a sealed value (the pattern of BookingData::isSealed(), case-sensitive). */
@@ -167,9 +184,7 @@ final class BookingRecords
     private static function anySealed(DatabaseInterface $db): bool
     {
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select('1')->from($db->quoteName('#__appointments_bookings'))
-            ->where('(' . implode(' OR ', array_map(static fn (string $column): string => self::sealedCondition($db, $column), BookingData::COLUMNS)) . ')')
-            ->setLimit(1);
+        $query->select('1')->from($db->quoteName('#__appointments_bookings'))->where(self::anySealedCondition($db))->setLimit(1);
 
         return (bool) $db->setQuery($query)->loadResult();
     }
@@ -233,7 +248,7 @@ final class BookingRecords
 
         do {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName(['id', 'uid', 'created_utc', 'invitee_email', 'guest_emails']))->from($db->quoteName('#__appointments_bookings'))
+            $query->select($db->quoteName(array_merge(['id'], BookingData::readColumns())))->from($db->quoteName('#__appointments_bookings'))
                 ->where($db->quoteName('id') . ' > ' . $last)
                 ->where($db->quoteName('anonymised_utc') . ' IS NULL')
                 ->where('(' . $db->quoteName('invitee_email') . ' IS NOT NULL OR ' . $db->quoteName('guest_emails') . ' IS NOT NULL)')
@@ -278,8 +293,7 @@ final class BookingRecords
         $needle = mb_strtolower(trim($needle), 'UTF-8');
         $query = clone $query;
         // A unique order, so paging the candidates neither skips nor repeats a row.
-        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.invitee_name', 'b.invitee_first_name',
-            'b.invitee_last_name', 'b.invitee_email']))->order($db->quoteName('b.id') . ' DESC');
+        $query->clear('select')->clear('order')->select($db->quoteName(array_merge(['b.id'], BookingData::readColumns('b'))))->order($db->quoteName('b.id') . ' DESC');
         $ids = [];
         $offset = 0;
         $batch = 500;
@@ -317,7 +331,7 @@ final class BookingRecords
     {
         $db = $this->db;
         $query = clone $query;
-        $query->clear('select')->clear('order')->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_name']))
+        $query->clear('select')->clear('order')->select($db->quoteName(array_merge(['b.id'], BookingData::readColumns('b'))))
             ->order($db->quoteName('b.id') . ' DESC');
         $rows = [];
 

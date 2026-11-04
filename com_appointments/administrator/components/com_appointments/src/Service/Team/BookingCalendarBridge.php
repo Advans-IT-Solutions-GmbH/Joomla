@@ -169,7 +169,15 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     {
         $bookingId = (int) ($booking['id'] ?? 0);
 
-        if ($bookingId < 1 || !$this->services->enabled()) {
+        if ($bookingId < 1) {
+            return;
+        }
+
+        // While the feature is off a change is not mirrored, so the copy would be stale (old
+        // times, a removed guest): it goes now, not only at the next sweep. Removal needs no key.
+        if (!$this->services->enabled()) {
+            $this->onBookingErased($bookingId);
+
             return;
         }
 
@@ -768,8 +776,8 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     private function booking(int $bookingId, bool $lock = false): ?array
     {
         $db = $this->services->db();
-        $query = $this->query()->select($db->quoteName(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc', 'sequence', 'state',
-            'start_utc', 'end_utc', 'modified_utc', 'invitee_name', 'invitee_email', 'guest_emails', 'conference_url', 'anonymised_utc']))
+        $query = $this->query()->select($db->quoteName(array_merge(['id', 'eventtype_id', 'host_user_id', 'sequence', 'state',
+            'start_utc', 'end_utc', 'modified_utc', 'anonymised_utc'], BookingData::readColumns())))
             ->from($db->quoteName('#__appointments_bookings'))
             ->where($db->quoteName('id') . ' = ' . $bookingId);
         $row = $db->setQuery((string) $query . ($lock ? ' FOR UPDATE' : ''))->loadAssoc() ?: null;
