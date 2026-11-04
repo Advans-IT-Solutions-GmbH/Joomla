@@ -257,6 +257,25 @@ final class DeviceService implements DeviceServiceInterface
             return null;
         }
 
+        try {
+            return $this->deviceSession($username, $raw);
+        } catch (TeamException | \InvalidArgumentException | \LogicException $e) {
+            // Whatever depends on the data ends in null, like every other refusal; only an
+            // infrastructure failure (the database is gone) reaches the caller as an exception,
+            // so the answer is no oracle for the state of a row.
+            return null;
+        } finally {
+            if (\function_exists('sodium_memzero')) {
+                sodium_memzero($raw);
+            }
+        }
+    }
+
+    /**
+     * The checks of authenticate() for a well-formed app password.
+     */
+    private function deviceSession(string $username, #[\SensitiveParameter] string $raw): ?DeviceSession
+    {
         $db = $this->services->db();
         $hash = AppPassword::hash($raw, $this->services->keyProvider());
         $query = $this->query()
@@ -286,11 +305,15 @@ final class DeviceService implements DeviceServiceInterface
         $reason = $epoch === null ? 'user_key' : (!$this->verifies($row) ? 'device_auth' : '');
 
         if ($reason !== '') {
-            $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
-                'subject_user_id' => (int) $row->user_id,
-                'actor_device_id' => (int) $row->id,
-                'details' => ['table' => self::TABLE, 'reason' => $reason],
-            ]);
+            try {
+                $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
+                    'subject_user_id' => (int) $row->user_id,
+                    'actor_device_id' => (int) $row->id,
+                    'details' => ['table' => self::TABLE, 'reason' => $reason],
+                ]);
+            } catch (\Throwable $e) {
+                Log::add('Internet calendar MAC failure not logged: device ' . (int) $row->id, Log::WARNING, 'com_appointments');
+            }
 
             return null;
         }
@@ -341,13 +364,13 @@ final class DeviceService implements DeviceServiceInterface
                 $later = ' = IF(' . $column . ' <= ' . $db->quote($threshold) . ', ' . $db->quote($nowSql) . ', ' . $column . ')';
 
                 if ($role !== null && CalendarRole::tryFrom($role) !== null) {
-                    // The first synchronisation always writes the pair, with the role it had then;
-                    // later ones only move the time, at most once a minute, and keep that role.
+                    // The pair always carries the role of the latest synchronisation, written at once;
+                    // only the time moves at most once a minute.
                     $db->setQuery(
                         'INSERT INTO ' . $db->quoteName('#__appointments_device_calendars')
                         . ' (' . implode(', ', $db->quoteName(['device_id', 'calendar_id', 'role', 'last_sync_utc'])) . ')'
                         . ' VALUES (' . $deviceId . ', ' . (int) $calendarId . ', ' . $role . ', ' . $db->quote($nowSql) . ')'
-                        . ' ON DUPLICATE KEY UPDATE ' . $column . $later
+                        . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('role') . ' = ' . $role . ', ' . $column . $later
                     )->execute();
                 } else {
                     // Without a role no pair row is created (the column has no default).
