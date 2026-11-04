@@ -69,6 +69,11 @@ final class EpochAnchor implements EpochAnchorInterface
             // Read again under the lock: another request may have raised an epoch.
             $data = $this->load(true);
 
+            // A file kept for the old site secret is never overwritten.
+            if ($data === null) {
+                return;
+            }
+
             if (($data[$kind][$id] ?? 0) >= $epoch) {
                 $this->data = $data;
 
@@ -90,11 +95,21 @@ final class EpochAnchor implements EpochAnchorInterface
     {
         self::assertKind($kind);
 
-        if ($id <= 0 || !$this->writable()) {
+        if ($id <= 0) {
             return 0;
         }
 
-        $this->data ??= $this->locked(fn (): array => $this->load(true));
+        if ($this->data === null) {
+            // Reading needs no lock: the file is only ever replaced by rename.
+            // A valid file is enforced even when it cannot be written any more.
+            $data = $this->parse(is_file($this->file()) ? (string) @file_get_contents($this->file()) : '');
+
+            if ($data === null && $this->writable()) {
+                $data = $this->locked(fn (): ?array => $this->load(true));
+            }
+
+            $this->data = $data ?? ['calendar' => [], 'user' => []];
+        }
 
         return (int) ($this->data[$kind][$id] ?? 0);
     }
@@ -137,9 +152,10 @@ final class EpochAnchor implements EpochAnchorInterface
      * The verified document, rebuilt from the database when the file is
      * missing or its signature does not match. The caller holds the lock.
      *
-     * @return  array{calendar: array<int, int>, user: array<int, int>}
+     * @return  array{calendar: array<int, int>, user: array<int, int>}|null  Null when a file
+     *          exists that must be kept as it is (the site secret looks changed).
      */
-    private function load(bool $rebuild): array
+    private function load(bool $rebuild): ?array
     {
         $raw = is_file($this->file()) ? (string) @file_get_contents($this->file()) : '';
         $data = $this->parse($raw);
@@ -149,6 +165,13 @@ final class EpochAnchor implements EpochAnchorInterface
         }
 
         $data = ['calendar' => [], 'user' => []];
+
+        // After a change of the site secret every signature fails: rebuilding
+        // would sign whatever the database holds under the wrong secret. Keep
+        // the file for the old secret and run without the anchor meanwhile.
+        if ($raw !== '' && $this->siteSecretSuspect()) {
+            return null;
+        }
 
         if (!$rebuild) {
             return $data;
@@ -212,7 +235,25 @@ final class EpochAnchor implements EpochAnchorInterface
         ) . "\n";
         $temporary = $this->file() . '.' . bin2hex(random_bytes(6)) . '.tmp';
 
-        if (@file_put_contents($temporary, $document) !== \strlen($document) || !@rename($temporary, $this->file())) {
+        $handle = @fopen($temporary, 'xb');
+        $written = $handle !== false && @fwrite($handle, $document) === \strlen($document) && @fflush($handle);
+
+        // On disk before the rename, so a crash never leaves an empty anchor.
+        if ($handle !== false) {
+            if (\function_exists('fsync')) {
+                @fsync($handle);
+            }
+
+            fclose($handle);
+        }
+
+        foreach (glob(\dirname($this->file()) . '/' . basename($this->file()) . '.*.tmp') ?: [] as $leftover) {
+            if ($leftover !== $temporary && @filemtime($leftover) < time() - 3600) {
+                @unlink($leftover);
+            }
+        }
+
+        if (!$written || !@rename($temporary, $this->file())) {
             @unlink($temporary);
 
             throw new \RuntimeException('The epoch anchor could not be written.');
@@ -230,15 +271,31 @@ final class EpochAnchor implements EpochAnchorInterface
         $db = $this->services->db();
         $data = ['calendar' => [], 'user' => []];
 
-        foreach ($db->setQuery('SELECT ' . $db->quoteName('id') . ', ' . $db->quoteName('grant_epoch') . ' FROM ' . $db->quoteName('#__appointments_calendars'))->loadRowList() ?: [] as [$id, $epoch]) {
-            if ((int) $id > 0 && (int) $epoch > 0) {
-                $data['calendar'][(int) $id] = (int) $epoch;
+        $keys = $this->services->keys();
+
+        // Only epochs of rows whose MAC verifies: a value a database writer set
+        // must not become a permanent lower bound.
+        if (method_exists(CalendarService::class, 'macFields')) {
+            foreach ($db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_calendars'))->loadObjectList() ?: [] as $row) {
+                if ((int) $row->id > 0 && (int) $row->grant_epoch > 0
+                    && $keys->verifyRowMac('calendars', CalendarService::macFields($row), (string) $row->row_mac)) {
+                    $data['calendar'][(int) $row->id] = (int) $row->grant_epoch;
+                }
             }
         }
 
-        foreach ($db->setQuery('SELECT ' . $db->quoteName('user_id') . ', ' . $db->quoteName('device_epoch') . ' FROM ' . $db->quoteName('#__appointments_user_keys'))->loadRowList() ?: [] as [$id, $epoch]) {
-            if ((int) $id > 0 && (int) $epoch > 0) {
-                $data['user'][(int) $id] = (int) $epoch;
+        $names = KeyService::macFields('user_keys');
+
+        foreach ($db->setQuery('SELECT * FROM ' . $db->quoteName('#__appointments_user_keys'))->loadAssocList() ?: [] as $row) {
+            $fields = [];
+
+            foreach ($names as $name) {
+                $fields[$name] = $row[$name] ?? null;
+            }
+
+            if ((int) $row['user_id'] > 0 && (int) $row['device_epoch'] > 0
+                && $keys->verifyRowMac('user_keys', $fields, (string) $row['row_mac'])) {
+                $data['user'][(int) $row['user_id']] = (int) $row['device_epoch'];
             }
         }
 
@@ -271,6 +328,17 @@ final class EpochAnchor implements EpochAnchorInterface
         } finally {
             flock($handle, LOCK_UN);
             fclose($handle);
+        }
+    }
+
+    private function siteSecretSuspect(): bool
+    {
+        try {
+            $keys = $this->services->keys();
+
+            return $keys instanceof KeyService && $keys->siteSecretSuspect();
+        } catch (\Throwable $e) {
+            return true;
         }
     }
 

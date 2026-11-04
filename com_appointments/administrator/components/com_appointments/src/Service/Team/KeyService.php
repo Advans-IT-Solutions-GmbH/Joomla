@@ -210,7 +210,7 @@ final class KeyService implements KeyServiceInterface
             )->execute();
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
             CipherSuite::wipe($oldSecret);
             CipherSuite::wipe($pair['secret']);
             $this->calendarKeyRows = [];
@@ -320,6 +320,8 @@ final class KeyService implements KeyServiceInterface
             . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $keys->userId()
             . ' AND ' . $db->quoteName('key_version') . ' = ' . $keys->userKeyVersion()
             . ' AND ' . $db->quoteName('public_key') . ' = ' . self::hex($keys->publicKey())
+            // A device epoch raised meanwhile (work package D) must not be signed back.
+            . ' AND ' . $db->quoteName('device_epoch') . ' = ' . (int) $row['device_epoch']
         )->execute();
 
         if ($db->getAffectedRows() !== 1) {
@@ -381,7 +383,7 @@ final class KeyService implements KeyServiceInterface
             $this->deleteAllWrapsOfUser($userId);
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
 
             if ($e instanceof TeamException && $e->getCode() === 409) {
                 $this->macFailure('user_keys', 'mismatch', ['subject_user_id' => $userId]);
@@ -396,17 +398,27 @@ final class KeyService implements KeyServiceInterface
     }
 
     /**
-     * The repair of a user key row that fails its MAC. The device epoch is
-     * raised in the anchor first, above the stored and the anchored value, so a
-     * device row from before can never verify again and the next key pair
-     * (created at the next password sign-in) starts at that epoch.
+     * The repair of a user key row that fails its MAC. The row is not deleted
+     * but replaced by a `reset` row of the next key version (new public key,
+     * secret discarded, no password wrap), so no key version is ever used twice:
+     * a grant signed for an older version can never verify again. The device
+     * epoch is raised in the anchor first, above the stored and the anchored
+     * value. In one transaction the user's grants are bound to the new version
+     * and suspended, and the wraps go. Refused while the site secret looks
+     * changed, because then every row fails and the old secret is the way back.
      */
     public function discardUserKey(int $actorUserId, int $userId): void
     {
         $actor = $actorUserId > 0 ? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($actorUserId) : null;
+        $identity = Factory::getApplication()->getIdentity();
 
-        if ($actor === null || $actor->guest || !$actor->authorise('core.admin', 'com_appointments')) {
+        if ($actor === null || $actor->guest || !$actor->authorise('core.admin', 'com_appointments')
+            || ($identity !== null && !$identity->guest && (int) $identity->id !== $actorUserId)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NOT_ALLOWED', 403);
+        }
+
+        if ($this->siteSecretSuspect()) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_SITE_SECRET', 409);
         }
 
         $stored = $this->rawUserKeyRow($userId);
@@ -428,7 +440,7 @@ final class KeyService implements KeyServiceInterface
                 $anchor->record(EpochAnchorInterface::KIND_USER, $userId, $epoch);
             }
         } catch (\Throwable $e) {
-            // Nothing is deleted before the higher epoch is anchored.
+            // Nothing is changed before the higher epoch is anchored.
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
 
@@ -436,14 +448,47 @@ final class KeyService implements KeyServiceInterface
         $db->transactionStart(true);
 
         try {
+            $query = $this->query()
+                ->select($db->quoteName(['key_version']))
+                ->from($db->quoteName('#__appointments_user_keys'))
+                ->where($db->quoteName('user_id') . ' = ' . $userId);
+            $previous = (int) $db->setQuery((string) $query . ' FOR UPDATE')->loadResult();
+            $highestWrap = (int) $db->setQuery(
+                $this->query()->select('MAX(' . $db->quoteName('user_key_version') . ')')
+                    ->from($db->quoteName('#__appointments_calendar_key_wraps'))
+                    ->where($db->quoteName('user_id') . ' = ' . $userId)
+            )->loadResult();
+            $pair = CipherSuite::keyPair();
+            CipherSuite::wipe($pair['secret']);
+            $fields = [
+                'user_id'          => $userId,
+                'key_version'      => max($previous, $highestWrap) + 1,
+                'public_key'       => $pair['public'],
+                'password_wrapped' => null,
+                'password_salt'    => random_bytes(CipherSuite::PWHASH_SALT_BYTES),
+                'pwhash_opslimit'  => CipherSuite::PWHASH_OPSLIMIT,
+                'pwhash_memlimit'  => CipherSuite::PWHASH_MEMLIMIT,
+                'device_epoch'     => $epoch,
+            ];
             $db->setQuery(
-                'DELETE FROM ' . $db->quoteName('#__appointments_user_keys') . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $userId
+                'UPDATE ' . $db->quoteName('#__appointments_user_keys')
+                . ' SET ' . $db->quoteName('key_version') . ' = ' . $fields['key_version']
+                . ', ' . $db->quoteName('public_key') . ' = ' . self::hex($fields['public_key'])
+                . ', ' . $db->quoteName('password_wrapped') . ' = NULL'
+                . ', ' . $db->quoteName('password_salt') . ' = ' . self::hex($fields['password_salt'])
+                . ', ' . $db->quoteName('pwhash_opslimit') . ' = ' . $fields['pwhash_opslimit']
+                . ', ' . $db->quoteName('pwhash_memlimit') . ' = ' . $fields['pwhash_memlimit']
+                . ', ' . $db->quoteName('device_epoch') . ' = ' . $epoch
+                . ', ' . $db->quoteName('row_mac') . ' = ' . self::hex($this->rowMac('user_keys', $fields))
+                . ', ' . $db->quoteName('modified_utc') . ' = ' . $db->quote($this->nowSql())
+                . ' WHERE ' . $db->quoteName('user_id') . ' = ' . $userId
             )->execute();
             $this->deleteAllWrapsOfUser($userId);
+            $this->rebindGrants($userId, $previous);
             $this->services->grants()->suspendAllForUser($userId, 'key_discarded');
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
 
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         }
@@ -461,7 +506,6 @@ final class KeyService implements KeyServiceInterface
 
         $this->log(AuditEvent::USER_KEY_RESET, ['actor_user_id' => $actorUserId, 'subject_user_id' => $userId, 'details' => ['reason' => 'discarded']]);
     }
-
     public function wrapForDevice(KeyContext $keys, #[\SensitiveParameter] string $appPasswordRaw, string $kekSalt): string
     {
         $row = $this->usableUserKey($keys->userId());
@@ -536,7 +580,7 @@ final class KeyService implements KeyServiceInterface
             )->execute();
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
 
             throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
         } finally {
@@ -650,7 +694,7 @@ final class KeyService implements KeyServiceInterface
 
                 $db->transactionCommit(true);
             } catch (\Throwable $e) {
-                $db->transactionRollback(true);
+                $this->rollback();
                 $this->warn('pending wraps could not be completed', $e);
                 $written = 0;
             }
@@ -680,6 +724,12 @@ final class KeyService implements KeyServiceInterface
     public function rotateCalendarKey(CalendarKeyring $keyring): CalendarKeyring
     {
         $calendarId = $keyring->calendarId();
+
+        if ($this->insideForeignTransaction()) {
+            // Postponed: `rotation_due` stays set and the next key holder's
+            // request outside a transaction rotates.
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 503);
+        }
         $db = $this->services->db();
         $newKey = CipherSuite::randomKey();
         $db->transactionStart(true);
@@ -736,7 +786,7 @@ final class KeyService implements KeyServiceInterface
             )->execute();
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
             CipherSuite::wipe($newKey);
 
             throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
@@ -1089,7 +1139,7 @@ final class KeyService implements KeyServiceInterface
             $this->rebindGrants($userId, $previous);
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
-            $db->transactionRollback(true);
+            $this->rollback();
             CipherSuite::wipe($pair['secret']);
 
             throw $e instanceof TeamException ? $e : new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_OPERATION', 500);
@@ -1294,6 +1344,37 @@ final class KeyService implements KeyServiceInterface
         return "X'" . bin2hex($bytes) . "'";
     }
 
+    /**
+     * Roll back to the savepoint of this service. After a deadlock InnoDB has
+     * already rolled back the whole transaction, and the rollback to a savepoint
+     * that no longer exists throws; that must not hide the original error.
+     */
+    private function rollback(): void
+    {
+        try {
+            $this->services->db()->transactionRollback(true);
+        } catch (\Throwable $e) {
+            $this->warn('a rollback failed', $e);
+        }
+    }
+
+    /**
+     * Whether a transaction of somebody else is open. A rotation records the new
+     * grant epoch outside the database after its commit; inside a foreign
+     * transaction that commit is only a savepoint, and a later rollback would
+     * leave the anchor ahead of the database and the calendar closed for all.
+     */
+    private function insideForeignTransaction(): bool
+    {
+        try {
+            $depth = (new \ReflectionProperty($this->services->db(), 'transactionDepth'))->getValue($this->services->db());
+
+            return (int) $depth > 0;
+        } catch (\Throwable $e) {
+            return true;
+        }
+    }
+
     private function contextFrom(int $userId, int $version, #[\SensitiveParameter] ?string $secret, string $publicKey): ?KeyContext
     {
         if ($secret === null || \strlen($secret) !== CipherSuite::KEY_BYTES || !hash_equals($publicKey, CipherSuite::publicKeyOf($secret))) {
@@ -1389,10 +1470,11 @@ final class KeyService implements KeyServiceInterface
         try {
             return $this->services->anchor()->accepts($kind, $id, $epoch);
         } catch (\Throwable $e) {
-            // Without a usable anchor the protection is off (the system check says so).
+            // An anchor that exists but fails is no reason to trust a row (as in
+            // the grant service); only a missing writable folder turns it off.
             $this->warn('the epoch anchor could not be read', $e);
 
-            return true;
+            return false;
         }
     }
 

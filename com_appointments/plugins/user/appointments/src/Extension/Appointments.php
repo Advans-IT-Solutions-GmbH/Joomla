@@ -156,8 +156,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $refused = false;
 
             $this->guard(static function () use ($services, $username, $ip, &$refused): void {
-                $lockout = $services->lockout();
-                $refused = method_exists($lockout, 'refused') && $lockout->refused($username, $ip);
+                $refused = $services->lockout()->wasRefused($username, $ip);
             });
             $this->guard(static fn () => $services->lockout()->recordFailure($username, $ip));
 

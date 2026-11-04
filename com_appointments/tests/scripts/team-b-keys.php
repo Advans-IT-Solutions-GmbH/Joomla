@@ -261,16 +261,16 @@ return static function (TeamSuite $suite): void {
     if ($suite->isStub(GrantService::class)) {
         $suite->pending('B: discarding a damaged key row deletes it and its wraps and raises the device epoch', 'C');
     } else {
-        $suite->test('B: discarding a damaged key row deletes it and its wraps and raises the device epoch', static function () use ($db, $keys, $member, $memberPassword, $p, $superUser, $services) {
-            $before = (int) $db->query("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0];
+        $suite->test('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', static function () use ($db, $keys, $member, $memberPassword, $p, $superUser) {
+            $before = $db->query("SELECT key_version, device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row();
             $db->query("UPDATE {$p}appointments_user_keys SET public_key = CONCAT(LEFT(public_key, 31), CHAR(ASCII(RIGHT(public_key, 1)) ^ 1)) WHERE user_id = {$member}");
             $keys->discardUserKey($superUser, $member);
-            $gone = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0] === 0
+            $status = $keys->userKeyStatus($member);
+            $replaced = $status['status'] === 'reset' && $status['version'] > (int) $before[0] && $status['device_epoch'] > (int) $before[1]
                 && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_key_wraps WHERE user_id = {$member}")->fetch_row()[0] === 0;
             $again = $keys->createUserKey($member, $memberPassword);
-            $after = (int) $db->query("SELECT device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row()[0];
 
-            return $gone && $again !== null && (!$services->anchor()->writable() || $after > $before);
+            return $replaced && $again->userKeyVersion() > $status['version'] && $keys->userKeyStatus($member)['device_epoch'] === $status['device_epoch'];
         });
     }
 
