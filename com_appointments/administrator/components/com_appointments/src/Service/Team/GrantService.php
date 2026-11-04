@@ -1076,8 +1076,8 @@ final class GrantService implements GrantServiceInterface
         $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keyring, $makeOwner, &$audience): bool {
             // Decided under the calendar lock: a concurrent switch-off of
             // external users or a second owner change cannot slip in.
-            $this->lockCalendar($calendarId);
-            $calendar = $this->services->calendars()->get($calendarId);
+            $locked = $this->lockCalendar($calendarId);
+            $calendar = $locked !== null && CalendarService::rowValid($this->services, $locked) ? $locked : null;
             $grantee = self::user($granteeUserId);
             $actor = self::user($actorUserId);
 

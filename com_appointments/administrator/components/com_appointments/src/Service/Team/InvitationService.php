@@ -628,7 +628,11 @@ final class InvitationService implements InvitationServiceInterface
         try {
             return $work();
         } finally {
-            $db->setQuery('SELECT RELEASE_LOCK(' . $name . ')')->loadResult();
+            try {
+                $db->setQuery('SELECT RELEASE_LOCK(' . $name . ')')->loadResult();
+            } catch (\Throwable) {
+                // Never mask the outcome; the lock ends with the connection anyway.
+            }
         }
     }
 
