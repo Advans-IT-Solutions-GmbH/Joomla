@@ -10,7 +10,6 @@ namespace Advans\Plugin\Privacy\Appointments\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
-use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Language\Text;
@@ -219,16 +218,15 @@ final class TeamPrivacy
 
         // Entries and staff data are independent: a failure in one never hides the other.
         try {
-            $search = $this->search($email);
+            $search = $this->search($email, Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_OTHER_PERSON'));
             $entries = $this->domain('appointments_calendar_entries', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_ENTRIES');
-            $other = Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_OTHER_PERSON');
 
-            foreach ($search['matches'] as [$object, $ics, $title]) {
+            foreach ($search['matches'] as $match) {
                 $item = new Item();
-                $item->id = $object->id;
-                $this->field($item, 'calendar', $title);
-                $this->field($item, 'modified_utc', $object->modifiedUtc->format('Y-m-d H:i:s'));
-                $this->field($item, 'content', self::redact($ics, $email, $other));
+                $item->id = $match['id'];
+                $this->field($item, 'calendar', $match['title']);
+                $this->field($item, 'modified_utc', $match['modified_utc']);
+                $this->field($item, 'content', $match['content']);
                 $this->field($item, 'note', Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_CONTENT_NOTE'));
                 $entries->addItem($item);
             }
@@ -290,15 +288,15 @@ final class TeamPrivacy
         $staff = false;
 
         try {
-            $search = $this->search($email);
+            $search = $this->search($email, null);
             $unsearched = $search['unsearched'];
 
-            foreach ($search['matches'] as [$object]) {
+            foreach ($search['matches'] as $match) {
                 try {
                     // Only the version that was searched: a client may have
                     // replaced the entry since, which then fails instead of
                     // being deleted without a match.
-                    $this->services->objects()->delete($object->calendarId, $object->uri, $object->etag, null);
+                    $this->services->objects()->delete($match['calendar_id'], $match['uri'], $match['etag'], null);
                     $deleted++;
                 } catch (\Throwable $e) {
                     $failed++;
@@ -347,10 +345,14 @@ final class TeamPrivacy
 
     /**
      * Search every calendar the handling person can unlock in this session.
+     * One calendar is in memory at a time, and a match keeps only what the
+     * request needs: its identity and, for an export, the redacted content.
      *
-     * @return  array{matches: array<int, array{0: StoredObject, 1: string, 2: string}>, unsearched: array<int, string>}
+     * @param   string|null  $otherPerson  The label for other attendees when exporting, null when deleting.
+     *
+     * @return  array{matches: array<int, array{id: int, calendar_id: int, uri: string, etag: string, modified_utc: string, title: string, content: string}>, unsearched: array<int, string>}
      */
-    private function search(string $email): array
+    private function search(string $email, ?string $otherPerson): array
     {
         $address = mb_strtolower(trim($email), 'UTF-8');
         $db = $this->services->db();
@@ -372,8 +374,11 @@ final class TeamPrivacy
             }
 
             try {
-                foreach ($this->services->objects()->all($id) as $object) {
+                $objects = $this->services->objects()->all($id);
+
+                foreach ($objects as $index => $object) {
                     $ics = $this->services->keys()->decryptObject($keyring, $object);
+                    unset($objects[$index]);
 
                     if ($ics === null) {
                         // One entry it cannot read: the calendar is not completely searched.
@@ -383,10 +388,15 @@ final class TeamPrivacy
                     }
 
                     if (\in_array($address, $this->services->timing()->emails($ics), true)) {
-                        $matches[] = [$object, $ics, $title];
+                        $matches[] = ['id' => $object->id, 'calendar_id' => $object->calendarId, 'uri' => $object->uri,
+                            'etag' => $object->etag, 'modified_utc' => $object->modifiedUtc->format('Y-m-d H:i:s'), 'title' => $title,
+                            'content' => $otherPerson === null ? '' : self::redact($ics, $address, $otherPerson)];
                     }
+
+                    unset($ics);
                 }
 
+                unset($objects);
                 $searched++;
             } catch (\Throwable $e) {
                 $unsearched[$id] = $title;
