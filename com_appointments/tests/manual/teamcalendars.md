@@ -98,8 +98,9 @@ factor before the recovery key and the grants are set up, so its session holds i
 | `EXT` | Internet calendars external | write on `CAL-X` |
 
 `OWNER` also needs the Joomla backend permissions to manage and create event types
-(`core.manage` and `core.create` on `com_appointments`) and `core.edit` on `E-CAL`. Do not give
-these permissions to `ADMIN` merely because it is a Super User.
+(`core.manage`, `core.create` and `core.edit.state` on `com_appointments`) and `core.edit` on
+`E-CAL`, so the account can create and publish the fixture. Do not give these permissions to `ADMIN`
+merely because it is a Super User.
 
 ### 2.3 Calendars and booking
 
