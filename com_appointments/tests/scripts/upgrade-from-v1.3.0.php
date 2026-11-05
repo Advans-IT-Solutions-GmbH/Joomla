@@ -455,10 +455,13 @@ function upgrade_verify(): void
     $admin = new AppointmentsHttp('http://localhost', 'upgrade-v130-admin');
     $admin->login();
     $list = $admin->request('/administrator/index.php?option=com_appointments&view=bookings&filter_eventtype_id=' . (int) $fixture['eventtype_id']);
-    upgrade_require($admin->status === 200
-        && str_contains($list, 'Legacy Confirmed Invitee')
-        && str_contains($list, 'Not verified')
-        && str_contains($list, 'bookings.encrypt'), 'administrator sees the upgraded legacy bookings and the encrypt action');
+    $bookingVisible = str_contains($list, 'Legacy Confirmed Invitee');
+    $unverifiedVisible = str_contains($list, 'Not verified');
+    $encryptActionVisible = str_contains($list, 'bookings.encrypt');
+    upgrade_require($admin->status === 200 && $bookingVisible && $unverifiedVisible && $encryptActionVisible,
+        'administrator sees the upgraded legacy bookings and the encrypt action',
+        'HTTP ' . $admin->status . '; booking=' . ($bookingVisible ? 'yes' : 'no')
+        . '; unverified=' . ($unverifiedVisible ? 'yes' : 'no') . '; encrypt=' . ($encryptActionVisible ? 'yes' : 'no'));
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', ['task' => 'bookings.encrypt']);
     $unchangedAfterRefusal = true;
     foreach ($fixture['bookings'] as $expected) {
