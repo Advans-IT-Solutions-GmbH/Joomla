@@ -98,7 +98,7 @@ class BookingModel extends BaseDatabaseModel
         // The conference link is encrypted at rest; one that cannot be decrypted is not shown.
         $item = \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($item);
         // The page shows the conference link only; the other personal fields were read to open the row.
-        foreach (array_diff(\Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns(), ['conference_url']) as $column) {
+        foreach (array_diff(\Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns(), ['id', 'conference_url']) as $column) {
             unset($item->$column);
         }
 

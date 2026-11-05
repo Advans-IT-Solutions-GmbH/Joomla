@@ -43,13 +43,15 @@ function appointments_open_booking(?array $row): ?array
  *
  * @return array<string, mixed>
  */
-function appointments_seal_booking(string $uid, string $created, array $fields): array
+function appointments_seal_booking(array $stored, array $fields): array
 {
     $data = new \Advans\Component\Appointments\Administrator\Helper\BookingData(
         new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret)
     );
 
-    return $data->seal($uid, $created, $fields);
+    $context = array_intersect_key($stored, array_flip(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc']));
+
+    return array_intersect_key($data->seal($fields + $context), $fields);
 }
 
 /** Whether a stored value is encrypted (for the checks that nothing personal is stored in clear). */

@@ -241,7 +241,7 @@ final class BookingRecords
     {
         $data = new BookingData($keys, $cutoff);
         $columns = BookingData::COLUMNS;
-        $query = self::rowsOf13($db, $cutoff)->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))
+        $query = self::rowsOf13($db, $cutoff)->select($db->quoteName(BookingData::readColumns()))
             ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
         $rows = $db->setQuery($query)->loadAssocList();
         $written = [];
@@ -255,10 +255,12 @@ final class BookingRecords
                 continue;
             }
 
-            $sealed = $data->seal((string) $row['uid'], (string) $row['created_utc'], $clear);
+            $sealed = $data->seal($row);
             $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $update->update($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . (int) $row['id'])
                 ->where($db->quoteName('uid') . ' = ' . $db->quote((string) $row['uid']))
+                ->where($db->quoteName('eventtype_id') . ' = ' . (int) $row['eventtype_id'])
+                ->where($db->quoteName('host_user_id') . ' = ' . (int) $row['host_user_id'])
                 ->where($db->quoteName('created_utc') . ' = ' . $db->quote((string) $row['created_utc']));
 
             foreach ($clear as $column => $value) {
@@ -314,7 +316,7 @@ final class BookingRecords
 
     private static function sealedCondition(DatabaseInterface $db, string $column): string
     {
-        return $db->quoteName($column) . ' COLLATE utf8mb4_bin REGEXP ' . $db->quote('^v1:[A-Za-z0-9+/]{54,}={0,2}$');
+        return $db->quoteName($column) . ' COLLATE utf8mb4_bin REGEXP ' . $db->quote('^v[12]:[A-Za-z0-9+/]{54,}={0,2}$');
     }
 
     /** Whether any booking holds a sealed field: then the migration of 1.3 rows is over. */

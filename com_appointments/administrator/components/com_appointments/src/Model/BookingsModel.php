@@ -43,7 +43,7 @@ class BookingsModel extends ListModel
     {
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state',
+        $query->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.eventtype_id', 'b.host_user_id', 'b.start_utc', 'b.end_utc', 'b.state',
             'b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email', 'b.invitee_phone', 'b.guest_emails', 'b.custom_fields', 'b.cancel_reason', 'b.conference_url',
             'b.consent_utc', 'b.consent_version',
             'b.sequence', 'b.conference_state', 'b.conference_error', 'b.anonymised_utc']))

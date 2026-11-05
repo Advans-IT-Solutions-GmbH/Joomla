@@ -99,8 +99,10 @@ return static function (TeamSuite $suite): void {
             };
             $legacy = $insert(['invitee_name' => 'Legacy Invitee', 'invitee_email' => 'legacy@example.test', 'guest_emails' => 'guest@example.test']);
             $mixedUid = bin2hex(random_bytes(32));
-            $sealedName = (new BookingData($keys))->seal($mixedUid, $created, ['invitee_name' => 'Sealed Invitee'])['invitee_name'];
-            $mixed = $insert(['uid' => $mixedUid, 'invitee_name' => $sealedName, 'invitee_email' => 'planted@example.test']);
+            $mixed = $insert(['uid' => $mixedUid, 'invitee_name' => 'Sealed Invitee', 'invitee_email' => 'planted@example.test']);
+            $sealedName = (new BookingData($keys))->seal($fixture->stored($mixed))['invitee_name'];
+            $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET invitee_name='"
+                . $suite->db->real_escape_string($sealedName) . "' WHERE id={$mixed}");
 
             // A migration that runs (the token of an update one minute ago).
             $params = json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
@@ -147,26 +149,130 @@ return static function (TeamSuite $suite): void {
 
             $migrated = BookingRecords::migrate($db, $keys, 500);
             $stored = $fixture->stored($id);
+            $expect = static function (bool $condition, string $failure): void {
+                if (!$condition) {
+                    throw new RuntimeException($failure);
+                }
+            };
+            $expect($migrated === 0, 'The expired migration window must not automatically encrypt bookings.');
+            $expect($stored !== null, 'The expired-window booking must remain present in the database.');
+            $expect($stored['invitee_email'] === 'window@example.test' && !BookingData::isSealed((string) $stored['invitee_email']),
+                'The expired-window booking must remain stored as readable legacy data.');
             $failed = [];
             $opened = BookingData::forToken($keys, $token)->openLenient($stored, $failed);
-            $readable = $migrated === 0 && $stored['invitee_email'] === 'window@example.test' && $failed === []
-                && $opened['invitee_email'] === 'window@example.test' && !empty($opened[BookingData::UNVERIFIED])
-                && BookingRecords::unverified($db, $keys) >= 1;
+            $expect($failed === [] && $opened['invitee_email'] === 'window@example.test',
+                'The expired-window legacy booking must still open without unreadable fields.');
+            $expect(!empty($opened[BookingData::UNVERIFIED]), 'An expired-window legacy booking must be marked not verified.');
+            $expect(BookingRecords::unverified($db, $keys) >= 1, 'The expired-window booking must be counted as unverified.');
 
             // The booking list shows it as not verified, and the action needs the form token.
             $admin = new AppointmentsHttp('http://localhost', 'team-e-admin');
             $admin->login();
             $list = $admin->request('/administrator/index.php?option=com_appointments&view=bookings&filter_eventtype_id=' . $event);
             $shown = str_contains($list, 'Window Invitee') && str_contains($list, 'Not verified') && str_contains($list, 'bookings.encrypt');
+            $expect($shown, 'The administrator booking list must show the unverified legacy row and the encrypt action.');
             $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', ['task' => 'bookings.encrypt']);
             $refused = $admin->status === 403 && $fixture->stored($id)['invitee_email'] === 'window@example.test';
+            $expect($refused, 'The encrypt action must reject a missing form token without changing the booking.');
             $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', [$admin->token($list) => 1]);
             $sealed = $fixture->stored($id);
+            $expect($sealed !== null && BookingData::isSealed((string) $sealed['invitee_email'])
+                && BookingData::isSealed((string) $sealed['invitee_name']), 'The authorized administrator action must encrypt every legacy personal field.');
+            $expect((new BookingData($keys))->open($sealed)['invitee_email'] === 'window@example.test',
+                'The administrator-encrypted booking must still open to its original address.');
             $audit = $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_audit WHERE booking_id={$id} AND action='encrypt' AND path='admin'");
+            $expect($audit === 1, 'The administrator encryption must create exactly one audit row.');
             $done = BookingData::migrationDone((string) ($readParams()[BookingData::MIGRATION_OPTION] ?? ''), $keys);
+            $expect($done, 'The administrator action must persist the migration completion marker.');
 
-            return $readable && $shown && $refused && BookingData::isSealed($sealed['invitee_email']) && BookingData::isSealed($sealed['invitee_name'])
-                && (new BookingData($keys))->open($sealed)['invitee_email'] === 'window@example.test' && $audit === 1 && $done;
+            return true;
+        });
+
+        $suite->test('A sealing failure rolls back the reserved booking identity', static function () use ($suite, $fixture) {
+            $event = $fixture->event();
+            $eventRow = $fixture->db->query("SELECT * FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+            $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+            $start = $now->modify('+5 days')->setTime(16, 0);
+
+            try {
+                (new BookingStore(Factory::getContainer()->get(DatabaseInterface::class)))->create($eventRow,
+                    ['invitee_name' => new stdClass(), 'invitee_email' => 'rollback@example.test'], $start, $now, [1], 'en-GB');
+
+                throw new RuntimeException('An invalid personal field must fail sealing after the identity is reserved.');
+            } catch (InvalidArgumentException $exception) {
+                if ($exception->getMessage() !== 'A booking field must be text.') {
+                    throw $exception;
+                }
+            }
+
+            return $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_bookings WHERE eventtype_id={$event}") === 0;
+        });
+
+        $suite->test('An encrypted update failure rolls back the reserved booking identity', static function () use ($suite, $fixture) {
+            $event = $fixture->event();
+            $eventRow = $fixture->db->query("SELECT * FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+            $trigger = 'suite_e_' . bin2hex(random_bytes(6));
+            $suite->db->query("CREATE TRIGGER `{$trigger}` BEFORE UPDATE ON {$suite->prefix}appointments_bookings FOR EACH ROW"
+                . " BEGIN IF NEW.eventtype_id={$event} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected encrypted booking update failure'; END IF; END");
+
+            try {
+                $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+
+                try {
+                    (new BookingStore(Factory::getContainer()->get(DatabaseInterface::class)))->create($eventRow,
+                        ['invitee_name' => 'Rollback Invitee', 'invitee_email' => 'rollback@example.test'],
+                        $now->modify('+6 days')->setTime(16, 0), $now, [1], 'en-GB');
+
+                    throw new RuntimeException('The injected encrypted booking update failure was not propagated.');
+                } catch (\Joomla\Database\Exception\ExecutionFailureException $exception) {
+                    if (!str_contains($exception->getMessage(), 'Injected encrypted booking update failure')) {
+                        throw $exception;
+                    }
+                }
+            } finally {
+                $suite->db->query("DROP TRIGGER `{$trigger}`");
+            }
+
+            return $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_bookings WHERE eventtype_id={$event}") === 0;
+        });
+
+        $suite->test('A complete encrypted booking transplant reveals no victim data to another confirmation session', static function () use ($suite, $fixture) {
+            $victimEvent = $fixture->event();
+            $attackerEvent = $fixture->event();
+            $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+7 days')->format('Y-m-d');
+            $victim = $fixture->booking($victimEvent, $day . ' 10:00:00')['booking'];
+            $attacker = $fixture->booking($attackerEvent, $day . ' 14:00:00');
+            $victimId = (int) $victim['id'];
+            $attackerId = (int) $attacker['booking']['id'];
+            $secretUrl = 'https://meeting.example.test/victim-private-room';
+            $fixture->update($victimId, ['conference_state' => 'ok', 'conference_url' => $secretUrl]);
+            $before = $fixture->stored($attackerId);
+            $source = $fixture->stored($victimId);
+            $set = static function (array $fields) use ($suite): string {
+                $values = [];
+                foreach ($fields as $column => $value) {
+                    $values[] = '`' . $column . '`=' . ($value === null ? 'NULL' : "'" . $suite->db->real_escape_string((string) $value) . "'");
+                }
+
+                return implode(',', $values);
+            };
+            $copied = array_intersect_key($source, array_flip(array_merge(['uid', 'created_utc'], BookingData::COLUMNS)));
+            // Accommodate UID uniqueness without changing the attacker's ID or event ownership.
+            $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET uid='" . bin2hex(random_bytes(32)) . "' WHERE id={$victimId}");
+
+            try {
+                $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET " . $set($copied) . ",conference_state='ok' WHERE id={$attackerId}");
+                $failed = [];
+                $opened = (new BookingData(new KeyProvider((string) (new JConfig())->secret)))->openLenient($fixture->stored($attackerId), $failed);
+                $page = $attacker['browser']->request('/index.php?option=com_appointments&view=booking');
+
+                return in_array('conference_url', $failed, true) && $opened['conference_url'] === null
+                    && $attacker['browser']->status === 200 && !str_contains($page, $secretUrl);
+            } finally {
+                $restore = array_intersect_key($before, array_flip(array_merge(['uid', 'created_utc', 'conference_state'], BookingData::COLUMNS)));
+                $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET " . $set($restore) . " WHERE id={$attackerId}");
+                $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET uid='" . $suite->db->real_escape_string($source['uid']) . "' WHERE id={$victimId}");
+            }
         });
 
         $suite->test('Switched on, a calendar error never fails a booking', static function () use ($suite, $fixture, $switch) {

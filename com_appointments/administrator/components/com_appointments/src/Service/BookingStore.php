@@ -77,10 +77,17 @@ final class BookingStore
                 'state' => (int) $event['requires_approval'] === 1 ? 0 : 1,
                 'created_utc' => $time, 'modified_utc' => $time,
             ]);
-            // The personal fields are stored encrypted; the caller gets them in clear.
-            $row = (object) $this->data()->seal($clear['uid'], $clear['created_utc'], $clear);
-            $db->insertObject('#__appointments_bookings', $row, 'id');
-            $clear['id'] = $row->id;
+            // Reserve the identity without personal fields; both writes commit together.
+            $skeleton = (object) array_intersect_key($clear, array_flip(['uid', 'sequence', 'eventtype_id', 'host_user_id',
+                'start_utc', 'end_utc', 'state', 'created_utc', 'modified_utc']));
+            if (!$db->insertObject('#__appointments_bookings', $skeleton, 'id')) {
+                throw new \RuntimeException('The booking identity could not be stored.');
+            }
+            $clear['id'] = $skeleton->id;
+            $row = (object) $this->data()->seal($clear);
+            if (!$db->updateObject('#__appointments_bookings', $row, 'id', true)) {
+                throw new \RuntimeException('The encrypted booking could not be stored.');
+            }
             $db->transactionCommit();
             $this->mirror('saved', $clear);
 
@@ -304,7 +311,7 @@ final class BookingStore
             } else {
                 unset($erased['state_active']);
                 // Every personal field is null now; sealing keeps any other one encrypted.
-                $row = (object) $this->data()->seal((string) $erased['uid'], (string) $erased['created_utc'], $erased);
+                $row = (object) $this->data()->seal($erased);
                 $db->updateObject('#__appointments_bookings', $row, 'id', true);
             }
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',

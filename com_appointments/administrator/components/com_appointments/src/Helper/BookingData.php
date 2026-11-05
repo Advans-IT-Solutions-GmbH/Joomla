@@ -16,12 +16,12 @@ defined('_JEXEC') or die;
 /**
  * The personal fields of a booking at rest (team-calendars.md, section 5.10).
  *
- * Every value of {@see self::COLUMNS} is stored as `v1:` plus Base64 of
- * `CipherSuite::encrypt(key(PURPOSE_BOOKING_DATA), value, associatedData('booking', uid, created_utc, column))`.
- * UID and creation time exist before the row is inserted and never change, so a
- * value can be moved neither to another booking nor to another column, and
- * copying UID and personal fields together into another row fails unless the
- * creation time is copied too (which makes it that booking).
+ * Every value of {@see self::COLUMNS} is stored as `v2:` plus Base64 of
+ * `CipherSuite::encrypt(key(PURPOSE_BOOKING_DATA), value, associatedData('booking/v2', id, eventtype_id, host_user_id, uid, created_utc, column))`.
+ * The row ID is reserved before sealing. Its ID, event type, host, UID and
+ * creation time never change: copying ciphertext, UID and creation time into
+ * another booking cannot make its personal fields readable. The unreleased v1
+ * format is recognised as sealed, but never opened or automatically migrated.
  *
  * This class is the only code that turns these columns into text and back.
  * Code that reads a booking row calls {@see self::open()} right after the read,
@@ -29,9 +29,10 @@ defined('_JEXEC') or die;
  * clear values it writes. Both accept a whole row: other keys pass through
  * unchanged, a null value stays null.
  *
- * An opened row carries the key {@see self::OPENED}, so opening it again
+ * An opened row carries the request-internal key {@see self::OPENED}, so opening it again
  * changes nothing (code that receives either a stored or an opened row opens
- * it), and sealing removes the key again before the write. A stored value that
+ * it). Never accept this marker from input or storage; sealing removes it
+ * again before the write. A stored value that
  * is not sealed is clear text of a row written before 1.4.0: it is read only
  * in a row created before that update (`$clearBefore`) that holds no sealed
  * field. The update writes a migration token into the component option
@@ -62,7 +63,7 @@ final class BookingData
     public const COLUMNS = ['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
         'guest_emails', 'custom_fields', 'cancel_reason', 'conference_url'];
 
-    /** The key an opened row carries. */
+    /** Request-internal only; never supplied by a form, storage or another trust boundary. */
     public const OPENED = '_opened';
 
     /** The key an opened row carries when its clear values (a row of 1.3) were read as they are. */
@@ -83,10 +84,10 @@ final class BookingData
      */
     public const MIGRATION_LIMIT_DAYS = 90;
 
-    private const PREFIX = 'v1:';
+    private const PREFIX = 'v2:';
 
-    /** `v1:` and Base64 of at least nonce and tag (40 bytes). */
-    private const SEALED = '/^v1:[A-Za-z0-9+\/]{54,}={0,2}$/D';
+    /** Both sealed schemes, including the rejected v1, so migration skips either. */
+    private const SEALED = '/^v[12]:[A-Za-z0-9+\/]{54,}={0,2}$/D';
 
     /**
      * @var  string
@@ -192,7 +193,7 @@ final class BookingData
     }
 
     /**
-     * The columns a read selects to open personal fields: UID, creation time and
+     * The columns a read selects to open personal fields: immutable context and
      * every personal column, also those it does not need, because whether a
      * clear value is read (a row of 1.3) is decided on the whole row.
      *
@@ -201,7 +202,7 @@ final class BookingData
     public static function readColumns(string $alias = ''): array
     {
         return array_map(static fn (string $column): string => ($alias === '' ? '' : $alias . '.') . $column,
-            array_merge(['uid', 'created_utc'], self::COLUMNS));
+            array_merge(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc'], self::COLUMNS));
     }
 
     /** Whether a stored value has the form of a sealed value. */
@@ -220,14 +221,11 @@ final class BookingData
      *
      * @return  array<string, mixed>
      *
-     * @throws  \InvalidArgumentException  Without a UID, or for a value that is no text.
+     * @throws  \InvalidArgumentException  With missing or malformed immutable context, or a value that is no text.
      */
-    public function seal(string $uid, string $created, array $row): array
+    public function seal(array $row): array
     {
-        if ($uid === '' || $created === '') {
-            throw new \InvalidArgumentException('A booking without UID or creation time cannot be sealed.');
-        }
-
+        $context = self::context($row);
         unset($row[self::OPENED], $row[self::CLEAR], $row[self::UNVERIFIED]);
 
         foreach (self::COLUMNS as $column) {
@@ -245,7 +243,7 @@ final class BookingData
                 throw new \InvalidArgumentException('A booking field must be text.');
             }
 
-            $row[$column] = self::PREFIX . base64_encode(CipherSuite::encrypt($this->key, (string) $value, self::data($uid, $created, $column)));
+            $row[$column] = self::PREFIX . base64_encode(CipherSuite::encrypt($this->key, (string) $value, self::data($context, $column)));
         }
 
         return $row;
@@ -254,7 +252,7 @@ final class BookingData
     /**
      * The row with every personal field in clear text.
      *
-     * @param   array<string, mixed>  $row  A booking row with its `uid` and `created_utc`.
+     * @param   array<string, mixed>  $row  A booking row with its full immutable context.
      *
      * @return  array<string, mixed>
      *
@@ -285,12 +283,16 @@ final class BookingData
     {
         $failed = [];
 
-        if (!empty($row[self::OPENED])) {
+        if (($row[self::OPENED] ?? null) === true) {
             return $row;
         }
 
-        $uid = (string) ($row['uid'] ?? '');
-        $created = (string) ($row['created_utc'] ?? '');
+        try {
+            $context = self::context($row);
+        } catch (\InvalidArgumentException) {
+            $context = null;
+        }
+
         // Decided on the row as stored, before any field is opened.
         $clearAccepted = $this->clearAccepted($row);
 
@@ -314,8 +316,9 @@ final class BookingData
                 continue;
             }
 
-            $raw = $uid === '' || $created === '' ? false : base64_decode(substr($row[$column], \strlen(self::PREFIX)), true);
-            $plain = $raw === false ? null : CipherSuite::decrypt($this->key, $raw, self::data($uid, $created, $column));
+            $raw = $context === null || !str_starts_with($row[$column], self::PREFIX)
+                ? false : base64_decode(substr($row[$column], \strlen(self::PREFIX)), true);
+            $plain = $raw === false ? null : CipherSuite::decrypt($this->key, $raw, self::data($context, $column));
 
             if ($plain === null) {
                 $failed[] = $column;
@@ -340,6 +343,9 @@ final class BookingData
      * genuine): the change is written in clear, so the row stays a whole row of
      * 1.3 until the administrator encrypts it. A clear value that would look
      * sealed gets a leading space, so it never makes the row a mixed one.
+     * Immutable context cannot be changed, even for an unverified row. Only
+     * requested fields are returned, plus the personal fields of a clear row
+     * being sealed; context used for encryption is not added to the change.
      *
      * @param   array<string, mixed>  $current
      * @param   array<string, mixed>  $fields
@@ -348,9 +354,16 @@ final class BookingData
      */
     public function sealChange(array $current, array $fields): array
     {
-        if (!empty($current[self::UNVERIFIED])) {
-            unset($fields[self::OPENED], $fields[self::CLEAR], $fields[self::UNVERIFIED]);
+        $current = $this->open($current);
+        $context = self::context($current);
 
+        if (self::context(array_replace($current, $fields)) !== $context) {
+            throw new \InvalidArgumentException('The immutable context of a booking cannot be changed.');
+        }
+
+        unset($fields[self::OPENED], $fields[self::CLEAR], $fields[self::UNVERIFIED]);
+
+        if (!empty($current[self::UNVERIFIED])) {
             foreach (self::COLUMNS as $column) {
                 if (!\array_key_exists($column, $fields) || $fields[$column] === null) {
                     continue;
@@ -372,7 +385,7 @@ final class BookingData
             $fields += array_intersect_key($current, array_flip(self::COLUMNS));
         }
 
-        return $this->seal((string) ($current['uid'] ?? ''), (string) ($current['created_utc'] ?? ''), $fields);
+        return array_intersect_key($this->seal($fields + $context), $fields);
     }
 
     /**
@@ -411,13 +424,49 @@ final class BookingData
             }
         }
 
-        $created = UtcTimestamp::parse((string) ($row['created_utc'] ?? ''));
+        $created = \is_string($row['created_utc'] ?? null) ? UtcTimestamp::parse($row['created_utc']) : null;
 
         return $created !== null && $created->getTimestamp() < $this->clearBefore;
     }
 
-    private static function data(string $uid, string $created, string $column): string
+    /** Canonical database integers only: no floats, signs, whitespace, leading zeroes or overflow. */
+    private static function context(array $row): array
     {
-        return CipherSuite::associatedData('booking', $uid, $created, $column);
+        $context = [];
+
+        foreach (['id' => 1, 'eventtype_id' => 1, 'host_user_id' => 0] as $column => $minimum) {
+            $value = $row[$column] ?? null;
+
+            if (!\is_int($value) && (!\is_string($value) || !preg_match('/^(0|[1-9][0-9]*)$/D', $value))) {
+                throw new \InvalidArgumentException('Invalid booking context: ' . $column . '.');
+            }
+
+            $integer = filter_var($value, FILTER_VALIDATE_INT);
+
+            if ($integer === false || $integer < $minimum) {
+                throw new \InvalidArgumentException('Invalid booking context: ' . $column . '.');
+            }
+
+            $context[$column] = $integer;
+        }
+
+        if (!\is_string($row['uid'] ?? null) || trim($row['uid']) === '') {
+            throw new \InvalidArgumentException('Invalid booking context: uid.');
+        }
+
+        $created = $row['created_utc'] ?? null;
+        $timestamp = \is_string($created) ? UtcTimestamp::parse($created) : null;
+
+        if ($timestamp === null || $timestamp->format('Y-m-d H:i:s') !== $created) {
+            throw new \InvalidArgumentException('Invalid booking context: created_utc.');
+        }
+
+        return $context + ['uid' => $row['uid'], 'created_utc' => $created];
+    }
+
+    private static function data(array $context, string $column): string
+    {
+        return CipherSuite::associatedData('booking/v2', $context['id'], $context['eventtype_id'], $context['host_user_id'],
+            $context['uid'], $context['created_utc'], $column);
     }
 }

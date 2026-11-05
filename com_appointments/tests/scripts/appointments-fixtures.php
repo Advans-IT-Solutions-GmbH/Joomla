@@ -74,7 +74,7 @@ final class AppointmentsFixture
         $stored = $this->stored($id);
         $set = [];
 
-        foreach (appointments_seal_booking((string) $stored['uid'], (string) $stored['created_utc'], $fields) as $key => $value) {
+        foreach (appointments_seal_booking($stored, $fields) as $key => $value) {
             $set[] = '`' . $key . '`=' . ($value === null ? 'NULL' : "'" . $this->db->real_escape_string((string) $value) . "'");
         }
 

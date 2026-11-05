@@ -104,7 +104,7 @@ final class ConferenceServiceTest extends TestCase
         $clear = array_filter(array_intersect_key($row, array_flip(BookingData::COLUMNS)),
             static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
 
-        return array_replace($row, $data->seal((string) $row['uid'], (string) $row['created_utc'], $clear));
+        return array_replace($row, $data->seal(array_intersect_key($row, array_flip(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc'])) + $clear));
     }
 
     private function service(array $params = [], ?ConferenceManager $manager = null): ConferenceService
