@@ -217,6 +217,11 @@ class DevicesController extends BaseController
         }
 
         $view->setLayout('default');
+
+        if (method_exists($view, 'blockAdd')) {
+            $view->blockAdd('COM_APPOINTMENTS_TEAM_D_ADD_NEEDS_PASSWORD');
+        }
+
         $view->display();
 
         return false;

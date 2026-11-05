@@ -72,6 +72,18 @@ class HtmlView extends BaseHtmlView
 
     protected $username = '';
 
+    /** Reason set by the controller for this response (e.g. 423 Locked); it wins over the checks. */
+    private string $forcedBlock = '';
+
+    /**
+     * Called by the controller when it refuses «Add device» in this response: the
+     * page then shows the reason and no form, whatever the checks would say now.
+     */
+    public function blockAdd(string $reason): void
+    {
+        $this->forcedBlock = $reason;
+    }
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -136,7 +148,8 @@ class HtmlView extends BaseHtmlView
 
         $this->setLayout('default');
         $this->calendars = $this->calendarsOf($services, $userId);
-        $this->addBlocked = $this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId);
+        $this->addBlocked = $this->forcedBlock !== '' ? $this->forcedBlock
+            : ($this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId));
 
         if ($this->addBlocked === '') {
             // A new value per rendering: the form can be sent once, a reload or a second
