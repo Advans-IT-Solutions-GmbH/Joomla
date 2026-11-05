@@ -82,7 +82,14 @@ final class TeamDBrowser
         $this->status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $size = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         $location = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
-        curl_close($ch);
+
+        // Since PHP 8 the jar is written only when the handle is freed: write it now, so the
+        // redirect after a sign-in sends the regenerated session cookie.
+        if (!curl_setopt($ch, CURLOPT_COOKIELIST, 'FLUSH')) {
+            throw new \RuntimeException('The cookie jar could not be written.');
+        }
+
+        unset($ch);
         $this->headers = substr($raw, 0, $size);
         $body = substr($raw, $size);
 
@@ -776,10 +783,15 @@ return static function (TeamSuite $suite): void {
         // Account activation (an administrator created the account)
         // ------------------------------------------------------------------
 
+        // Team accounts are invited only by core.admin with a real second factor: a temporary
+        // Super User of this suite with its own TOTP method, removed with the other fixture users.
+        $inviter = $user('inviter', 'Unused-' . bin2hex(random_bytes(12)) . '!', [8]);
+        $inviterMfa = \Joomla\CMS\Factory::getApplication()->bootComponent('com_users')->getMVCFactory()->createTable('Mfa', 'Administrator');
+        $inviterMfa->save(['user_id' => $inviter, 'title' => 'Test', 'method' => 'totp', 'default' => 1, 'options' => ['key' => $secret]]);
         $fresh = $user('fresh', 'Unused-' . bin2hex(random_bytes(12)) . '!', [$teamGroup]);
         $hashBefore = (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password'];
         $mailsBefore = AppointmentsMail::snapshot();
-        $services->invitations()->invite($admin, $fresh);
+        $services->invitations()->invite($inviter, $fresh);
         $link = '';
 
         foreach (AppointmentsMail::messagesSince($mailsBefore) as $mime) {
