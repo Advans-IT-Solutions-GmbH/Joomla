@@ -176,7 +176,9 @@ namespace {
         $duplicateRuntime = $work . '/another-extension/advansinstaller';
         mkdir($duplicateRuntime, 0700, true);
         copy($support . '/load.php', $duplicateRuntime . '/load.php');
+        $class = 'JFormFieldAdvanssystemcheck';
         require $duplicateRuntime . '/load.php';
+        $assert($class === 'JFormFieldAdvanssystemcheck', 'Runtime loader overwrote Joomla FormHelper caller scope.');
         $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
