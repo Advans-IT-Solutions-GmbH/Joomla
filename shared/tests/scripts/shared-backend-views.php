@@ -24,7 +24,10 @@
  * from the extension's own language file — otherwise the page did not render.
  *
  * The package is read from /tmp/extension.zip (BACKEND_VIEWS_PACKAGE overrides
- * it). The suite only reads; it changes nothing on the site.
+ * it). The suite reinstalls it with each supported language directory present,
+ * then renders the views in en-GB, de-DE and fr-FR. Non-English pages must show
+ * text different from the English fallback. This is HTTP coverage, not a
+ * visual browser or exhaustive interactive form test.
  */
 
 define('JOOMLA_ROOT', '/var/www/html');
@@ -100,7 +103,7 @@ function bv_extract_token(string $html): ?string
     return null;
 }
 
-function bv_login(string $baseUrl, string $user, string $pass): bool
+function bv_login(string $baseUrl, string $user, string $pass, string $language): bool
 {
     global $cookieJar;
 
@@ -128,6 +131,7 @@ function bv_login(string $baseUrl, string $user, string $pass): bool
         'passwd'   => $pass,
         'option'   => 'com_login',
         'task'     => 'login',
+        'lang'     => $language,
         'return'   => base64_encode('index.php'),
         $token     => '1',
     ], true);
@@ -245,72 +249,93 @@ if (!is_dir(JOOMLA_ROOT . '/administrator/components/' . $option)) {
 $views = bv_discover_views($option);
 echo 'Views: ' . implode(', ', array_map(static fn (string $v): string => $v === '' ? '(default)' : $v, $views)) . "\n\n";
 
-// Strings of the extension itself: at least one of them has to appear on a
-// page that really rendered. en-GB is the language the test site runs in.
-$strings = sh_read_package_language($package, 'en-GB');
+$englishStrings = sh_read_package_language($package, 'en-GB');
 
-if (!$strings) {
+if (!$englishStrings) {
     bv_fail('the package has no en-GB language file, so a rendered page cannot be recognised');
     exit(1);
 }
 
-echo "--- Admin authentication ---\n";
-$loggedIn = bv_login($baseUrl, $adminUser, $adminPass);
+foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+    $restore = sh_use_cli_language(JOOMLA_ROOT, $tag);
 
-if (!$loggedIn) {
-    bv_fail('cannot authenticate against /administrator');
-    exit(1);
-}
+    try {
+        // Joomla only copies global <languages> entries into existing tags.
+        [$code, $output] = sh_cli_install(JOOMLA_ROOT, $package);
 
-bv_pass('admin login succeeds');
+        if ($code !== 0) {
+            bv_fail("$tag: cannot install language files: " . sh_strip_ansi($output));
+            continue;
+        }
 
-foreach ($views as $view) {
-    $label = $view === '' ? "$option (default view)" : "$option&view=$view";
-    $url   = $baseUrl . '/administrator/index.php?option=' . rawurlencode($option)
-        . ($view === '' ? '' : '&view=' . rawurlencode($view));
+        $strings = sh_read_package_language($package, $tag);
 
-    echo "\n--- $label ---\n";
+        if (!$strings) {
+            bv_fail("$tag: package has no language strings");
+            continue;
+        }
 
-    $response = bv_request($url);
-    $body     = $response['body'];
+        if (!bv_login($baseUrl, $adminUser, $adminPass, $tag)) {
+            bv_fail("$tag: cannot authenticate against /administrator");
+            continue;
+        }
 
-    if ($response['code'] !== 200) {
-        bv_fail("$label: HTTP {$response['code']} (expected 200)");
-        echo '  [diag] ' . mb_substr(bv_page_text($body), 0, 400) . "\n";
+        bv_pass("$tag: admin login succeeds");
 
-        continue;
-    }
+        foreach ($views as $view) {
+            $label = $tag . ': ' . ($view === '' ? "$option (default view)" : "$option&view=$view");
+            $url   = $baseUrl . '/administrator/index.php?option=' . rawurlencode($option)
+                . ($view === '' ? '' : '&view=' . rawurlencode($view));
 
-    bv_pass("$label: HTTP 200");
+            echo "\n--- $label ---\n";
 
-    $markers = bv_error_markers(bv_strip_scripts($body));
+            $response = bv_request($url);
+            $body     = $response['body'];
 
-    if ($markers) {
-        bv_fail("$label: error markers on the page: " . implode(', ', $markers));
-        echo '  [diag] ' . mb_substr(bv_page_text($body), 0, 400) . "\n";
-    } else {
-        bv_pass("$label: no PHP error and no Joomla error page");
-    }
+            if ($response['code'] !== 200) {
+                bv_fail("$label: HTTP {$response['code']} (expected 200)");
+                echo '  [diag] ' . mb_substr(bv_page_text($body), 0, 400) . "\n";
+                continue;
+            }
 
-    // Only this extension's own keys count. An admin page carries the whole
-    // sidebar, so a third-party extension with an untranslated menu entry
-    // would otherwise fail a page that is perfectly fine.
-    $text    = bv_page_text($body);
-    $rawKeys = array_values(array_intersect(sh_find_raw_language_keys($text), array_keys($strings)));
+            bv_pass("$label: HTTP 200");
 
-    if ($rawKeys) {
-        bv_fail("$label: untranslated keys of this extension: " . implode(', ', \array_slice($rawKeys, 0, 5)));
-    } else {
-        bv_pass("$label: no untranslated language key of this extension");
-    }
+            if (!preg_match('/<html\b[^>]*\blang=["\']' . preg_quote($tag, '/') . '["\']/i', $body)) {
+                bv_fail("$label: page language is not $tag");
+            } else {
+                bv_pass("$label: page language is $tag");
+            }
 
-    $shown = sh_shown_language_keys($text, $strings);
+            $markers = bv_error_markers(bv_strip_scripts($body));
 
-    if ($shown) {
-        bv_pass("$label: page rendered (" . implode(', ', \array_slice($shown, 0, 3)) . ')');
-    } else {
-        bv_fail("$label: no string of the extension on the page, so it did not render");
-        echo '  [diag] ' . mb_substr($text, 0, 400) . "\n";
+            if ($markers) {
+                bv_fail("$label: error markers on the page: " . implode(', ', $markers));
+                echo '  [diag] ' . mb_substr(bv_page_text($body), 0, 400) . "\n";
+            } else {
+                bv_pass("$label: no PHP error and no Joomla error page");
+            }
+
+            // The sidebar also carries other extensions' keys; only ours count.
+            $text    = bv_page_text($body);
+            $rawKeys = array_values(array_intersect(sh_find_raw_language_keys($text), array_keys($strings)));
+
+            if ($rawKeys) {
+                bv_fail("$label: untranslated keys of this extension: " . implode(', ', \array_slice($rawKeys, 0, 5)));
+            } else {
+                bv_pass("$label: no untranslated language key of this extension");
+            }
+
+            $shown = sh_shown_language_keys($text, $strings, $tag === 'en-GB' ? null : $englishStrings);
+
+            if ($shown) {
+                bv_pass("$label: page rendered (" . implode(', ', \array_slice($shown, 0, 3)) . ')');
+            } else {
+                bv_fail("$label: no distinct $tag string of the extension on the page");
+                echo '  [diag] ' . mb_substr($text, 0, 400) . "\n";
+            }
+        }
+    } finally {
+        $restore();
     }
 }
 

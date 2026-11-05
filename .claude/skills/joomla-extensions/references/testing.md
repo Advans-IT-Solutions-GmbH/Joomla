@@ -251,6 +251,29 @@ Notable test details:
   (plugin serves `com_j2store` while both are enabled, `com_j2commerce` after `com_j2store` is
   disabled, a component without tables does not break the sitemap).
 
+### Language delivery acceptance
+
+Every extension and bundled plugin ships exactly `de-DE`, `en-GB` and `fr-FR`; `de-DE` carries
+Swiss High German. `de-CH` folders and manifest entries are not supported or generated.
+Run `php shared/tests/lang-lint.php <extension>` for every extension. It checks the complete
+file/key/placeholder set and explicit manifest language lists. `verify-package.sh` additionally
+rejects unsupported or missing language counterparts in the archive, including bundled plugins.
+`.github/scripts/test-language-delivery.py` exercises valid delivery and negative cases (missing
+locale, extra key, German `ß`, unsupported/empty `de-CH` folder, wrong manifest and bundled-plugin
+files). Shared Path Coverage runs these regressions on PHP 8.1.
+
+The existing installer-messages CI lanes install and update in all three languages. Backend Views
+now reinstalls with each language directory present, logs in with that language and checks the
+HTML language, raw keys and a translated string different from the English fallback. The fixture
+uses minimal language metadata, not a full translated Joomla core pack. It tests the component's
+own translations; it does not claim that every Joomla core page is translated.
+
+These are not visual or exhaustive interactive tests. Complete acceptance additionally requires
+Edge (Chromium) and Firefox at 375, 768, 1024, 1280, 1440, 1600 and 1920 px, in light and dark mode:
+every clickable control, form and element, with valid and invalid input, on frontend and backend.
+Record PASS/FAIL per case and combination only after execution; unavailable environments are
+BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a substitute.
+
 ## CI
 
 - **Triggers:** each `Build & Test` workflow runs on push and pull request to `main` for
@@ -286,7 +309,9 @@ Notable test details:
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
   extension on the declared minimum PHP 8.1; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
-  keys and printf placeholders equal to en-GB, de-DE without `ß`, without ae/oe/ue spellings and with `z.B.`, a shipped de-CH equal to de-DE,
+  exactly de-DE/en-GB/fr-FR in every file group (including bundled plugins), no de-CH folders or
+  unsupported manifest language tags, keys and printf placeholders equal to en-GB,
+  de-DE without `ß`, without ae/oe/ue spellings and with `z.B.`,
   fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
   every defined key is used by the code, derived from a `langConstPrefix` or listed in
   `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, and no `ß` in

@@ -138,3 +138,7 @@ Skills liegen in:
 - `.claude/skills/privacy-plugin`
 - `.claude/skills/dmarc-reports`
 - `.claude/skills/appointments`
+
+Sprachen: Jede Erweiterung und jedes Unter-Plugin liefert genau `de-DE`, `en-GB` und `fr-FR`
+mit vollständiger Schlüsselparität. `de-DE` enthält Schweizer Hochdeutsch; keine `de-CH`-Ordner
+oder Build-Kopien. Details: Skill `joomla-extensions`, `references/conventions.md`, „Language Files“.

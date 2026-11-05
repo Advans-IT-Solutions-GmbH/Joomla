@@ -103,9 +103,19 @@ Local test prerequisites and commands: [`.claude/skills/joomla-extensions/refere
 
 ## Languages
 
-All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for extensions using `<languages>`, one manifest line per file.
+Every extension and bundled plugin ships exactly **de-DE, en-GB and fr-FR**, with complete key
+and placeholder parity per language file. This also applies to future extensions. Sites run in
+de-DE, whose wording is **Swiss High German** (`ss`, never `ß`, Swiss terminology, `z.B.`).
+No de-CH language folders or manifest declarations are shipped or generated at build time.
+The source language files remain checked in. The shared lint enforces this rule across all
+extensions, while package verification checks that the ZIP contains the same supported file set.
+No text is written into the code: PHP, layouts and JavaScript show language keys only.
 
 To add a language:
+
+The supported language set is a repository-wide decision. A new locale requires maintainer
+approval and must be added to all extensions, bundled plugins, the shared lint and package checks,
+not just to a single extension. Swiss wording is maintained in de-DE, not a separate de-CH locale.
 
 1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
 2. Import/Export, Cleanup, DMARC Reports, DMARC Reports Dashboard Module, DMARC Reports Package, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.
