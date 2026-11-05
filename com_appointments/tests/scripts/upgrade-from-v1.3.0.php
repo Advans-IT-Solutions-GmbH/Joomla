@@ -326,7 +326,7 @@ function upgrade_update(): void
     $candidatePackage = getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip';
     upgrade_require(is_file($candidatePackage), 'exact candidate package is present for Joomla CLI update');
 
-    [$code, $output] = sh_cli_install(JOOMLA_ROOT, $candidatePackage);
+    [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $candidatePackage);
     $clean = sh_strip_ansi($output);
     echo $clean . "\n";
 

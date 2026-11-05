@@ -8,9 +8,9 @@
 
 defined('_JEXEC') or die;
 
-require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
-    ? __DIR__ . '/advansinstaller/InstallerScript.php'
-    : dirname(__DIR__, 2) . '/shared/installer/InstallerScript.php';
+require_once is_file(__DIR__ . '/advansinstaller/load.php')
+    ? __DIR__ . '/advansinstaller/load.php'
+    : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
 use Advans\Installer\InstallerScript;

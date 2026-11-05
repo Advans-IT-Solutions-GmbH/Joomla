@@ -282,8 +282,11 @@ function sh_cli_install_reviewed_fixture(string $root, string $package): array
             }
         }
 
-        require_once $work . '/State.php';
-        require_once $work . '/FileGuard.php';
+        foreach (['State', 'FileGuard'] as $class) {
+            if (!class_exists('Advans\\Installer\\' . $class, false)) {
+                require_once $work . '/' . $class . '.php';
+            }
+        }
         $entries = \Advans\Installer\State::read($plan);
 
         if ($entries === []) {

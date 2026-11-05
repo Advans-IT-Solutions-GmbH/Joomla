@@ -95,7 +95,7 @@ namespace {
     define('JPATH_ADMINISTRATOR', JPATH_ROOT . '/administrator');
     define('JPATH_PLUGINS', JPATH_ROOT . '/plugins');
     $support = dirname(__DIR__) . '/installer';
-    require_once $support . '/InstallerScript.php';
+    require_once $support . '/load.php';
 
     $app = new class {
         public string $tag = 'en-GB';
@@ -157,6 +157,11 @@ namespace {
     };
 
     try {
+        $duplicateRuntime = $work . '/another-extension/advansinstaller';
+        mkdir($duplicateRuntime, 0700, true);
+        copy($support . '/load.php', $duplicateRuntime . '/load.php');
+        require $duplicateRuntime . '/load.php';
+        $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
         mkdir($source, 0700, true);

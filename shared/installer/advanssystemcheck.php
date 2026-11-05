@@ -7,7 +7,7 @@
 
 defined('_JEXEC') or die;
 
-require_once __DIR__ . '/SystemCheck.php';
+require_once __DIR__ . '/load.php';
 
 class JFormFieldAdvanssystemcheck extends \Joomla\CMS\Form\FormField
 {

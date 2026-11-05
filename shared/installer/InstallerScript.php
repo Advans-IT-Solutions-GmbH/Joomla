@@ -9,11 +9,6 @@ namespace Advans\Installer;
 
 defined('_JEXEC') or die;
 
-require_once __DIR__ . '/SystemCheck.php';
-require_once __DIR__ . '/Destinations.php';
-require_once __DIR__ . '/FileGuard.php';
-require_once __DIR__ . '/State.php';
-
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
