@@ -1037,10 +1037,15 @@ class DataIsolationTest
                     $langPlugin->call('customerLanguage', $mailUser) === $tag
                     && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
             }
-            $siteParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_languages');
-            $previousSiteLanguage = $siteParams->get('site', 'en-GB');
             $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
                 . $this->db->quote(json_encode(['language' => 'it-IT'])) . ' WHERE id = ' . $mailUser)->execute();
+            // This CLI suite has no application to populate Joomla's component cache.
+            $components = new \ReflectionProperty(\Joomla\CMS\Component\ComponentHelper::class, 'components');
+            $previousComponents = $components->getValue();
+            $siteParams = new \Joomla\Registry\Registry();
+            $languageComponent = new \Joomla\CMS\Component\ComponentRecord(['option' => 'com_languages', 'enabled' => 1]);
+            $languageComponent->setParams($siteParams);
+            $components->setValue(null, array_replace($previousComponents, ['com_languages' => $languageComponent]));
             try {
                 foreach (['de-DE', 'en-GB', 'fr-FR'] as $siteLanguage) {
                     $siteParams->set('site', $siteLanguage);
@@ -1057,7 +1062,7 @@ class DataIsolationTest
                 $this->test('Unsupported account and site languages use en-GB',
                     $langPlugin->call('customerLanguage', $mailUser) === 'en-GB');
             } finally {
-                $siteParams->set('site', $previousSiteLanguage);
+                $components->setValue(null, $previousComponents);
             }
             $profile = new \Joomla\CMS\User\User();
             $profile->id = $mailUser;
