@@ -1037,6 +1037,28 @@ class DataIsolationTest
                     $langPlugin->call('customerLanguage', $mailUser) === $tag
                     && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
             }
+            $siteParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_languages');
+            $previousSiteLanguage = $siteParams->get('site', 'en-GB');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
+                . $this->db->quote(json_encode(['language' => 'it-IT'])) . ' WHERE id = ' . $mailUser)->execute();
+            try {
+                foreach (['de-DE', 'en-GB', 'fr-FR'] as $siteLanguage) {
+                    $siteParams->set('site', $siteLanguage);
+                    $langPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                        'subject' => $this->guestTestRequest('lang.guest@example.com'),
+                        'user' => null,
+                    ]));
+                    $this->test("$siteLanguage: guest removal uses the configured site language regardless of order language",
+                        (end($langPlugin->reported)[0] ?? '') === $siteLanguage);
+                    $this->test("$siteLanguage: unsupported account language uses the configured site language",
+                        $langPlugin->call('customerLanguage', $mailUser) === $siteLanguage);
+                }
+                $siteParams->set('site', 'it-IT');
+                $this->test('Unsupported account and site languages use en-GB',
+                    $langPlugin->call('customerLanguage', $mailUser) === 'en-GB');
+            } finally {
+                $siteParams->set('site', $previousSiteLanguage);
+            }
             $profile = new \Joomla\CMS\User\User();
             $profile->id = $mailUser;
             $profile->username = $mailAccount->username;

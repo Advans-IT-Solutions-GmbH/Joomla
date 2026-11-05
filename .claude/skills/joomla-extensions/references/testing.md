@@ -270,7 +270,8 @@ and guest account/site preferences, and device notice MIME with published and sh
 templates. Booking-mail regressions also unpublish both localized database candidates while
 English stays published, then check actual de-DE/fr-FR subjects and bodies against shipped defaults.
 Privacy tests every customer-body variant and administrator action in all three
-languages, account/address preference lookup and preservation before account pseudonymisation.
+languages, account/address preference lookup, guest/unsupported-account fallback for each
+configured site locale, and preservation before account pseudonymisation.
 Injected mail-language failures must not stop cleanup, change a successful address deletion into
 a failure, or escape the customer-notice failure result. Disabled administrator notices must not
 load their translations.
