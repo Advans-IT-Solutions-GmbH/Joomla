@@ -21,11 +21,11 @@ try {
     $firstId = (int) $one['booking']['id'];
     $secondId = (int) $two['booking']['id'];
     $otherId = (int) $other['booking']['id'];
-    $db->query("UPDATE {$prefix}appointments_bookings SET custom_fields='{\"12\":\"PRIVATE-ANSWER\"}' WHERE id={$firstId}");
+    $fixture->update($firstId, ['custom_fields' => '{"12":"PRIVATE-ANSWER"}']);
     // The request address is also a guest of another person's booking, next to an address that
     // merely contains it as a substring.
-    $db->query("UPDATE {$prefix}appointments_bookings SET guest_emails='notinvitee@example.test\nInvitee@Example.test\nbystander@example.test',"
-        . " custom_fields='{\"12\":\"OTHER-ANSWER\"}' WHERE id={$otherId}");
+    $fixture->update($otherId, ['guest_emails' => "notinvitee@example.test\nInvitee@Example.test\nbystander@example.test",
+        'custom_fields' => '{"12":"OTHER-ANSWER"}']);
     require __DIR__ . '/appointments-joomla.php';
     $application->bootComponent('com_privacy');
     $plugin = $application->bootPlugin('appointments', 'privacy');
@@ -97,7 +97,7 @@ try {
 
     $unicode = $fixture->booking($event, $day . ' 13:00:00');
     $unicodeId = (int) $unicode['booking']['id'];
-    $db->query("UPDATE {$prefix}appointments_bookings SET invitee_email='müller@example.test' WHERE id={$unicodeId}");
+    $fixture->update($unicodeId, ['invitee_email' => 'müller@example.test']);
     $request->email = 'muller@example.test';
     $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => null]);
     $plugin->onPrivacyExportRequest($export);

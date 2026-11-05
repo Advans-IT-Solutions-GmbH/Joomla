@@ -1,0 +1,5 @@
+# Verified false positives in historical PR commits: Sabre lock-token examples and deterministic test keys.
+828b8267fd21c22982b47dd67f15ca06f1fc18c1:com_appointments/administrator/components/com_appointments/lib/sabre/dav/lib/DAV/Server.php:generic-api-key:1302
+828b8267fd21c22982b47dd67f15ca06f1fc18c1:com_appointments/administrator/components/com_appointments/lib/sabre/dav/lib/DAV/Server.php:generic-api-key:1323
+3d32fb59bb37d375db82903381366b34e43f9375:com_appointments/tests/Unit/Team/AuditChainTest.php:generic-api-key:23
+3d32fb59bb37d375db82903381366b34e43f9375:com_appointments/tests/Unit/Team/LockoutDelayTest.php:generic-api-key:22

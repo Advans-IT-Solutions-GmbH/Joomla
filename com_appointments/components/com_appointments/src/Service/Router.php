@@ -31,7 +31,7 @@ defined('_JEXEC') or die;
  * - StandardRules builds and parses the event type below a list item by its alias.
  * - NomenuRules handles /component/appointments/eventtype/<alias> without a menu item.
  *
- * Only the two menu views are registered. The confirmation page, the signed manage pages and
+ * Only the three menu views are registered. The confirmation page, the signed manage pages and
  * the tasks keep their query string, so a signed link carries its parameters unchanged and the
  * links in e-mails, which are built without a router, keep resolving.
  */
@@ -63,6 +63,9 @@ class Router extends RouterView
         $eventtype = new RouterViewConfiguration('eventtype');
         $eventtype->setKey('id')->setParent($eventtypes);
         $this->registerView($eventtype);
+
+        // «My calendars» of the internet calendars: its menu item, so tasks return to it.
+        $this->registerView(new RouterViewConfiguration('mycalendars'));
 
         parent::__construct($app, $menu);
 

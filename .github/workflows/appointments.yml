@@ -2,6 +2,11 @@ name: Build & Test - Appointments
 
 on:
   workflow_dispatch:
+    inputs:
+      integrated:
+        description: 'Require every team-calendar work package (no PENDING results)'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -132,6 +137,35 @@ jobs:
           cd com_appointments
           composer test:unit
 
+  # The CalDAV libraries in lib/ are generated code: sabre/dav and its
+  # dependencies from the pinned composer.lock, prefixed with php-scoper. This
+  # job regenerates them and fails on any difference, so lib/ is always exactly
+  # what tests/tools/sabre/generate.php produces from the lock files.
+  sabre-lib:
+    name: Bundled sabre/dav
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, xml
+          tools: composer
+      - name: Regenerate lib/ and compare
+        run: |
+          php com_appointments/tests/tools/sabre/generate.php
+          changes="$(git status --porcelain -- com_appointments/administrator/components/com_appointments/lib)"
+          if [ -n "$changes" ]; then
+            echo "lib/ differs from what generate.php produces:"
+            echo "$changes" | head -50
+            exit 1
+          fi
+
   test-j5:
     name: ${{ matrix.name }} (J5)
     runs-on: ubuntu-latest
@@ -181,6 +215,8 @@ jobs:
             script: 'administration'
           - name: '16 - Menu items and routing'
             script: 'menu-routing'
+          - name: '21 - Team calendars'
+            script: 'teamcalendars'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '20 - Uninstall'
@@ -209,6 +245,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -284,6 +323,8 @@ jobs:
             script: 'administration'
           - name: '16 - Menu items and routing'
             script: 'menu-routing'
+          - name: '21 - Team calendars'
+            script: 'teamcalendars'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '20 - Uninstall'
@@ -312,6 +353,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_j6_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -384,6 +428,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_mariadb_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_mariadb_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show database and container versions
         if: always()
         run: |
@@ -411,6 +458,345 @@ jobs:
           cd com_appointments/tests
           docker compose -f docker-compose.mariadb.yml down -v
 
+  # Real CalDAV clients (Python caldav and vdirsyncer, tests/caldav/) against the
+  # internet calendars of the Joomla 6 lane, over HTTPS with the certificate
+  # verified against the test CA: discovery, sync tokens, roles, a booking, a
+  # revoked grant and the clean-up that deletes the client's local copy. Phases
+  # whose work package still ships its stub are reported as PENDING on the
+  # partial integration base only; main and integrated dispatches reject them.
+  caldav-clients:
+    name: CalDAV clients (J6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build
+    env:
+      TEAM_NO_PENDING: ${{ (github.base_ref == 'main' || github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.integrated)) && '1' || '0' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: com_appointments/tests/
+      - name: Start environment (J6)
+        run: |
+          cd com_appointments/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
+          timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          docker exec com_appointments_j6_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec com_appointments_j6_test php -r 'foreach (["curl", "mysqli", "zip"] as $extension) { if (!extension_loaded($extension)) { fwrite(STDERR, "Missing PHP extension: $extension\n"); exit(1); } }'
+      # The shared runner does not forward TEAM_NO_PENDING. Pass it explicitly
+      # inside the container rather than setting an ineffective host-only flag.
+      - name: Require complete team-calendar integration
+        if: env.TEAM_NO_PENDING == '1'
+        shell: bash
+        run: |
+          cd com_appointments/tests
+          mkdir -p test-results
+          docker exec com_appointments_j6_test mkdir -p /var/www/html/tests/scripts
+          docker cp scripts/. com_appointments_j6_test:/var/www/html/tests/scripts/
+          docker exec -e TEAM_NO_PENDING=1 -e TEAM_BASE_URL=https://localhost -e TEST_STRICT_SKIP=1 com_appointments_j6_test \
+            php /var/www/html/tests/scripts/21-teamcalendars.php 2>&1 | tee test-results/teamcalendars-strict.txt
+      - name: Run CalDAV clients
+        shell: bash
+        run: |
+          cd com_appointments/tests
+          mkdir -p test-results
+          echo "TEAM_NO_PENDING=$TEAM_NO_PENDING (0 permits explicit PENDING dependencies, not full support)" >> "$GITHUB_STEP_SUMMARY"
+          bash caldav/run-clients.sh com_appointments_j6_test 2>&1 | tee test-results/caldav-clients-ci.txt
+      - name: Capture environment diagnostics
+        if: always()
+        run: |
+          cd com_appointments/tests
+          mkdir -p test-results
+          docker compose -f docker-compose.joomla6.yml ps -a > test-results/caldav-compose-status.txt 2>&1 || true
+          docker compose -f docker-compose.joomla6.yml logs --no-color > test-results/caldav-compose-logs.txt 2>&1 || true
+          log_dir="$(docker exec com_appointments_j6_test php -r 'require "/var/www/html/configuration.php"; echo (new JConfig())->log_path;' 2>/dev/null || true)"
+          if [ -n "$log_dir" ]; then
+            docker exec com_appointments_j6_test sh -c 'grep -hE "Internet calendar (mail failed: phase=|activation failed: phase )" "$1"/*.php 2>/dev/null | tail -n 50 || true' sh "$log_dir" > test-results/team-mail-diagnostics.txt 2>/dev/null || true
+          else
+            printf '%s\n' 'Joomla log directory unavailable.' > test-results/team-mail-diagnostics.txt
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: j6-caldav-clients-logs
+          path: com_appointments/tests/test-results/*.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: Cleanup
+        if: always()
+        run: |
+          cd com_appointments/tests
+          docker compose -f docker-compose.joomla6.yml down -v
+
+  upgrade-v130:
+    name: Previous release upgrade (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: Joomla 5.4
+            stack: j5
+            container: com_appointments_test
+            compose_file: docker-compose.yml
+          - name: Joomla 6
+            stack: j6
+            container: com_appointments_j6_test
+            compose_file: docker-compose.joomla6.yml
+    env:
+      TEAM_NO_PENDING: ${{ (github.base_ref == 'main' || github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.integrated)) && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: com_appointments/tests/candidate/
+      - name: Hash the exact candidate package
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p com_appointments/tests/test-results
+          : > com_appointments/tests/test-results/upgrade-source.txt
+          hash="$(sha256sum com_appointments/tests/candidate/extension.zip | cut -d ' ' -f 1)"
+          echo "sha256=$hash" >> "$GITHUB_OUTPUT"
+      - name: Resolve the retained v1.3.0 source asset
+        id: source
+        env:
+          CANDIDATE_PACKAGE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p com_appointments/tests/test-results
+          : > com_appointments/tests/test-results/upgrade-source.txt
+          api='https://api.github.com/repos/Advans-IT-Solutions-GmbH/Joomla/releases/tags/appointments-v1.3.0'
+          response="$(mktemp)"
+          status="$(curl --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --output "$response" --write-out '%{http_code}' "$api")"
+
+          if [ "$status" = '404' ]; then
+            {
+              echo "The published v1.3.0 source release has been retired by the repository's latest-release-only policy."
+              echo "This one-time plaintext-booking migration gate is not run after its source asset is removed."
+            } | tee com_appointments/tests/test-results/upgrade-source.txt
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "### Previous-release upgrade" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped: the published v1.3.0 source asset has been retired." >> "$GITHUB_STEP_SUMMARY"
+            rm -f "$response"
+            exit 0
+          fi
+
+          if [ "$status" != '200' ]; then
+            echo "::error::GitHub release API returned HTTP $status while resolving appointments-v1.3.0"
+            rm -f "$response"
+            exit 1
+          fi
+
+          tag="$(jq -r '.tag_name // ""' "$response")"
+          name='com_appointments_1.3.0.zip'
+          url="$(jq -r --arg name "$name" '.assets[]? | select(.name == $name) | .browser_download_url' "$response" | head -n 1)"
+          digest="$(jq -r --arg name "$name" '.assets[]? | select(.name == $name) | .digest // ""' "$response" | head -n 1)"
+          expected='fd546debd9265f2915b1cf9c0ad2cfc219c05c087bc038ea633cd1ffd40ddd3f'
+
+          if [ "$tag" != 'appointments-v1.3.0' ] || [ -z "$url" ] || [ "$digest" != "sha256:$expected" ]; then
+            echo "::error::The v1.3.0 release asset metadata does not match the verified source package."
+            rm -f "$response"
+            exit 1
+          fi
+
+          asset_sha="${digest#sha256:}"
+          {
+            echo "Source tag: $tag"
+            echo "Source asset: $name"
+            echo "Source asset SHA-256: $asset_sha"
+            echo "Candidate PR head SHA: $CANDIDATE_HEAD_SHA"
+            echo "Candidate workflow SHA: $WORKFLOW_SHA"
+            echo "Exact candidate package SHA-256: $CANDIDATE_PACKAGE_SHA256"
+          } | tee com_appointments/tests/test-results/upgrade-source.txt
+          {
+            echo "available=true"
+            echo "tag=$tag"
+            echo "asset_name=$name"
+            echo "asset_url=$url"
+            echo "asset_sha=$asset_sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Previous-release upgrade (${{ matrix.name }})"
+            echo "- Source: \`$tag\` / \`$name\` (SHA-256 \`$asset_sha\`)"
+            echo "- Candidate PR head: \`$CANDIDATE_HEAD_SHA\`"
+            echo "- Candidate workflow SHA: \`$WORKFLOW_SHA\`"
+            echo "- Exact candidate package SHA-256: \`$CANDIDATE_PACKAGE_SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$response"
+      - name: Download and verify the actual previous release package
+        if: steps.source.outputs.available == 'true'
+        env:
+          ASSET_URL: ${{ steps.source.outputs.asset_url }}
+          ASSET_SHA256: ${{ steps.source.outputs.asset_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 \
+            "$ASSET_URL" -o extension.zip
+          printf '%s  %s\n' "$ASSET_SHA256" extension.zip | sha256sum --check
+          cp candidate/extension.zip upgrade-candidate.zip
+          cp extension.zip extension-previous.zip
+      - name: Start Joomla from the previous release package
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+          COMPOSE_FILE: ${{ matrix.compose_file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker compose -f "$COMPOSE_FILE" up -d --build
+          timeout 600 bash -c 'until docker exec "$CONTAINER" test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          docker exec "$CONTAINER" curl -fsS --cacert /etc/ssl/appointments-test/ca.pem \
+            -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec "$CONTAINER" php -r 'foreach (["curl", "mysqli", "zip"] as $extension) { if (!extension_loaded($extension)) { fwrite(STDERR, "Missing PHP extension: $extension\n"); exit(1); } }'
+      - name: Prepare upgrade fixture and scripts
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec "$CONTAINER" mkdir -p /var/www/html/tests/scripts
+          docker cp scripts/. "$CONTAINER:/var/www/html/tests/scripts/"
+          docker cp ../../shared/tests/scripts/shared-test-helpers.php "$CONTAINER:/var/www/html/tests/scripts/"
+          docker cp extension-previous.zip "$CONTAINER:/tmp/extension-previous.zip"
+          docker cp upgrade-candidate.zip "$CONTAINER:/tmp/extension-candidate-reference.zip"
+      - name: Seed data using the actual v1.3.0 schema
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+          PREVIOUS_PACKAGE_SHA256: ${{ steps.source.outputs.asset_sha }}
+          CANDIDATE_PACKAGE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+          PREVIOUS_RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec \
+            -e PREVIOUS_PACKAGE_SHA256="$PREVIOUS_PACKAGE_SHA256" \
+            -e CANDIDATE_PACKAGE_SHA256="$CANDIDATE_PACKAGE_SHA256" \
+            -e PREVIOUS_RELEASE_TAG="$PREVIOUS_RELEASE_TAG" \
+            "$CONTAINER" php /var/www/html/tests/scripts/upgrade-from-v1.3.0.php seed \
+            2>&1 | tee "test-results/upgrade-seed-${{ matrix.stack }}.txt"
+      - name: Update through Joomla with the exact candidate ZIP
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+          CANDIDATE_PACKAGE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec \
+            -e CANDIDATE_PACKAGE=/tmp/extension-candidate-reference.zip \
+            -e CANDIDATE_PACKAGE_SHA256="$CANDIDATE_PACKAGE_SHA256" \
+            "$CONTAINER" php /var/www/html/tests/scripts/upgrade-from-v1.3.0.php update \
+            2>&1 | tee "test-results/upgrade-install-${{ matrix.stack }}.txt"
+      - name: Verify preserved data and the real schema migration
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+          CANDIDATE_PACKAGE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec \
+            -e CANDIDATE_PACKAGE=/tmp/extension-candidate-reference.zip \
+            -e CANDIDATE_PACKAGE_SHA256="$CANDIDATE_PACKAGE_SHA256" \
+            "$CONTAINER" php /var/www/html/tests/scripts/upgrade-from-v1.3.0.php verify \
+            2>&1 | tee "test-results/upgrade-verify-${{ matrix.stack }}.txt"
+      - name: Run booking behavior on the upgraded installation
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec -e TEST_STRICT_SKIP=1 "$CONTAINER" \
+            php /var/www/html/tests/scripts/08-booking.php \
+            2>&1 | tee "test-results/upgrade-booking-${{ matrix.stack }}.txt"
+      - name: Require complete team-calendar integration after upgrade
+        if: steps.source.outputs.available == 'true'
+        env:
+          CONTAINER: ${{ matrix.container }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          docker exec -e TEAM_NO_PENDING="$TEAM_NO_PENDING" -e TEAM_BASE_URL=https://localhost -e TEST_STRICT_SKIP=1 \
+            "$CONTAINER" php /var/www/html/tests/scripts/21-teamcalendars.php \
+            2>&1 | tee "test-results/upgrade-teamcalendars-${{ matrix.stack }}.txt"
+          {
+            echo "Team-calendar strict mode: TEAM_NO_PENDING=$TEAM_NO_PENDING"
+            echo "This post-upgrade suite includes the expired seven-day migration window and the administrator encrypt-now action with per-booking audit assertions."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run real CalDAV clients after upgrade (J6)
+        if: steps.source.outputs.available == 'true' && matrix.stack == 'j6'
+        env:
+          CONTAINER: ${{ matrix.container }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd com_appointments/tests
+          TEAM_NO_PENDING="$TEAM_NO_PENDING" bash caldav/run-clients.sh "$CONTAINER" \
+            2>&1 | tee test-results/upgrade-caldav-clients-j6.txt
+      - name: Capture upgrade container diagnostics
+        if: always() && steps.source.outputs.available == 'true'
+        env:
+          COMPOSE_FILE: ${{ matrix.compose_file }}
+        shell: bash
+        run: |
+          cd com_appointments/tests
+          docker compose -f "$COMPOSE_FILE" ps -a > "test-results/upgrade-compose-status-${{ matrix.stack }}.txt" 2>&1 || true
+          docker compose -f "$COMPOSE_FILE" logs --no-color > "test-results/upgrade-compose-logs-${{ matrix.stack }}.txt" 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: upgrade-v130-${{ matrix.stack }}-logs
+          path: com_appointments/tests/test-results/*.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: Cleanup
+        if: always()
+        env:
+          COMPOSE_FILE: ${{ matrix.compose_file }}
+        run: |
+          cd com_appointments/tests
+          docker compose -f "$COMPOSE_FILE" down -v || true
+
   # Result of this workflow. Deliberately not named "Collect Results": that
   # required check is produced only by collect-results.yml.
   all-jobs:
@@ -421,9 +807,12 @@ jobs:
       - syntax-check
       - language-lint
       - unit-tests
+      - sabre-lib
       - test-j5
       - test-j6
       - test-mariadb
+      - caldav-clients
+      - upgrade-v130
     if: always()
     permissions:
       actions: read
@@ -454,6 +843,7 @@ jobs:
             echo
             echo "Lanes: Joomla 5.4 with MySQL 8, Joomla 6 with MySQL 8, Joomla 6 with MariaDB 10.6."
             echo "The MariaDB lane runs the schema-sensitive suites only."
+            echo "A separate upgrade matrix tests the actual published v1.3.0 package on Joomla 5.4 and 6 while that source asset is retained."
             echo
           } >> "$GITHUB_STEP_SUMMARY"
 

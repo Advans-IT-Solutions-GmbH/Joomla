@@ -27,6 +27,22 @@ class StructureTest
         'appointments_templates',
         'appointments_audit',
         'appointments_ratelimit',
+        'appointments_keyring',
+        'appointments_user_keys',
+        'appointments_calendars',
+        'appointments_calendar_keys',
+        'appointments_calendar_grants',
+        'appointments_calendar_key_wraps',
+        'appointments_calendar_objects',
+        'appointments_calendar_changes',
+        'appointments_calendar_busy',
+        'appointments_devices',
+        'appointments_device_calendars',
+        'appointments_invitations',
+        'appointments_teamlog',
+        'appointments_teamlog_head',
+        'appointments_auth_failures',
+        'appointments_eventtype_calendars',
     ];
 
     public function __construct()
@@ -359,6 +375,7 @@ class StructureTest
             'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
+            'Team calendar migration' => $this->admin . '/sql/updates/mysql/1.4.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',
@@ -688,7 +705,15 @@ class StructureTest
 
             return $found;
         };
+        // Text types since 1.4.0, because the values are stored encrypted.
         $expected = [
+            ['invitee_name', 'text', 'YES', null],
+            ['invitee_first_name', 'text', 'YES', null],
+            ['invitee_last_name', 'text', 'YES', null],
+        ];
+        // What the 1.3.0 migration alone adds to a table of the previous version;
+        // 1.4.0 then turns all three columns into text for encrypted values.
+        $afterNameMigration = [
             ['invitee_name', 'varchar(255)', 'YES', null],
             ['invitee_first_name', 'varchar(255)', 'YES', null],
             ['invitee_last_name', 'varchar(255)', 'YES', null],
@@ -710,7 +735,7 @@ class StructureTest
         $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.3.0.sql');
         $bookings = "{$this->dbPrefix}appointments_upgrade_test_bookings";
 
-        $this->test('Name migration splits existing full names without data loss and keeps anonymised rows empty', function () use ($migration, $bookings, $columns, $expected) {
+        $this->test('Name migration splits existing full names without data loss and keeps anonymised rows empty', function () use ($migration, $bookings, $columns, $afterNameMigration) {
             if ($migration === false) {
                 return false;
             }
@@ -722,6 +747,8 @@ class StructureTest
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN invitee_last_name");
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_utc");
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_version");
+                // CREATE TABLE LIKE copies the current 1.4 schema, so restore the 1.3 full-name type.
+                $this->db->query("ALTER TABLE {$bookings} MODIFY invitee_name VARCHAR(255) DEFAULT NULL");
                 $names = [1 => 'Anna Muster', 2 => '  Anna Maria  von Muster ', 3 => 'Cher', 4 => null, 5 => 'Zoë Ærø'];
                 foreach ($names as $id => $name) {
                     $value = $name === null ? 'NULL' : "'" . $this->db->real_escape_string($name) . "'";
@@ -754,15 +781,26 @@ class StructureTest
                     $consent[] = [$row['Field'], strtolower($row['Type']), $row['Null']];
                 }
                 $unset = (int) $this->db->query("SELECT COUNT(*) AS n FROM {$bookings} WHERE consent_utc IS NOT NULL OR consent_version IS NOT NULL")->fetch_assoc()['n'];
-
-                return $columns($bookings) === $expected && $unset === 0
-                    && $consent === [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']] && $rows === [
+                $expectedRows = [
                     1 => ['Anna Muster', 'Anna', 'Muster'],
                     2 => ['  Anna Maria  von Muster ', 'Anna Maria  von', 'Muster'],
                     3 => ['Cher', 'Cher', ''],
                     4 => [null, null, null],
                     5 => ['Zoë Ærø', 'Zoë', 'Ærø'],
                 ];
+                $actualColumns = $columns($bookings);
+                $expectedConsent = [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']];
+                $passed = $actualColumns === $afterNameMigration && $unset === 0
+                    && $consent === $expectedConsent && $rows === $expectedRows;
+
+                if (!$passed) {
+                    echo '  Name migration diagnostics: columns=' . json_encode($actualColumns, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)
+                        . ', consent=' . json_encode($consent, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)
+                        . ', consent values remaining=' . $unset
+                        . ', rows=' . json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n";
+                }
+
+                return $passed;
             } finally {
                 $this->db->query("DROP TABLE IF EXISTS {$bookings}");
             }

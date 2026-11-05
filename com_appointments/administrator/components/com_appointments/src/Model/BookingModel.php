@@ -43,6 +43,7 @@ class BookingModel extends BaseDatabaseModel
         if (!$item) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
-        return $item;
+        // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
+        return \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($item);
     }
 }

@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Controller;
 
 use Advans\Component\Appointments\Administrator\Service\FeedService;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -32,7 +33,8 @@ class FeedsController extends BaseController
         }
         $scope = $this->input->post->getString('scope', '');
         $id = $this->input->post->getInt('id', 0);
-        if (!in_array($scope, ['event', 'host'], true) || $id < 1) {
+        if (!FeedService::legacyEnabled(ComponentHelper::getParams('com_appointments'))
+            || !in_array($scope, ['event', 'host'], true) || $id < 1) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND'), 404);
         }
         if ($scope === 'event' && !$user->authorise('core.edit', 'com_appointments.eventtype.' . $id)) {

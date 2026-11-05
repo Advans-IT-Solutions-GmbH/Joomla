@@ -121,14 +121,17 @@ class GuestController extends BaseController
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['b.id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.guest_emails', 'b.modified_utc']))
+        $query->select($db->quoteName(array_merge(['b.id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc'],
+            \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->where($db->quoteName('b.id') . ' = ' . $id)
             ->where($db->quoteName('b.anonymised_utc') . ' IS NULL');
+        $row = $db->setQuery($query)->loadAssoc() ?: null;
 
-        return $db->setQuery($query)->loadAssoc() ?: null;
+        // The guest list is encrypted at rest; one that cannot be decrypted matches no link.
+        return $row === null ? null : \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openLenient($row);
     }
 
     private function links(): SignedLink

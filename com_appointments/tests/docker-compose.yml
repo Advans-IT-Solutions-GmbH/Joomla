@@ -6,6 +6,7 @@ services:
     container_name: com_appointments_test
     ports:
       - "8080:80"
+      - "8443:443"
     environment:
       JOOMLA_DB_HOST: mysql
       JOOMLA_DB_USER: joomla
@@ -29,6 +30,7 @@ services:
 
   mysql:
     image: mysql:8.0
+    command: --log-bin-trust-function-creators=1
     container_name: com_appointments_test_mysql
     environment:
       MYSQL_ROOT_PASSWORD: root_pass

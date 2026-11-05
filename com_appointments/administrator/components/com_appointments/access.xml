@@ -8,6 +8,7 @@
         <action name="core.delete" title="JACTION_DELETE" />
         <action name="core.edit" title="JACTION_EDIT" />
         <action name="core.edit.state" title="JACTION_EDITSTATE" />
+        <action name="appointments.team.external" title="COM_APPOINTMENTS_ACTION_TEAM_EXTERNAL" description="COM_APPOINTMENTS_ACTION_TEAM_EXTERNAL_DESC" />
     </section>
     <section name="eventtype">
         <action name="core.delete" title="JACTION_DELETE" />

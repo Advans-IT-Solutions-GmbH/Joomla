@@ -18,9 +18,35 @@ final class ConfigurationTest extends TestCase
         self::assertFalse(isset($config->fields));
 
         foreach (['erase_mode' => 'anonymise', 'retention_days' => '365', 'audit_retention_years' => '3',
-            'conference_provider' => 'none', 'conference_allow_outbound' => '0', 'reminder_offsets' => '1440,60', 'max_guests' => '10'] as $name => $default) {
+            'conference_provider' => 'none', 'conference_allow_outbound' => '0', 'reminder_offsets' => '1440,60', 'max_guests' => '10',
+            'teamcal_enabled' => '0', 'team_cleanup_days' => '14'] as $name => $default) {
             self::assertSame($default, (string) $config->xpath('//field[@name="' . $name . '"]')[0]['default']);
         }
+    }
+
+    public function testInternetCalendarOptionsAreOffAndFilteredByDefault(): void
+    {
+        $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
+        $field = static fn (string $name) => $config->xpath('//fieldset[@name="teamcalendars"]/field[@name="' . $name . '"]')[0] ?? null;
+
+        self::assertSame('0', (string) $field('teamcal_enabled')['default']);
+        self::assertSame('1', (string) $field('team_create_groups')['default']);
+        self::assertSame(['intarray', 'true'], [(string) $field('team_groups')['filter'], (string) $field('team_groups')['multiple']]);
+        self::assertSame('integer', (string) $field('external_group')['filter']);
+        self::assertSame('integer', (string) $field('team_viewlevel')['filter']);
+    }
+
+    public function testCalendarFormOffersExactlyTheFieldsTheServiceAccepts(): void
+    {
+        $form = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/forms/calendar.xml');
+        $names = array_map(static fn ($field): string => (string) $field['name'], $form->xpath('//field'));
+        sort($names);
+
+        // The owner is chosen in the layout at creation only; nothing else
+        // (state, address, key version, sync token) is ever a form field.
+        self::assertSame(['allow_external', 'blocks_availability', 'colour', 'description', 'retention_days', 'title'], $names);
+        $retention = $form->xpath('//field[@name="retention_days"]')[0];
+        self::assertSame(['0', '65535'], [(string) $retention['min'], (string) $retention['max']]);
     }
 
     public function testGuestMaximumOptionMatchesTheServerSideBounds(): void
@@ -35,7 +61,7 @@ final class ConfigurationTest extends TestCase
         $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
         $rule = new RangeRule();
         $fields = $config->xpath('//field[@validate="range"]');
-        self::assertCount(6, $fields);
+        self::assertCount(7, $fields);
 
         foreach ($fields as $field) {
             self::assertSame('raw', (string) $field['filter']);

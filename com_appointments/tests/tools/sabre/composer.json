@@ -1,0 +1,23 @@
+{
+    "name": "advans/com-appointments-sabre-bundle",
+    "description": "Source of the bundled, namespace-prefixed sabre/dav copy in administrator/components/com_appointments/lib. Not shipped; generate.php builds lib/ from it.",
+    "type": "project",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": "^8.1",
+        "sabre/dav": "4.7.1",
+        "sabre/event": "^5.1",
+        "sabre/http": "^5.1",
+        "sabre/uri": "^2.3",
+        "sabre/vobject": "^4.5",
+        "sabre/xml": "^2.2",
+        "psr/log": "^3.0"
+    },
+    "config": {
+        "platform": {
+            "php": "8.1.0"
+        },
+        "sort-packages": true,
+        "optimize-autoloader": false
+    }
+}

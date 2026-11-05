@@ -126,6 +126,9 @@ class EventtypeTable extends Table
             return false;
         }
 
+        // Target internet calendar: a positive id or none (NULL). The model checks the host's access.
+        $this->calendar_id = (int) ($this->calendar_id ?? 0) > 0 ? (int) $this->calendar_id : null;
+
         if (!$this->id) {
             $this->feed_token = bin2hex(random_bytes(32));
         }

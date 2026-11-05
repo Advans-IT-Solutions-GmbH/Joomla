@@ -270,6 +270,12 @@ Short-lived counters for the public endpoints.
 Unique `(bucket, window_utc)`. The retention task deletes rows older than one day. The IP is
 hashed with a key from `KeyProvider`, so the table is not a log of visitors.
 
+## Internet calendars
+
+The tables of the internet calendars (calendars, grants, keys, devices, invitations, objects, log) and
+`#__appointments_eventtypes.calendar_id` are specified in `references/team-calendars.md`, section 4,
+and in the header comments of the install file.
+
 ## Signing keys
 
 `KeyProvider` derives one key per purpose from the **Joomla site secret** of the installation:

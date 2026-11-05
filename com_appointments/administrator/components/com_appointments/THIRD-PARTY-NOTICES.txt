@@ -1,0 +1,38 @@
+Third-party notices for com_appointments
+========================================
+
+This file lists third-party code shipped with the component, with its source,
+version and licence. Each listed licence is compatible with the component's
+GPL-3.0-or-later. Upstream copyright notices are kept unchanged in the files.
+
+CalDAV libraries
+----------------
+
+Folder: administrator/components/com_appointments/lib/
+
+The CalDAV server of the internet calendars uses sabre/dav and its
+dependencies. They are bundled with every PHP symbol moved below the namespace
+Advans\Component\Appointments\Vendor\ (php-scoper), so the copy never collides
+with another extension that ships the same libraries. Apart from that prefix,
+Joomla's guard against a direct call (defined('_JEXEC') or die) at the top of
+each file, and the omission of parts the component never loads (the SQL storage backends,
+CardDAV, the HTML browser plugin, the file system nodes and the command line
+tool), the code is the unchanged upstream release. Each library folder holds
+the upstream licence text in LICENSE. tests/tools/sabre/ in the source
+repository regenerates the folder from the pinned versions below.
+
+| Library       | Version | Licence      | Source                               | Folder             |
+|---------------|---------|--------------|--------------------------------------|--------------------|
+| sabre/dav     | 4.7.1   | BSD-3-Clause | https://github.com/sabre-io/dav      | lib/sabre/dav/     |
+| sabre/event   | 5.1.9   | BSD-3-Clause | https://github.com/sabre-io/event    | lib/sabre/event/   |
+| sabre/http    | 5.1.13  | BSD-3-Clause | https://github.com/sabre-io/http     | lib/sabre/http/    |
+| sabre/uri     | 2.3.4   | BSD-3-Clause | https://github.com/sabre-io/uri      | lib/sabre/uri/     |
+| sabre/vobject | 4.6.1   | BSD-3-Clause | https://github.com/sabre-io/vobject  | lib/sabre/vobject/ |
+| sabre/xml     | 2.2.11  | BSD-3-Clause | https://github.com/sabre-io/xml      | lib/sabre/xml/     |
+| psr/log       | 3.0.2   | MIT          | https://github.com/php-fig/log       | lib/psr/log/       |
+
+Copyright: sabre/dav (C) 2007-2016, sabre/event (C) 2013-2016, sabre/http
+(C) 2009-2017, sabre/uri (C) 2014-2019, sabre/vobject (C) 2011-2016 and
+sabre/xml (C) 2009-2015 fruux GmbH (https://fruux.com/); psr/log (c) 2012 PHP
+Framework Interoperability Group. The full licence texts are in the LICENSE
+file of each library folder.

@@ -8,17 +8,35 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\FeedCalendar;
 use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Joomla\Database\DatabaseInterface;
+use Joomla\Registry\Registry;
 
 defined('_JEXEC') or die;
 
+/**
+ * The token feeds (deprecated since 1.4.0, removed in 2.0.0): a secret address
+ * per event type and per host. They are replaced by the internet calendars,
+ * which need a sign-in. Option `legacy_feeds` switches them; while it is off,
+ * no feed is served, listed or rotated. The single-booking export is not a
+ * token feed and stays.
+ */
 final class FeedService
 {
     public function __construct(private DatabaseInterface $db)
     {
+    }
+
+    /**
+     * Whether the token feeds are switched on. A missing value counts as off:
+     * the installer writes the option on installation and update.
+     */
+    public static function legacyEnabled(Registry $params): bool
+    {
+        return (string) $params->get('legacy_feeds', '0') === '1';
     }
 
     /** @return array{body: string, etag: string, filename: string}|null */
@@ -151,6 +169,7 @@ final class FeedService
         $db = $this->db;
         $query = $this->bookingQuery()->where($db->quoteName('b.id') . ' = ' . $id);
         $row = $db->setQuery($query)->loadAssoc();
+        $row = $row ? $this->open($row) : null;
         if (!$row) {
             throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND', 404);
         }
@@ -214,7 +233,7 @@ final class FeedService
                 . $db->quoteName('b.modified_utc') . ' >= ' . $db->quote($now->modify('-30 days')->format('Y-m-d H:i:s')) . '))');
         $rows = $db->setQuery($query)->loadAssocList();
         $entries = [];
-        foreach ($rows as $row) {
+        foreach (array_map([$this, 'open'], $rows) as $row) {
             if ($row['start_utc'] >= $horizons[$row['eventtype_id']]) {
                 continue;
             }
@@ -226,12 +245,18 @@ final class FeedService
         return $entries;
     }
 
+    /** Personal fields are encrypted at rest; one that cannot be decrypted is left out of the entry. */
+    private function open(array $row): array
+    {
+        return BookingData::fromApplication()->openLenient($row);
+    }
+
     private function bookingQuery()
     {
         $db = $this->db;
 
-        return $this->query()->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.uid', 'b.sequence', 'b.state',
-            'b.start_utc', 'b.end_utc', 'b.modified_utc', 'b.invitee_name', 'b.invitee_email', 'b.guest_emails', 'b.conference_url']))
+        return $this->query()->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.sequence', 'b.state',
+            'b.start_utc', 'b.end_utc', 'b.modified_utc'], BookingData::readColumns('b'))))
             ->from($db->quoteName('#__appointments_bookings', 'b'));
     }
 

@@ -59,6 +59,8 @@ class ManageModel extends BaseDatabaseModel
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->where($db->quoteName('b.id') . ' = ' . $id);
         $booking = $db->setQuery($query)->loadObject();
+        // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
+        $booking = $booking ? \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($booking) : null;
 
         if (!$booking || !$this->links()->verify($id, $this->action(), $booking->modified_utc, $this->signature())
             || $booking->anonymised_utc !== null) {

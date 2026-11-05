@@ -83,6 +83,54 @@ is engine independent and already covered.
 No J2Commerce is involved, so no `j2commerce6.zip` is needed. Follow the shape of
 `com_dmarcreports`, which is also J2Commerce-free and has both lanes.
 
+**HTTPS in every lane.** CalDAV answers over HTTPS only, so both Dockerfiles run
+`tests/caldav/tls/setup-tls.sh` at build time: a throw-away test CA signs a server certificate for
+`localhost`, `joomla` (the compose service name) and `127.0.0.1`, and Apache serves the site on
+port 443 next to the unchanged port 80. The CA is at `/etc/ssl/appointments-test/ca.pem` in the
+image and in the image's system trust store. The images set `TEAM_BASE_URL=https://localhost`,
+which `21-teamcalendars.php` reads; every other suite keeps using `http://localhost`. Host ports:
+8443 (J5), 8444 (J6), 8445 (MariaDB).
+
+Certificates are verified, never switched off: the workflow's `curl -f --cacert` probe right after
+each container is ready, so a broken TLS set-up fails before any suite runs, and `TeamSuite::http()`
+in `21-teamcalendars.php`, which sets `CURLOPT_CAINFO` to `ca.pem`. A client outside the container
+verifies against `ca.pem` too (copy it out with `docker cp`).
+
+**Real CalDAV clients** (job `caldav-clients`, J6 lane): `tests/caldav/run-clients.sh` builds a
+client container (`tests/caldav/Dockerfile`, pinned Python `caldav` and `vdirsyncer`) on the compose
+network, which reaches the site as `https://joomla` and verifies the certificate against `ca.pem`.
+`tests/caldav/fixture.php` prepares and changes the server between the phases of
+`tests/caldav/clients.py` through the component's own services: seed, discovery, sync, roles,
+vdirsyncer, booking, revocation and the three clean-up phases. Automated assertions cover real
+initial and incremental CalDAV sync with `disable_fallback=True`, preservation of all-day and
+recurring events, and vdirsyncer create/change/delete in both directions. Negative assertions
+cover anonymous and mismatched credentials, case-insensitive names, MFA removal/restoration,
+and stale DELETE rejection with contents retained. Sync tombstones remove local entries during
+clean-up, booking cancellation removes the local event, and the final lockout assertion requires
+HTTP 429 with `Retry-After`. Clean-up uses independent devices for the sync tombstones, empty
+collection listing, vdirsyncer's deletion guard and explicitly forced local deletion: fetching the
+empty collection already advances that device to hidden, and listing its hidden home revokes it.
+A separate idle device checks both Scheduler timeout transitions without consuming those deliveries.
+These are automated assertions, not a claim that end-to-end execution
+succeeded on a partial branch. Phases whose work package still ships its stub print PENDING, as
+`TeamSuite::pending()` does (a failure with `TEAM_NO_PENDING=1`).
+The job also verifies the Joomla runtime's required PHP extensions before starting the clients.
+Its output and compose diagnostics are uploaded even on failure; Bash's pipeline failure handling
+keeps a failed runner from being hidden by `tee`.
+
+On PRs to `main`, pushes to `main`, and integrated manual dispatches, the client job sets
+`TEAM_NO_PENDING=1` and first runs `21-teamcalendars.php` with that flag explicitly passed through
+`docker exec`. The shared test runner does not forward this flag. Any unfinished work package
+therefore fails the integrated gate, rather than producing a misleading success.
+Manual dispatches on a partial branch retain explicit PENDING dependencies by default;
+that lane is not evidence of complete calendar-client support. Select `integrated: true`
+when dispatching an assembled integration branch to require the complete gate. Dispatches on
+`main` are always strict, regardless of that input. The run summary records which mode ran.
+
+Locally, with the Joomla 6 stack running: `bash caldav/run-clients.sh` from `tests/`.
+Use `TEAM_NO_PENDING=1 bash caldav/run-clients.sh` for the integrated client gate; successful static
+checks alone do not prove that either real client ran.
+
 ```
 com_appointments/tests/scripts/
 ├── 01-installation.php      # tables created, task plugin registered, both Scheduler tasks created once (never re-enabled), no signing secret stored
@@ -102,7 +150,9 @@ com_appointments/tests/scripts/
 ├── 14-privacy.php           # typed Joomla events, Unicode ownership, guest export/removal and legal blocking
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 ├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
-└── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
+├── 21-teamcalendars.php     # internet calendars: one runner, one part file team-<letter>-*.php per work package
+├── 20-uninstall.php         # final installed-suite run: tables dropped, task plugin removed, no orphan rows
+└── upgrade-from-v1.3.0.php  # separate CI-only published v1.3.0 upgrade fixture
 ```
 
 Build the package once, then run either lane. `tests/test.env` names the Joomla 5 container, so the
@@ -200,7 +250,7 @@ Three new files, mirroring the DMARC set:
 
 | File | Trigger | Purpose |
 |---|---|---|
-| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test, both lanes in the matrix |
+| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test, both lanes in the matrix and real CalDAV clients on J6 |
 | `.github/workflows/release-appointments.yml` | `workflow_dispatch` | Stage 1: bump and open the release pull request |
 | `.github/workflows/publish-appointments.yml` | release pull request merged | Stage 2: package, tag, GitHub Release |
 
@@ -213,8 +263,24 @@ Tag prefix: `appointments-v`.
 runs. `shared-path-coverage.yml` fails if a file under `shared/` is matched by no workflow, so check
 it after adding the component.
 
+The `upgrade-v130` matrix starts isolated Joomla 5.4 and 6 installations from the actual published
+`appointments-v1.3.0` ZIP, verifies its asset digest, seeds representative 1.3.0 schedules,
+event types and plaintext bookings, then installs the exact candidate ZIP through Joomla's CLI.
+It checks the 1.4.0 schema migration and legacy-feed compatibility, then verifies that the same
+plaintext bookings remain readable during the authenticated seven-day migration window. The
+fixture expires that token and uses the authenticated administrator action on those bookings,
+requiring `v2:` ciphertext and exactly one audit row per booking. The upgraded installations also
+run the booking suite and strict team-calendar suite, with real CalDAV clients on Joomla 6.
+The release workflow intentionally retires older assets, so this transition-specific job reports
+an explicit skip after the v1.3.0 source asset is removed.
+
 Concurrency: cancel a superseded run of the same branch or pull request, never on `main`, never for
 `workflow_dispatch`, never in the release or publish workflows.
 
 The required check on a pull request is `Collect Results` alone. After re-running a failed component
 workflow, re-run `Collect Results` too.
+This component workflow, the collector and the other repository-wide PR workflows target `main`;
+they do not automatically run for the partial base `feat/appointments-teamkalender`. A manual
+dispatch is separate execution evidence, not proof that the PR-triggered required gate ran.
+An empty `statusCheckRollup` is never a successful gate. Preserve the partial PR base and use a
+manual dispatch; do not retarget the PR or weaken branch protections to obtain checks.

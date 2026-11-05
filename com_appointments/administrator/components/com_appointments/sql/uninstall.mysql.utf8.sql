@@ -7,6 +7,22 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
 
+DROP TABLE IF EXISTS `#__appointments_eventtype_calendars`;
+DROP TABLE IF EXISTS `#__appointments_auth_failures`;
+DROP TABLE IF EXISTS `#__appointments_teamlog_head`;
+DROP TABLE IF EXISTS `#__appointments_teamlog`;
+DROP TABLE IF EXISTS `#__appointments_invitations`;
+DROP TABLE IF EXISTS `#__appointments_device_calendars`;
+DROP TABLE IF EXISTS `#__appointments_devices`;
+DROP TABLE IF EXISTS `#__appointments_calendar_busy`;
+DROP TABLE IF EXISTS `#__appointments_calendar_changes`;
+DROP TABLE IF EXISTS `#__appointments_calendar_objects`;
+DROP TABLE IF EXISTS `#__appointments_calendar_key_wraps`;
+DROP TABLE IF EXISTS `#__appointments_calendar_grants`;
+DROP TABLE IF EXISTS `#__appointments_calendar_keys`;
+DROP TABLE IF EXISTS `#__appointments_calendars`;
+DROP TABLE IF EXISTS `#__appointments_user_keys`;
+DROP TABLE IF EXISTS `#__appointments_keyring`;
 DROP TABLE IF EXISTS `#__appointments_ratelimit`;
 DROP TABLE IF EXISTS `#__appointments_audit`;
 DROP TABLE IF EXISTS `#__appointments_templates`;

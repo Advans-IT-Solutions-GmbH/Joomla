@@ -7,6 +7,7 @@ $helper = '/var/www/html/administrator/components/com_appointments/src/Helper/';
 require_once $helper . 'KeyProvider.php';
 require_once $helper . 'UtcTimestamp.php';
 require_once $helper . 'SignedLink.php';
+require_once __DIR__ . '/appointments-bookingdata.php';
 
 final class AppointmentsFixture
 {
@@ -53,7 +54,7 @@ final class AppointmentsFixture
         sleep(2);
         $html = $browser->request($path, $form);
         $time = $this->db->real_escape_string($start);
-        $booking = $this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}' AND state IN (0,1)")->fetch_assoc();
+        $booking = appointments_open_booking($this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}' AND state IN (0,1)")->fetch_assoc());
         if (!$booking || $browser->status !== 200 || preg_match('/Appointment (?:received|confirmed)/', $html) !== 1) {
             throw new RuntimeException('The fixture HTTP booking did not succeed.');
         }
@@ -62,6 +63,25 @@ final class AppointmentsFixture
     }
 
     public function row(int $id): ?array
+    {
+        // Personal fields opened; ->stored() returns the row as it is in the database.
+        return appointments_open_booking($this->stored($id));
+    }
+
+    /** Change stored fields of a booking the way the application stores them (personal fields sealed). */
+    public function update(int $id, array $fields): void
+    {
+        $stored = $this->stored($id);
+        $set = [];
+
+        foreach (appointments_seal_booking($stored, $fields) as $key => $value) {
+            $set[] = '`' . $key . '`=' . ($value === null ? 'NULL' : "'" . $this->db->real_escape_string((string) $value) . "'");
+        }
+
+        $this->db->query("UPDATE {$this->prefix}appointments_bookings SET " . implode(',', $set) . " WHERE id={$id}");
+    }
+
+    public function stored(int $id): ?array
     {
         return $this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE id={$id}")->fetch_assoc();
     }

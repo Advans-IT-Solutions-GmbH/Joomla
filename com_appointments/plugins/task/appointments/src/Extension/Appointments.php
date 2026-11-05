@@ -9,6 +9,7 @@
 namespace Advans\Plugin\Task\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Service\SchedulerService;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Scheduler\Administrator\Event\ExecuteTaskEvent;
@@ -38,6 +39,23 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             'form' => 'batch',
             'method' => 'retention',
         ],
+        // Internet calendars. Each does nothing while they are switched off.
+        'plg_task_appointments.teamcleanup' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMCLEANUP',
+            'method' => 'teamCleanup',
+        ],
+        'plg_task_appointments.teamlog' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMLOG',
+            'method' => 'teamLog',
+        ],
+        'plg_task_appointments.teaminvitations' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMINVITATIONS',
+            'method' => 'teamInvitations',
+        ],
+        'plg_task_appointments.teamretention' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_TEAMRETENTION',
+            'method' => 'teamRetention',
+        ],
     ];
 
     public static function getSubscribedEvents(): array
@@ -57,6 +75,140 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     protected function retention(ExecuteTaskEvent $event): int
     {
         return $this->execute('retention', $event);
+    }
+
+    /**
+     * Advance the clean-up of blocked devices by its timeouts and delete
+     * lock-out counters without a failure for 24 hours.
+     */
+    protected function teamCleanup(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamcleanup', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'devices_advanced' => $services->cleanup()->advance($now),
+            'counters_deleted' => $services->lockout()->purge($now),
+        ]);
+    }
+
+    /**
+     * Prune log rows older than twelve months; the chain stays verifiable.
+     */
+    protected function teamLog(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamlog', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'rows_pruned' => $services->audit()->prune($now),
+        ]);
+    }
+
+    /**
+     * Close expired invitations of external users and clear their addresses.
+     */
+    protected function teamInvitations(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teaminvitations', static fn (TeamServices $services, \DateTimeImmutable $now): array => [
+            'invitations_closed' => $services->invitations()->purgeExpired($now),
+        ]);
+    }
+
+    /**
+     * Retention per calendar: delete the entries that ended longer ago than the
+     * calendar's `retention_days`; calendars with 0 keep everything. Also,
+     * whether the internet calendars are on or off: remove calendar copies of
+     * cancelled, anonymised or deleted bookings, and encrypt booking rows that
+     * are still in clear (once the booking record class exists).
+     */
+    protected function teamRetention(ExecuteTaskEvent $event): int
+    {
+        return $this->executeTeam('teamretention', static function (TeamServices $services, \DateTimeImmutable $now): array {
+            $result = self::bookingUpkeep($services);
+
+            if (!$services->enabled()) {
+                return $result;
+            }
+
+            $db = $services->db();
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $calendars = $db->setQuery($query->select($db->quoteName(['id', 'retention_days']))
+                ->from($db->quoteName('#__appointments_calendars'))
+                ->where($db->quoteName('retention_days') . ' > 0')
+                ->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+            $deleted = 0;
+
+            foreach ($calendars as $calendar) {
+                // The retention is taken from the calendar service, which checks the
+                // row MAC: a value written into the database alone deletes nothing.
+                $verified = $services->calendars()->get((int) $calendar['id']);
+                $days = $verified !== null ? (int) ($verified->retention_days ?? 0) : 0;
+
+                if ($days > 0) {
+                    $deleted += $services->objects()->deleteEndedBefore((int) $calendar['id'], $now->modify('-' . $days . ' days'));
+                }
+            }
+
+            return $result + ['calendars' => \count($calendars), 'entries_deleted' => $deleted];
+        }, true);
+    }
+
+    /**
+     * Work that needs no key and runs with the internet calendars switched off too.
+     *
+     * @return  array<string, int>
+     */
+    private static function bookingUpkeep(TeamServices $services): array
+    {
+        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)];
+        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (class_exists($records) && method_exists($records, 'resume')) {
+            // The booking record class resumes its own migration within the time given.
+            $result['bookings_encrypted'] = (int) $records::resume($services->db(), $services->keyProvider(), 20);
+        } elseif (class_exists($records) && method_exists($records, 'migrate')) {
+            $encrypted = 0;
+
+            // Batches of 200 until nothing is left, within 20 seconds per run.
+            $until = microtime(true) + 20;
+
+            while (microtime(true) < $until) {
+                $done = (int) $records::migrate($services->db(), $services->keyProvider(), 200);
+                $encrypted += $done;
+
+                if ($done === 0) {
+                    break;
+                }
+            }
+
+            $result['bookings_encrypted'] = $encrypted;
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param   callable(TeamServices, \DateTimeImmutable): array<string, int>  $routine
+     * @param   bool  $alsoWhenOff  The routine decides itself what runs while the internet calendars are off.
+     */
+    private function executeTeam(string $name, callable $routine, bool $alsoWhenOff = false): int
+    {
+        try {
+            $this->getApplication()->bootComponent('com_appointments');
+            $services = TeamServices::fromApplication();
+
+            if (!$alsoWhenOff && !$services->enabled()) {
+                $this->logTask('Appointments ' . $name . ': internet calendars are switched off, nothing to do.');
+
+                return Status::OK;
+            }
+
+            $result = $routine($services, $services->now());
+            $this->logTask('Appointments ' . $name . ': ' . json_encode($result, JSON_THROW_ON_ERROR));
+
+            return Status::OK;
+        } catch (\Throwable $e) {
+            // Counts only; an exception text could name a user or a value.
+            $this->logTask('The appointments ' . $name . ' task failed. ' . get_class($e) . ', code ' . (int) $e->getCode()
+                . ', ' . basename($e->getFile()) . ':' . $e->getLine(), 'error');
+
+            return Status::KNOCKOUT;
+        }
     }
 
     private function execute(string $method, ExecuteTaskEvent $event): int

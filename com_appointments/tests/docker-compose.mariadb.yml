@@ -12,6 +12,7 @@ services:
     container_name: com_appointments_mariadb_test
     ports:
       - "8082:80"
+      - "8445:443"
     environment:
       JOOMLA_DB_HOST: mysql
       JOOMLA_DB_USER: joomla
@@ -37,6 +38,7 @@ services:
   # JOOMLA_DB_HOST above need no change; only the image behind it differs.
   mysql:
     image: mariadb:10.6
+    command: --log-bin-trust-function-creators=1
     container_name: com_appointments_mariadb_test_mysql
     environment:
       MARIADB_ROOT_PASSWORD: root_pass

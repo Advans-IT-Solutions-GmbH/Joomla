@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Service\HostStore;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Advans\Component\Appointments\Administrator\Helper\Conference\FixedRoomProvider;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceException;
 use Joomla\CMS\Factory;
@@ -28,9 +29,183 @@ class EventtypeModel extends AdminModel
             if (!is_array($item->conference_params)) {
                 throw new \RuntimeException('The event conferencing settings are invalid.');
             }
+            $item->busy_calendars = (int) $item->id > 0 ? $this->busyCalendars((int) $item->id) : [];
         }
 
         return $item;
+    }
+
+    /** @return int[] Further busy calendars of an event type. */
+    private function busyCalendars(int $id): array
+    {
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('calendar_id'))->from($db->quoteName('#__appointments_eventtype_calendars'))
+            ->where($db->quoteName('eventtype_id') . ' = ' . $id)->order($db->quoteName('calendar_id'));
+
+        return array_map('intval', $db->setQuery($query)->loadColumn());
+    }
+
+    private function teamEnabled(): bool
+    {
+        try {
+            return TeamServices::fromApplication()->enabled();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Internet calendars of the event type, checked against the host's access:
+     * the target calendar must be one the host can write, a further busy
+     * calendar one the host has any effective access to. A stored value the host
+     * no longer reaches may stay unchanged (the booking page ignores it while
+     * the access is missing) but is never accepted as a new value or for a new
+     * host. Calendar ids that are not offered are refused, so a forged form
+     * cannot link a calendar the host may not see.
+     *
+     * @return int[]|null The further busy calendars to store, or null to leave them as they are.
+     *
+     * @throws \DomainException When a calendar is not allowed.
+     */
+    private function calendarLinks(array &$data, int $id, int $oldHost, int $newHost): ?array
+    {
+        if (!$this->teamEnabled()) {
+            unset($data['calendar_id'], $data['busy_calendars']);
+
+            return null;
+        }
+
+        $target = max(0, (int) ($data['calendar_id'] ?? 0));
+        $busy = array_values(array_unique(array_filter(array_map('intval', (array) ($data['busy_calendars'] ?? [])),
+            static fn (int $calendar): bool => $calendar > 0 && $calendar !== $target)));
+        unset($data['busy_calendars']);
+
+        if (count($busy) > 20) {
+            throw new \DomainException('Too many busy calendars.');
+        }
+
+        $storedTarget = 0;
+        $storedBusy = [];
+
+        if ($id > 0) {
+            $db = $this->getDatabase();
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('calendar_id'))->from($db->quoteName('#__appointments_eventtypes'))
+                ->where($db->quoteName('id') . ' = ' . $id);
+            $storedTarget = (int) $db->setQuery($query)->loadResult();
+            $storedBusy = $this->busyCalendars($id);
+        }
+
+        // Values outside the reachable set may only stay as the unchanged, complete set:
+        // removing some would let an editor without access isolate one calendar's busy times.
+        $sortedBusy = $busy;
+        $sortedStored = $storedBusy;
+        sort($sortedBusy);
+        sort($sortedStored);
+        $keep = $id > 0 && $oldHost === $newHost && $target === $storedTarget && $sortedBusy === $sortedStored;
+        [$visible, $writable, , $unknown] = self::reachable($newHost, (int) Factory::getApplication()->getIdentity()->id);
+
+        if ($unknown && !$keep) {
+            throw new \DomainException('Access to the calendars cannot be established.');
+        }
+
+        if ($target > 0 && !isset($writable[$target]) && !($keep && $target === $storedTarget)) {
+            throw new \DomainException('The target calendar is not writable for the host.');
+        }
+
+        foreach ($busy as $calendar) {
+            if (!isset($visible[$calendar]) && !($keep && in_array($calendar, $storedBusy, true))) {
+                throw new \DomainException('A busy calendar is not visible to the host.');
+            }
+        }
+
+        // Removing a link changes the public free times too: comparing the page before and after
+        // would show the removed calendar's busy times. Only who reaches that calendar removes it.
+        $removed = array_diff(array_filter(array_merge($storedBusy, [$storedTarget])), array_merge($busy, [$target]));
+        $before = $removed === [] || $oldHost < 1 ? [[], [], [], false] : self::reachable($oldHost, (int) Factory::getApplication()->getIdentity()->id);
+
+        foreach ($removed as $calendar) {
+            // Without the grant service nobody can tell who reaches the calendar: refuse.
+            if ($before[3] || isset($before[2][(int) $calendar])) {
+                throw new \DomainException('A linked calendar the editor cannot reach was removed.');
+            }
+        }
+
+        // 0 is stored as NULL by the table; null itself would not be bound.
+        $data['calendar_id'] = $target;
+
+        return $busy;
+    }
+
+    /**
+     * Calendars that may be linked to an event type of `$host` by `$actor`: both
+     * must have an effective access (the target calendar: both can write). So
+     * nobody publishes the free times of a calendar they may not see
+     * themselves, and nobody links a calendar the host may not see. A user
+     * without a grant (also a Super User) links nothing until a manager grants.
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, true>, 3: bool} Visible and writable calendars
+     *               (id => title), the calendars the host reaches but the actor does not, and whether the lookup failed.
+     */
+    public static function reachable(int $host, int $actor): array
+    {
+        $visible = [];
+        $writable = [];
+        $hidden = [];
+        $failed = false;
+
+        if ($host < 1 || $actor < 1) {
+            return [$visible, $writable, $hidden, $failed];
+        }
+
+        try {
+            $grants = TeamServices::fromApplication()->grants();
+            $index = static function (array $accesses): array {
+                $byId = [];
+
+                foreach ($accesses as $access) {
+                    $byId[$access->calendarId] = $access;
+                }
+
+                return $byId;
+            };
+            $hostAccess = $index($grants->calendarsFor($host));
+            $actorAccess = $actor === $host ? $hostAccess : $index($grants->calendarsFor($actor));
+
+            foreach ($hostAccess as $id => $access) {
+                if (!isset($actorAccess[$id])) {
+                    $hidden[$id] = true;
+                }
+
+                if (isset($actorAccess[$id])) {
+                    $visible[$id] = $access->title;
+
+                    if ($access->role->canWrite() && $actorAccess[$id]->role->canWrite()) {
+                        $writable[$id] = $access->title;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Without the grant service no calendar is reachable; only unchanged values pass.
+            $failed = true;
+        }
+
+        return [$visible, $writable, $hidden, $failed];
+    }
+
+    /** @param int[] $calendars */
+    private function storeBusyCalendars(int $id, array $calendars): void
+    {
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $db->setQuery($query->delete($db->quoteName('#__appointments_eventtype_calendars'))
+            ->where($db->quoteName('eventtype_id') . ' = ' . $id))->execute();
+
+        foreach ($calendars as $calendar) {
+            $row = (object) ['eventtype_id' => $id, 'calendar_id' => (int) $calendar];
+            $db->insertObject('#__appointments_eventtype_calendars', $row);
+        }
     }
     public function getTable($name = 'Eventtype', $prefix = 'Administrator', $options = [])
     {
@@ -50,6 +225,11 @@ class EventtypeModel extends AdminModel
 
         if ($form && !Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
             $form->setFieldAttribute('rules', 'filter', 'unset');
+        }
+
+        if ($form && !$this->teamEnabled()) {
+            $form->removeField('calendar_id');
+            $form->removeField('busy_calendars');
         }
 
         return $form;
@@ -173,10 +353,23 @@ class EventtypeModel extends AdminModel
                 }
             }
 
+            try {
+                $busyCalendars = $this->calendarLinks($data, $id, $oldHost, $newHost);
+            } catch (\DomainException $e) {
+                $db->transactionRollback();
+                $this->setError(Text::_('COM_APPOINTMENTS_TEAM_E_EVENTTYPE_ERROR_CALENDAR'));
+
+                return false;
+            }
+
             if (!parent::save($data)) {
                 $db->transactionRollback();
 
                 return false;
+            }
+
+            if ($busyCalendars !== null) {
+                $this->storeBusyCalendars((int) $this->getState($this->getName() . '.id'), $busyCalendars);
             }
 
             $db->transactionCommit();

@@ -25,7 +25,8 @@ blocked.
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
-- PHP 8.1 or later
+- PHP 8.1 or later with the sodium extension (libsodium). The installer refuses without it, because
+  bookings are stored encrypted.
 - MySQL or MariaDB only. The component ships its schema only for these servers; the installer
   refuses other database servers. The booking table uses a generated column to guarantee that one
   time slot can be held by exactly one booking. PostgreSQL is not supported by this component,
@@ -298,14 +299,17 @@ the associated Joomla user object.
 
 ### Scheduler, reminders and retention
 
-The component installs and enables **Task - Appointments**. Updates preserve its enabled/disabled
-state; uninstalling the component removes the plugin and its Scheduler tasks. Installation and
-every update create the two tasks in **System → Scheduled Tasks** through Joomla's Scheduler:
+The component installs and enables **Task - Appointments**. Updates preserve an existing task's
+enabled/disabled state; uninstalling the component removes the plugin and its Scheduler tasks.
+On installation and updates, Joomla's Scheduler ensures these tasks exist in **System → Scheduled Tasks**:
 **Appointments: reminders**, running every five minutes, and **Appointments: retention**,
-running daily, each with a batch size of 100. A task is only created when no task of its routine
-exists at all, in any state: a task you disabled or trashed is never enabled or created again, and
-its schedule and options are never overwritten. A task that was deleted permanently is created
-again by the next update, so disable a task instead of deleting it. A first installation creates the tasks enabled. An update creates a missing task **disabled** and says so, because the retention task would otherwise start anonymising the existing bookings and the reminder task start writing to their invitees without your decision: enable them yourself. If a task cannot be created,
+running daily, each with a batch size of 100. A first installation creates both tasks enabled.
+An update creates a missing task **disabled** and says so, because retention would otherwise start
+anonymising existing bookings and reminders start writing to invitees without your decision: enable
+the task yourself. A task is created only when no task of its routine exists in any state: a task
+you disabled or trashed is never enabled or created again, and its schedule and options are never
+overwritten. A task deleted permanently is created again by the next update, so disable a task
+instead of deleting it. If a task cannot be created,
 the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
@@ -337,6 +341,265 @@ size** defaults to 100 (1–1000); the retention routine processes at most that 
 rows and rate-limit windows per invocation. Run additional batches or increase the frequency when
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
+
+### Internet calendars
+
+**Implementation and verification status:** This section documents the 1.4.0 target behaviour; it
+is not evidence that the feature is available in a published release or that every behaviour has
+passed its checks. The component remains unreleased, and the [manual client acceptance
+plan](tests/manual/teamcalendars.md) records no completed manual tests. Do not rely on internet
+calendars in production until the release and its required automated and human acceptance checks
+are complete.
+
+An internet calendar is a calendar on your own site that every authorised user reads and writes
+with a CalDAV client, signed in with an app password. Calendars are created in the administrator
+and shared per user; **nothing is visible that was not explicitly granted** (default deny), and
+there are no secret addresses. Bookings of an event type land in its target calendar, and busy
+times in a calendar block the booking page's slots. The binding specification is
+[`team-calendars.md`](../.claude/skills/appointments/references/team-calendars.md).
+
+#### Requirements a host can block
+
+The component runs on any host that runs Joomla 5.4 or 6. The following can still be blocked by a
+host's configuration. **Components → Appointments → System checks** tests each point on the site itself
+and names the remedy.
+
+| Requirement | Remedy when the system check fails |
+|---|---|
+| HTTPS. CalDAV answers over HTTPS only; a plain HTTP request gets `403` without a body or redirect, before its `Authorization` header is even read. | Enable TLS for the site. |
+| HSTS (`Strict-Transport-Security`), recommended rather than required. | Enable HSTS in Joomla's HTTP headers plugin or in the web server. |
+| The WebDAV methods `OPTIONS`, `PROPFIND`, `REPORT`, `PUT`, `DELETE` and `MKCALENDAR` reach PHP. | Allow them in the web server or firewall rules (ModSecurity or another web application firewall). |
+| The `Authorization` header reaches PHP. | Keep the rule `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` from Joomla's `htaccess.txt`, or use the host's equivalent setting. |
+| `/.well-known/caldav` reaches Joomla. | Add the rewrite, or configure clients with the full CalDAV address; only automatic discovery is lost. |
+| PHP with libsodium, including Argon2id (`sodium_crypto_pwhash`). Required for the whole component, not only for the internet calendars: the installer refuses without it, because bookings are stored encrypted. | Enable the sodium extension. |
+| `memory_limit` of at least 128M (Argon2id uses 64 MiB per sign-in). | Raise `memory_limit`. |
+
+Every calendar user also needs a second factor in Joomla's multi-factor authentication. Only these
+count, each with its Joomla plugin enabled: an **authenticator app** (TOTP), a **passkey**
+(WebAuthn) and a **YubiKey**. Codes by e-mail, the fixed code and backup codes give no effective
+grant: e-mail is the same channel as a password reset, so it would let a reset by mail alone reach
+the calendars. Neither does an account in a group listed under «Never use MFA for these user
+groups».
+
+**Failed sign-ins** lock an account temporarily (after 10 failures, with a growing delay, never
+permanently). The lock is checked before the password, on Joomla's own sign-in forms of the site
+and the administrator and on CalDAV. Administrators get a mail when an account with a calendar
+right is locked and can lift the lock in the devices view. Not covered, stated plainly:
+
+- Joomla's **API Authentication - Basic Auth** plugin signs in with a password, without second
+  factor and without the lock-out. Keep it disabled, as Joomla ships it; the system check warns
+  when it is enabled.
+- Sign-ins of other extensions that do not post `username` and `password` like Joomla's forms are
+  refused while locked, but Joomla's answer there shows that the password was right.
+- Guessing the second factor after a correct password is limited by Joomla itself (Users → Options
+  → Multi-factor Authentication, by default 10 tries per hour); the system check warns when that
+  limit is off or above 10.
+- If the lock-out check itself fails (a database error), the website sign-in still works, so that
+  nobody, administrators included, is locked out; the system check then warns. CalDAV and «Add
+  device» refuse in that case.
+
+#### Setting up
+
+1. In **Options → Internet calendars**, switch **Internet calendars** on. While it is off, no
+   calendar address answers and no key is handled at sign-in.
+2. Enable the plugins **System - Appointments CalDAV** and **User - Appointments internet
+   calendars**. Both are installed disabled.
+3. Check the groups. With **Create user groups** on, installation and update create the groups
+   «Internet calendars internal» and «Internet calendars external» below the registration group,
+   the access level «Internet calendars», and add both groups to **Users → Options →
+   Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
+   groups that skip MFA; the system check reports that as an error.
+4. Create the **recovery key** in **Internet calendars** as a Super User who is also a member of
+   «Internet calendars internal» (that membership gives the account a key pair; it needs no calendar
+   grant). Sign out and in again with password and second factor first: the key operations need a
+   session unlocked by the password. Its secret is shown once.
+   Print it **twice together with the site secret** (`$secret` in `configuration.php`) and keep the
+   two printouts offline in separate places. The recovery key is never stored, and without it no
+   calendar can be created.
+5. Create a calendar, name its owner (the owner gets the manage role) and grant access to users.
+6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
+   adds one device per client and receives the app password and the instructions for that client.
+
+#### Accounts
+
+**Only an administrator creates accounts**, for team members and external users alike, in Joomla's
+user management, in the team group or the external group. Joomla's own registration stays off;
+there is no self-registration. The administrator grants the calendars and sends the activation
+link: valid once, for 72 hours, bound to the account and its address. The person sets the password
+with it; Joomla enforces the second factor at the first sign-in. When the activation is completed,
+every user with the permission «Share with external users» receives a mail with a link that
+revokes the access in one step (all grants removed, account blocked, devices cleaned up).
+
+That first password sign-in also creates the user's key pair; a grant becomes usable only after
+it.
+
+#### Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| Internet calendars | off | The single switch of the feature. |
+| Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
+| Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
+| Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
+| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
+| Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
+
+The CalDAV plugin holds the **CalDAV base address**, an absolute `https://` address (default: the
+site address plus `/dav/`). The CalDAV path, the well-known redirect, the client instructions, the
+mails and the system check all derive from it. A configured address is used only when it is valid:
+`https://` with a host, no user name, password, query or fragment, at most 255 characters, and a
+path below the site's own path that adds 1 to 3 plain segments (letters, digits, `.`, `_`, `~`,
+`-`), the first of which is not a Joomla folder such as `administrator`, `media` or `images`.
+Otherwise the default applies. The permission **Share with
+external users** (`appointments.team.external`) is granted to nobody by default; Super Users have
+it implicitly.
+
+#### Roles
+
+| Role | In the client | Web |
+|---|---|---|
+| Free/busy | read-only calendar of busy blocks titled «Busy», without any content | sees the calendar in «My calendars» |
+| Read | read | same |
+| Write | view, create, change and delete events | same |
+| Manage | as write | shares with team members, revokes, edits title, colour and description |
+
+#### Devices and app passwords
+
+In **My calendars → Add device**, the user names the device, picks the client and confirms the usage
+rule: a lock code on the device, no forwarding to iCloud or Google calendars, report a loss at once.
+Private smartphones are allowed under that rule. Adding a device requires a password sign-in with
+the second factor in the same session and at least one grant. The app password is shown once and
+stored only as a keyed hash; the user receives a mail for every new device. The Joomla password
+never works for CalDAV. **Remove device** starts the clean-up.
+
+#### Client instructions
+
+The user name is the Joomla user name, the password is the device's app password. `<site>` stands
+for your site's address; the CalDAV address below assumes the default base address.
+
+| Client | Address | Refresh |
+|---|---|---|
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
+| DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
+| Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
+| eM Client | account → CalDAV, `https://<site>/dav/` | account → synchronisation every 5 minutes |
+
+**Not supported:** the new Outlook for Windows and the Outlook apps on phones, because they do not
+speak CalDAV. Use classic Outlook with CalDav Synchronizer on Windows and the phone's own calendar
+(iOS) or DAVx⁵ (Android). The macOS calendar works with the iOS settings, but it is not part of the
+tested set.
+
+Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
+refresh without changes transfers no events. Menu paths can differ between client versions.
+
+#### Blocking and clean-up
+
+A device to be blocked first gets its calendars **empty**, so the client deletes its local copy;
+then the calendars are **no longer listed**, so the client removes them; then every request is
+refused. Each phase ends when the device has fetched it, at the latest after **Days per clean-up
+phase**. Writes are refused during the clean-up, so a client cannot upload the deleted events
+again. Triggers: «Remove device», an administrator blocking a device or a user's calendar access,
+a blocked Joomla account and a password reset. A device that never connects again keeps its local
+copy; that is why the usage rule asks for a lock code.
+
+#### What the encryption protects, and what not
+
+**In one sentence: the encryption protects when the database or a backup of it leaks, not when
+somebody executes code on the server.** It is encryption at rest; end-to-end encryption is not
+possible with CalDAV clients.
+
+- **Protected:** a copy of the database alone (dump, database backup, SQL injection in any
+  extension) shows no content and no times of calendar entries, no app password and no key. Of
+  the bookings, the personal fields (names, addresses, phone, answers) are encrypted, while their
+  dates, times, event types and states stay readable, because reminders and the slot calculation
+  need them. A row added or changed in the database without the site
+  secret grants nothing. A Super User without a grant sees calendar lists and the log, never
+  contents; granting oneself access is possible, but it is logged and mailed to the calendar's
+  owner and managers.
+- **Not protected:** anybody who executes code on the server, which includes a compromised
+  extension, the hosting provider and anybody with access to the files: while a key holder's request
+  runs, the calendar key is in memory, and such an attacker can also capture app passwords. A copy
+  of database **and** files together (the site secret is in `configuration.php`) reveals when
+  events take place and decrypts the personal fields of bookings, because both use server keys;
+  the contents of calendar entries stay encrypted. Devices that never connect again. Booking mails to the team, which carry content and ICS as before.
+- **The site secret is recovery material.** Changing `$secret` in `configuration.php` invalidates
+  every app password, every server-side key and every encrypted booking field, and the recovery key
+  alone does not repair that; the way back is the old site secret. That is why it is printed with
+  the recovery key.
+- **Password reset:** a reset by mail or a password set by an administrator gives a new key pair;
+  the user's grants are suspended and the devices go into clean-up. A manager grants again, or an
+  administrator uses the recovery key. A password reset alone never gives anybody calendar access.
+- **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
+  design.
+- **Known residual risk:** while a calendar connected to an event type cannot be read at all, a
+  forged booking request (a crafted POST, not the booking page) for a time the page did not offer
+  is accepted, because the busy times of that calendar are unknown. The booking page itself offers
+  only free times.
+
+#### Updating to 1.4.0
+
+The update encrypts the personal fields of existing bookings in batches, inside the update itself;
+whatever it does not finish is encrypted at the next visit of an administrator to the component,
+independent of the Scheduler. This migration window lasts at most 7 days. **An update never makes
+data unreadable:** a booking still in clear text after the window stays readable, is shown as «not
+verified», and **System checks** warns and shows how many are left. The action **Encrypt now**
+there finishes the migration. After the window nothing else encrypts clear text, so that clear
+text planted in the database later is never taken for a genuine booking.
+
+#### Restoring a backup
+
+Grants, calendars and devices carry counters (epochs) that every key rotation, revocation and
+device block raises. A signed anchor file,
+`administrator/components/com_appointments/data/epochs.php`, keeps the highest value, so a row
+from an older database copy no longer counts. This is the protection against played-back rows.
+
+- **Database only restored**, from a backup older than the last key rotation, revocation or device
+  block (or an older row written back into it): the affected calendars and users **stay closed**, on
+  purpose; revoked grants and devices cannot come back this way. To open them, delete
+  `data/epochs.php`, which deliberately resets the protection, and then revoke again every device
+  and grant that was revoked after the backup was taken.
+- **Files and database restored together** is a legitimate rollback, and the anchor goes back too.
+  Revoke again every device and grant that was revoked after the backup was taken.
+- **System checks** reports when the anchor file cannot be written or is not kept up to date (the
+  protection is then off), and when an anchored value lies below the verified database value.
+- The anchor belongs to one installation: a fresh installation and an uninstall remove
+  `data/epochs.php`.
+
+#### Privacy requests and retention
+
+Joomla's privacy component (**Users → Privacy**) handles export and removal requests. There is no
+index of e-mail addresses anywhere, because whoever holds the server key could test known
+addresses against it.
+
+- **Bookings** are decrypted on the server in batches and matched by the invitee's and guests'
+  addresses.
+- **Calendar entries** are searched only in the session of the person handling the request, and
+  only in the calendars that person can unlock (owner, manager, or keys recovered with the recovery
+  key). Removal deletes the matching entries as normal changes, so clients drop them at the next
+  synchronisation.
+- **Never silently incomplete:** every calendar that could not be searched is named in the export
+  and in the removal result, with the way to search it (sign in as a key holder, or use the
+  recovery key).
+- Searches, exports and removals are logged with counts only, never the address or content.
+
+Each calendar has its own **retention**; the Scheduler deletes older entries and logs only their
+number.
+
+#### Replacing the token feeds
+
+The internet calendars replace the token feeds of the next section, whose secret addresses
+contradict default deny. From 1.4.0 the option **Subscription feeds with token** controls them: off
+on a new installation, on after an update (never overwritten). Off, the feed address answers `404`
+and the Calendar feeds view explains the replacement; on, the feeds work unchanged with a
+deprecation notice. Version 2.0.0 removes the feeds. Move each feed user to an internet calendar
+before that.
+
+#### Testing with real clients
+
+The [manual test plan for internet calendars](tests/manual/teamcalendars.md) checks every supported
+client, including the clean-up and the refresh interval. It runs only against a test installation.
 
 ### Calendar subscriptions
 
@@ -721,7 +984,9 @@ component preserves existing templates rather than overwriting operator changes.
 labels are installed privately from the same shipped language files, so a stored recipient
 language does not depend on that Joomla language pack being installed.
 
-Templates are plain text. Placeholders are written `{name}` and replaced in one pass. A detail line that holds only a label and one placeholder (`Location: {location}`) is left out when the value is empty, so a telephone appointment shows no empty location:
+Templates are plain text. Placeholders are written `{name}` and replaced in one pass. A detail line
+that holds only a label and one placeholder (`Location: {location}`) is left out when the value is
+empty, so a telephone appointment shows no empty location:
 
 | Placeholder | Value |
 |---|---|
@@ -955,6 +1220,16 @@ Build & Test workflow: package build, PHP 8.1 syntax check, language lint, compa
 requirements check, deprecated-API scan, PHPUnit, and real Joomla integration suites. It runs on
 relevant pushes and pull requests to `main`, and by manual dispatch. **Collect Results** is the
 required pull request check.
+
+The workflow also tests the actual published `appointments-v1.3.0` package as the starting point
+for an update on Joomla 5.4 and Joomla 6. It seeds prior-version schedules, event types and
+plaintext bookings, installs the exact candidate ZIP through Joomla's CLI, then verifies the
+database migration, preservation and readability of booking data during the seven-day migration
+window, and legacy-feed compatibility. It expires the authentic migration token and exercises the
+administrator encrypt-now action against those same upgraded bookings, requiring `v2:` ciphertext
+and exactly one audit row per booking. The upgraded installations also run booking and strict
+team-calendar behavior tests; Joomla 6 runs the real CalDAV clients. The transition-specific lane
+reports an explicit skip once the repository's latest-release-only policy retires the v1.3.0 asset.
 
 The full integration matrix runs on the newest Joomla 5.4 and Joomla 6 images with MySQL. A third
 lane runs the schema-sensitive suites on Joomla 6 with MariaDB 10.6, because the booking table

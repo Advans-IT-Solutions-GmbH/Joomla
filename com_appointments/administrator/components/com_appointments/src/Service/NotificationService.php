@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
@@ -30,6 +31,8 @@ defined('_JEXEC') or die;
 
 final class NotificationService
 {
+    private ?BookingData $data = null;
+
     public function __construct(private DatabaseInterface $db)
     {
     }
@@ -49,10 +52,18 @@ final class NotificationService
             return is_string($copy) ? $copy : null;
         }
 
-        $rows = $this->db->setQuery('SELECT ' . $this->db->quoteName('guest_emails') . ' FROM ' . $this->db->quoteName('#__appointments_bookings')
-            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadColumn();
+        $row = $this->db->setQuery('SELECT ' . implode(', ', $this->db->quoteName(BookingData::readColumns())) . ' FROM '
+            . $this->db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadAssoc();
+        // Stored encrypted; a list that cannot be opened has no guest to write to.
+        $guests = $row ? $this->data()->openLenient($row)['guest_emails'] : null;
 
-        return is_string($rows[0] ?? null) ? $rows[0] : null;
+        return is_string($guests) ? $guests : null;
+    }
+
+    private function data(): BookingData
+    {
+        return $this->data ??= BookingData::fromApplication();
     }
 
     public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
@@ -68,6 +79,15 @@ final class NotificationService
             Log::add('Appointment notification disabled: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
             throw new NotificationException('Appointment mail delivery is disabled.');
         }
+        // Callers pass a stored row or a row opened before: opening is idempotent. A field that
+        // cannot be decrypted is left blank (no mail to that address), only its column is logged.
+        $failed = [];
+        $booking = $this->data()->openLenient($booking, $failed);
+
+        if ($failed !== []) {
+            Log::add('Appointment notification: booking ' . (int) $booking['id'] . ' has fields that could not be decrypted (' . implode(', ', $failed) . ').', Log::WARNING, 'com_appointments');
+        }
+
         $event = $this->event((int) $booking['eventtype_id']);
         $hostParams = json_decode((string) $event['host_params'], true) ?: [];
         // The host's profile language, else the site's default language, else English.

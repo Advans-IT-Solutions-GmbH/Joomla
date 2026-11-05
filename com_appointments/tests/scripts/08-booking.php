@@ -3,6 +3,7 @@
 require __DIR__ . '/appointments-http.php';
 require __DIR__ . '/appointments-mail.php';
 require '/var/www/html/configuration.php';
+require __DIR__ . '/appointments-bookingdata.php';
 $config = new JConfig();
 $db = new mysqli($config->host, $config->user, $config->password, $config->db);
 $prefix = $config->dbprefix;
@@ -142,7 +143,12 @@ try {
     $request = $prepare($eventIds[0], $slot);
     sleep(2);
     $body = $request[0]->request($request[1], $request[2]);
-    $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
+    $stored = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
+    $booking = appointments_open_booking($stored);
+    $check($stored && appointments_is_sealed($stored['invitee_email']) && appointments_is_sealed($stored['invitee_first_name'])
+        && appointments_is_sealed($stored['invitee_last_name']) && appointments_is_sealed($stored['invitee_name'])
+        && !str_contains(implode('|', array_map('strval', $stored)), 'invitee@example.test'),
+        'The personal fields of a booking are stored encrypted, the address appears nowhere in the row');
     $check($booking && (int) $booking['state'] === 0 && str_contains($body, 'held while'), 'Pending request holds its slot');
     $check($booking && $booking['consent_utc'] !== null && $booking['consent_utc'] >= $time
         && $booking['consent_version'] === hash('sha256', "consent\nen-GB\nI agree to the processing of my data for this appointment."),
@@ -466,7 +472,7 @@ try {
         $before = AppointmentsMail::snapshot();
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
-        $stored = $db->query("SELECT id,invitee_phone,custom_fields FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc();
+        $stored = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
         $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
         $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));

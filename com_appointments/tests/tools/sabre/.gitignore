@@ -1,0 +1,6 @@
+# Composer and php-scoper working folders; only the manifests and locks are kept.
+/vendor/
+/scoper/vendor/
+/.build/
+!composer.lock
+!/scoper/composer.lock
