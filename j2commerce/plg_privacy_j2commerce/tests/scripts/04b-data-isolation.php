@@ -1012,11 +1012,15 @@ class DataIsolationTest
                     $langPlugin->call('customerLanguage', $mailUser) === $tag
                     && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
             }
-            $profile = new \Joomla\CMS\User\User($mailUser);
+            $profile = new \Joomla\CMS\User\User();
+            $profile->id = $mailUser;
+            $profile->username = $mailAccount->username;
+            $profile->email = $mailAccount->email;
             $profile->setParam('language', 'fr-FR');
-            $langPlugin->onPrivacyCanRemoveData(null, $profile);
+            $mailRequest = $this->guestTestRequest($mailAccount->email);
+            $langPlugin->onPrivacyCanRemoveData($mailRequest, $profile);
             $profile->setParam('language', 'en-GB');
-            $langPlugin->onPrivacyRemoveData(null, $profile);
+            $langPlugin->onPrivacyRemoveData($mailRequest, $profile);
             $this->test('The account language is captured before another privacy plugin can pseudonymise the account',
                 (end($langPlugin->reported)[0] ?? '') === 'fr-FR');
 
