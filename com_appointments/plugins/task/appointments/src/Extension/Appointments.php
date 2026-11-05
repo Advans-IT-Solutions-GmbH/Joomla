@@ -158,7 +158,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)];
         $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
 
-        if (class_exists($records) && method_exists($records, 'migrate')) {
+        if (class_exists($records) && method_exists($records, 'resume')) {
+            // The booking record class resumes its own migration within the time given.
+            $result['bookings_encrypted'] = (int) $records::resume($services->db(), $services->keyProvider(), 20);
+        } elseif (class_exists($records) && method_exists($records, 'migrate')) {
             $encrypted = 0;
 
             // Batches of 200 until nothing is left, within 20 seconds per run.

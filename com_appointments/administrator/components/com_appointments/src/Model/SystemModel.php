@@ -114,7 +114,7 @@ class SystemModel extends BaseDatabaseModel
 
         if (class_exists($records) && method_exists($records, 'unverified')) {
             // Still in clear after the migration window: readable, but not verified.
-            $unverified = (int) $records::unverified($this->getDatabase());
+            $unverified = (int) $records::unverified($this->getDatabase(), $services->keyProvider());
             $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED', $unverified === 0, (string) $unverified,
                 'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED_FIX');
         }
