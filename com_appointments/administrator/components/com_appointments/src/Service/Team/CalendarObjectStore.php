@@ -350,6 +350,13 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 ->where($db->quoteName('uid_hash') . ' = ' . $db->quoteBinary($uidHash));
             $uri = (string) ($db->setQuery((string) $query . ' FOR UPDATE')->loadResult() ?: $this->bookingUri($calendarId, $uid));
             $existing = $this->lockObject($calendarId, $uri);
+
+            // The derived address may belong to another event by now (a writer reused it after
+            // the booking's object was deleted): never overwrite it, take a fresh one.
+            while ($existing !== null && !hash_equals($existing['uid_hash'], $uidHash)) {
+                $uri = 'booking-' . bin2hex(random_bytes(20)) . '.ics';
+                $existing = $this->lockObject($calendarId, $uri);
+            }
             $sealed = $keys->sealObject($calendarId, $uri, $ics);
             $etag = bin2hex(random_bytes(16));
             $objectId = $this->store($calendarId, $uri, $existing, [
@@ -536,9 +543,22 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         $current = $this->syncToken($calendarId);
         $token = $syncToken === null ? '' : trim($syncToken);
 
-        // No token, or one this server never issued: the full set, as added.
+        // No token, or one this server never issued: the full set, as added. Token and
+        // objects are read under the calendar lock, so they show the same state.
         if ($token === '' || preg_match('/^\d{1,19}$/', $token) !== 1 || (int) $token > $current) {
-            return new ChangeSet((string) $current, array_map(static fn (StoredObject $o): string => $o->uri, $this->listing($calendarId)), [], []);
+            $db->transactionStart();
+
+            try {
+                $current = $this->lockCalendar($calendarId);
+                $uris = array_map(static fn (StoredObject $o): string => $o->uri, $this->listing($calendarId));
+                $db->transactionCommit();
+            } catch (\Throwable $e) {
+                $db->transactionRollback();
+
+                throw $e;
+            }
+
+            return new ChangeSet((string) $current, $uris, [], []);
         }
 
         $since = (int) $token;

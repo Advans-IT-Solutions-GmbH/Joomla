@@ -468,6 +468,15 @@ final class DavServerTest extends TestCase
         self::assertSame(403, $this->sync($this->teamUri, 'urn:other:1')->getStatus());
     }
 
+    public function testAListingWhoseTokenCannotBeReadIsNotDelivered(): void
+    {
+        $this->world->grant(5, 1, CalendarRole::Read);
+        $this->world->store->seed(1, 'a.ics', self::ics('a'));
+        $this->world->store->tokenFails = true;
+
+        self::assertSame(503, $this->propfind('/dav/calendars/u5/' . $this->teamUri . '/', '1')->getStatus());
+    }
+
     public function testNothingIsDeliveredWhenTheSynchronisationCannotBeRecorded(): void
     {
         $this->world->grant(5, 1, CalendarRole::Read);
@@ -540,6 +549,21 @@ final class DavServerTest extends TestCase
         $sync = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
         self::assertMatchesRegularExpression('#a\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $sync);
         self::assertStringContainsString('http://sabre.io/ns/sync/2-c', $sync);
+
+        // A client behind the recorded token still gets the deletions since its own token.
+        $this->world->store->seed(1, 'gone.ics', self::ics('gone'));
+        $this->world->store->delete(1, 'gone.ics', null, null);
+        $this->world->inCleanup = [1 => ['role' => CalendarRole::Read->value, 'synctoken' => 4]];
+        $behind = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/2</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
+        self::assertStringNotContainsString('gone.ics', $behind, 'Added and deleted after its token: the client never had it.');
+        self::assertStringContainsString('a.ics', $behind);
+
+        $this->world->store->seed(1, 'kept.ics', self::ics('kept'));
+        $this->world->store->delete(1, 'kept.ics', null, null);
+        $this->world->inCleanup = [1 => ['role' => CalendarRole::Read->value, 'synctoken' => 6]];
+        $tombstone = self::body($this->send('REPORT', $base, ['Depth' => '1', 'Content-Type' => 'application/xml'], '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>http://sabre.io/ns/sync/5</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>', $password, 'carol'));
+        self::assertMatchesRegularExpression('#kept\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $tombstone, 'Deleted after the token of the client but before the recorded one.');
+        $this->world->inCleanup = [1 => ['role' => CalendarRole::Read->value, 'synctoken' => 2]];
 
         // Created after the clean-up started: a made-up newer token reveals nothing about it.
         $this->world->store->seed(1, 'after-cleanup.ics', self::ics('after-cleanup'));

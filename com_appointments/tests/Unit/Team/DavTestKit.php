@@ -81,6 +81,8 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
 
     public int $gets = 0;
 
+    public bool $tokenFails = false;
+
     private int $nextId = 1;
 
     public function addCalendar(int $calendarId, int $token = 1): void
@@ -191,6 +193,10 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
 
     public function syncToken(int $calendarId): int
     {
+        if ($this->tokenFails) {
+            throw new TeamException('X', 503);
+        }
+
         return $this->tokens[$calendarId] ?? throw new TeamException('X', 404);
     }
 

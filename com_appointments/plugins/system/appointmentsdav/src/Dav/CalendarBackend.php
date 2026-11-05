@@ -191,11 +191,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     /**
      * A listing shows the calendar as it is now. Its token is read after the
      * objects, so nothing the device received is newer than what is recorded as
-     * seen; a write in between makes it at most one change too new.
+     * seen; a write in between makes it at most one change too new. Not quietly:
+     * without it the clean-up could miss what the device received.
      */
     private function recordListing(DavCalendar $calendar): void
     {
-        $this->context->quietly(fn () => $this->context->recordDelivered($calendar->id, $this->context->services->objects->syncToken($calendar->id)));
+        $this->context->recordDelivered($calendar->id, $this->store(fn () => $this->context->services->objects->syncToken($calendar->id)));
     }
 
     public function getCalendarObject($calendarId, $objectUri)
@@ -374,14 +375,21 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         }
 
         // Never beyond what the device had: the last token delivered before the clean-up
-        // wins over whatever the client sends, so it learns nothing created since.
-        $since = $calendar->cleanupToken !== null ? (string) $calendar->cleanupToken : (string) preg_replace('/^fb|-c$/', '', $token);
+        // caps whatever the client sends, so it learns nothing created since.
+        $client = (string) preg_replace('/^fb|-c$/', '', $token);
+        $since = $calendar->cleanupToken !== null ? (string) $calendar->cleanupToken : $client;
         $known = $current;
 
         if (preg_match('/^\d{1,19}$/', $since) === 1) {
             try {
                 $changes = $this->context->services->objects->changesSince($calendar->id, $since, null);
                 $known = array_merge(array_diff($current, $changes->added), $changes->deleted);
+
+                // A client behind the cap may still hold objects deleted since its own token
+                // (it saw a newer CTag without applying the deletions): report those too.
+                if (preg_match('/^\d{1,19}$/', $client) === 1 && (int) $client < (int) $since) {
+                    $known = array_merge($known, $this->context->services->objects->changesSince($calendar->id, $client, null)->deleted);
+                }
             } catch (TeamException $e) {
                 // A token beyond the journal: the current objects are what the device can still hold.
             }
