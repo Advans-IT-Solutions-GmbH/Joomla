@@ -349,7 +349,13 @@ play back an older, validly signed grant, calendar, device or invitation row.
   update time and an expiry of at most 7 days; `migrate()` renews it while rows created before the update
   hold clear text and replaces it by a keyed end marker when none is left; only those rows are ever read
   in clear or encrypted, so clear text planted later by a database writer counts as unreadable and is
-  never laundered. The option is written with `JSON_SET` only. Residual risk: a database writer who deletes
+  never laundered. The option is written with `JSON_SET` only. **An update never makes data unreadable:**
+  the migration runs in batches inside the update itself, the rest at the next administrator visit of the
+  component (not depending on the Scheduler). Rows still in clear after the window stay readable, are
+  shown as «not verified», the system check warns, and an administrator action «encrypt now» (form token,
+  core.admin, logged) finishes the migration; after the window nothing encrypts clear text without that
+  action (protection against planted clear text). A test proves that nothing becomes unreadable after the
+  window. Residual risk: a database writer who deletes
   the end marker and every sealed booking can reopen a migration with the next update.
 - **No blind index** (maintainer's decision): a keyed hash of an address could be tested against known
   addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)

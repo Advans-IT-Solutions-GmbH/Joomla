@@ -289,7 +289,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     /**
      * Encrypt the personal fields of existing bookings (team-calendars.md, 5.10)
-     * in batches for at most 20 seconds; the Scheduler finishes what is left.
+     * in batches during the installation itself (booking tables are small); what
+     * is left after the time budget is finished at the next administrator visit
+     * of the component, never depending on the Scheduler.
      * Idempotent, and a no-op until the booking record class exists.
      */
     private function encryptExistingBookings(string $type): void
@@ -302,7 +304,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
-        $until = microtime(true) + 20;
+        $until = microtime(true) + 120;
 
         try {
             // An update starts the time-limited migration window: only while its
