@@ -124,7 +124,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $checkOutput("$tag uninstall", $code, $out);
         }
 
-        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $package);
+        [$code, $out] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
         echo $out . "\n";
         $checkOutput("$tag install", $code, $out);
         $checkTranslated($tag, "$tag install", $out);
@@ -172,7 +172,7 @@ $runUpdate = static function (string $tag, string $label) use ($updatePackage, $
     $restore = sh_use_cli_language(JOOMLA_ROOT, $tag);
 
     try {
-        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $updatePackage);
+        [$code, $out] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $updatePackage);
     } finally {
         $restore();
     }

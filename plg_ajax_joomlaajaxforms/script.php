@@ -10,8 +10,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -21,7 +25,7 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp    = '8.1';
 
-    public function postflight(string $type, object $parent): void
+    protected function extensionPostflight(string $type, object $parent): void
     {
         if ($type !== 'install' && $type !== 'update') {
             return;

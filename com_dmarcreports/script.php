@@ -9,8 +9,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -77,7 +81,15 @@ class Com_dmarcreportsInstallerScript extends InstallerScript
         return true;
     }
 
-    public function postflight($type, $parent)
+    protected function guardedFiles(string $type, object $parent): array
+    {
+        return [
+            JPATH_ADMINISTRATOR . '/components/com_dmarcreports/com_dmarcreports.xml'
+                => $this->removalCandidate($parent, 'Remove obsolete DMARC Reports manifest'),
+        ];
+    }
+
+    protected function extensionPostflight($type, $parent)
     {
         if ($type !== 'install' && $type !== 'update') {
             return true;

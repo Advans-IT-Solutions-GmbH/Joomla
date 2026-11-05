@@ -9,8 +9,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\User\CurrentUserInterface;
@@ -104,7 +108,28 @@ class Com_appointmentsInstallerScript extends InstallerScript
         return true;
     }
 
-    public function postflight($type, $parent)
+    protected function guardedFiles(string $type, object $parent): array
+    {
+        $root = JPATH_ADMINISTRATOR . '/components/com_appointments';
+        $files = [
+            $root . '/com_appointments.xml' => $this->removalCandidate($parent, 'Remove obsolete appointments manifest'),
+        ];
+
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            $files[$root . '/language/' . $tag . '/com_appointments.ini']
+                = $parent->getParent()->getPath('source') . '/administrator/language/' . $tag . '/com_appointments.ini';
+        }
+
+        if ($type === 'install') {
+            foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
+                $files[$file] = $this->removalCandidate($parent, 'Remove obsolete calendar epoch anchor on fresh installation');
+            }
+        }
+
+        return $files;
+    }
+
+    protected function extensionPostflight($type, $parent)
     {
         if ($type !== 'install' && $type !== 'update') {
             return true;

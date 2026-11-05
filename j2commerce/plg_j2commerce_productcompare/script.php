@@ -8,8 +8,12 @@
  */
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__, 2) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -24,7 +28,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         return parent::preflight($type, $parent);
     }
 
-    public function postflight($type, $parent)
+    protected function extensionPostflight($type, $parent)
     {
         $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
 
@@ -313,8 +317,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             mkdir($destParent, 0755, true);
         }
 
-        // Replace the previous copy (or a symlink from older versions).
-        $this->removePath($dest);
+        // Preflight guards every replacement; keep unrelated destination files.
         $this->copyDir($src, $dest);
 
         // Update #__extensions so Joomla's plugin loader resolves the correct path.
@@ -355,7 +358,13 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         );
         foreach ($iter as $item) {
             $target = $dest . '/' . $iter->getSubPathname();
-            $item->isDir() ? mkdir($target, 0755, true) : copy($item->getRealPath(), $target);
+            if ($item->isDir()) {
+                if (!is_dir($target) && !mkdir($target, 0755, true)) {
+                    throw new \RuntimeException('The mirrored plugin directory could not be created.');
+                }
+            } elseif (!copy($item->getRealPath(), $target)) {
+                throw new \RuntimeException('The mirrored plugin file could not be copied.');
+            }
         }
     }
 

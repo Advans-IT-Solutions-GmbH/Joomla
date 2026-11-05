@@ -9,8 +9,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 
 /**
@@ -56,7 +60,7 @@ class Mod_dmarcreportsInstallerScript extends InstallerScript
      *
      * @return  bool
      */
-    public function postflight($type, $parent)
+    protected function extensionPostflight($type, $parent)
     {
         if ($type !== 'install' && $type !== 'update') {
             return true;

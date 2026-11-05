@@ -11,6 +11,7 @@
  */
 
 require_once __DIR__ . '/shared-database-check-lib.php';
+require_once __DIR__ . '/shared-test-helpers.php';
 
 class UpdateTest
 {
@@ -94,9 +95,8 @@ class UpdateTest
         $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
             . " WHERE type = 'component' AND element = 'com_dmarcreports'");
         // Reinstall the same package archive (update path).
-        $output = [];
-        $exitCode = 0;
-        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=$zip 2>&1", $output, $exitCode);
+        [$exitCode, $text] = sh_cli_install_reviewed_fixture('/var/www/html', $zip);
+        $output = explode("\n", $text);
 
         $this->test('Reinstall (update) command executed', function () use ($exitCode, $output) {
             if ($exitCode !== 0) {
@@ -232,9 +232,8 @@ class UpdateTest
             return false;
         }
 
-        $output = [];
-        $exitCode = 0;
-        exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($childZip) . ' 2>&1', $output, $exitCode);
+        [$exitCode, $text] = sh_cli_install_reviewed_fixture('/var/www/html', $childZip);
+        $output = explode("\n", $text);
         @unlink($childZip);
         @rmdir($work);
 

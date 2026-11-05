@@ -8,8 +8,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/InstallerScript.php')
+    ? __DIR__ . '/advansinstaller/InstallerScript.php'
+    : dirname(__DIR__, 2) . '/shared/installer/InstallerScript.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -19,7 +23,31 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
-    public function postflight(string $type, object $parent): void
+    protected function guardedFiles(string $type, object $parent): array
+    {
+        $file = JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php';
+
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $content = file_get_contents($file);
+
+        if ($content === false) {
+            throw new \RuntimeException('The OSMap file could not be inspected.');
+        }
+
+        $buggy = 'return Table::getInstance($tableName, $prefix);';
+        $fixed = 'return Table::getInstance($tableName, $prefix) ?: null;';
+
+        if (!str_contains($content, $buggy) || str_contains($content, $fixed)) {
+            return [];
+        }
+
+        return [$file => $this->replacementCandidate($parent, str_replace($buggy, $fixed, $content))];
+    }
+
+    protected function extensionPostflight(string $type, object $parent): void
     {
         if ($type !== 'install' && $type !== 'update') {
             return;

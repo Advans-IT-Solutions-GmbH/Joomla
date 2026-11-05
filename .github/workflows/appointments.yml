@@ -12,6 +12,7 @@ on:
     paths:
       - 'com_appointments/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'
@@ -26,6 +27,7 @@ on:
     paths:
       - 'com_appointments/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'
