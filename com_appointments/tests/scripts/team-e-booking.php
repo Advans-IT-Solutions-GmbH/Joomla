@@ -40,13 +40,24 @@ return static function (TeamSuite $suite): void {
         return $row && $row['Null'] === 'YES';
     });
 
-    $suite->test('A fresh installation records the token feeds as switched off', static function () use ($suite) {
-        $result = $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'");
-        $row = $result ? $result->fetch_assoc() : null;
-        $params = $row ? json_decode((string) $row['params'], true) : null;
+    $result = $suite->db->query("SELECT extension_id, params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'");
+    $component = $result ? $result->fetch_assoc() : null;
+    $componentParams = $component ? json_decode((string) $component['params'], true) : null;
+    // The v1.3.0 upgrade fixture leaves its state, naming the upgraded component, in the container.
+    $upgradeState = sys_get_temp_dir() . '/appointments-upgrade-v1.3.0.json';
+    $upgradeFixture = is_file($upgradeState) ? json_decode((string) file_get_contents($upgradeState), true) : null;
+    $upgraded = $component !== null && is_array($upgradeFixture)
+        && (int) ($upgradeFixture['extension_id'] ?? 0) === (int) $component['extension_id'];
 
-        return is_array($params) && ($params['legacy_feeds'] ?? null) === '0';
-    });
+    if ($upgraded) {
+        $suite->test('An update from 1.3 keeps the token feeds switched on', static function () use ($componentParams) {
+            return is_array($componentParams) && ($componentParams['legacy_feeds'] ?? null) === '1';
+        });
+    } else {
+        $suite->test('A fresh installation records the token feeds as switched off', static function () use ($componentParams) {
+            return is_array($componentParams) && ($componentParams['legacy_feeds'] ?? null) === '0';
+        });
+    }
 
     require_once __DIR__ . '/appointments-fixtures.php';
     require_once __DIR__ . '/appointments-joomla.php';
