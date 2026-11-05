@@ -594,8 +594,11 @@ return static function (TeamSuite $suite): void {
             $saved = $rowOf('appointments_devices', 'id = ' . (int) $made['device_id']);
             $services->devices()->revoke(null, (int) $made['device_id'], 'test');
             $restore('appointments_devices', $saved, 'id');
+            $refused = $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            // The played-back row says «active»: revoke it again, so later tests see only real devices.
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
 
-            return $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            return $refused;
         });
 
         $suite->test($flow[16], static function () use ($services, $probe, $rowOf, $restore, $tag, $member, &$created) {
