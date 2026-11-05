@@ -168,7 +168,8 @@ final class BookingRecords
      * (created before the update, no sealed field), also after the migration
      * window, record each in the audit log and finish the migration with the end
      * marker. The only way clear text is encrypted after the window: the
-     * administrator decides that these rows are genuine.
+     * administrator decides that these rows are genuine. Each batch and its
+     * audit records commit together, so a failed batch can be retried.
      *
      * @return  int  Bookings encrypted.
      */
@@ -185,11 +186,25 @@ final class BookingRecords
         $time = gmdate('Y-m-d H:i:s');
 
         for ($round = 0; $round < 10000; $round++) {
-            $found = self::sealBatch($db, $keys, $cutoff, 200);
+            $db->transactionStart(true);
 
-            foreach ($found['sealed'] as $id) {
-                $db->insertObject('#__appointments_audit', (object) ['booking_id' => $id, 'action' => 'encrypt', 'path' => 'admin',
-                    'actor_user_id' => $actor > 0 ? $actor : null, 'occurred_utc' => $time]);
+            try {
+                $found = self::sealBatch($db, $keys, $cutoff, 200);
+
+                foreach ($found['sealed'] as $id) {
+                    $db->insertObject('#__appointments_audit', (object) ['booking_id' => $id, 'action' => 'encrypt', 'path' => 'admin',
+                        'actor_user_id' => $actor > 0 ? $actor : null, 'occurred_utc' => $time]);
+                }
+
+                if ($found['rows'] === 0) {
+                    self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
+                }
+
+                $db->transactionCommit(true);
+            } catch (\Throwable $e) {
+                $db->transactionRollback(true);
+
+                throw $e;
             }
 
             $total += \count($found['sealed']);
@@ -200,8 +215,6 @@ final class BookingRecords
             }
 
             if ($found['rows'] === 0) {
-                self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
-
                 break;
             }
         }
