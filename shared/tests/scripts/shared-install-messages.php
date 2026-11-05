@@ -52,7 +52,7 @@ if ($manifest === null) {
 echo "Package: $package ({$manifest['type']} {$manifest['element']}"
     . ($manifest['folder'] !== '' ? " in {$manifest['folder']}" : '') . ")\n\n";
 
-$checkOutput = static function (string $label, int $exitCode, string $output): void {
+$checkOutput = static function (string $label, int $exitCode, string $output, array $expectedWarnings = []): void {
     $clean = sh_strip_ansi($output);
 
     if ($exitCode !== 0) {
@@ -69,10 +69,21 @@ $checkOutput = static function (string $label, int $exitCode, string $output): v
         im_pass("$label: no untranslated language keys");
     }
 
-    if (preg_match_all('/\[(ERROR|WARNING|CAUTION)\][^\n]*(?:\n(?!\s*$)[^\n]*)*/', $clean, $blocks)) {
-        im_fail("$label: unexpected installer messages:\n  " . implode("\n  ", array_map('trim', $blocks[0])));
+    preg_match_all('/\[(ERROR|WARNING|CAUTION)\][^\n]*(?:\n(?!\s*$)[^\n]*)*/', $clean, $blocks);
+    $unexpected = [];
+
+    foreach ($blocks[0] as $block) {
+        $message = sh_plain_text((string) preg_replace('/^\[(?:ERROR|WARNING|CAUTION)\]\s*/', '', $block));
+
+        if (!str_starts_with($block, '[WARNING]') || !in_array($message, $expectedWarnings, true)) {
+            $unexpected[] = trim($block);
+        }
+    }
+
+    if ($unexpected) {
+        im_fail("$label: unexpected installer messages:\n  " . implode("\n  ", $unexpected));
     } else {
-        im_pass("$label: no error, warning or caution messages");
+        im_pass("$label: no unexpected error, warning or caution messages");
     }
 
     if (preg_match_all('/^(?:PHP )?(Warning|Notice|Fatal error|Parse error):.*$/m', $clean, $phpErrors)) {
@@ -87,6 +98,15 @@ $checkOutput = static function (string $label, int $exitCode, string $output): v
 // de-DE and fr-FR only strings whose text differs from en-GB count, so the
 // English fallback cannot pass the check.
 $englishStrings = sh_read_package_language($package, 'en-GB');
+$uninstallWarnings = [];
+
+foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+    foreach (sh_read_package_language($package, $tag) as $key => $value) {
+        if (str_ends_with($key, '_UNINSTALL_DATA_RETAINED')) {
+            $uninstallWarnings[] = sh_plain_text($value);
+        }
+    }
+}
 
 $checkTranslated = static function (string $tag, string $label, string $output) use ($package, $englishStrings): void {
     $strings = sh_read_package_language($package, $tag);
@@ -121,7 +141,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
         if ($extensionId > 0) {
             [$code, $out] = sh_cli(JOOMLA_ROOT, 'extension:remove ' . $extensionId . ' --no-interaction');
             echo $out . "\n";
-            $checkOutput("$tag uninstall", $code, $out);
+            $checkOutput("$tag uninstall", $code, $out, $uninstallWarnings);
         }
 
         [$code, $out] = sh_cli_install(JOOMLA_ROOT, $package);
