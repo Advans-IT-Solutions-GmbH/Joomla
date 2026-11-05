@@ -719,6 +719,7 @@ PHP;
             $db->query("INSERT IGNORE INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$member}, " . (int) ($groups[0] ?? 0) . ')');
             // Switch the feature and the user plugin on for this test only.
             $params = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0];
+            $pluginEnabled = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='user' AND element='appointments'")->fetch_row()[0];
             $on = json_decode($params ?: '{}', true) ?: [];
             $on['teamcal_enabled'] = 1;
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($on)) . "' WHERE type='component' AND element='com_appointments'");
@@ -726,12 +727,29 @@ PHP;
             $headers = '';
             $curl = curl_init($suite->base . '/index.php?option=com_users&view=login');
             $jar = sys_get_temp_dir() . '/teamb-' . bin2hex(random_bytes(6));
-            curl_setopt_array($curl, [CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0]);
-            $form = (string) curl_exec($curl);
-            preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $form, $token);
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+                CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5, CURLOPT_TIMEOUT => 30,
+            ]);
+            $form = curl_exec($curl);
+
+            if ($form === false || (int) curl_getinfo($curl, CURLINFO_HTTP_CODE) !== 200
+                || !preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $form, $token)) {
+                $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+                curl_close($curl);
+                unset($curl);
+                @unlink($jar);
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET enabled = {$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
+                throw new \RuntimeException('The password sign-in form did not render a token: HTTP ' . $status . '.');
+            }
+
             curl_setopt_array($curl, [
                 CURLOPT_URL => $suite->base . '/index.php?option=com_users&task=user.login', CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => http_build_query(['username' => $tag . 'member', 'password' => $memberPassword, 'return' => base64_encode('index.php'), ($token[1] ?? 'x') => 1]),
+                // Inspect the password response itself, before the captive page.
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_POSTFIELDS => http_build_query(['username' => $tag . 'member', 'password' => $memberPassword, 'return' => base64_encode('index.php'), $token[1] => 1]),
                 CURLOPT_HEADERFUNCTION => static function ($c, $line) use (&$headers) { $headers .= $line; return \strlen($line); },
             ]);
             curl_exec($curl);
@@ -745,7 +763,7 @@ PHP;
             unset($curl);
             @unlink($jar);
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
-            $db->query("UPDATE {$p}extensions SET enabled = 0 WHERE type='plugin' AND folder='user' AND element='appointments'");
+            $db->query("UPDATE {$p}extensions SET enabled = {$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
 
             preg_match('/^Set-Cookie:\s*(?:__Host-)?appointments_keys_site=([0-9a-f]{64});([^\r\n]*)/mi', $headers, $cookie);
             $session = teamBSession($db, $p, $member);
