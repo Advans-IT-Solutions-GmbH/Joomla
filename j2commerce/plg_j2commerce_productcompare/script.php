@@ -131,7 +131,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $tmp    = $mirror . '.tmp-' . getmypid();
 
         if ($target !== false && is_dir($target)) {
-            $this->copyDir($target, $tmp);
+            $this->copyLegacyTree($target, $tmp);
         } else {
             @mkdir($tmp, 0755, true);
         }
@@ -356,6 +356,31 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
             if (!copy($source, $target)) {
                 throw new \RuntimeException('The mirrored plugin file could not be copied.');
+            }
+        }
+    }
+
+    /** Only the temporary legacy-uninstall copy; installs use the guarded inventory. */
+    private function copyLegacyTree(string $src, string $dest): void
+    {
+        if (!is_dir($dest) && !mkdir($dest, 0755, true)) {
+            throw new \RuntimeException('The temporary uninstall directory could not be created.');
+        }
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($src, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($iterator as $item) {
+            $target = $dest . '/' . $iterator->getSubPathname();
+
+            if ($item->isDir()) {
+                if (!is_dir($target) && !mkdir($target, 0755, true)) {
+                    throw new \RuntimeException('The temporary uninstall directory could not be created.');
+                }
+            } elseif (!copy($item->getRealPath(), $target)) {
+                throw new \RuntimeException('The temporary uninstall file could not be copied.');
             }
         }
     }

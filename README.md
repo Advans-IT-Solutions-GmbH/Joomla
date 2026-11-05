@@ -117,6 +117,10 @@ Joomla's installer is not interactive. After an installation stops, the server a
    php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
    ```
 
+   Run this command as the same filesystem user that performs the Joomla install, so that
+   Joomla can read the protected approval file. The server administrator must arrange that
+   user context; do not make the state directory or approval files publicly readable.
+
 3. Retry the same ZIP under **System → Install → Extensions** (or repeat the CLI install).
    Different incoming or existing bytes require a new backup and approval. A package inspects
    all child archives first; its exact-hash approval also applies when those children install.

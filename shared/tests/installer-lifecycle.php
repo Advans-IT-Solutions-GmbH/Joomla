@@ -166,7 +166,7 @@ namespace {
                 continue;
             }
 
-            $entry->isDir() ? $remove($entry->getPathname()) : unlink($entry->getPathname());
+            $entry->isDir() && !$entry->isLink() ? $remove($entry->getPathname()) : unlink($entry->getPathname());
         }
 
         rmdir($directory);
@@ -274,6 +274,16 @@ namespace {
         $copyMirror->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $productFiles, $mirror);
         $assert(file_get_contents($mirror . '/payload.php') === '<?php echo "incoming";', 'Incoming mirrored payload was not copied.');
         $assert(file_get_contents($mirror . '/custom.php') === '<?php echo "mirror custom";', 'An unlisted canonical file overwrote a mirror customization.');
+        $legacyCopy = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'copyLegacyTree');
+        $legacyCopy->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $canonical, $work . '/legacy-copy');
+        $assert(file_get_contents($work . '/legacy-copy/custom.php') === '<?php echo "canonical custom";', 'Legacy uninstall copy helper did not preserve the old plugin files.');
+        if (PHP_OS_FAMILY !== 'Windows') {
+            $remove($mirror);
+            $assert(symlink($canonical, $mirror), 'Could not create the disposable legacy mirror symlink.');
+            (new \PlgJ2commerceProductcompareInstallerScript())->uninstall(null);
+            $assert(!is_link($mirror) && is_file($mirror . '/custom.php'), 'Legacy symlink uninstall did not prepare a real directory for Joomla.');
+            $assert(is_file($canonical . '/custom.php'), 'Legacy symlink preparation removed its original target.');
+        }
         echo "PASS common lifecycle: abort, verified backup, explicit approval, retry, translated reports and refreshed state\n";
     } finally {
         $remove($work);
