@@ -107,7 +107,7 @@ final class TeamDavFixture
             'freebusy' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::FreeBusy,
             'denied' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
             'nomfa' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
-            'cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Write,
             'cleanupadmin' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Manage,
             'lockout' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
         ] as $name => $role) {
@@ -670,7 +670,7 @@ return static function (TeamSuite $suite): void {
             [
                 'Free/busy is redacted, read is read-only, and write enforces ETag and UID preconditions',
                 ['B', 'C', 'D', 'E', 'F'],
-                static function (TeamDavFixture $f) use ($send, $propfind, $ics): bool {
+                static function (TeamDavFixture $f) use ($send, $propfind, $ics, $header): bool {
                     $uid = 'role-' . bin2hex(random_bytes(6));
                     $summary = 'Confidential CalDAV protocol fixture';
                     $ownerPath = $f->calendar('owner');
