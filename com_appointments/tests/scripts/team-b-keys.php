@@ -1032,6 +1032,87 @@ PHP;
         }
     });
 
+    $suite->test('B: legacy-only epoch anchor migration prepares the stable directory before locking', static function () use ($services) {
+        $root = sys_get_temp_dir() . '/teamb-anchor-legacy-only-' . bin2hex(random_bytes(6));
+        $stableFolder = $root . '/stable';
+        $legacyFolder = $root . '/legacy';
+        $stableFile = $stableFolder . '/epochs.php';
+        $legacyFile = $legacyFolder . '/epochs.php';
+        $id = random_int(1000000000, 2000000000);
+        $data = [
+            EpochAnchorInterface::KIND_CALENDAR => [],
+            EpochAnchorInterface::KIND_CALENDAR_KEY => [],
+            EpochAnchorInterface::KIND_LOG => [],
+            EpochAnchorInterface::KIND_USER => [$id => 7],
+        ];
+        $key = $services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_ANCHOR);
+        $mac = hash_hmac('sha256', EpochAnchor::canonical($data), $key);
+        CipherSuite::wipe($key);
+        $document = [
+            'v' => 2,
+            EpochAnchorInterface::KIND_CALENDAR => (object) [],
+            EpochAnchorInterface::KIND_CALENDAR_KEY => (object) [],
+            EpochAnchorInterface::KIND_LOG => (object) [],
+            EpochAnchorInterface::KIND_USER => (object) [$id => 7],
+            'mac' => $mac,
+        ];
+        $bytes = "<?php defined('_JEXEC') or die;\n" . json_encode($document, JSON_THROW_ON_ERROR) . "\n";
+
+        try {
+            if (!mkdir($legacyFolder, 0755, true) || file_put_contents($legacyFile, $bytes) !== strlen($bytes)) {
+                throw new \RuntimeException('Could not create the legacy-only epoch anchor fixture.');
+            }
+
+            (new EpochAnchor($services, $stableFile, $legacyFile))->migrateLegacy();
+
+            $migrated = is_dir($stableFolder)
+                && !is_file($legacyFile)
+                && (new EpochAnchor($services, $stableFile))->minimum(EpochAnchorInterface::KIND_USER, $id) === 7;
+
+            $blocker = $root . '/not-a-directory';
+            $blockedLegacyFolder = $root . '/blocked-legacy';
+            $blockedLegacyFile = $blockedLegacyFolder . '/epochs.php';
+            $blockedStableFile = $blocker . '/stable/epochs.php';
+
+            if (file_put_contents($blocker, 'not a directory') === false
+                || !mkdir($blockedLegacyFolder, 0755, true)
+                || file_put_contents($blockedLegacyFile, $bytes) !== strlen($bytes)) {
+                throw new \RuntimeException('Could not create the blocked epoch anchor fixture.');
+            }
+
+            $failedClosed = false;
+
+            try {
+                (new EpochAnchor($services, $blockedStableFile, $blockedLegacyFile))->migrateLegacy();
+            } catch (\RuntimeException $exception) {
+                $failedClosed = $exception->getMessage() === 'The stable Appointments epoch anchor is not writable.'
+                    && is_file($blockedLegacyFile);
+            }
+
+            return $migrated && $failedClosed;
+        } finally {
+            foreach ([
+                $stableFile,
+                $stableFile . '.lock',
+                $legacyFile,
+                $legacyFile . '.lock',
+                $root . '/not-a-directory',
+                $root . '/blocked-legacy/epochs.php',
+                $root . '/blocked-legacy/epochs.php.lock',
+            ] as $file) {
+                if (is_file($file) && !@unlink($file)) {
+                    throw new \RuntimeException('Could not remove a legacy-only epoch anchor fixture.');
+                }
+            }
+
+            foreach ([$legacyFolder, $stableFolder, $root . '/blocked-legacy', $root] as $folder) {
+                if (is_dir($folder) && !@rmdir($folder)) {
+                    throw new \RuntimeException('Could not remove a legacy-only epoch anchor fixture folder.');
+                }
+            }
+        }
+    });
+
     $suite->test('B: recordAfterCommit anchors only what was committed, nothing while a transaction is open, never a rolled-back value', static function () use ($services, &$st) {
         $file = sys_get_temp_dir() . '/teamb-anchor-' . bin2hex(random_bytes(6)) . '/epochs.php';
         $anchor = new EpochAnchor($services, $file);

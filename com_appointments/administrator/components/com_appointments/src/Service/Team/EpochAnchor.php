@@ -72,13 +72,19 @@ final class EpochAnchor implements EpochAnchorInterface
     private $shutdownRegistered = false;
 
     /**
-     * @var  string|null  Overrides the file for the tests; null means the stable administrator path.
+     * @var  string|null  Overrides the stable file for the tests; null means the stable administrator path.
      */
     private $path;
 
-    public function __construct(private readonly TeamServices $services, ?string $path = null)
+    /**
+     * @var  string|null  Overrides the legacy file for tests; null uses the default only with the production stable path.
+     */
+    private $legacyPath;
+
+    public function __construct(private readonly TeamServices $services, ?string $path = null, ?string $legacyPath = null)
     {
         $this->path = $path;
+        $this->legacyPath = $legacyPath;
     }
 
     public function record(string $kind, int $id, int $epoch): void
@@ -113,6 +119,10 @@ final class EpochAnchor implements EpochAnchorInterface
 
         if ($legacyFile === null || !is_file($legacyFile)) {
             return;
+        }
+
+        if (!$this->writable()) {
+            throw new \RuntimeException('The stable Appointments epoch anchor is not writable.');
         }
 
         $this->locked(function () use ($legacyFile): void {
@@ -661,9 +671,11 @@ final class EpochAnchor implements EpochAnchorInterface
 
     private function legacyFile(): ?string
     {
-        return $this->path === null
-            ? JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php'
-            : null;
+        if ($this->legacyPath !== null) {
+            return $this->legacyPath;
+        }
+
+        return $this->path === null ? JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php' : null;
     }
 
     private function siteSecretSuspect(): bool
