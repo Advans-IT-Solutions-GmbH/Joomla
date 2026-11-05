@@ -111,6 +111,23 @@ The source language files remain checked in. The shared lint enforces this rule 
 extensions, while package verification checks that the ZIP contains the same supported file set.
 No text is written into the code: PHP, layouts and JavaScript show language keys only.
 
+### E-mail templates
+
+Every extension that sends mail ships complete, equivalent subjects and message texts in
+**de-DE, en-GB and fr-FR**, even when only German is active on the website. HTML generated from
+translated text uses that same language; there is no second, untranslated HTML default.
+The recipient's supported account language wins, otherwise the **default site language** applies,
+including recipients without an account. A request, administrator session, order or another
+recipient must not choose the mail language. An unsupported site language falls back to en-GB.
+Operator-customised templates remain operator content and are not overwritten on update.
+
+| Extension | Outgoing templates |
+|---|---|
+| Appointments | 18 booking/invitee/guest/host purposes and 7 internet-calendar/device/activation/security purposes; subject and text in each locale, with HTML rendered through the configured Joomla mail layout |
+| AJAX Forms | Password reset, username reminder, self/admin activation and new-registration notice; Joomla `com_mails` templates with translated plugin fallbacks |
+| J2Commerce Privacy | Customer retention/removal notice (8 account/guest, address and newsletter variants) and 3 administrator action notices, including translated order details; plain-text mail |
+| Other extensions and bundled plugins | No outgoing message bodies of their own. DMARC ingestion receives reports, it does not send notifications. The Privacy system plugin changes confirmation URLs in Joomla-owned `com_privacy` mail without replacing its text or language selection |
+
 To add a language:
 
 The supported language set is a repository-wide decision. A new locale requires maintainer

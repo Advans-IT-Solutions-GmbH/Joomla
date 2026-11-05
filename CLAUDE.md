@@ -23,6 +23,8 @@ Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` 
 Sprachregel für alle Erweiterungen und Unter-Plugins: genau `de-DE`, `en-GB`, `fr-FR`;
 Schweizer Hochdeutsch in `de-DE`, keine `de-CH`-Ordner. Massgeblich: `AGENTS.md` und
 `joomla-extensions/references/conventions.md`, „Language Files“.
+Das gilt auch für E-Mail-Vorlagen; Sprachwahl über das Empfängerkonto, sonst die
+Site-Standardsprache (auch Gäste). Sender-Inventar und Details: `README.md`, „E-mail templates“.
 
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).

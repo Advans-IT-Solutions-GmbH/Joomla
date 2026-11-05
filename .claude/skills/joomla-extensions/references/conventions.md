@@ -60,6 +60,13 @@ bodies.
   Do not ship `de-CH` folders or manifest declarations, and do not generate them during a build.
   Language files stay checked in, matching the installation paths declared by each manifest.
   The shared lint enforces the language set; package verification checks the delivered file set.
+- All outgoing mail defaults (subjects and bodies, including HTML where used) are complete in
+  the same three languages, even on a German-only site. Use the supported recipient account
+  language, otherwise the default **site** language, including guests; never the current request,
+  order or another recipient's language. If the site language is unsupported, use en-GB.
+  Preserve custom templates. HTML derived from translated text does not need duplicate strings.
+  Lint checks named `{placeholders}` as well as printf placeholders and rejects empty subject/body
+  strings. Sender inventory: root README, "E-mail templates".
 - `de-DE` uses Swiss High German (no `ß`, use `ss` instead, and `z.B.` without a space). The lint enforces the `ß` rule in the language
   files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
   `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries

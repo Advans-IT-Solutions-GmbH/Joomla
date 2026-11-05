@@ -55,6 +55,20 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     check(command, ROOT, False, "use 'ss' for Swiss High German")
     german.write_bytes(original)
 
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_example.ini").write_text(
+            'PLG_EXAMPLE_EMAIL_BODY="Hello {name}"\n', encoding="utf-8"
+        )
+    manifest.write_text(xml.replace("PLG_EXAMPLE_TITLE", "PLG_EXAMPLE_EMAIL_BODY"), encoding="utf-8")
+    check(command, ROOT, True, "Language files OK")
+    german.write_text('PLG_EXAMPLE_EMAIL_BODY="Hello"\n', encoding="utf-8")
+    check(command, ROOT, False, "named placeholders of PLG_EXAMPLE_EMAIL_BODY differ")
+    german.write_text('PLG_EXAMPLE_EMAIL_BODY=""\n', encoding="utf-8")
+    check(command, ROOT, False, "empty subject/body template")
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_example.ini").write_bytes(original)
+    manifest.write_text(xml, encoding="utf-8")
+
     swiss = fixture / "language" / "de-CH"
     swiss.mkdir()
     check(command, ROOT, False, "unsupported language folder")
@@ -106,6 +120,14 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     check(command, ROOT, False, "missing fr-FR counterpart")
     (nested / "fr-FR" / "plg_example.ini").write_bytes(original)
     check(command, ROOT, True, "Language files OK")
+    manifest.write_text(xml.replace("</extension>", "<files><folder>plugins</folder></files></extension>"), encoding="utf-8")
+    (nested.parent / "example.xml").write_text(
+        xml.replace(f'<languages folder="language">{declarations}</languages>', ""),
+        encoding="utf-8",
+    )
+    check(command, ROOT, False, "language file is not installed")
+    manifest.write_text(xml, encoding="utf-8")
+    (nested.parent / "example.xml").write_text(xml, encoding="utf-8")
 
     (fixture / "build.env").write_text(
         'EXTENSION_NAME="example"\nVERSION="1.0.0"\n', encoding="utf-8"

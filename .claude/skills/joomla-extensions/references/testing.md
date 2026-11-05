@@ -256,11 +256,22 @@ Notable test details:
 Every extension and bundled plugin ships exactly `de-DE`, `en-GB` and `fr-FR`; `de-DE` carries
 Swiss High German. `de-CH` folders and manifest entries are not supported or generated.
 Run `php shared/tests/lang-lint.php <extension>` for every extension. It checks the complete
-file/key/placeholder set and explicit manifest language lists. `verify-package.sh` additionally
+file/key/printf/named-placeholder set, non-empty subjects/bodies and manifest installation coverage
+(explicit entries or whole-folder installs). `verify-package.sh` additionally
 rejects unsupported or missing language counterparts in the archive, including bundled plugins.
 `.github/scripts/test-language-delivery.py` exercises valid delivery and negative cases (missing
-locale, extra key, German `ß`, unsupported/empty `de-CH` folder, wrong manifest and bundled-plugin
-files). Shared Path Coverage runs these regressions on PHP 8.1.
+locale, extra key, German `ß`, empty/unsupported locale directories including non-two-letter tags,
+missing named mail placeholders, empty bodies, omitted entire manifest file families and
+bundled-plugin files). Shared Path Coverage runs these regressions on PHP 8.1.
+
+Mail coverage belongs in the sender's existing CI suites. Appointments checks all 25 purposes in
+all three languages (subject, text and generated HTML), actual booking MIME for separate invitee
+and guest account/site preferences, and device notice MIME with published and shipped-default
+templates. Privacy tests every customer-body variant and administrator action in all three
+languages, account/address preference lookup and preservation before account pseudonymisation.
+AJAX Forms covers its account-template and fallback language paths. Compare account preference
+against a different request/site language; guests must use the site default, never another
+recipient's language. A translation being shipped is not evidence that a real mail was delivered.
 
 The existing installer-messages CI lanes install and update in all three languages. Backend Views
 now reinstalls with each language directory present, logs in with that language and checks the

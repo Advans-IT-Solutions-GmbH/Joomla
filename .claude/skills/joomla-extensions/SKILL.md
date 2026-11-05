@@ -70,6 +70,9 @@ Advans-IT-Solutions-GmbH/Joomla
   rejects another language set, missing or extra keys, `ß` and `z. B.` in `de-DE`. Keys only a site template
   prints are listed per extension in `tests/language-keys-for-template-overrides.txt`. Details:
   `references/conventions.md`, section "Language Files".
+- **Mail languages:** all outgoing subjects and bodies are supplied in the same three languages,
+  including HTML where used. Recipient account language, else site default (also guests), not
+  request/order language. See root README "E-mail templates" and `references/testing.md`.
 - **Releases:** only the latest release per extension exists; the publish workflow deletes older
   releases and tags on purpose. Details: `references/release-workflow.md`.
 - **OSMap mixed installation** (J2Store and J2Commerce both enabled): `com_j2store` takes

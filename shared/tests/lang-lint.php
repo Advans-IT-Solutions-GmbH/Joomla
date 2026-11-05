@@ -471,6 +471,15 @@ function lint_placeholders(string $value): array
     return $list;
 }
 
+function lint_named_placeholders(string $value): array
+{
+    preg_match_all('/\{[a-z][a-z0-9_.]*\}/i', $value, $matches);
+    $tokens = array_values(array_unique($matches[0]));
+    sort($tokens);
+
+    return $tokens;
+}
+
 foreach (array_slice($argv, 1) as $extensionDir) {
     $extensionDir = rtrim($extensionDir, '/\\');
 
@@ -662,11 +671,19 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                     if (lint_placeholders($entry['value']) !== lint_placeholders($reference[$key]['value'])) {
                         $addError($path, $entry['line'], "placeholders of $key differ from en-GB");
                     }
+
+                    if (lint_named_placeholders($entry['value']) !== lint_named_placeholders($reference[$key]['value'])) {
+                        $addError($path, $entry['line'], "named placeholders of $key differ from en-GB");
+                    }
                 }
             }
 
             foreach ($entries as $key => $entry) {
                 $value = $entry['value'];
+
+                if (preg_match('/_(?:SUBJECT|BODY)(?:_|$)/', $key) && trim($value) === '') {
+                    $addError($path, $entry['line'], "empty subject/body template $key");
+                }
 
                 if ($tag === 'de-DE') {
                     if (str_contains($value, 'ß')) {

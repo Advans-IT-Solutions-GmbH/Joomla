@@ -142,3 +142,5 @@ Skills liegen in:
 Sprachen: Jede Erweiterung und jedes Unter-Plugin liefert genau `de-DE`, `en-GB` und `fr-FR`
 mit vollständiger Schlüsselparität. `de-DE` enthält Schweizer Hochdeutsch; keine `de-CH`-Ordner
 oder Build-Kopien. Details: Skill `joomla-extensions`, `references/conventions.md`, „Language Files“.
+Auch alle E-Mail-Vorlagen in diesen drei Sprachen; Empfängerkonto, sonst Site-Standardsprache
+(auch bei Gästen). Details und Sender-Inventar: `README.md`, „E-mail templates“.
