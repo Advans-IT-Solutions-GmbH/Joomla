@@ -106,6 +106,14 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertTrue(TeamPrivacy::fits(0, 0, TeamPrivacy::MAX_OBJECTS), 'An empty calendar always fits');
     }
 
+    public function testAlarmsAndOtherComponentsAreLeftOutWhole(): void
+    {
+        $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Remind Joan about her salary\r\n"
+            . "DESCRIPTION:private\r\nEND:VALARM\r\nLOCATION:Room 2\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nSUMMARY:Secret task\r\nEND:VTODO", 'an@example.test');
+
+        self::assertSame("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nLOCATION:Room 2\r\nEND:VEVENT", $out);
+    }
+
     public function testFoldedLinesAreUnfoldedFirst(): void
     {
         $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nATTENDEE;CN=\"Long\r\n Name\":mailto:x@example.test\r\nDESCRIPTION:a\r\n b\r\nEND:VEVENT", 'an@example.test', 'other');

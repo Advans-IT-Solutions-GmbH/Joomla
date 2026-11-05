@@ -139,6 +139,9 @@ final class TeamPrivacy
     private const KEPT = ['BEGIN', 'END', 'VERSION', 'DTSTART', 'DTEND', 'DURATION', 'RRULE', 'RDATE', 'EXDATE',
         'RECURRENCE-ID', 'STATUS', 'TRANSP', 'TZID', 'TZOFFSETFROM', 'TZOFFSETTO', 'TZNAME', 'SUMMARY', 'LOCATION'];
 
+    /** The components whose properties may be kept; anything inside another one is left out. */
+    private const KEPT_COMPONENTS = ['VCALENDAR', 'VEVENT', 'VTIMEZONE', 'STANDARD', 'DAYLIGHT'];
+
     /** The only parameters kept: time zone and value type of times, and the requester's own participation. */
     private const KEPT_PARAMETERS = ['TZID', 'VALUE', 'RANGE', 'PARTSTAT', 'ROLE', 'CUTYPE', 'RSVP'];
 
@@ -157,7 +160,36 @@ final class TeamPrivacy
         $unfolded = preg_replace('/\r?\n[ \t]/', '', $ics) ?? '';
         $lines = [];
 
+        $stack = [];
+
         foreach (preg_split('/\r?\n/', $unfolded) ?: [] as $line) {
+            // Only the calendar, its events and their time zones: an alarm
+            // (VALARM, with its own SUMMARY and DESCRIPTION) or any other
+            // component is left out as a whole, with everything inside it.
+            if (preg_match('/^(BEGIN|END):([A-Za-z0-9-]+)\s*$/i', $line, $component) === 1) {
+                $kind = strtoupper($component[2]);
+
+                if (strtoupper($component[1]) === 'BEGIN') {
+                    $stack[] = $kind;
+                }
+
+                $inside = array_diff($stack, self::KEPT_COMPONENTS) === [];
+
+                if (strtoupper($component[1]) === 'END') {
+                    array_pop($stack);
+                }
+
+                if ($inside) {
+                    $lines[] = strtoupper($component[1]) . ':' . $kind;
+                }
+
+                continue;
+            }
+
+            if (array_diff($stack, self::KEPT_COMPONENTS) !== []) {
+                continue;
+            }
+
             // NAME *(;PARAM=value) : value, colons and semicolons inside quotes do not count.
             if (preg_match('/^([A-Za-z0-9-]+)((?:;[A-Za-z0-9-]+=(?:"[^"]*"|[^;:"]*)(?:,(?:"[^"]*"|[^;:",]*))*)*):(.*)$/s', $line, $m) !== 1) {
                 continue;
@@ -286,7 +318,7 @@ final class TeamPrivacy
             }
         }
 
-        $this->services->audit()->log(AuditEvent::PRIVACY_EXPORT, [
+        $this->record(AuditEvent::PRIVACY_EXPORT, [
             'actor_user_id'   => $this->actorId(),
             'subject_user_id' => $userId > 0 ? $userId : null,
             'details'         => $counts,
@@ -368,7 +400,7 @@ final class TeamPrivacy
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
         }
 
-        $this->services->audit()->log(AuditEvent::PRIVACY_DELETE, [
+        $this->record(AuditEvent::PRIVACY_DELETE, [
             'actor_user_id'   => $this->actorId(),
             'subject_user_id' => $userId > 0 ? $userId : null,
             'details'         => ['entries' => $deleted, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff],
@@ -390,8 +422,9 @@ final class TeamPrivacy
         $db = $this->services->db();
         $calendars = $db->setQuery($this->query()->select($db->quoteName(['id', 'title']))
             ->from($db->quoteName('#__appointments_calendars'))->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+        // The stored bytes themselves, not the declared size.
         $stats = $db->setQuery($this->query()->select([$db->quoteName('calendar_id'), 'COUNT(*) AS ' . $db->quoteName('objects'),
-            'COALESCE(SUM(' . $db->quoteName('size') . '), 0) AS ' . $db->quoteName('bytes')])
+            'COALESCE(SUM(LENGTH(' . $db->quoteName('payload') . ') + LENGTH(' . $db->quoteName('timing') . ')), 0) AS ' . $db->quoteName('bytes')])
             ->from($db->quoteName('#__appointments_calendar_objects'))->group($db->quoteName('calendar_id')))->loadAssocList('calendar_id') ?: [];
         // One deadline for the whole request: the removal after the search
         // stops at it too.
@@ -430,6 +463,21 @@ final class TeamPrivacy
 
             try {
                 $objects = $this->services->objects()->all($id);
+                $loaded = 0;
+
+                foreach ($objects as $object) {
+                    $loaded += \strlen($object->payload) + \strlen($object->timing);
+                }
+
+                // Written to between the count and the fetch: checked again on
+                // what was really loaded, and dropped at once when too large.
+                if (!self::fits(\count($objects), $loaded, $used - $count)) {
+                    unset($objects);
+                    $used -= $count;
+                    $unsearched[$id] = $title;
+
+                    continue;
+                }
 
                 foreach ($objects as $index => $object) {
                     if (microtime(true) > $deadline) {
@@ -476,7 +524,7 @@ final class TeamPrivacy
             }
         }
 
-        $this->services->audit()->log(AuditEvent::PRIVACY_SEARCH, [
+        $this->record(AuditEvent::PRIVACY_SEARCH, [
             'actor_user_id' => $this->actorId(),
             'details'       => ['calendars' => \count($calendars), 'searched' => $searched, 'not_searched' => \count($unsearched),
                 'matches' => \count($matches)],
@@ -583,6 +631,23 @@ final class TeamPrivacy
         $domain->addItem($item);
 
         return $domain;
+    }
+
+    /**
+     * Log a privacy step. A failing log row (a lock conflict is rethrown by
+     * the audit service) never aborts the request or hides its result: the
+     * administrator is told that the evidence is missing.
+     *
+     * @param   array<string, mixed>  $context
+     */
+    private function record(string $event, array $context): void
+    {
+        try {
+            $this->services->audit()->log($event, $context);
+        } catch (\Throwable $e) {
+            Log::add('Team calendars: a privacy log row could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
+        }
     }
 
     private function actorId(): ?int
