@@ -22,7 +22,10 @@ require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/s
  */
 final class AuditChainTest extends TestCase
 {
-    private const KEY = '0123456789abcdef0123456789abcdef';
+    private static function key(): string
+    {
+        return hash('sha256', 'audit-chain-test-fixture', true);
+    }
 
     /**
      * Append rows like AuditService::append(), with a fake clock.
@@ -34,11 +37,11 @@ final class AuditChainTest extends TestCase
      */
     private function chain(array $events, ?array $head = null, int $firstId = 1): array
     {
-        $head ??= ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
+        $head ??= ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::key()), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
         $rows = [];
         $id = $firstId;
         // What AuditService::predecessorLink() finds: the link of the newest row, else the anchor, else genesis.
-        $prev = $head['link'] ?? ($head['pruned_through_hash'] ?? AuditService::genesis(self::KEY));
+        $prev = $head['link'] ?? ($head['pruned_through_hash'] ?? AuditService::genesis(self::key()));
         unset($head['link']);
 
         foreach ($events as $event) {
@@ -49,10 +52,10 @@ final class AuditChainTest extends TestCase
                 'details' => $details === null ? null : AuditService::encodeDetails($details), 'ip_hash' => null,
                 'prev_hash' => $prev,
             ];
-            $row['row_hash'] = AuditService::rowHash(self::KEY, $row);
+            $row['row_hash'] = AuditService::rowHash(self::key(), $row);
             $head['last_id'] = $id;
-            $head['last_hash'] = AuditService::seal(self::KEY, $id, $row['row_hash']);
-            $prev = AuditService::link(self::KEY, $id, $row['row_hash']);
+            $head['last_hash'] = AuditService::seal(self::key(), $id, $row['row_hash']);
+            $prev = AuditService::link(self::key(), $id, $row['row_hash']);
             $rows[$id] = $row;
             // Ids may have gaps (a rolled back append), the chain must not care.
             $id += 2;
@@ -74,7 +77,7 @@ final class AuditChainTest extends TestCase
     public function testIntactChainVerifies(): void
     {
         [$head, $rows] = $this->sample();
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
 
         self::assertTrue($result->intact);
         self::assertSame(4, $result->checkedRows);
@@ -88,7 +91,7 @@ final class AuditChainTest extends TestCase
         // MySQL returns JSON with its own key order and spacing.
         $rows[3]['details'] = '{"rule_version": "1", "device_id": 4}';
 
-        self::assertTrue(AuditService::verifyChain(self::KEY, $head, array_values($rows))->intact);
+        self::assertTrue(AuditService::verifyChain(self::key(), $head, array_values($rows))->intact);
     }
 
     public function testAlteredRowIsDetected(): void
@@ -96,13 +99,13 @@ final class AuditChainTest extends TestCase
         [$head, $rows] = $this->sample();
         $rows[5]['details'] = '{"role": "manage"}';
 
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
         self::assertFalse($result->intact);
         self::assertSame(5, $result->firstBrokenId);
 
         [$head, $rows] = $this->sample();
         $rows[3]['occurred_utc'] = '2026-01-01 08:02:00';
-        self::assertSame(3, AuditService::verifyChain(self::KEY, $head, array_values($rows))->firstBrokenId);
+        self::assertSame(3, AuditService::verifyChain(self::key(), $head, array_values($rows))->firstBrokenId);
     }
 
     public function testRemovedRowIsDetected(): void
@@ -110,7 +113,7 @@ final class AuditChainTest extends TestCase
         [$head, $rows] = $this->sample();
         unset($rows[3]);
 
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
         self::assertFalse($result->intact);
         self::assertSame(5, $result->firstBrokenId);
     }
@@ -125,7 +128,7 @@ final class AuditChainTest extends TestCase
         $forged['prev_hash'] = $rows[5]['prev_hash'];
         $all = [$rows[1], $rows[3], $forged, $rows[5], $rows[7]];
 
-        $result = AuditService::verifyChain(self::KEY, $head, $all);
+        $result = AuditService::verifyChain(self::key(), $head, $all);
         self::assertFalse($result->intact);
         self::assertSame(4, $result->firstBrokenId);
     }
@@ -136,7 +139,7 @@ final class AuditChainTest extends TestCase
         [$rows[3]['id'], $rows[5]['id']] = [$rows[5]['id'], $rows[3]['id']];
         $all = [$rows[1], $rows[5], $rows[3], $rows[7]];
 
-        self::assertFalse(AuditService::verifyChain(self::KEY, $head, $all)->intact);
+        self::assertFalse(AuditService::verifyChain(self::key(), $head, $all)->intact);
     }
 
     public function testCutOffEndIsDetected(): void
@@ -150,46 +153,46 @@ final class AuditChainTest extends TestCase
             $head['last_hash'] = $copy === 'row_hash' ? $rows[5]['row_hash'] : $rows[7]['prev_hash'];
             unset($rows[7]);
 
-            $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+            $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
             self::assertFalse($result->intact, $copy);
             self::assertSame(5, $result->firstBrokenId);
         }
 
         [$head, $rows] = $this->sample();
         unset($rows[7]);
-        self::assertFalse(AuditService::verifyChain(self::KEY, $head, array_values($rows))->intact, 'Head not updated at all');
+        self::assertFalse(AuditService::verifyChain(self::key(), $head, array_values($rows))->intact, 'Head not updated at all');
     }
 
     public function testEmptiedLogIsDetected(): void
     {
         [$head] = $this->sample();
 
-        self::assertFalse(AuditService::verifyChain(self::KEY, $head, [])->intact, 'Rows deleted, head kept');
-        self::assertFalse(AuditService::verifyChain(self::KEY, null, [], true)->intact, 'Rows and head deleted while calendars exist');
-        self::assertTrue(AuditService::verifyChain(self::KEY, null, [], false)->intact, 'A log that was never written');
+        self::assertFalse(AuditService::verifyChain(self::key(), $head, [])->intact, 'Rows deleted, head kept');
+        self::assertFalse(AuditService::verifyChain(self::key(), null, [], true)->intact, 'Rows and head deleted while calendars exist');
+        self::assertTrue(AuditService::verifyChain(self::key(), null, [], false)->intact, 'A log that was never written');
 
         // The head reset to the empty state (readable once it was empty) while calendar data exists.
-        $empty = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
-        self::assertFalse(AuditService::verifyChain(self::KEY, $empty, [], true)->intact, 'Emptied with calendar data');
-        self::assertTrue(AuditService::verifyChain(self::KEY, $empty, [], false)->intact, 'Empty before any calendar');
+        $empty = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::key()), 'pruned_through_id' => 0, 'pruned_through_hash' => null];
+        self::assertFalse(AuditService::verifyChain(self::key(), $empty, [], true)->intact, 'Emptied with calendar data');
+        self::assertTrue(AuditService::verifyChain(self::key(), $empty, [], false)->intact, 'Empty before any calendar');
 
         [, $rows] = $this->sample();
-        self::assertFalse(AuditService::verifyChain(self::KEY, null, array_values($rows))->intact, 'Head deleted, rows kept');
+        self::assertFalse(AuditService::verifyChain(self::key(), null, array_values($rows))->intact, 'Head deleted, rows kept');
     }
 
     public function testRestartedLogStaysBroken(): void
     {
         // Rows and head deleted, then a new event: the head is re-created with the restart marker.
-        $restart = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::KEY), 'pruned_through_id' => 0,
-            'pruned_through_hash' => AuditService::restartMarker(self::KEY)];
+        $restart = ['last_id' => 0, 'last_hash' => AuditService::emptyHead(self::key()), 'pruned_through_id' => 0,
+            'pruned_through_hash' => AuditService::restartMarker(self::key())];
         [$head, $rows] = $this->chain([[AuditEvent::LOGIN_FAILURE, '2026-03-01 08:00:00']], $restart);
 
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows), true);
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows), true);
         self::assertFalse($result->intact);
 
         // Removing the marker does not help: the first row links to it, not to genesis.
         $head['pruned_through_hash'] = null;
-        self::assertFalse(AuditService::verifyChain(self::KEY, $head, array_values($rows), true)->intact);
+        self::assertFalse(AuditService::verifyChain(self::key(), $head, array_values($rows), true)->intact);
     }
 
     public function testDeadlockIsRecognised(): void
@@ -204,7 +207,7 @@ final class AuditChainTest extends TestCase
     {
         [$head, $rows] = $this->sample();
 
-        self::assertFalse(AuditService::verifyChain(strrev(self::KEY), $head, array_values($rows))->intact);
+        self::assertFalse(AuditService::verifyChain(strrev(self::key()), $head, array_values($rows))->intact);
     }
 
     /**
@@ -215,11 +218,11 @@ final class AuditChainTest extends TestCase
     {
         [$head, $rows] = $this->sample();
         $through = 3;
-        $anchor = AuditService::link(self::KEY, $through, $rows[$through]['row_hash']);
+        $anchor = AuditService::link(self::key(), $through, $rows[$through]['row_hash']);
         unset($rows[1], $rows[3]);
         $head['pruned_through_id'] = $through;
         $head['pruned_through_hash'] = $anchor;
-        $head['link'] = AuditService::link(self::KEY, 7, $rows[7]['row_hash']);
+        $head['link'] = AuditService::link(self::key(), 7, $rows[7]['row_hash']);
         [$head, $more] = $this->chain([[AuditEvent::LOG_PRUNED, '2027-02-01 00:00:00', ['through_id' => $through, 'rows' => 2, 'anchor' => bin2hex($anchor)]]], $head, 9);
 
         return [$head, $rows + $more];
@@ -228,7 +231,7 @@ final class AuditChainTest extends TestCase
     public function testPrunedChainStillVerifies(): void
     {
         [$head, $rows] = $this->pruned();
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
 
         self::assertTrue($result->intact);
         self::assertSame(3, $result->checkedRows);
@@ -243,7 +246,7 @@ final class AuditChainTest extends TestCase
         $head['pruned_through_id'] = 5;
         $head['pruned_through_hash'] = $rows[7]['prev_hash'];
 
-        $result = AuditService::verifyChain(self::KEY, $head, array_values($rows));
+        $result = AuditService::verifyChain(self::key(), $head, array_values($rows));
         self::assertFalse($result->intact, 'The newest log.pruned row names another anchor');
 
         // A prune of a log that was never pruned: no log.pruned row at all.
@@ -251,7 +254,7 @@ final class AuditChainTest extends TestCase
         unset($rows[1]);
         $head['pruned_through_id'] = 1;
         $head['pruned_through_hash'] = $rows[3]['prev_hash'];
-        self::assertFalse(AuditService::verifyChain(self::KEY, $head, array_values($rows))->intact);
+        self::assertFalse(AuditService::verifyChain(self::key(), $head, array_values($rows))->intact);
     }
 
     public function testDetailsKeepNoAddressNoContentAndNoNesting(): void
@@ -279,14 +282,14 @@ final class AuditChainTest extends TestCase
 
     public function testAddressIsHashedWithTheKeyOnly(): void
     {
-        $hash = AuditService::addressHash(self::KEY, '192.0.2.10');
+        $hash = AuditService::addressHash(self::key(), '192.0.2.10');
 
         self::assertSame(32, strlen($hash));
-        self::assertNotSame($hash, AuditService::addressHash(strrev(self::KEY), '192.0.2.10'));
-        self::assertSame(AuditService::addressHash(self::KEY, '2001:db8::1'), AuditService::addressHash(self::KEY, '2001:0db8:0:0::1'));
-        self::assertSame(AuditService::addressHash(self::KEY, '2001:db8:1:2::1'), AuditService::addressHash(self::KEY, '2001:db8:1:2:ffff::9'), 'IPv6 per /64');
-        self::assertNotSame(AuditService::addressHash(self::KEY, '2001:db8:1:2::1'), AuditService::addressHash(self::KEY, '2001:db8:1:3::1'));
-        self::assertNull(AuditService::addressHash(self::KEY, 'not an address'));
-        self::assertNull(AuditService::addressHash(self::KEY, ''));
+        self::assertNotSame($hash, AuditService::addressHash(strrev(self::key()), '192.0.2.10'));
+        self::assertSame(AuditService::addressHash(self::key(), '2001:db8::1'), AuditService::addressHash(self::key(), '2001:0db8:0:0::1'));
+        self::assertSame(AuditService::addressHash(self::key(), '2001:db8:1:2::1'), AuditService::addressHash(self::key(), '2001:db8:1:2:ffff::9'), 'IPv6 per /64');
+        self::assertNotSame(AuditService::addressHash(self::key(), '2001:db8:1:2::1'), AuditService::addressHash(self::key(), '2001:db8:1:3::1'));
+        self::assertNull(AuditService::addressHash(self::key(), 'not an address'));
+        self::assertNull(AuditService::addressHash(self::key(), ''));
     }
 }
