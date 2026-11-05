@@ -137,6 +137,12 @@ final class BookingRecords
         return $total;
     }
 
+    /** Whether the migration is over (the keyed end marker): a single read of the component options. */
+    public static function finished(DatabaseInterface $db, KeyProvider $keys): bool
+    {
+        return BookingData::migrationDone(self::token($db), $keys);
+    }
+
     /**
      * Rows of 1.3 still in clear text after the migration window: readable, but
      * shown as «not verified» until an administrator encrypts them (for the

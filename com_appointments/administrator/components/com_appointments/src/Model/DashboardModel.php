@@ -41,7 +41,15 @@ class DashboardModel extends BaseDatabaseModel
             $db = Factory::getContainer()->get(DatabaseInterface::class);
             $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) $app->get('secret', ''));
 
+            // After the end (also on every new installation) nothing to do, and no table scan.
+            if (\Advans\Component\Appointments\Administrator\Service\BookingRecords::finished($db, $keys)) {
+                return 0;
+            }
+
             if ($app->getIdentity()->authorise('core.admin', 'com_appointments')) {
+                // Also opens a migration the update could not open (an installation over existing
+                // tables, an error in the update): idempotent, and only while no row is sealed.
+                \Advans\Component\Appointments\Administrator\Service\BookingRecords::begin($db, $keys);
                 \Advans\Component\Appointments\Administrator\Service\BookingRecords::resume($db, $keys, self::MIGRATION_SECONDS);
             }
 
