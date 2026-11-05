@@ -81,8 +81,10 @@ function state(): array
 
 function saveState(array $state): void
 {
-    file_put_contents(STATE_FILE, json_encode($state, JSON_PRETTY_PRINT));
-    chmod(STATE_FILE, 0600);
+    if (file_put_contents(STATE_FILE, json_encode($state, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR), LOCK_EX) === false
+        || !chmod(STATE_FILE, 0600)) {
+        fail('Could not persist the fixture clean-up checkpoint.');
+    }
 }
 
 /**
@@ -167,12 +169,21 @@ function createUser(string $name, int $group): array
     $password = bin2hex(random_bytes(16));
     $hash = db()->real_escape_string(password_hash($password, PASSWORD_DEFAULT));
     $now = gmdate('Y-m-d H:i:s');
-    db()->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,lastvisitDate,activation,params,requireReset)"
-        . " VALUES ('CI {$name}','{$username}','{$username}@example.invalid','{$hash}',0,0,'{$now}',NULL,'','{}',0)");
-    $id = (int) db()->insert_id;
-    db()->query("INSERT INTO {$prefix}user_usergroup_map (user_id,group_id) VALUES ({$id},{$group})");
-    db()->query("INSERT INTO {$prefix}user_mfa (user_id,title,method,`default`,options,created_on,last_used)"
-        . " VALUES ({$id},'CI authenticator','totp',1,'{}','{$now}',NULL)");
+    db()->begin_transaction();
+
+    try {
+        db()->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,lastvisitDate,activation,params,requireReset)"
+            . " VALUES ('CI {$name}','{$username}','{$username}@example.invalid','{$hash}',0,0,'{$now}',NULL,'','{}',0)");
+        $id = (int) db()->insert_id;
+        db()->query("INSERT INTO {$prefix}user_usergroup_map (user_id,group_id) VALUES ({$id},{$group})");
+        db()->query("INSERT INTO {$prefix}user_mfa (user_id,title,method,`default`,options,created_on,last_used)"
+            . " VALUES ({$id},'CI authenticator','totp',1,'{}','{$now}',NULL)");
+        db()->commit();
+    } catch (\Throwable $error) {
+        db()->rollback();
+
+        throw $error;
+    }
 
     return ['id' => $id, 'username' => $username, 'password' => $password];
 }
@@ -198,17 +209,20 @@ function setup(): void
     $admin = (int) db()->query("SELECT id FROM " . prefix() . "users WHERE username='"
         . db()->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin') . "'")->fetch_assoc()['id'];
     $state = ['admin' => $admin, 'users' => [], 'calendars' => [], 'devices' => []];
+    saveState($state);
 
     if ($team->keys()->recoveryFingerprint() === null) {
         // The secret is shown once on a real site; the job never needs it.
         $team->keys()->createRecoveryKey($admin);
         $state['recovery_created'] = true;
+        saveState($state);
     }
 
     $keys = [];
 
     foreach (array_keys(USERS) as $name) {
         $state['users'][$name] = createUser($name, $group);
+        saveState($state);
         $keys[$name] = $team->keys()->createUserKey($state['users'][$name]['id'], $state['users'][$name]['password']);
     }
 
@@ -220,7 +234,11 @@ function setup(): void
 
     foreach (['T' => 'CI team calendar', 'R' => 'CI revocation calendar', 'F' => 'CI owner only'] as $key => $title) {
         $id = $team->calendars()->create($admin, ['title' => $title, 'owner_user_id' => $owner, 'colour' => '#2a6f97']);
-        $state['calendars'][$key] = ['id' => $id, 'uri' => (string) $team->calendars()->get($id)->uri, 'title' => $title];
+        $state['calendars'][$key] = ['id' => $id, 'title' => $title];
+        saveState($state);
+        $calendar = $team->calendars()->get($id) ?? fail('The newly created calendar is missing.');
+        $state['calendars'][$key]['uri'] = (string) $calendar->uri;
+        saveState($state);
     }
 
     saveState($state);
@@ -237,6 +255,7 @@ function setup(): void
         $device = $team->devices()->create($keys[$name], 'CI ' . $name, 'other', true);
         $state['devices'][$name] = (int) $device['device_id'];
         $state['users'][$name]['app_password'] = $device['app_password'];
+        saveState($state);
     }
 
     saveState($state);

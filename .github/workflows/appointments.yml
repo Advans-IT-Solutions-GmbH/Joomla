@@ -507,7 +507,7 @@ jobs:
           mkdir -p test-results
           docker exec com_appointments_j6_test mkdir -p /var/www/html/tests/scripts
           docker cp scripts/. com_appointments_j6_test:/var/www/html/tests/scripts/
-          docker exec -e TEAM_NO_PENDING=1 -e TEST_STRICT_SKIP=1 com_appointments_j6_test \
+          docker exec -e TEAM_NO_PENDING=1 -e TEAM_BASE_URL=https://localhost -e TEST_STRICT_SKIP=1 com_appointments_j6_test \
             php /var/www/html/tests/scripts/21-teamcalendars.php 2>&1 | tee test-results/teamcalendars-strict.txt
       - name: Run CalDAV clients
         shell: bash
