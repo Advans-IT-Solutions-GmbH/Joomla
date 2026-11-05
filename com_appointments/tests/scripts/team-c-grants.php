@@ -21,6 +21,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\KeyService;
+use Advans\Component\Appointments\Administrator\Service\Team\CleanupService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamMailer;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 
@@ -278,7 +279,7 @@ return static function (TeamSuite $suite): void {
 
         if ($needKeys) {
             foreach ($grantE2e as $index => $name) {
-                $suite->pending($name, $index >= 7 ? 'B, D' : 'B');
+                $suite->pending($name, $index === 9 ? 'B, D, F' : ($index >= 7 ? 'B, D' : 'B'));
             }
 
             foreach ($replayE2e as $name) {
@@ -470,7 +471,10 @@ return static function (TeamSuite $suite): void {
                 && $refused(static fn () => $invitations->invite($external, $owner), 403);
         });
 
-        $suite->test($grantE2e[9], static function () use ($invitations, $grants, $super, $owner, $fresh, $calendar, $ownerKeys, $refused, $db, $p) {
+        if ($suite->isStub(CleanupService::class)) {
+            // The one-step revoke starts the device clean-up before it closes the link.
+            $suite->pending($grantE2e[9], 'F');
+        } else $suite->test($grantE2e[9], static function () use ($invitations, $grants, $super, $owner, $fresh, $calendar, $ownerKeys, $refused, $db, $p) {
             $grants->grant($owner, $calendar, $fresh, CalendarRole::Read, $ownerKeys);
             $id = (int) $db->query("SELECT id FROM {$p}appointments_invitations WHERE user_id={$fresh} AND state=" . TeamStates::INVITATION_COMPLETED)->fetch_row()[0];
             $nobody = $refused(static fn () => $invitations->revoke($owner, $id), 403);

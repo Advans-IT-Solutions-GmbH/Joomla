@@ -480,7 +480,10 @@ final class CalendarService implements CalendarServiceInterface
             } catch (\Throwable) {
             }
 
-            GrantService::queueTombstone($calendarId, max((int) $row->grant_epoch, $minimum) + 1);
+            // The epoch of a row that does not verify is not trusted (it could
+            // be set to anything); then only the anchored value counts.
+            $epoch = $valid ? min((int) $row->grant_epoch, PHP_INT_MAX - 1) : 0;
+            GrantService::queueTombstone($calendarId, min(max($epoch, $minimum), PHP_INT_MAX - 1) + 1);
 
             return ['title' => $valid ? (string) $row->title : null, 'recipients' => array_values(array_unique($recipients))];
         });

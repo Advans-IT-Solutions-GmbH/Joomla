@@ -115,7 +115,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                         $mayChange = !$grant->is_owner && (int) $grant->user_id !== $me && $grant->current_audience !== 'none'
                             && ($external ? $this->canShareExternally : $manager);
                         $mayRemove = !$grant->is_owner && (int) $grant->user_id !== $me
-                            && ($manager || (($external || $wasExternal) && $this->canShareExternally));
+                            && ($manager || (($external || $wasExternal) && $this->canRevokeExternal));
                         ?>
                         <tr>
                             <th scope="row">

@@ -63,6 +63,9 @@ class HtmlView extends BaseHtmlView
     /** @var bool  Whether the signed-in user may see who holds which grant. */
     protected $showGrants = false;
 
+    /** @var bool  May remove external grants (the right to share externally), whatever the calendar setting. */
+    protected $canRevokeExternal = false;
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -112,8 +115,16 @@ class HtmlView extends BaseHtmlView
                 // Who holds which grant (and whether it is effective, which
                 // tells about a second factor) is shown to the calendar's
                 // managers and to administrators only, not to every editor.
-                $this->showGrants = $this->myRole === CalendarRole::Manage || $user->authorise('core.admin', 'com_appointments');
+                $this->canRevokeExternal = GrantService::sharesExternally($services, (int) $user->id);
+                $this->showGrants = $this->myRole === CalendarRole::Manage || $user->authorise('core.admin', 'com_appointments')
+                    || $this->canRevokeExternal;
                 $this->grants = $this->showGrants ? $services->grants()->grantsOf($id) : [];
+
+                // Somebody who only shares externally sees the external grants,
+                // the ones they may administer, and no team details.
+                if ($this->myRole !== CalendarRole::Manage && !$user->authorise('core.admin', 'com_appointments')) {
+                    $this->grants = array_values(array_filter($this->grants, static fn (object $grant): bool => $grant->audience === 'external' || $grant->current_audience === 'external'));
+                }
                 $held = array_map(static fn (object $grant): int => (int) $grant->user_id, $this->grants);
                 $this->canShareExternally = (int) $this->item->allow_external === 1
                     && GrantService::sharesExternally($services, (int) $user->id);

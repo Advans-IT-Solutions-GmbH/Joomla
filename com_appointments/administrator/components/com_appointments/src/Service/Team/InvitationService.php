@@ -505,6 +505,10 @@ final class InvitationService implements InvitationServiceInterface
 
             if ($state === TeamStates::INVITATION_COMPLETED) {
                 $this->block($userId);
+                // The device clean-up has to start before the link is closed:
+                // when it fails, the revoke stays repeatable (the link remains
+                // «completed», the blocked account already has no access).
+                $this->services->cleanup()->startForUser($userId, 'access_revoked', $actorUserId);
             }
 
             return $this->atomic(function () use ($actorUserId, $invitationId, $userId, $state): array {
@@ -758,12 +762,6 @@ final class InvitationService implements InvitationServiceInterface
      */
     private function endAccess(int $userId, int $actorUserId): void
     {
-        try {
-            $this->services->cleanup()->startForUser($userId, 'access_revoked', $actorUserId);
-        } catch (\Throwable) {
-            // The block alone keeps the account out; the clean-up follows with the user plugin.
-        }
-
         foreach ([0, 1] as $client) {
             try {
                 Factory::getApplication()->logout($userId, ['clientid' => $client]);
