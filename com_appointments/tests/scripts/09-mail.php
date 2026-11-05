@@ -10,6 +10,9 @@ $tag = 'suite-mail-' . bin2hex(random_bytes(6));
 $event = 0;
 $schedule = 0;
 $mailsParams = null;
+$languageParams = null;
+$inviteeUser = 0;
+$guestUser = 0;
 $failed = 0;
 $check = static function (bool $ok, string $message) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $message . "\n";
@@ -21,6 +24,23 @@ $utc = new DateTimeZone('UTC');
 $now = new DateTimeImmutable('now', $utc);
 $day = $now->modify('+2 days')->format('Y-m-d');
 $admin = new AppointmentsHttp('http://localhost', 'mail-admin');
+
+$subjectFor = static function (array $before, string $address): string {
+    $subjects = [];
+    foreach (AppointmentsMail::messagesSince($before) as $mime) {
+        $headers = preg_replace('/\r?\n[ \t]+/', ' ', $mime);
+        if (preg_match('/^To:.*' . preg_quote($address, '/') . '/mi', $headers)
+            && preg_match('/^Subject:\s*(.*)$/mi', $headers, $subject)
+        ) {
+            $subjects[] = iconv_mime_decode(trim($subject[1]), 0, 'UTF-8');
+        }
+    }
+    if (count($subjects) !== 1 || !is_string($subjects[0])) {
+        throw new RuntimeException('Expected exactly one readable subject for the fixture recipient.');
+    }
+
+    return $subjects[0];
+};
 
 $inspect = static function (array $before, array $booking, string $method, string $status, int $expected, ?string $localizedSubject = null) use ($spool, $check): void {
     $messages = array_values(array_diff($spool(), $before));
@@ -75,6 +95,8 @@ try {
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
+    $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params) VALUES ('Mail fixture','{$tag}','invitee@example.test','',1,0,UTC_TIMESTAMP(),'{\"language\":\"en-GB\"}')");
+    $inviteeUser = (int) $db->insert_id;
     $time = $now->format('Y-m-d H:i:s');
     $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$tag}','UTC',{$host},1,'{$time}','{$time}')");
     $schedule = (int) $db->insert_id;
@@ -95,12 +117,22 @@ try {
     $check($booking && preg_match('/Appointment (?:received|confirmed)/', $html) === 1, 'Public confirmation sends real email after saving');
     $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3, 'Fixture override');
 
-    $db->query("UPDATE {$prefix}appointments_bookings SET invitee_language='de-DE' WHERE id=" . (int) $booking['id']);
+    $db->query("UPDATE {$prefix}appointments_bookings SET invitee_language='fr-FR' WHERE id=" . (int) $booking['id']);
+    $db->query("UPDATE {$prefix}users SET params='{\"language\":\"de-DE\"}' WHERE id={$inviteeUser}");
+    $languageParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_languages' AND type='component'")->fetch_row()[0];
+    $languages = json_decode((string) $languageParams, true, 512, JSON_THROW_ON_ERROR);
+    $languages['site'] = 'de-DE';
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($languages, JSON_THROW_ON_ERROR)) . "' WHERE element='com_languages' AND type='component'");
     $before = $spool();
     $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.cancel', ['cid' => [$booking['id']], $token => 1]);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE id=" . (int) $booking['id'])->fetch_assoc();
     $inspect($before, $booking, 'CANCEL', 'CANCELLED', 3, 'Abgesagt:');
+    $check(str_contains($subjectFor($before, 'guest@example.test'), 'Abgesagt:'),
+        'Guest without an account uses the default site language, not the stored booking language');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $languageParams) . "' WHERE element='com_languages' AND type='component'");
+    $languageParams = null;
+    $db->query("UPDATE {$prefix}users SET params='{\"language\":\"en-GB\"}' WHERE id={$inviteeUser}");
 
     $db->query("UPDATE {$prefix}appointments_eventtypes SET requires_approval=1 WHERE id={$event}");
     $client = new AppointmentsHttp('http://localhost', 'mail-pending');
@@ -110,12 +142,24 @@ try {
     $browser->request($path, $form);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 11:00:00'")->fetch_assoc();
     $inspect($before, $booking, 'REQUEST', 'TENTATIVE', 3, 'Awaiting approval:');
-    $db->query("UPDATE {$prefix}appointments_bookings SET invitee_language='fr-FR' WHERE id=" . (int) $booking['id']);
+    $db->query("UPDATE {$prefix}users SET params='{\"language\":\"fr-FR\"}' WHERE id={$inviteeUser}");
     $before = $spool();
     $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.approve', ['cid' => [$booking['id']], $token => 1]);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE id=" . (int) $booking['id'])->fetch_assoc();
     $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3, 'Validé :');
+    $check(str_contains($subjectFor($before, 'guest@example.test'), 'Approved:'),
+        'An additional guest does not inherit the French account language of the booking person');
+    $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params) VALUES ('Guest fixture','{$tag}-guest','guest@example.test','',1,0,UTC_TIMESTAMP(),'{\"language\":\"de-DE\"}')");
+    $guestUser = (int) $db->insert_id;
+    $before = $spool();
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.cancel', ['cid' => [$booking['id']], $token => 1]);
+    $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE id=" . (int) $booking['id'])->fetch_assoc();
+    $inspect($before, $booking, 'CANCEL', 'CANCELLED', 3, 'Annulé :');
+    $check(str_contains($subjectFor($before, 'guest@example.test'), 'Abgesagt:'),
+        'An additional guest with an account receives their own profile language');
+    $db->query("UPDATE {$prefix}users SET params='{\"language\":\"en-GB\"}' WHERE id={$inviteeUser}");
 
     // HTML mail style with Joomla's own mail layout (com_mails): HTML in the layout, text as
     // alternative part, both calendar parts unchanged, management links clickable.
@@ -174,6 +218,9 @@ try {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
 } finally {
+    if ($languageParams !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $languageParams) . "' WHERE element='com_languages' AND type='component'");
+    }
     if ($mailsParams !== null) {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $mailsParams) . "' WHERE element='com_mails' AND type='component'");
     }
@@ -188,6 +235,11 @@ try {
     if ($schedule) {
         $db->query("DELETE FROM {$prefix}appointments_schedule_rules WHERE schedule_id={$schedule}");
         $db->query("DELETE FROM {$prefix}appointments_schedules WHERE id={$schedule}");
+    }
+    foreach ([$inviteeUser, $guestUser] as $userId) {
+        if ($userId > 0) {
+            $db->query("DELETE FROM {$prefix}users WHERE id={$userId}");
+        }
     }
 }
 exit($failed ? 1 : 0);

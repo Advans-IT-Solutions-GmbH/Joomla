@@ -269,6 +269,47 @@ return static function (TeamSuite $suite): void {
     };
 
     try {
+        $suite->test('Calendar notices use each account language and same-language defaults without a published DB template', static function () use ($enabled, $user, $db, $joomla, $p, $tag) {
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $language) {
+                $id = $user('mail-' . $language, 'Calendar mail fixture 1!', [2]);
+                $params = $db->real_escape_string(json_encode(['language' => $language], JSON_THROW_ON_ERROR));
+                $db->query("UPDATE {$p}users SET params='{$params}' WHERE id={$id}");
+                $address = $tag . 'mail-' . $language . '@example.test';
+                $strings = parse_ini_file(JPATH_ADMINISTRATOR . '/components/com_appointments/language/' . $language . '/com_appointments.ini', false, INI_SCANNER_RAW);
+                $expected = strtr($strings['COM_APPOINTMENTS_TEAM_D_MAIL_DEVICE_ADDED_SUBJECT'], [
+                    '{site_name}' => (string) \Joomla\CMS\Factory::getApplication()->get('sitename'),
+                    '{user_name}' => $tag . 'mail-' . $language,
+                ]);
+                if (\Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, strtoupper($address), 'de-DE') !== $language) {
+                    return false;
+                }
+
+                foreach ([true, false] as $published) {
+                    $db->query("UPDATE {$p}appointments_templates SET published=" . ($published ? 1 : 0) . " WHERE eventtype_id=0 AND purpose='team_device_added' AND language='{$language}'");
+                    try {
+                        $before = AppointmentsMail::snapshot();
+                        $enabled->mailer()->deviceAdded($id, 'Mail fixture device', 'other', new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                        $messages = AppointmentsMail::messagesSince($before);
+                        if (count($messages) !== 1) {
+                            return false;
+                        }
+                        $headers = preg_replace('/\r?\n[ \t]+/', ' ', $messages[0]);
+                        if (!preg_match('/^Subject:\s*(.*)$/mi', $headers, $subject)
+                            || iconv_mime_decode(trim($subject[1]), 0, 'UTF-8') !== $expected
+                            || !str_contains(AppointmentsMail::decoded($messages[0]), 'Mail fixture device')
+                            || str_contains(AppointmentsMail::decoded($messages[0]), 'COM_APPOINTMENTS_')
+                        ) {
+                            return false;
+                        }
+                    } finally {
+                        $db->query("UPDATE {$p}appointments_templates SET published=1 WHERE eventtype_id=0 AND purpose='team_device_added' AND language='{$language}'");
+                    }
+                }
+            }
+
+            return \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $tag . '-no-account@example.test', 'fr-FR') === 'fr-FR';
+        });
+
         $suite->test('A template of an internet calendar mail cannot be bound to an event type', static function () use ($joomla) {
             $table = new TemplateTable($joomla);
             $table->bind(['eventtype_id' => 5, 'purpose' => 'team_device_added', 'language' => 'en-GB', 'subject' => 'S', 'body' => 'B', 'published' => 1]);

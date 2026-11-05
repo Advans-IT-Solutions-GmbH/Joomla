@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
+use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Table\TemplateTable;
@@ -35,7 +36,7 @@ defined('_JEXEC') or die;
  *
  * Every mail is a DB template of `#__appointments_templates` (event type 0, the
  * purposes of {@see DefaultTemplates::TEAM_KEYS}), editable in the backend like
- * the booking mails, in the recipient's language with English as fallback.
+ * the booking mails, in the recipient's account language, else the site's default.
  * Without a published template the default text of the language file applies:
  * these mails are security notices and always go out. They carry no calendar
  * entry, no app password, no key and no calendar content; the only secret is the
@@ -45,9 +46,6 @@ defined('_JEXEC') or die;
  */
 final class TeamMailer implements TeamMailerInterface
 {
-    /** Languages the component ships; any other recipient language falls back to English. */
-    private const LANGUAGES = ['en-GB', 'de-DE', 'fr-FR'];
-
     /** Reasons of {@see accessSuspended()} with their text; any other reason gets the general text. */
     public const REASONS = [
         'password_reset' => 'COM_APPOINTMENTS_TEAM_D_MAIL_REASON_PASSWORD_RESET',
@@ -335,8 +333,8 @@ final class TeamMailer implements TeamMailerInterface
     }
 
     /**
-     * The published DB template of the purpose in the language, then in English,
-     * then the default text of the language file.
+     * The published DB template of the purpose in the language, then the
+     * default text of that same language file.
      *
      * @return  array{subject: string, body: string}
      */
@@ -344,23 +342,21 @@ final class TeamMailer implements TeamMailerInterface
     {
         $db = $this->services->db();
 
-        foreach (array_unique([$tag, 'en-GB']) as $candidate) {
-            $query = $this->query()
-                ->select($db->quoteName(['subject', 'body']))
-                ->from($db->quoteName('#__appointments_templates'))
-                ->where($db->quoteName('eventtype_id') . ' = 0')
-                ->where($db->quoteName('purpose') . ' = :purpose')
-                ->where($db->quoteName('language') . ' = :language')
-                ->where($db->quoteName('published') . ' = 1')
-                ->bind(':purpose', $purpose)
-                ->bind(':language', $candidate);
-            $row = $db->setQuery($query)->loadAssoc();
+        $query = $this->query()
+            ->select($db->quoteName(['subject', 'body']))
+            ->from($db->quoteName('#__appointments_templates'))
+            ->where($db->quoteName('eventtype_id') . ' = 0')
+            ->where($db->quoteName('purpose') . ' = :purpose')
+            ->where($db->quoteName('language') . ' = :language')
+            ->where($db->quoteName('published') . ' = 1')
+            ->bind(':purpose', $purpose)
+            ->bind(':language', $tag);
+        $row = $db->setQuery($query)->loadAssoc();
 
-            if ($row && trim((string) $row['subject']) !== '' && trim((string) $row['body']) !== ''
-                && TemplateTable::linksSafe($purpose, (string) $row['subject'], (string) $row['body'])
-            ) {
-                return ['subject' => (string) $row['subject'], 'body' => (string) $row['body']];
-            }
+        if ($row && trim((string) $row['subject']) !== '' && trim((string) $row['body']) !== ''
+            && TemplateTable::linksSafe($purpose, (string) $row['subject'], (string) $row['body'])
+        ) {
+            return ['subject' => (string) $row['subject'], 'body' => (string) $row['body']];
         }
 
         [$subjectKey, $bodyKey] = DefaultTemplates::TEAM_KEYS[$purpose];
@@ -403,11 +399,7 @@ final class TeamMailer implements TeamMailerInterface
         $params = json_decode((string) ($recipient->params ?? '{}'), true) ?: [];
         $tag = (string) ($params['language'] ?? '');
 
-        if ($tag === '') {
-            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
-        }
-
-        return \in_array($tag, self::LANGUAGES, true) ? $tag : 'en-GB';
+        return MailLanguage::resolve($tag, (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB'));
     }
 
     private function userByEmail(string $email): ?object
