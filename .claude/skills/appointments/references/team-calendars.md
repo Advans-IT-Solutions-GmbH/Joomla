@@ -409,7 +409,11 @@ play back an older, validly signed grant, calendar, device or invitation row.
   plainly: sign-ins that do not post `username` and `password` at the top level (AJAX or JSON logins of
   extensions, Joomla's API with Basic authentication, extensions calling `login()` themselves); there
   `onUserAuthorisation` refuses with Joomla's JLIB_LOGIN_DENIED, which shows that the password was
-  right. The README advises to keep the API's Basic authentication plugin off (Joomla's default).
+  right. The system check warns when Joomla's plugin «API Authentication - Basic Auth» is enabled (password
+  sign-in without second factor and without lock-out); the README advises to keep it off (Joomla's
+  default). Joomla core's own sign-in forms (site and administrator, including the AJAX submission of
+  the login module) post `username` and `password` at the top level and therefore go through
+  `guardLogin()`; every other path is a stated residual risk.
   Administrators get a mail when an account with a calendar right is locked (`accountLocked()`) and
   can lift a lock in the devices view (`login.unlocked`). If the lock-out check itself fails: the website
   sign-in fails **open** (a database error must not lock everybody out, administrators included), with a
@@ -514,6 +518,7 @@ the prerequisites:
 | libsodium with Argon2id | `CipherSuite::available()` and a test `sodium_crypto_pwhash` | PHP with the sodium extension |
 | Memory for Argon2id INTERACTIVE (64 MiB) | `memory_limit` | raise `memory_limit` to at least 128M |
 | HSTS | `Strict-Transport-Security` on the site's own answer | recommendation: enable HSTS in Joomla's HTTP headers plugin or the web server |
+| API Basic authentication | plugin `api-authentication/basic` enabled | switch it off: it signs in with a password, without second factor and without the lock-out |
 
 The CalDAV base address is the system plugin's parameter `dav_base_url` (absolute https URL; default:
 the site root plus `/dav/`), read by everybody only through `TeamServices::davBaseUrl()`, which always
