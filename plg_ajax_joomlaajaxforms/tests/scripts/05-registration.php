@@ -314,16 +314,10 @@ class RegistrationTest
             );
 
             $defaultLanguage = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
-            ajaxforms_create_test_user('activationduplicate', 'en-GB', $user->email);
 
             $this->test(
                 'An unmatched mailfrom address uses the default site language',
                 $language->invoke($plugin, 'unmatched@example.test') === $defaultLanguage,
-                'expected the configured default site language'
-            );
-            $this->test(
-                'An ambiguous mailfrom match uses the default site language',
-                $language->invoke($plugin, $user->email) === $defaultLanguage,
                 'expected the configured default site language'
             );
 
@@ -374,6 +368,13 @@ class RegistrationTest
                 'Notice uses the matched recipient account language',
                 stripos($text, 'Un nouvel utilisateur') !== false,
                 'the matched account language fr-FR was not rendered'
+            );
+
+            ajaxforms_create_test_user('activationduplicate', 'en-GB', $user->email);
+            $this->test(
+                'An ambiguous mailfrom match uses the default site language',
+                $language->invoke($plugin, $user->email) === $defaultLanguage,
+                'expected the configured default site language'
             );
         } finally {
             $app->set('mailfrom', $mailfrom);

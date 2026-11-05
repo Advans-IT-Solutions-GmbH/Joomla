@@ -1420,7 +1420,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         array $trustedTags = []
     ): bool {
         try {
-            if (MailTemplate::getTemplate($templateId, $languageTag) === null) {
+            if (!$this->hasMailTemplate($templateId, $languageTag)) {
                 Log::add(
                     $context . ': no mail template ' . $templateId . ', composing the mail in the plugin',
                     Log::WARNING,
@@ -1478,6 +1478,31 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         }
 
         return true;
+    }
+
+    /**
+     * Check for a localized or language-neutral core mail template without
+     * invoking Joomla's deprecated static template lookup.
+     *
+     * @param   string  $templateId   Template identifier
+     * @param   string  $languageTag  Recipient language
+     *
+     * @return  bool
+     */
+    protected function hasMailTemplate(string $templateId, string $languageTag): bool
+    {
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select('1')
+            ->from($db->quoteName('#__mail_templates'))
+            ->where($db->quoteName('template_id') . ' = :templateId')
+            ->where($db->quoteName('language') . ' IN (' . $db->quote('') . ', :languageTag)')
+            ->bind(':templateId', $templateId, ParameterType::STRING)
+            ->bind(':languageTag', $languageTag, ParameterType::STRING);
+
+        $db->setQuery($query, 0, 1);
+
+        return $db->loadResult() !== null;
     }
 
     /**
