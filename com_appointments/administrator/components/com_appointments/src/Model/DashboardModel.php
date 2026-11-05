@@ -23,6 +23,36 @@ defined('_JEXEC') or die;
  */
 class DashboardModel extends BaseDatabaseModel
 {
+    /** Seconds an administrator's page view spends on the migration at most. */
+    private const MIGRATION_SECONDS = 5;
+
+    /**
+     * Continue the migration of booking rows of 1.3 (team-calendars.md, 5.10)
+     * at an administrator's visit of the component, a few seconds per page, so
+     * it never depends on the Scheduler (whose tasks an update creates switched
+     * off). Never fails the page.
+     *
+     * @return  int  Bookings of 1.3 still in clear text after the migration window (shown as «not verified»).
+     */
+    public static function continueMigration(): int
+    {
+        try {
+            $app = Factory::getApplication();
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) $app->get('secret', ''));
+
+            if ($app->getIdentity()->authorise('core.admin', 'com_appointments')) {
+                \Advans\Component\Appointments\Administrator\Service\BookingRecords::resume($db, $keys, self::MIGRATION_SECONDS);
+            }
+
+            return \Advans\Component\Appointments\Administrator\Service\BookingRecords::unverified($db, $keys);
+        } catch (\Throwable $e) {
+            \Joomla\CMS\Log\Log::add('Appointment booking migration could not continue: ' . \get_class($e) . '.', \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
+
+            return 0;
+        }
+    }
+
     /**
      * The counts the dashboard shows.
      *

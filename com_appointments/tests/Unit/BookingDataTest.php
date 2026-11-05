@@ -153,6 +153,49 @@ final class BookingDataTest extends TestCase
         self::assertSame(['id', 'guest_emails'], array_keys($this->data()->sealChange($sealed, ['id' => 7, 'guest_emails' => 'one@example.test'])));
     }
 
+    public function testAfterTheWindowARowOf13StaysReadableButNotVerified(): void
+    {
+        $keys = new KeyProvider('unit-site-secret');
+        $cutoff = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        $token = BookingData::migrationToken($keys, $cutoff + BookingData::MIGRATION_DAYS * 86400, $cutoff);
+
+        // Within the window: data, verified.
+        $within = BookingData::forToken($keys, $token, $cutoff + 3600)->open($this->row());
+        self::assertSame('anna@example.test', $within['invitee_email']);
+        self::assertArrayNotHasKey(BookingData::UNVERIFIED, $within);
+
+        // The clock past the window (also past the limit): nothing becomes unreadable.
+        foreach ([$cutoff + 8 * 86400, $cutoff + 100 * 86400, $cutoff + 3000 * 86400] as $now) {
+            $failed = [];
+            $after = BookingData::forToken($keys, $token, $now)->openLenient($this->row(), $failed);
+            self::assertSame([], $failed);
+            self::assertSame('anna@example.test', $after['invitee_email']);
+            self::assertTrue($after[BookingData::UNVERIFIED]);
+        }
+
+        $late = BookingData::forToken($keys, $token, $cutoff + 100 * 86400);
+        $failed = [];
+        // Still only rows of 1.3: a later row or one with a sealed field stays unreadable.
+        $late->openLenient(array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']), $failed);
+        self::assertCount(8, $failed);
+        $mixed = array_replace($this->data()->seal($this->row()['uid'], $this->row()['created_utc'], $this->row()), ['invitee_email' => 'planted@example.test']);
+        $late->openLenient($mixed, $failed);
+        self::assertContains('invitee_email', $failed);
+
+        // A change to a row that is not verified never seals it: written in clear, nothing else added.
+        $current = $late->open($this->row());
+        $change = $late->sealChange($current, ['id' => 7, 'state' => 2, 'cancel_reason' => 'Termin passt nicht']);
+        self::assertSame(['id' => 7, 'state' => 2, 'cancel_reason' => 'Termin passt nicht'], $change);
+        $lookalike = 'v1:' . str_repeat('A', 60);
+        self::assertSame(' ' . $lookalike, $late->sealChange($current, ['cancel_reason' => $lookalike])['cancel_reason'], 'Never turns the row into a mixed one');
+
+        // After the end marker, and for a forged value, clear text is never read.
+        foreach ([BookingData::migrationDoneMarker($keys), '', BookingData::migrationToken(new KeyProvider('another-site-secret'), $cutoff + 86400, $cutoff)] as $state) {
+            BookingData::forToken($keys, $state, $cutoff + 100 * 86400)->openLenient($this->row(), $failed);
+            self::assertCount(8, $failed);
+        }
+    }
+
     public function testTheMigrationTokenIsKeyedAndExpires(): void
     {
         $keys = new KeyProvider('unit-site-secret');

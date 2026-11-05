@@ -121,8 +121,15 @@ final class PrivacyService
         $data = BookingData::fromApplication();
 
         // The markers of an opened row are no booking data: they never reach the export.
-        return array_map(static fn (array $row): array => array_diff_key($data->openLenient($row), [BookingData::OPENED => true, BookingData::CLEAR => true]),
-            $db->setQuery($query)->loadAssocList());
+        // The markers of an opened row are no booking data and never reach the export; a booking of
+        // 1.3 still in clear text after the migration window is exported as not verified.
+        return array_map(static function (array $row) use ($data): array {
+            $row = $data->openLenient($row);
+            $unverified = !empty($row[BookingData::UNVERIFIED]);
+
+            return array_diff_key($row, [BookingData::OPENED => true, BookingData::CLEAR => true, BookingData::UNVERIFIED => true])
+                + ['unverified' => $unverified ? 1 : 0];
+        }, $db->setQuery($query)->loadAssocList());
     }
 
     /**

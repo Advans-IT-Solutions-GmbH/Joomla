@@ -192,6 +192,8 @@ class BookingsModel extends ListModel
                 // Opened right before the output; a field that cannot be decrypted is exported empty.
                 $failed = [];
                 $row = $data->openLenient($row, $failed);
+                // A booking of 1.3 still in clear text after the migration window (team-calendars.md, 5.10).
+                $row['unverified'] = empty($row[BookingData::UNVERIFIED]) ? '' : '1';
 
                 if ($failed !== []) {
                     Log::add('Appointment export: booking ' . $last . ' has fields that could not be decrypted (' . implode(', ', $failed) . ').', Log::WARNING, 'com_appointments');

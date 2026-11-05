@@ -32,6 +32,13 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
+        // An administrator's visit continues the migration of booking rows (team-calendars.md, 5.10).
+        $unverified = \Advans\Component\Appointments\Administrator\Model\DashboardModel::continueMigration();
+
+        if ($unverified > 0) {
+            Factory::getApplication()->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_E_BOOKINGS_UNVERIFIED_NOTICE', $unverified), 'warning');
+        }
+
         $this->counts = $this->getModel()->getCounts();
         $this->eventCounts = $this->getModel()->getEventCounts();
 

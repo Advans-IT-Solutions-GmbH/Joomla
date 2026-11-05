@@ -34,6 +34,9 @@ if (!empty($item->consent_utc)) {
 }
 ?>
 <h2><?php echo $this->escape($item->eventtype_title); ?></h2>
+<?php if (!empty($item->{\Advans\Component\Appointments\Administrator\Helper\BookingData::UNVERIFIED})) : ?>
+    <p class="alert alert-warning"><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_BOOKING_UNVERIFIED_DESC'); ?></p>
+<?php endif; ?>
 <dl class="row">
     <?php foreach ($labels as $field => $label) : ?>
         <dt class="col-sm-3"><?php echo Text::_($label); ?></dt>

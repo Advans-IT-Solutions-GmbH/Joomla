@@ -102,20 +102,130 @@ final class BookingRecords
             return 0;
         }
 
-        $data = new BookingData($keys, $cutoff);
-        $columns = BookingData::COLUMNS;
-        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))->from($db->quoteName('#__appointments_bookings'))
-            ->where(self::clearCondition($db))->where('NOT ' . self::anySealedCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
-            ->where($db->quoteName('created_utc') . ' < ' . $db->quote(gmdate('Y-m-d H:i:s', $cutoff)))
-            ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
-        $rows = $db->setQuery($query)->loadAssocList();
+        $found = self::sealBatch($db, $keys, $cutoff, $batch);
 
-        if ($rows === []) {
+        if ($found['rows'] === 0) {
             self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
 
             return 0;
         }
+
+        // Renewed, but never beyond the limit after the update.
+        self::setToken($db, BookingData::migrationToken($keys,
+            min(time() + BookingData::MIGRATION_DAYS * 86400, $cutoff + BookingData::MIGRATION_LIMIT_DAYS * 86400), $cutoff), $token);
+
+        return $found['rows'];
+    }
+
+    /**
+     * The migration for `$seconds` at most, in batches: called by the update
+     * and at an administrator's visit of the component, so it never depends on
+     * the Scheduler. Within the window only, like {@see self::migrate()}.
+     *
+     * @return  int  Rows taken up.
+     */
+    public static function resume(DatabaseInterface $db, KeyProvider $keys, int $seconds): int
+    {
+        $until = microtime(true) + max(1, $seconds);
+        $total = 0;
+
+        do {
+            $rows = self::migrate($db, $keys, 200);
+            $total += $rows;
+        } while ($rows > 0 && microtime(true) < $until);
+
+        return $total;
+    }
+
+    /**
+     * Rows of 1.3 still in clear text after the migration window: readable, but
+     * shown as «not verified» until an administrator encrypts them (for the
+     * system check). 0 while the window is open, after the end and without any
+     * migration.
+     */
+    public static function unverified(DatabaseInterface $db, KeyProvider $keys): int
+    {
+        $token = self::token($db);
+        $cutoff = BookingData::tokenCutoff($token, $keys);
+
+        if ($cutoff === null || BookingData::migrationCutoff($token, $keys, time()) !== null) {
+            return 0;
+        }
+
+        $query = self::rowsOf13($db, $cutoff)->select('COUNT(*)')->where($db->quoteName('anonymised_utc') . ' IS NULL');
+
+        return (int) $db->setQuery($query)->loadResult();
+    }
+
+    /**
+     * The administrator action «encrypt now»: encrypt every remaining row of 1.3
+     * (created before the update, no sealed field), also after the migration
+     * window, record each in the audit log and finish the migration with the end
+     * marker. The only way clear text is encrypted after the window: the
+     * administrator decides that these rows are genuine.
+     *
+     * @return  int  Bookings encrypted.
+     */
+    public static function encryptRemaining(DatabaseInterface $db, KeyProvider $keys, int $actor): int
+    {
+        $token = self::token($db);
+        $cutoff = BookingData::tokenCutoff($token, $keys);
+
+        if ($cutoff === null) {
+            return 0;
+        }
+
+        $total = 0;
+        $time = gmdate('Y-m-d H:i:s');
+
+        for ($round = 0; $round < 10000; $round++) {
+            $found = self::sealBatch($db, $keys, $cutoff, 200);
+
+            foreach ($found['sealed'] as $id) {
+                $db->insertObject('#__appointments_audit', (object) ['booking_id' => $id, 'action' => 'encrypt', 'path' => 'admin',
+                    'actor_user_id' => $actor > 0 ? $actor : null, 'occurred_utc' => $time]);
+            }
+
+            $total += \count($found['sealed']);
+
+            // Rows found but none written (each changed meanwhile): stop, the next action takes them.
+            if ($found['rows'] > 0 && $found['sealed'] === []) {
+                break;
+            }
+
+            if ($found['rows'] === 0) {
+                self::setToken($db, BookingData::migrationDoneMarker($keys), $token);
+
+                break;
+            }
+        }
+
+        return $total;
+    }
+
+    /** The rows of 1.3 created before `$cutoff`: no sealed field, at least one clear one. */
+    private static function rowsOf13(DatabaseInterface $db, int $cutoff)
+    {
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+
+        return $query->from($db->quoteName('#__appointments_bookings'))
+            ->where(self::clearCondition($db))->where('NOT ' . self::anySealedCondition($db))->where($db->quoteName('uid') . ' <> ' . $db->quote(''))
+            ->where($db->quoteName('created_utc') . ' < ' . $db->quote(gmdate('Y-m-d H:i:s', $cutoff)));
+    }
+
+    /**
+     * Seal one batch of rows of 1.3, each with a compare-and-set on the whole row.
+     *
+     * @return  array{rows: int, sealed: int[]}  Rows found, and the ids of those written.
+     */
+    private static function sealBatch(DatabaseInterface $db, KeyProvider $keys, int $cutoff, int $batch): array
+    {
+        $data = new BookingData($keys, $cutoff);
+        $columns = BookingData::COLUMNS;
+        $query = self::rowsOf13($db, $cutoff)->select($db->quoteName(array_merge(['id', 'uid', 'created_utc'], $columns)))
+            ->order($db->quoteName('id'))->setLimit(max(1, min(1000, $batch)));
+        $rows = $db->setQuery($query)->loadAssocList();
+        $written = [];
 
         foreach ($rows as $row) {
             // A row of 1.3 holds no sealed field (the query takes no other), so every value present is clear.
@@ -143,13 +253,13 @@ final class BookingRecords
             }
 
             $db->setQuery($update)->execute();
+
+            if ($db->getAffectedRows() > 0) {
+                $written[] = (int) $row['id'];
+            }
         }
 
-        // Renewed, but never beyond the limit after the update.
-        self::setToken($db, BookingData::migrationToken($keys,
-            min(time() + BookingData::MIGRATION_DAYS * 86400, $cutoff + BookingData::MIGRATION_LIMIT_DAYS * 86400), $cutoff), $token);
-
-        return \count($rows);
+        return ['rows' => \count($rows), 'sealed' => $written];
     }
 
     /**

@@ -41,7 +41,7 @@ class BookingsController extends BaseController
         $model = $this->getModel('Bookings', 'Administrator', ['ignore_request' => false]);
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $columns = ['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email',
-            'invitee_phone', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc'];
+            'invitee_phone', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc', 'unverified'];
         $output = tmpfile();
         if ($output === false) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
@@ -79,6 +79,30 @@ class BookingsController extends BaseController
             fclose($output);
         }
         $this->app->close();
+    }
+
+    /**
+     * «Encrypt now» (team-calendars.md, 5.10): encrypt the bookings of 1.3 left
+     * in clear text, also after the migration window, and finish the migration.
+     * Form token and core.admin; each booking is recorded in the audit log.
+     */
+    public function encrypt(): bool
+    {
+        $this->requireEditRequest();
+        $user = $this->app->getIdentity();
+
+        if (!$user->authorise('core.admin', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        $count = \Advans\Component\Appointments\Administrator\Service\BookingRecords::encryptRemaining(Factory::getContainer()->get(DatabaseInterface::class),
+            new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) $this->app->get('secret', '')), (int) $user->id);
+        \Joomla\CMS\Log\Log::add('Appointment bookings: an administrator (user ' . (int) $user->id . ') encrypted ' . $count . ' bookings of 1.3.',
+            \Joomla\CMS\Log\Log::INFO, 'com_appointments');
+        $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_E_BOOKINGS_ENCRYPTED', $count));
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
+
+        return true;
     }
 
     public function reschedule(): bool

@@ -125,6 +125,50 @@ return static function (TeamSuite $suite): void {
                 && $mixedOpened['invitee_name'] === 'Sealed Invitee' && BookingData::migrationDone($token, $keys);
         });
 
+        $suite->test('After the migration window no booking becomes unreadable, and only the administrator action encrypts it', static function () use ($suite, $fixture) {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $keys = new KeyProvider((string) (new JConfig())->secret);
+            $event = $fixture->event();
+            $created = '2026-01-05 08:00:00';
+            $uid = bin2hex(random_bytes(32));
+            $suite->db->query("INSERT INTO {$suite->prefix}appointments_bookings (uid, eventtype_id, start_utc, end_utc, state, created_utc, modified_utc,"
+                . " invitee_name, invitee_email) VALUES ('{$uid}', {$event}, '2026-01-12 09:00:00', '2026-01-12 09:30:00', 2, '{$created}', '{$created}',"
+                . " 'Window Invitee', 'window@example.test')");
+            $id = (int) $suite->db->insert_id;
+            $readParams = static fn (): array => json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
+
+            // An update 100 days ago whose migration never finished: the clock is past the window.
+            $cutoff = time() - 100 * 86400;
+            $token = BookingData::migrationToken($keys, $cutoff + BookingData::MIGRATION_DAYS * 86400, $cutoff);
+            $params = $readParams();
+            $params[BookingData::MIGRATION_OPTION] = $token;
+            $suite->db->query("UPDATE {$suite->prefix}extensions SET params='" . $suite->db->real_escape_string(json_encode($params))
+                . "' WHERE type='component' AND element='com_appointments'");
+
+            $migrated = BookingRecords::migrate($db, $keys, 500);
+            $stored = $fixture->stored($id);
+            $failed = [];
+            $opened = BookingData::forToken($keys, $token)->openLenient($stored, $failed);
+            $readable = $migrated === 0 && $stored['invitee_email'] === 'window@example.test' && $failed === []
+                && $opened['invitee_email'] === 'window@example.test' && !empty($opened[BookingData::UNVERIFIED])
+                && BookingRecords::unverified($db, $keys) >= 1;
+
+            // The booking list shows it as not verified, and the action needs the form token.
+            $admin = new AppointmentsHttp('http://localhost', 'team-e-admin');
+            $admin->login();
+            $list = $admin->request('/administrator/index.php?option=com_appointments&view=bookings&filter_eventtype_id=' . $event);
+            $shown = str_contains($list, 'Window Invitee') && str_contains($list, 'Not verified') && str_contains($list, 'bookings.encrypt');
+            $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', ['task' => 'bookings.encrypt']);
+            $refused = $admin->status === 403 && $fixture->stored($id)['invitee_email'] === 'window@example.test';
+            $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', [$admin->token($list) => 1]);
+            $sealed = $fixture->stored($id);
+            $audit = $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_audit WHERE booking_id={$id} AND action='encrypt' AND path='admin'");
+            $done = BookingData::migrationDone((string) ($readParams()[BookingData::MIGRATION_OPTION] ?? ''), $keys);
+
+            return $readable && $shown && $refused && BookingData::isSealed($sealed['invitee_email']) && BookingData::isSealed($sealed['invitee_name'])
+                && (new BookingData($keys))->open($sealed)['invitee_email'] === 'window@example.test' && $audit === 1 && $done;
+        });
+
         $suite->test('Switched on, a calendar error never fails a booking', static function () use ($suite, $fixture, $switch) {
             $switch(true);
             $event = $fixture->event();

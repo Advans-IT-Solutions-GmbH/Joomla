@@ -32,18 +32,20 @@ defined('_JEXEC') or die;
  * An opened row carries the key {@see self::OPENED}, so opening it again
  * changes nothing (code that receives either a stored or an opened row opens
  * it), and sealing removes the key again before the write. A stored value that
- * is not sealed is clear text of a row written before 1.4.0: it is accepted
- * only while the migration of the update to 1.4.0 runs, and only in a row
- * created before that update (`$clearBefore`). The update writes a migration
- * token into the component option {@see self::MIGRATION_OPTION}: the update
- * time and an expiry of at most {@see self::MIGRATION_DAYS} days, keyed with
- * the site secret. The migration renews the expiry while old rows are left and
- * deletes the token when none is (also a token an Options form wrote back).
- * Without a valid token (a new installation, a finished migration, a token
- * deleted or forged by a database write), and in any row created later, a
- * clear value counts as one that does not open: an address put in as clear
- * text by a database write alone neither receives mail nor answers a privacy
- * request, and the migration does not encrypt it either.
+ * is not sealed is clear text of a row written before 1.4.0: it is read only
+ * in a row created before that update (`$clearBefore`) that holds no sealed
+ * field. The update writes a migration token into the component option
+ * {@see self::MIGRATION_OPTION}: the update time and an expiry of at most
+ * {@see self::MIGRATION_DAYS} days, keyed with the site secret. The migration
+ * renews the expiry while old rows are left and writes a keyed end marker when
+ * none is. While the token is valid such a value is read as data; after the
+ * window (a migration that did not finish) it stays readable but the row is
+ * marked {@see self::UNVERIFIED}: an update never makes data unreadable, and
+ * nothing but the administrator action encrypts it then. Without any token of
+ * this site (a new installation, a finished migration, a forged value), and in
+ * any row created later or holding a sealed field, a clear value counts as one
+ * that does not open: an address put in as clear text by a database write
+ * alone neither receives mail nor answers a privacy request.
  *
  * A value that does not open (another site secret, a changed byte) throws in
  * {@see self::open()}; {@see self::openLenient()} blanks it instead and reports
@@ -65,6 +67,9 @@ final class BookingData
 
     /** The key an opened row carries when its clear values (a row of 1.3) were read as they are. */
     public const CLEAR = '_clear';
+
+    /** The key an opened row of 1.3 carries when it was read after the migration window: shown as «not verified». */
+    public const UNVERIFIED = '_unverified';
 
     /** The component option that holds the migration token while clear rows are encrypted. */
     public const MIGRATION_OPTION = 'booking_data_migration';
@@ -89,9 +94,10 @@ final class BookingData
     private $key;
 
     /**
-     * @param   int|null  $clearBefore  Unix time: a stored clear value is read as it is in a row created before it (only while the migration runs).
+     * @param   int|null  $clearBefore  Unix time: a stored clear value is read as it is in a row created before it.
+     * @param   bool      $verified     False after the migration window: such a row is marked {@see self::UNVERIFIED}.
      */
-    public function __construct(KeyProvider $keys, private readonly ?int $clearBefore = null)
+    public function __construct(KeyProvider $keys, private readonly ?int $clearBefore = null, private readonly bool $verified = true)
     {
         $this->key = $keys->key(KeyProvider::PURPOSE_BOOKING_DATA);
     }
@@ -108,10 +114,23 @@ final class BookingData
         return self::forToken($keys, $token);
     }
 
-    /** An instance that reads clear values of old rows only while `$token` is a valid migration token. */
-    public static function forToken(KeyProvider $keys, string $token): self
+    /**
+     * An instance for the migration state `$token`: clear values of old rows are
+     * data while it is a valid migration token, readable but not verified when
+     * it is an older token of this site, and never read otherwise.
+     */
+    public static function forToken(KeyProvider $keys, string $token, ?int $now = null): self
     {
-        return new self($keys, self::migrationCutoff($token, $keys, time()));
+        $now ??= time();
+        $cutoff = self::migrationCutoff($token, $keys, $now);
+
+        if ($cutoff !== null) {
+            return new self($keys, $cutoff);
+        }
+
+        $cutoff = self::tokenCutoff($token, $keys);
+
+        return $cutoff === null || $cutoff > $now ? new self($keys) : new self($keys, $cutoff, false);
     }
 
     /** A migration token for rows created before `$cutoff`, valid until `$expiresAt` (Unix seconds). */
@@ -209,7 +228,7 @@ final class BookingData
             throw new \InvalidArgumentException('A booking without UID or creation time cannot be sealed.');
         }
 
-        unset($row[self::OPENED], $row[self::CLEAR]);
+        unset($row[self::OPENED], $row[self::CLEAR], $row[self::UNVERIFIED]);
 
         foreach (self::COLUMNS as $column) {
             if (!\array_key_exists($column, $row) || $row[$column] === null) {
@@ -286,6 +305,10 @@ final class BookingData
                     $row[$column] = null;
                 } else {
                     $row[self::CLEAR] = true;
+
+                    if (!$this->verified) {
+                        $row[self::UNVERIFIED] = true;
+                    }
                 }
 
                 continue;
@@ -312,7 +335,11 @@ final class BookingData
      * change. When `$current` was a row of 1.3 read in clear text, every other
      * personal field of it is sealed in the same write, so a row is never left
      * half sealed (it would then be read neither as a row of 1.3 nor taken up by
-     * the migration).
+     * the migration). A row that is not verified is never sealed by a change
+     * (that would make clear text a database writer may have planted look
+     * genuine): the change is written in clear, so the row stays a whole row of
+     * 1.3 until the administrator encrypts it. A clear value that would look
+     * sealed gets a leading space, so it never makes the row a mixed one.
      *
      * @param   array<string, mixed>  $current
      * @param   array<string, mixed>  $fields
@@ -321,6 +348,26 @@ final class BookingData
      */
     public function sealChange(array $current, array $fields): array
     {
+        if (!empty($current[self::UNVERIFIED])) {
+            unset($fields[self::OPENED], $fields[self::CLEAR], $fields[self::UNVERIFIED]);
+
+            foreach (self::COLUMNS as $column) {
+                if (!\array_key_exists($column, $fields) || $fields[$column] === null) {
+                    continue;
+                }
+
+                $value = \is_array($fields[$column]) ? json_encode($fields[$column], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) : $fields[$column];
+
+                if (!\is_scalar($value)) {
+                    throw new \InvalidArgumentException('A booking field must be text.');
+                }
+
+                $fields[$column] = self::isSealed((string) $value) ? ' ' . $value : (string) $value;
+            }
+
+            return $fields;
+        }
+
         if (!empty($current[self::CLEAR])) {
             $fields += array_intersect_key($current, array_flip(self::COLUMNS));
         }
