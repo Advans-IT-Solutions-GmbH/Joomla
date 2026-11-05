@@ -23,6 +23,10 @@ defined('_JEXEC') or die;
  * The key is released to callers only after the session passed the second
  * factor. Sign-in without a password (passkey, "remember me") leaves the key
  * locked: operations that need it answer 423 and ask for a password sign-in.
+ * A backend core.admin may unlock for recovery without calendar-group
+ * membership, using an enrolled second factor even when MFA is not forced for
+ * its groups. This establishes no calendar grant or calendar-data permission;
+ * callers must still authorise every operation separately.
  *
  * Called by `plg_user_appointments`, which is frozen: it only delegates.
  *
