@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+    The settings of an internet calendar. The owner is chosen in the layout at
+    creation only; key version, sync token, state and address are never part of
+    a form. The calendar service validates every value again.
+-->
+<form>
+    <fieldset name="details">
+        <field name="title" type="text" label="JGLOBAL_TITLE" required="true" maxlength="255" filter="string" />
+        <field name="description" type="textarea" label="JGLOBAL_DESCRIPTION" description="COM_APPOINTMENTS_TEAM_C_FIELD_DESCRIPTION_DESC" rows="3" maxlength="2000" filter="string" />
+        <field name="colour" type="color" label="COM_APPOINTMENTS_TEAM_C_FIELD_COLOUR" format="hex" default="" filter="string" validate="color" />
+    </fieldset>
+    <fieldset name="settings">
+        <field name="allow_external" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_TEAM_C_FIELD_ALLOW_EXTERNAL" description="COM_APPOINTMENTS_TEAM_C_FIELD_ALLOW_EXTERNAL_DESC" default="0" filter="integer">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="blocks_availability" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_TEAM_C_FIELD_BLOCKS" description="COM_APPOINTMENTS_TEAM_C_FIELD_BLOCKS_DESC" default="1" filter="integer">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="retention_days" type="number" label="COM_APPOINTMENTS_TEAM_C_FIELD_RETENTION" description="COM_APPOINTMENTS_TEAM_C_FIELD_RETENTION_DESC" default="0" min="0" max="65535" filter="integer" />
+    </fieldset>
+</form>

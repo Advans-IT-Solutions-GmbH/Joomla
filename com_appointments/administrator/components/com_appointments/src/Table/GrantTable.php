@@ -28,10 +28,24 @@ class GrantTable extends Table
         parent::__construct('#__appointments_calendar_grants', 'id', $db);
     }
 
+    /**
+     * Every write goes through \Advans\Component\Appointments\Administrator\Service\Team\GrantService,
+     * which checks the permission and computes `row_mac` over the verified
+     * values. A store() or delete() through this class would bypass both, so
+     * both are refused whatever the row carries.
+     */
     public function check(): bool
     {
-        // The service that owns this table validates and MACs every field
-        // before a store(). Until it exists, nothing is stored through here.
-        return (string) ($this->row_mac ?? '') !== '' && parent::check();
+        return false;
+    }
+
+    public function store($updateNulls = false): bool
+    {
+        return false;
+    }
+
+    public function delete($pk = null): bool
+    {
+        return false;
     }
 }

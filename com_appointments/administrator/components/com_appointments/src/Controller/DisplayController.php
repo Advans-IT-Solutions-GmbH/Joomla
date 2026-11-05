@@ -31,7 +31,7 @@ class DisplayController extends BaseController
      *
      * @var  string[]
      */
-    private const EDIT_VIEWS = ['schedule', 'blocked', 'eventtype', 'field', 'template'];
+    private const EDIT_VIEWS = ['schedule', 'blocked', 'eventtype', 'field', 'template', 'calendar'];
 
     public function display($cachable = false, $urlparams = [])
     {

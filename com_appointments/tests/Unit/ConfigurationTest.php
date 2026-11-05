@@ -24,6 +24,31 @@ final class ConfigurationTest extends TestCase
         }
     }
 
+    public function testInternetCalendarOptionsAreOffAndFilteredByDefault(): void
+    {
+        $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
+        $field = static fn (string $name) => $config->xpath('//fieldset[@name="teamcalendars"]/field[@name="' . $name . '"]')[0] ?? null;
+
+        self::assertSame('0', (string) $field('teamcal_enabled')['default']);
+        self::assertSame('1', (string) $field('team_create_groups')['default']);
+        self::assertSame(['intarray', 'true'], [(string) $field('team_groups')['filter'], (string) $field('team_groups')['multiple']]);
+        self::assertSame('integer', (string) $field('external_group')['filter']);
+        self::assertSame('integer', (string) $field('team_viewlevel')['filter']);
+    }
+
+    public function testCalendarFormOffersExactlyTheFieldsTheServiceAccepts(): void
+    {
+        $form = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/forms/calendar.xml');
+        $names = array_map(static fn ($field): string => (string) $field['name'], $form->xpath('//field'));
+        sort($names);
+
+        // The owner is chosen in the layout at creation only; nothing else
+        // (state, address, key version, sync token) is ever a form field.
+        self::assertSame(['allow_external', 'blocks_availability', 'colour', 'description', 'retention_days', 'title'], $names);
+        $retention = $form->xpath('//field[@name="retention_days"]')[0];
+        self::assertSame(['0', '65535'], [(string) $retention['min'], (string) $retention['max']]);
+    }
+
     public function testGuestMaximumOptionMatchesTheServerSideBounds(): void
     {
         $config = simplexml_load_file(dirname(__DIR__, 2) . '/administrator/components/com_appointments/config.xml');
