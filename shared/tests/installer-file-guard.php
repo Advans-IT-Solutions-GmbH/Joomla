@@ -187,7 +187,7 @@ try {
             static fn() => FileGuard::inspect([$escape . DIRECTORY_SEPARATOR . 'target.php' => $source], $backupRoot),
             'A destination with a symlink ancestor must be rejected.'
         );
-        expect(count(new FilesystemIterator($backupRoot, FilesystemIterator::SKIP_DOTS)) === 1,
+        expect(iterator_count(new FilesystemIterator($backupRoot, FilesystemIterator::SKIP_DOTS)) === 1,
             'Symlink rejection must occur before creating any backup.');
         $passed++;
     }

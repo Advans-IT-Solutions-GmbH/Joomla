@@ -8,7 +8,9 @@ on:
       - '.github/workflows/**'
       - 'shared/build/**'
       - 'shared/installer/**'
-      - 'shared/tests/installer-*.php'
+      - 'shared/tests/installer-file-guard.php'
+      - 'shared/tests/installer-pattern.php'
+      - 'shared/tests/installer-lifecycle.php'
   pull_request:
     branches: [main]
     paths:
@@ -16,7 +18,9 @@ on:
       - '.github/workflows/**'
       - 'shared/build/**'
       - 'shared/installer/**'
-      - 'shared/tests/installer-*.php'
+      - 'shared/tests/installer-file-guard.php'
+      - 'shared/tests/installer-pattern.php'
+      - 'shared/tests/installer-lifecycle.php'
 
 permissions: {}
 

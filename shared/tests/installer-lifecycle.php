@@ -136,6 +136,8 @@ namespace {
         public function quote($value) { return "'" . $value . "'"; }
         public function setQuery($query): self { return $this; }
         public function loadObject(): object { return (object) ['extension_id' => 1, 'enabled' => (int) $this->enabled]; }
+        public function getPrefix(): string { return 'test_'; }
+        public function getTableList(): array { return ['test_j2commerce_orders', 'test_j2store_orders']; }
     };
     $assert = static function (bool $ok, string $message): void {
         if (!$ok) {
@@ -209,6 +211,9 @@ namespace {
         $enabled = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(count($disabled['warnings']) === 1 && count($enabled['warnings']) === 0, 'Repeating the check did not refresh actual plugin state.');
         $assert($enabled['blockers'] === [], 'Available platform was reported blocked.');
+        $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
+        $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
+        $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');
         echo "PASS common lifecycle: abort, verified backup, explicit approval, retry, translated reports and refreshed state\n";
     } finally {
         $remove($work);

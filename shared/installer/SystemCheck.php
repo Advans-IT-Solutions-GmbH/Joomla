@@ -89,18 +89,17 @@ final class SystemCheck
 
         if ($definition['shop'] ?? false) {
             $tables = $db->getTableList();
-            $active = '';
+            $shops = [];
 
             foreach (['com_j2commerce' => 'j2commerce', 'com_j2store' => 'j2store'] as $component => $prefix) {
                 $shop = self::extension($component);
 
                 if ($shop && (int) $shop->enabled === 1 && in_array($db->getPrefix() . $prefix . '_orders', $tables, true)) {
-                    $active = $component;
-                    break;
+                    $shops[] = $component;
                 }
             }
 
-            $add($active !== '', Text::_('ADVANS_CHECK_SHOP'), $active !== '' ? $active : Text::_('ADVANS_CHECK_MISSING_DISABLED'), Text::_('ADVANS_CHECK_MANAGE'));
+            $add($shops !== [], Text::_('ADVANS_CHECK_SHOP'), $shops !== [] ? implode(', ', $shops) : Text::_('ADVANS_CHECK_MISSING_DISABLED'), Text::_('ADVANS_CHECK_MANAGE'));
         }
 
         $installed = self::extension($id);
