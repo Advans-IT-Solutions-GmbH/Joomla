@@ -10,6 +10,10 @@ The binding behaviour is in the specification
 (sections 6, 7, 11 and 16). Automated protocol checks do not replace this plan, because real
 clients differ exactly where the clean-up and the refresh matter.
 
+**Readiness:** This is an acceptance plan, not evidence of working support. Do not execute it until
+the implementation is complete and its automated suites pass. Record blocked cases as **BLOCKED**,
+never as passing.
+
 **Execution status:** this document records no completed manual tests.
 
 ## 1. Rules

@@ -341,6 +341,13 @@ task prevents both personal-data retention and metadata cleanup from being enfor
 
 ### Internet calendars
 
+**Implementation and verification status:** This section documents the 1.4.0 target behaviour; it
+is not evidence that the feature is available in a published release or that every behaviour has
+passed its checks. The component remains unreleased, and the [manual client acceptance
+plan](tests/manual/teamcalendars.md) records no completed manual tests. Do not rely on internet
+calendars in production until the release and its required automated and human acceptance checks
+are complete.
+
 An internet calendar is a calendar on your own site that every authorised user reads and writes
 with a CalDAV client, signed in with an app password. Calendars are created in the administrator
 and shared per user; **nothing is visible that was not explicitly granted** (default deny), and
