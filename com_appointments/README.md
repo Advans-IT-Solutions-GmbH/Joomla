@@ -1221,6 +1221,16 @@ requirements check, deprecated-API scan, PHPUnit, and real Joomla integration su
 relevant pushes and pull requests to `main`, and by manual dispatch. **Collect Results** is the
 required pull request check.
 
+The workflow also tests the actual published `appointments-v1.3.0` package as the starting point
+for an update on Joomla 5.4 and Joomla 6. It seeds prior-version schedules, event types and
+plaintext bookings, installs the exact candidate ZIP through Joomla's CLI, then verifies the
+database migration, preservation and readability of booking data during the seven-day migration
+window, and legacy-feed compatibility. It expires the authentic migration token and exercises the
+administrator encrypt-now action against those same upgraded bookings, requiring `v2:` ciphertext
+and exactly one audit row per booking. The upgraded installations also run booking and strict
+team-calendar behavior tests; Joomla 6 runs the real CalDAV clients. The transition-specific lane
+reports an explicit skip once the repository's latest-release-only policy retires the v1.3.0 asset.
+
 The full integration matrix runs on the newest Joomla 5.4 and Joomla 6 images with MySQL. A third
 lane runs the schema-sensitive suites on Joomla 6 with MariaDB 10.6, because the booking table
 relies on an indexed `STORED` generated column. No J2Commerce installation is needed.
