@@ -61,7 +61,8 @@ final class SystemCheck
         $add(version_compare(PHP_VERSION, '8.1', '>='), 'PHP >= 8.1', PHP_VERSION, Text::_('ADVANS_CHECK_SERVER'));
         $joomla = (new Version())->getShortVersion();
         $add(version_compare($joomla, '5.4', '>=') && version_compare($joomla, '7', '<'), 'Joomla 5.4 / 6', $joomla, Text::_('ADVANS_CHECK_JOOMLA_UPDATE'));
-        $cli = Factory::getApplication()->isClient('cli');
+        $app = Factory::getApplication();
+        $cli = $app instanceof \Joomla\CMS\Application\ConsoleApplication || $app->isClient('cli');
         $https = !$cli && Uri::getInstance()->getScheme() === 'https';
         $add($https, Text::_('ADVANS_CHECK_HTTPS'), Text::_($cli ? 'ADVANS_CHECK_HTTPS_UNKNOWN' : ($https ? 'ADVANS_CHECK_HTTPS_CURRENT' : 'ADVANS_CHECK_HTTPS_INSECURE')), Text::_('ADVANS_CHECK_HTTPS_PATH'), true);
 
