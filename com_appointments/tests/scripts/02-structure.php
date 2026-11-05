@@ -781,15 +781,26 @@ class StructureTest
                     $consent[] = [$row['Field'], strtolower($row['Type']), $row['Null']];
                 }
                 $unset = (int) $this->db->query("SELECT COUNT(*) AS n FROM {$bookings} WHERE consent_utc IS NOT NULL OR consent_version IS NOT NULL")->fetch_assoc()['n'];
-
-                return $columns($bookings) === $afterNameMigration && $unset === 0
-                    && $consent === [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']] && $rows === [
+                $expectedRows = [
                     1 => ['Anna Muster', 'Anna', 'Muster'],
                     2 => ['  Anna Maria  von Muster ', 'Anna Maria  von', 'Muster'],
                     3 => ['Cher', 'Cher', ''],
                     4 => [null, null, null],
                     5 => ['Zoë Ærø', 'Zoë', 'Ærø'],
                 ];
+                $actualColumns = $columns($bookings);
+                $expectedConsent = [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']];
+                $passed = $actualColumns === $afterNameMigration && $unset === 0
+                    && $consent === $expectedConsent && $rows === $expectedRows;
+
+                if (!$passed) {
+                    echo '  Name migration diagnostics: columns=' . json_encode($actualColumns, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)
+                        . ', consent=' . json_encode($consent, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)
+                        . ', consent values remaining=' . $unset
+                        . ', rows=' . json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n";
+                }
+
+                return $passed;
             } finally {
                 $this->db->query("DROP TABLE IF EXISTS {$bookings}");
             }
