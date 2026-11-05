@@ -917,6 +917,121 @@ PHP;
         }
     });
 
+    $suite->test('B: retrying migration merges authenticated maxima from both anchor paths and retires the legacy file', static function () use ($services) {
+        $stableFile = JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
+        $legacyFile = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+        $stableFolder = \dirname($stableFile);
+        $legacyFolder = \dirname($legacyFile);
+        $stableExisted = is_file($stableFile);
+        $legacyExisted = is_file($legacyFile);
+        $stableBytes = $stableExisted ? file_get_contents($stableFile) : null;
+        $legacyBytes = $legacyExisted ? file_get_contents($legacyFile) : null;
+        $stableLockExisted = is_file($stableFile . '.lock');
+        $legacyLockExisted = is_file($legacyFile . '.lock');
+        $stableFolderExisted = is_dir($stableFolder);
+        $legacyFolderExisted = is_dir($legacyFolder);
+
+        if ($stableBytes === false || $legacyBytes === false) {
+            throw new \RuntimeException('Could not snapshot the epoch anchor migration fixtures.');
+        }
+
+        $makeBytes = static function (array $data) use ($services): string {
+            $key = $services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_ANCHOR);
+            $mac = hash_hmac('sha256', EpochAnchor::canonical($data), $key);
+            CipherSuite::wipe($key);
+            $document = ['v' => 2];
+
+            foreach ([EpochAnchorInterface::KIND_CALENDAR, EpochAnchorInterface::KIND_CALENDAR_KEY, EpochAnchorInterface::KIND_LOG, EpochAnchorInterface::KIND_USER] as $kind) {
+                $map = $data[$kind];
+                ksort($map, SORT_NUMERIC);
+                $document[$kind] = (object) $map;
+            }
+
+            $document['mac'] = $mac;
+
+            return "<?php defined('_JEXEC') or die;\n" . json_encode($document, JSON_THROW_ON_ERROR) . "\n";
+        };
+
+        try {
+            foreach ([$stableFolder, $legacyFolder] as $folder) {
+                if (!is_dir($folder) && !mkdir($folder, 0755, true) && !is_dir($folder)) {
+                    throw new \RuntimeException('Could not create an epoch anchor migration folder.');
+                }
+            }
+
+            $id = random_int(1000000000, 2000000000);
+            $otherId = $id + 1;
+            $stableData = [
+                EpochAnchorInterface::KIND_CALENDAR => [$id => 8],
+                EpochAnchorInterface::KIND_CALENDAR_KEY => [],
+                EpochAnchorInterface::KIND_LOG => [],
+                EpochAnchorInterface::KIND_USER => [$id => 4],
+            ];
+            $legacyData = [
+                EpochAnchorInterface::KIND_CALENDAR => [$id => 5],
+                EpochAnchorInterface::KIND_CALENDAR_KEY => [$id => 2],
+                EpochAnchorInterface::KIND_LOG => [$id => 7],
+                EpochAnchorInterface::KIND_USER => [$id => 9],
+            ];
+
+            if (file_put_contents($stableFile, $makeBytes($stableData)) === false
+                || file_put_contents($legacyFile, $makeBytes($legacyData)) === false) {
+                throw new \RuntimeException('Could not write the dual epoch anchor fixtures.');
+            }
+
+            $anchor = new EpochAnchor($services);
+            $anchor->migrateLegacy();
+            $merged = (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_CALENDAR, $id) === 8
+                && (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_CALENDAR_KEY, $id) === 2
+                && (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_LOG, $id) === 7
+                && (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_USER, $id) === 9
+                && !is_file($legacyFile);
+
+            $lateData = [
+                EpochAnchorInterface::KIND_CALENDAR => [$id => 6],
+                EpochAnchorInterface::KIND_CALENDAR_KEY => [],
+                EpochAnchorInterface::KIND_LOG => [$otherId => 3],
+                EpochAnchorInterface::KIND_USER => [$id => 12],
+            ];
+
+            if (file_put_contents($legacyFile, $makeBytes($lateData)) === false) {
+                throw new \RuntimeException('Could not write the late epoch anchor fixture.');
+            }
+
+            $anchor->migrateLegacy();
+            $retried = (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_CALENDAR, $id) === 8
+                && (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_LOG, $otherId) === 3
+                && (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_USER, $id) === 12
+                && !is_file($legacyFile);
+
+            return $merged && $retried;
+        } finally {
+            foreach ([[$stableFile, $stableExisted, $stableBytes], [$legacyFile, $legacyExisted, $legacyBytes]] as [$file, $existed, $bytes]) {
+                if ($existed) {
+                    if (file_put_contents($file, $bytes) !== strlen($bytes)) {
+                        throw new \RuntimeException('Could not restore an epoch anchor migration fixture.');
+                    }
+                } elseif (is_file($file) && !@unlink($file)) {
+                    throw new \RuntimeException('Could not remove an epoch anchor migration fixture.');
+                }
+            }
+
+            foreach ([[$stableFile . '.lock', $stableLockExisted], [$legacyFile . '.lock', $legacyLockExisted]] as [$file, $existed]) {
+                if (!$existed && is_file($file) && !@unlink($file)) {
+                    throw new \RuntimeException('Could not remove an epoch anchor lock fixture.');
+                }
+            }
+
+            foreach ([$legacyFolder, $stableFolder] as $folder) {
+                $wasPresent = $folder === $legacyFolder ? $legacyFolderExisted : $stableFolderExisted;
+
+                if (!$wasPresent && is_dir($folder) && count(scandir($folder) ?: []) === 2 && !@rmdir($folder)) {
+                    throw new \RuntimeException('Could not remove an epoch anchor migration folder.');
+                }
+            }
+        }
+    });
+
     $suite->test('B: recordAfterCommit anchors only what was committed, nothing while a transaction is open, never a rolled-back value', static function () use ($services, &$st) {
         $file = sys_get_temp_dir() . '/teamb-anchor-' . bin2hex(random_bytes(6)) . '/epochs.php';
         $anchor = new EpochAnchor($services, $file);

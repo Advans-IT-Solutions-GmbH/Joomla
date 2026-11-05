@@ -19,6 +19,8 @@ use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Filesystem\File;
 use Joomla\Filesystem\Folder;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 
 class Com_appointmentsInstallerScript extends InstallerScript
 {
@@ -217,6 +219,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
+        if (!$deleteData) {
+            $this->migrateLegacyEpochAnchor();
+        }
+
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
@@ -252,7 +258,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             $this->removeEpochAnchor();
         } else {
-            $this->migrateLegacyEpochAnchor();
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
@@ -308,21 +313,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
             return;
         }
 
-        $destination = $this->epochAnchorPath();
-
-        $this->withEpochAnchorLocks([$source, $destination], function () use ($source, $destination): void {
-            if (!is_file($source)) {
-                return;
-            }
-
-            if (file_exists($destination) || is_link($destination)) {
-                throw new \RuntimeException('Both legacy and stable Appointments epoch anchors exist.');
-            }
-
-            if (!@rename($source, $destination)) {
-                throw new \RuntimeException('The Appointments epoch anchor could not be moved to its stable location.');
-            }
-        });
+        Factory::getApplication()->bootComponent('com_appointments');
+        (new EpochAnchor(TeamServices::fromApplication()))->migrateLegacy();
     }
 
     /**

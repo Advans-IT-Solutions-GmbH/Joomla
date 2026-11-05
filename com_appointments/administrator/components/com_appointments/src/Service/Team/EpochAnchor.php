@@ -107,6 +107,27 @@ final class EpochAnchor implements EpochAnchorInterface
         });
     }
 
+    public function migrateLegacy(): void
+    {
+        $legacyFile = $this->legacyFile();
+
+        if ($legacyFile === null || !is_file($legacyFile)) {
+            return;
+        }
+
+        $this->locked(function () use ($legacyFile): void {
+            if (!is_file($legacyFile)) {
+                return;
+            }
+
+            $this->load(true);
+
+            if (is_file($legacyFile)) {
+                throw new \RuntimeException('The legacy Appointments epoch anchor could not be retired.');
+            }
+        });
+    }
+
     public function recordAfterCommit(string $kind, int $id): void
     {
         self::assertKind($kind);
@@ -339,9 +360,11 @@ final class EpochAnchor implements EpochAnchorInterface
             if ($legacyData !== null) {
                 $merged = self::merge($data, $legacyData);
 
-                if ($merged !== $data) {
+                if (self::canonical($merged) !== self::canonical($data)) {
                     $this->write($merged);
                 }
+
+                $this->retireLegacy($legacyFile, $merged);
 
                 return $merged;
             }
@@ -351,6 +374,7 @@ final class EpochAnchor implements EpochAnchorInterface
 
         if ($legacyData !== null) {
             $this->write($legacyData);
+            $this->retireLegacy($legacyFile, $legacyData);
 
             return $legacyData;
         }
@@ -371,6 +395,42 @@ final class EpochAnchor implements EpochAnchorInterface
         $this->log($raw === '' ? 'missing' : 'signature');
 
         return $data;
+    }
+
+    /**
+     * Verify the stable file contains the merged bounds before removing the legacy copy.
+     *
+     * @param   string                         $legacyFile
+     * @param   array<string, array<int, int>> $expected
+     */
+    private function retireLegacy(string $legacyFile, array $expected): void
+    {
+        if (!is_file($legacyFile)) {
+            return;
+        }
+
+        $legacyData = $this->parse((string) @file_get_contents($legacyFile));
+        $stableData = $this->parse(is_file($this->file()) ? (string) @file_get_contents($this->file()) : '');
+
+        if ($legacyData === null || $stableData === null) {
+            throw new \RuntimeException('The Appointments epoch anchors could not be authenticated.');
+        }
+
+        $merged = self::merge($stableData, $legacyData);
+
+        if (self::canonical($merged) !== self::canonical($stableData)) {
+            $this->write($merged);
+            $stableData = $this->parse((string) @file_get_contents($this->file()));
+        }
+
+        if ($stableData === null || self::canonical($stableData) !== self::canonical($merged)
+            || self::canonical($merged) !== self::canonical($expected)) {
+            throw new \RuntimeException('The stable Appointments epoch anchor could not be verified.');
+        }
+
+        if (!@unlink($legacyFile) && is_file($legacyFile)) {
+            throw new \RuntimeException('The legacy Appointments epoch anchor could not be removed.');
+        }
     }
 
     /**

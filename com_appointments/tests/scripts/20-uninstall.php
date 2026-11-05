@@ -9,6 +9,7 @@ class UninstallTest
     private $passed = 0;
     private $failed = 0;
     private $dbPrefix;
+    private $siteSecret;
 
     /**
      * Every table the install schema creates, without the `#__` prefix.
@@ -56,6 +57,7 @@ class UninstallTest
         require '/var/www/html/configuration.php';
         $config = new JConfig();
         $this->dbPrefix = $config->dbprefix;
+        $this->siteSecret = $config->secret;
         $this->db = new mysqli($config->host, $config->user, $config->password, $config->db);
     }
 
@@ -78,34 +80,21 @@ class UninstallTest
         );
         $anchorPath = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
         $legacyAnchorPath = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
-        if (is_file($anchorPath) && is_file($legacyAnchorPath)) {
-            throw new \RuntimeException('Both stable and legacy epoch anchors exist before the test.');
-        }
-        $anchorContent = is_file($anchorPath) ? file_get_contents($anchorPath) : null;
-        if ($anchorContent === false) {
-            throw new \RuntimeException('Could not read the epoch anchor test fixture.');
-        }
-        if ($anchorContent === null && is_file($legacyAnchorPath)) {
-            $anchorContent = file_get_contents($legacyAnchorPath);
-            if ($anchorContent === false) {
-                throw new \RuntimeException('Could not read the legacy epoch anchor test fixture.');
+        foreach ([dirname($anchorPath), dirname($legacyAnchorPath)] as $folder) {
+            if (!is_dir($folder) && !mkdir($folder, 0755, true) && !is_dir($folder)) {
+                throw new \RuntimeException('Could not create an epoch anchor test directory.');
             }
         }
-        if ($anchorContent === null) {
-            if (!is_dir(dirname($legacyAnchorPath)) && !mkdir(dirname($legacyAnchorPath), 0755, true)) {
-                throw new \RuntimeException('Could not create the epoch anchor test directory.');
-            }
-            $anchorContent = "Appointments uninstall test anchor\n";
-            if (file_put_contents($legacyAnchorPath, $anchorContent) !== strlen($anchorContent)) {
-                throw new \RuntimeException('Could not create the epoch anchor test fixture.');
-            }
-        } elseif (is_file($anchorPath)) {
-            if (!is_dir(dirname($legacyAnchorPath)) && !mkdir(dirname($legacyAnchorPath), 0755, true)) {
-                throw new \RuntimeException('Could not create the legacy epoch anchor test directory.');
-            }
-            if (!rename($anchorPath, $legacyAnchorPath)) {
-                throw new \RuntimeException('Could not stage the legacy epoch anchor test fixture.');
-            }
+        $commonId = 1800000001;
+        $stableOnlyId = 1800000002;
+        $legacyOnlyId = 1800000003;
+        $stableData = [$commonId => 5, $stableOnlyId => 3];
+        $legacyData = [$commonId => 8, $legacyOnlyId => 4];
+        $mergedData = [$commonId => 8, $stableOnlyId => 3, $legacyOnlyId => 4];
+        $anchorContent = $this->epochAnchorBytes($mergedData);
+        if (file_put_contents($anchorPath, $this->epochAnchorBytes($stableData)) === false
+            || file_put_contents($legacyAnchorPath, $this->epochAnchorBytes($legacyData)) === false) {
+            throw new \RuntimeException('Could not create the dual epoch anchor test fixtures.');
         }
         $this->insertSchedulerTasks();
 
@@ -320,6 +309,28 @@ class UninstallTest
                 . "'{\"type\":\"manual\",\"exp\":\"\"}',1,'{}','{$time}',0)"
             );
         }
+    }
+
+    private function epochAnchorBytes(array $userEpochs): string
+    {
+        ksort($userEpochs, SORT_NUMERIC);
+        $data = [
+            'calendar' => [],
+            'calendar_key' => [],
+            'log' => [],
+            'user' => $userEpochs,
+        ];
+        $document = ['v' => 2];
+
+        foreach ($data as $kind => $map) {
+            $document[$kind] = (object) $map;
+        }
+
+        $key = hash_hmac('sha256', 'com_appointments:team-anchor', $this->siteSecret, true);
+        $canonical = 'com_appointments/epoch-anchor/v2|' . json_encode($document, JSON_THROW_ON_ERROR);
+        $document['mac'] = hash_hmac('sha256', $canonical, $key);
+
+        return "<?php defined('_JEXEC') or die;\n" . json_encode($document, JSON_THROW_ON_ERROR) . "\n";
     }
 
     private function test(string $name, callable $fn): void
