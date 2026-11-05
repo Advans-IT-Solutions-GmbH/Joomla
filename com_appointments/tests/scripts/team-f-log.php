@@ -125,11 +125,18 @@ PHP;
             return $v['intact'] === true && $v['rows'] === 4 && count($ids()) === 4 && strlen($v['head']) === 64;
         });
 
-        $suite->test('The log stores no address and no IP in clear', static function () use ($db, $p) {
+        $suite->test('The log stores no address and no IP in clear', static function () use ($db, $p, $run) {
             $dump = '';
-            $result = $db->query("SELECT details, object_ref, ip_hash FROM {$p}appointments_teamlog");
+            $expected = $run('return bin2hex(AuditService::addressHash($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_LOG), "192.0.2.10"));');
+            // Binary HMACs may contain "@": validate their exact keyed bytes
+            // separately instead of mistaking one random byte for an address.
+            $result = $db->query("SELECT details, object_ref, HEX(ip_hash) AS ip_hash FROM {$p}appointments_teamlog");
 
             while ($result && ($r = $result->fetch_assoc())) {
+                if ($r['ip_hash'] !== strtoupper($expected)) {
+                    return false;
+                }
+
                 $dump .= implode('|', array_map('strval', $r));
             }
 
