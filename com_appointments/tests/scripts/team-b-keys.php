@@ -138,6 +138,9 @@ $app->loadLanguage($container->get(\Joomla\CMS\Language\LanguageFactoryInterface
 $app->createExtensionNamespaceMap();
 $app->bootComponent('com_appointments');
 $services = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
+$backendAdmin = new \ReflectionMethod($services->keySession(), 'isBackendKeyAdministrator');
+$ordinaryUserExcluded = $app->isClient('administrator')
+    && !$backendAdmin->invoke($services->keySession(), __ORDINARY_USER__);
 $unlocked = false;
 $context = null;
 try {
@@ -172,6 +175,7 @@ echo json_encode([
     'noCalendars' => $services->grants()->calendarsFor($id) === [],
     'noAccess' => $services->grants()->accessFor($id, __CALENDAR__) === null,
     'noKey' => $noKey,
+    'ordinaryUserExcluded' => $ordinaryUserExcluded,
     'passed' => (int) $app->getSession()->get('com_users.mfa_checked', 0) === 1,
 ]);
 PHP;
@@ -215,7 +219,7 @@ PHP;
                 $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
                 $db->query("UPDATE {$p}extensions SET enabled=1 WHERE type='plugin' AND folder='user' AND element='appointments'");
 
-                if (file_put_contents($probeFile, str_replace(['__GATE__', '__CALENDAR__', '__HOLDER__'], [$gate, (string) $calendar, (string) $holder], $probe)) === false) {
+                if (file_put_contents($probeFile, str_replace(['__GATE__', '__CALENDAR__', '__HOLDER__', '__ORDINARY_USER__'], [$gate, (string) $calendar, (string) $holder, (string) $owner], $probe)) === false) {
                     throw new \RuntimeException('Could not write bootstrap fixture probe.');
                 }
 
@@ -236,7 +240,6 @@ PHP;
                 $siteSession = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession(TeamServices::fromApplication());
                 $backendAdmin = new \ReflectionMethod($siteSession, 'isBackendKeyAdministrator');
                 $notOnSite = !$backendAdmin->invoke($siteSession, $admin);
-                $notOrdinaryUser = !$backendAdmin->invoke($siteSession, $owner);
 
                 $db->query("DELETE FROM {$p}user_usergroup_map WHERE user_id={$admin} AND group_id=8");
                 $revokedAdmin = $inspect();
@@ -261,7 +264,7 @@ PHP;
                     'explicitRecoveryWorks' => $passed['recovered'],
                     'noImplicitCalendarAccess' => $passed['noAudience'] && $passed['noCalendars'] && $passed['noAccess'] && $passed['noKey'] && $noImplicitGrants,
                     'backendOnly' => $notOnSite,
-                    'ordinaryUserExcluded' => $notOrdinaryUser && !$revokedAdmin['unlocked'],
+                    'ordinaryUserExcluded' => $passed['ordinaryUserExcluded'] && !$revokedAdmin['unlocked'],
                     'neverMfaExcluded' => !$excluded['unlocked'],
                     'emailExcluded' => !$emailOnly['unlocked'],
                     'backupExcluded' => !$backupOnly['unlocked'],
