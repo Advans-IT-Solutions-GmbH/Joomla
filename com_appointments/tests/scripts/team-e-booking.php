@@ -418,7 +418,7 @@ return static function (TeamSuite $suite): void {
 
             if ($team->keys()->recoveryFingerprint() === null) {
                 $team->keys()->createRecoveryKey($admin);
-                $createdRecoveryFingerprint = $team->keys()->recoveryFingerprint();
+                $createdRecoveryFingerprint = str_replace('-', '', $team->keys()->recoveryFingerprint());
             }
 
             $keys = $team->keys()->createUserKey($user, $password);
@@ -486,8 +486,12 @@ return static function (TeamSuite $suite): void {
                 $suite->db->query("DELETE FROM {$suite->prefix}users WHERE id={$user}");
             }
             if ($createdRecoveryFingerprint !== null) {
-                $suite->db->query("DELETE FROM {$suite->prefix}appointments_keyring WHERE purpose='recovery'"
-                    . " AND fingerprint='" . $suite->db->real_escape_string($createdRecoveryFingerprint) . "' AND created_by={$admin}");
+                $suite->test('E removes exactly the recovery key its fixture created', static function () use ($suite, $createdRecoveryFingerprint, $admin) {
+                    $suite->db->query("DELETE FROM {$suite->prefix}appointments_keyring WHERE purpose='recovery'"
+                        . " AND fingerprint='" . $suite->db->real_escape_string($createdRecoveryFingerprint) . "' AND created_by={$admin}");
+
+                    return $suite->db->affected_rows === 1;
+                });
             }
         }
     } finally {
