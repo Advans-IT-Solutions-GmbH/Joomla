@@ -102,6 +102,7 @@ class HtmlView extends BaseHtmlView
         $this->canDeleteInvalid = $this->canAdmin && $user->authorise('core.delete', 'com_appointments');
         $this->canInvite = $this->canAdmin || $user->authorise('appointments.team.external', 'com_appointments');
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'), 'calendar');
+        $toolbar = Toolbar::getInstance('toolbar');
 
         if ($this->enabled) {
             try {
@@ -127,17 +128,25 @@ class HtmlView extends BaseHtmlView
                 $this->recoveryAvailable = false;
             }
 
-            $toolbar = Toolbar::getInstance('toolbar');
-
             if ($this->canCreate && $this->available) {
                 $toolbar->addNew('calendars.add');
             }
-
-            if ($this->canInvite) {
-                $toolbar->linkButton('invitations')->url('index.php?option=com_appointments&view=invitations')
-                    ->text(Text::_('COM_APPOINTMENTS_TEAM_C_NAV_INVITATIONS'))->icon('icon-envelope');
-            }
         }
+
+        if ($this->canInvite) {
+            $toolbar->linkButton('invitations')->url('index.php?option=com_appointments&view=invitations')
+                ->text(Text::_('COM_APPOINTMENTS_TEAM_C_NAV_INVITATIONS'))->icon('icon-envelope');
+        }
+
+        if ($this->canAdmin) {
+            $toolbar->linkButton('devices')->url('index.php?option=com_appointments&view=devices')
+                ->text(Text::_('COM_APPOINTMENTS_TEAM_NAV_DEVICES'))->icon('icon-desktop');
+            $toolbar->linkButton('teamlog')->url('index.php?option=com_appointments&view=teamlog')
+                ->text(Text::_('COM_APPOINTMENTS_TEAM_NAV_LOG'))->icon('icon-list');
+        }
+
+        $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')
+            ->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'))->icon('icon-arrow-left');
 
         return parent::display($tpl);
     }

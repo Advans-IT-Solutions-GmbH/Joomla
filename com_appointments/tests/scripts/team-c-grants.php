@@ -336,6 +336,26 @@ return static function (TeamSuite $suite): void {
         $calendars[] = $calendar;
         $grants = $services->grants();
 
+        $suite->test('A calendar edit can be cancelled after disabling the feature, with token and edit-id release', static function () use ($admin, $base, $calendar, $setOptions) {
+            $admin->request($base . '&task=calendars.edit&id=' . $calendar);
+            $setOptions(['teamcal_enabled' => 0]);
+
+            try {
+                $html = $admin->request($base . '&view=calendar&layout=edit&id=' . $calendar);
+                $renders = $admin->status === 200 && str_contains($html, 'id="toolbar-cancel"');
+                $admin->request($base, ['task' => 'calendars.cancel', 'id' => $calendar]);
+                $protected = $admin->status === 403;
+                $admin->request($base, ['task' => 'calendars.cancel', 'id' => $calendar, $admin->token($html) => 1]);
+                $closed = $admin->status === 200;
+            } finally {
+                $setOptions(['teamcal_enabled' => 1]);
+            }
+
+            $admin->request($base . '&view=calendar&layout=edit&id=' . $calendar);
+
+            return $renders && $protected && $closed && $admin->status === 403;
+        });
+
         $suite->test($aclE2e, static function () use (
             $services, $grants, $owner, $member, $nomfa, $external, $outsider, $teamGroup, $refused, $db, $p, $tag, &$calendars
         ) {

@@ -21,6 +21,11 @@ defined('_JEXEC') or die;
 
 if (!$this->enabled) : ?>
     <div class="alert alert-info" role="status"><?php echo Text::_('COM_APPOINTMENTS_TEAM_DISABLED'); ?></div>
+    <form action="<?php echo Route::_('index.php?option=com_appointments'); ?>" method="post" name="adminForm" id="calendar-form" class="form-validate">
+        <input type="hidden" name="id" value="<?php echo Factory::getApplication()->getInput()->getInt('id', 0); ?>">
+        <input type="hidden" name="task" value="">
+        <?php echo HTMLHelper::_('form.token'); ?>
+    </form>
     <?php return; ?>
 <?php endif;
 

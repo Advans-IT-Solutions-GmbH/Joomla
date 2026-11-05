@@ -102,6 +102,17 @@ everything that is not booking-specific: directory layout, `build.sh`, `build.en
 `services/provider.php`, the three CI workflows, the test harness and the skill layout. Copy its
 shape, do not reinvent it.
 
+## Navigation
+
+Every view must retain a usable route within its branch and back to its parent or overview, including
+empty lists, disabled features and recoverable errors. Use the existing toolbar links and
+Save & Close / Cancel actions; leaving administrator edit forms must release their checkout.
+Authorisation takes precedence: never expose administrator links or another person's signed
+booking capabilities to a public visitor. Deliberate 403/404 privacy boundaries stay intact.
+Joomla component options use the native Close action, not a global navigation plugin.
+Test branch navigation in Edge and Firefox, light and dark, at 375, 768, 1024, 1280, 1440, 1600
+and 1920 pixels; record actual PASS/FAIL cases and screenshots rather than assuming coverage.
+
 ## swiss made software label
 
 This extension carries the swiss made software label. Logo, link and origin claims follow the
