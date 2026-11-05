@@ -6,14 +6,266 @@
  * address redirects, every method needs authentication, every answer is
  * no-store/noindex without a session cookie or session row.
  *
- * The end-to-end cases (app password, roles, sync, ETags, clean-up) need the
- * services of the other work packages; until those are delivered they are
- * reported as pending (TeamSuite::pending()), never as passed. The same cases
- * run in PHPUnit (DavServerTest) against the real sabre/dav copy with test
- * doubles of the services.
+ * The authenticated cases create temporary Joomla accounts, MFA rows, keys,
+ * grants and devices, then use real HTTPS CalDAV requests. Until the required
+ * services are delivered, they are reported as pending, never as passed.
  *
  * Leaves the plugin and the option as it found them.
  */
+
+final class TeamDavFixture
+{
+    public \Advans\Component\Appointments\Administrator\Service\Team\TeamServices $services;
+    public int $calendarId;
+    public string $calendarUri;
+    public int $adminId;
+    public array $accounts = [];
+
+    private bool $createdRecoveryKey = false;
+    private string $token;
+
+    public function __construct(private readonly TeamSuite $suite)
+    {
+        require_once __DIR__ . '/appointments-joomla.php';
+        $this->services = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
+        $this->token = bin2hex(random_bytes(6));
+    }
+
+    public function create(): void
+    {
+        $db = $this->suite->db;
+        $p = $this->suite->prefix;
+        $adminName = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
+        $admin = $db->query("SELECT id FROM {$p}users WHERE username='{$adminName}' LIMIT 1")->fetch_assoc();
+
+        if (!$admin) {
+            throw new \RuntimeException('The Joomla test administrator is missing.');
+        }
+
+        $this->adminId = (int) $admin['id'];
+        $component = $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_assoc();
+        $params = json_decode((string) ($component['params'] ?? '{}'), true);
+        $groupIds = (array) ($params['team_groups'] ?? []);
+        $groupId = (int) ($groupIds[0] ?? 0);
+
+        if ($groupId < 1) {
+            throw new \RuntimeException('No team group is configured for the CalDAV fixture.');
+        }
+
+        if ($this->suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") !== 0) {
+            throw new \RuntimeException('The CalDAV fixture requires an empty recovery-key table.');
+        }
+
+        $this->services->keys()->createRecoveryKey($this->adminId);
+        $this->createdRecoveryKey = true;
+
+        foreach (['owner', 'reader', 'writer', 'freebusy', 'denied', 'nomfa', 'cleanup', 'lockout'] as $name) {
+            $username = 'dav_' . $name . '_' . $this->token;
+            $password = bin2hex(random_bytes(24));
+            $userId = $this->insertUser($username, $password, $groupId);
+            $this->accounts[$name] = [
+                'id' => $userId,
+                'username' => $username,
+                'password' => $password,
+            ];
+            $this->addMfa($userId);
+            $this->accounts[$name]['keys'] = $this->services->keys()->createUserKey($userId, $password);
+        }
+
+        $this->calendarId = $this->services->calendars()->create($this->adminId, [
+            'title' => 'CalDAV protocol test ' . $this->token,
+            'owner_user_id' => $this->accounts['owner']['id'],
+            'allow_external' => false,
+        ]);
+        $calendar = $this->services->calendars()->get($this->calendarId);
+
+        if (!$calendar || !isset($calendar->uri)) {
+            throw new \RuntimeException('The CalDAV fixture calendar has no URI.');
+        }
+
+        $this->calendarUri = (string) $calendar->uri;
+        $owner = $this->accounts['owner'];
+
+        foreach ([
+            'reader' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'writer' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Write,
+            'freebusy' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::FreeBusy,
+            'denied' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'nomfa' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'lockout' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+        ] as $name => $role) {
+            $this->services->grants()->grant($owner['id'], $this->calendarId, $this->accounts[$name]['id'], $role, $owner['keys']);
+        }
+
+        foreach ($this->accounts as $name => &$account) {
+            $device = $this->services->devices()->create($account['keys'], 'CalDAV test ' . $name, 'other', true);
+            $account['device_id'] = (int) $device['device_id'];
+            $account['app_password'] = (string) $device['app_password'];
+        }
+        unset($account);
+
+        $this->services->grants()->revoke(
+            $owner['id'],
+            $this->calendarId,
+            $this->accounts['denied']['id'],
+            $owner['keys']
+        );
+        foreach ($this->accounts as &$account) {
+            unset($account['keys']);
+        }
+        unset($account, $owner);
+
+        if (!$db->query("DELETE FROM {$p}user_mfa WHERE user_id=" . (int) $this->accounts['nomfa']['id'])) {
+            throw new \RuntimeException('Could not disable the fixture second factor: ' . $db->error);
+        }
+    }
+
+    public function home(string $account): string
+    {
+        return '/dav/calendars/u' . $this->accounts[$account]['id'] . '/';
+    }
+
+    public function calendar(string $account): string
+    {
+        return $this->home($account) . rawurlencode($this->calendarUri) . '/';
+    }
+
+    public function expireJournal(): bool
+    {
+        $p = $this->suite->prefix;
+
+        return (bool) $this->suite->db->query("DELETE FROM {$p}appointments_calendar_changes WHERE calendar_id=" . (int) $this->calendarId);
+    }
+
+    public function cleanup(): bool
+    {
+        $db = $this->suite->db;
+        $p = $this->suite->prefix;
+        $errors = [];
+
+        if (isset($this->calendarId)) {
+            try {
+                $this->services->calendars()->delete($this->adminId, $this->calendarId);
+            } catch (\Throwable $e) {
+                $errors[] = $e->getMessage();
+            }
+        }
+
+        $userIds = array_values(array_filter(array_map(static fn (array $account): int => (int) ($account['id'] ?? 0), $this->accounts)));
+        $ids = implode(',', $userIds);
+
+        if ($ids !== '') {
+            foreach (['appointments_device_calendars', 'appointments_devices', 'appointments_user_keys', 'user_mfa', 'user_usergroup_map'] as $table) {
+                if (!$db->query("DELETE FROM {$p}{$table} WHERE " . ($table === 'appointments_device_calendars'
+                    ? "device_id IN (SELECT id FROM {$p}appointments_devices WHERE user_id IN ({$ids}))"
+                    : "user_id IN ({$ids})"))) {
+                    $errors[] = $db->error;
+                }
+            }
+
+            if (!$db->query("DELETE FROM {$p}users WHERE id IN ({$ids})")) {
+                $errors[] = $db->error;
+            }
+        }
+
+        if ($this->createdRecoveryKey && !$db->query("DELETE FROM {$p}appointments_keyring")) {
+            $errors[] = $db->error;
+        }
+
+        $this->accounts = [];
+
+        return $errors === [];
+    }
+
+    private function insertUser(string $username, string $password, int $groupId): int
+    {
+        $db = $this->suite->db;
+        $p = $this->suite->prefix;
+        $result = $db->query("SHOW COLUMNS FROM {$p}users");
+        $columns = [];
+
+        while ($result && ($column = $result->fetch_assoc())) {
+            $columns[$column['Field']] = $column;
+        }
+
+        $now = gmdate('Y-m-d H:i:s');
+        $wanted = [
+            'name' => 'CalDAV ' . $username,
+            'username' => $username,
+            'email' => $username . '@example.test',
+            'password' => password_hash($password, PASSWORD_DEFAULT),
+            'block' => '0',
+            'sendEmail' => '0',
+            'registerDate' => $now,
+            'params' => '{}',
+            'requireReset' => '0',
+        ];
+        $sets = [];
+
+        foreach ($columns as $name => $column) {
+            if (array_key_exists($name, $wanted)) {
+                $sets[] = "`{$name}`='" . $db->real_escape_string((string) $wanted[$name]) . "'";
+            } elseif ($name !== 'id' && $column['Null'] !== 'YES' && $column['Default'] === null) {
+                $type = strtolower((string) $column['Type']);
+                $value = str_contains($type, 'char') || str_contains($type, 'text') ? ''
+                    : (str_contains($type, 'datetime') || str_contains($type, 'timestamp') ? $now
+                        : (str_contains($type, 'date') ? substr($now, 0, 10) : '0'));
+                $sets[] = "`{$name}`='" . $db->real_escape_string($value) . "'";
+            }
+        }
+
+        if (!$db->query("INSERT INTO {$p}users SET " . implode(', ', $sets))) {
+            throw new \RuntimeException('Could not create a CalDAV test user: ' . $db->error);
+        }
+
+        $userId = (int) $db->insert_id;
+
+        if (!$db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$userId}, {$groupId})")) {
+            $db->query("DELETE FROM {$p}users WHERE id={$userId}");
+            throw new \RuntimeException('Could not assign a CalDAV test user to the team group: ' . $db->error);
+        }
+
+        return $userId;
+    }
+
+    private function addMfa(int $userId): void
+    {
+        $db = $this->suite->db;
+        $p = $this->suite->prefix;
+        $result = $db->query("SHOW COLUMNS FROM {$p}user_mfa");
+        $columns = [];
+
+        while ($result && ($column = $result->fetch_assoc())) {
+            $columns[$column['Field']] = $column;
+        }
+
+        $now = gmdate('Y-m-d H:i:s');
+        $wanted = [
+            'user_id' => (string) $userId,
+            'title' => 'CalDAV protocol test factor',
+            'method' => 'totp',
+            'default' => '1',
+            'created_on' => $now,
+            'last_used' => null,
+            'options' => '{}',
+        ];
+        $sets = [];
+
+        foreach ($columns as $name => $column) {
+            if (array_key_exists($name, $wanted)) {
+                $value = $wanted[$name];
+                $sets[] = "`{$name}`=" . ($value === null ? 'NULL' : "'" . $db->real_escape_string($value) . "'");
+            } elseif ($name !== 'id' && $column['Null'] !== 'YES' && $column['Default'] === null) {
+                $sets[] = "`{$name}`='0'";
+            }
+        }
+
+        if (!$db->query("INSERT INTO {$p}user_mfa SET " . implode(', ', $sets))) {
+            throw new \RuntimeException('Could not create a CalDAV test second factor: ' . $db->error);
+        }
+    }
+}
 
 return static function (TeamSuite $suite): void {
     $admin = '/var/www/html/administrator/components/com_appointments/src/';
@@ -198,44 +450,301 @@ return static function (TeamSuite $suite): void {
             });
         }
 
-        // End-to-end cases: they run once the services they need are delivered.
+        // Every authenticated case below goes through the installed HTTPS endpoint.
         $needs = [
-            'B' => 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\KeyService',
-            'C' => 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\GrantService',
-            'D' => 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\DeviceService',
-            'E' => 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\TimingIndex',
-            'F' => 'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\LockoutService',
+            'B' => ['Advans\\Component\\Appointments\\Administrator\\Service\\Team\\KeyService'],
+            'C' => [
+                'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\GrantService',
+                'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\CalendarService',
+            ],
+            'D' => ['Advans\\Component\\Appointments\\Administrator\\Service\\Team\\DeviceService'],
+            'E' => ['Advans\\Component\\Appointments\\Administrator\\Service\\Team\\TimingIndex'],
+            'F' => [
+                'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\LockoutService',
+                'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\CleanupService',
+                'Advans\\Component\\Appointments\\Administrator\\Service\\Team\\AuditService',
+            ],
         ];
         $missing = static function (string ...$packages) use ($suite, $needs, $https): string {
-            $open = array_values(array_filter($packages, static fn (string $p): bool => $suite->isStub($needs[$p])));
+            $open = [];
 
-            if (!$https) {
-                $open[] = 'G1';
+            foreach ($packages as $package) {
+                foreach ($needs[$package] as $class) {
+                    if ($suite->isStub($class)) {
+                        $open[] = $package;
+                        break;
+                    }
+                }
             }
 
-            return implode(', ', $open);
+            if (!$https && !in_array('G', $open, true)) {
+                $open[] = 'G';
+            }
+
+            return implode(', ', array_unique($open));
         };
 
-        foreach ([
-            ['A Joomla password is refused with the same 401 as a wrong app password, and counted', ['F']],
-            ['Ten failed sign-ins lock CalDAV with 429 and Retry-After, also for the correct app password', ['D', 'F']],
-            ['Discovery: current-user-principal, calendar-home-set, home of the own user only', ['B', 'C', 'D', 'F']],
-            ['Default deny: without a grant the home is empty, a foreign calendar is 404', ['B', 'C', 'D', 'F']],
-            ['Roles: free/busy redacted without a key, read only reads, write and manage write', ['B', 'C', 'D', 'E', 'F']],
-            ['PUT, REPORT and DELETE per role, with ETag preconditions and no-uid-conflict', ['B', 'C', 'D', 'E', 'F']],
-            ['sync-collection: initial, incremental, expired token answered with valid-sync-token', ['B', 'C', 'D', 'E', 'F']],
-            ['Clean-up: empty view, hidden view, then 401', ['B', 'C', 'D', 'F']],
-            ['An active device without second factor is refused with 403', ['B', 'C', 'D', 'F']],
-            ['Object store: booking objects sealed, removed with the booking, e-mail index and retention', ['B', 'E']],
-        ] as [$name, $packages]) {
+        $fixture = null;
+        $fixtureForCleanup = null;
+        $fixtureError = null;
+        $setupMissing = $missing('B', 'C', 'D', 'F');
+
+        if ($https && $setupMissing === '') {
+            try {
+                $fixture = new TeamDavFixture($suite);
+                $fixtureForCleanup = $fixture;
+                $fixture->create();
+            } catch (\Throwable $e) {
+                $fixtureError = $e;
+                $fixture = null;
+            }
+        }
+
+        if ($setupMissing !== '' || !$https) {
+            $suite->pending('Create isolated authenticated CalDAV fixture', $setupMissing !== '' ? $setupMissing : 'G');
+        } else {
+            $suite->test('Create isolated authenticated CalDAV fixture', static fn () => $fixture !== null);
+        }
+
+        $send = static function (string $method, string $path, string $account, array $headers = [], ?string $body = null, ?string $password = null) use ($suite, $request, &$fixture, $fixtureError): array {
+            if (!$fixture) {
+                throw new \RuntimeException('CalDAV fixture setup failed: ' . ($fixtureError?->getMessage() ?? 'not available'));
+            }
+
+            $user = $fixture->accounts[$account];
+            $headers[] = 'Authorization: Basic ' . base64_encode($user['username'] . ':' . ($password ?? $user['app_password']));
+
+            return $request($method, $suite->base . $path, $headers, $body);
+        };
+
+        $ics = static function (string $uid, string $summary): string {
+            return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Appointments CalDAV tests//EN\r\n"
+                . "BEGIN:VEVENT\r\nUID:{$uid}\r\nDTSTAMP:20261110T100000Z\r\n"
+                . "DTSTART:20261112T090000Z\r\nDTEND:20261112T100000Z\r\nSUMMARY:{$summary}\r\n"
+                . "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        };
+
+        $propfind = static function (string $account, string $path, string $depth, string $properties = '<d:resourcetype/>') use ($send): array {
+            $body = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop>' . $properties . '</d:prop></d:propfind>';
+
+            return $send('PROPFIND', $path, $account, ['Depth: ' . $depth, 'Content-Type: application/xml'], $body);
+        };
+
+        $sync = static function (string $account, string $path, string $token = '') use ($send): array {
+            $body = '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token>'
+                . htmlspecialchars($token, ENT_XML1) . '</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>';
+
+            return $send('REPORT', $path, $account, ['Depth: 1', 'Content-Type: application/xml'], $body);
+        };
+
+        $httpCases = [
+            [
+                'A Joomla password is refused like an invalid app password, while the real app password works',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind, $header): bool {
+                    $path = '/dav/principals/u' . $f->accounts['reader']['id'] . '/';
+                    $joomla = $send('PROPFIND', '/dav/', 'reader', ['Depth: 0', 'Content-Type: application/xml'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>', $f->accounts['reader']['password']);
+                    $wrong = $send('PROPFIND', '/dav/', 'reader', ['Depth: 0'], null, str_repeat('A', 32));
+                    $good = $propfind('reader', $path, '0', '<d:displayname/>');
+
+                    return $joomla['status'] === 401 && $wrong['status'] === 401
+                        && $joomla['body'] === $wrong['body'] && $header($joomla, 'WWW-Authenticate') === $header($wrong, 'WWW-Authenticate')
+                        && $good['status'] === 207;
+                },
+            ],
+            [
+                'Ten failed app-password sign-ins lock out the account, including its correct password',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $header): bool {
+                    for ($attempt = 0; $attempt < 10; $attempt++) {
+                        if ($send('PROPFIND', '/dav/', 'lockout', ['Depth: 0'], null, str_repeat('A', 32))['status'] !== 401) {
+                            return false;
+                        }
+                    }
+
+                    $locked = $send('PROPFIND', '/dav/', 'lockout', ['Depth: 0']);
+
+                    return $locked['status'] === 429 && (int) $header($locked, 'Retry-After') > 0;
+                },
+            ],
+            [
+                'Discovery exposes only the authenticated principal and default-deny hides an ungranted calendar',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($propfind): bool {
+                    $principalPath = '/dav/principals/u' . $f->accounts['reader']['id'] . '/';
+                    $root = $propfind('reader', '/dav/', '0', '<d:current-user-principal/>');
+                    $principal = $propfind('reader', $principalPath, '0', '<c:calendar-home-set/>');
+                    $principals = $propfind('reader', '/dav/principals/', '1');
+                    $ownHome = $propfind('reader', $f->home('reader'), '1');
+                    $deniedHome = $propfind('denied', $f->home('denied'), '1');
+                    $foreign = $propfind('denied', $f->calendar('denied'), '0');
+
+                    return $root['status'] === 207 && str_contains($root['body'], $principalPath)
+                        && $principal['status'] === 207 && str_contains($principal['body'], $f->home('reader'))
+                        && $principals['status'] === 207 && substr_count($principals['body'], '/dav/principals/u') === 1
+                        && $ownHome['status'] === 207 && str_contains($ownHome['body'], $f->calendarUri)
+                        && $deniedHome['status'] === 207 && !str_contains($deniedHome['body'], $f->calendarUri)
+                        && $foreign['status'] === 404;
+                },
+            ],
+            [
+                'Free/busy is redacted, read is read-only, and write enforces ETag and UID preconditions',
+                ['B', 'C', 'D', 'E', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind, $ics): bool {
+                    $uid = 'role-' . bin2hex(random_bytes(6));
+                    $summary = 'Confidential CalDAV protocol fixture';
+                    $ownerPath = $f->calendar('owner');
+                    $seed = $send('PUT', $ownerPath . 'seed.ics', 'owner', ['Content-Type: text/calendar', 'If-None-Match: *'], $ics($uid, $summary));
+
+                    if ($seed['status'] !== 201) {
+                        return false;
+                    }
+
+                    $read = $send('GET', $f->calendar('reader') . 'seed.ics', 'reader');
+                    $readOnly = $send('PUT', $f->calendar('reader') . 'denied.ics', 'reader', ['Content-Type: text/calendar'], $ics('read-denied', 'Denied write'));
+                    $freeList = $propfind('freebusy', $f->calendar('freebusy'), '1');
+
+                    if ($read['status'] !== 200 || !str_contains($read['body'], $summary) || $readOnly['status'] !== 403
+                        || $freeList['status'] !== 207 || str_contains($freeList['body'], $uid) || str_contains($freeList['body'], 'seed.ics')
+                        || !preg_match('#/dav/calendars/u\d+/[^/]+/(fb-[0-9a-f]{40}\.ics)#', $freeList['body'], $match)) {
+                        return false;
+                    }
+
+                    $busy = $send('GET', $f->calendar('freebusy') . $match[1], 'freebusy');
+
+                    if ($busy['status'] !== 200 || !str_contains($busy['body'], 'CLASS:CONFIDENTIAL')
+                        || str_contains($busy['body'], $summary) || str_contains($busy['body'], $uid)) {
+                        return false;
+                    }
+
+                    $writerPath = $f->calendar('writer');
+                    $create = $send('PUT', $writerPath . 'write.ics', 'writer', ['Content-Type: text/calendar', 'If-None-Match: *'], $ics('writer-' . $uid, 'Write test'));
+                    $etag = $header($create, 'ETag');
+                    $uidConflict = $send('PUT', $writerPath . 'same-uid.ics', 'writer', ['Content-Type: text/calendar'], $ics('writer-' . $uid, 'UID conflict'));
+
+                    if ($create['status'] !== 201 || $etag === null
+                        || $uidConflict['status'] !== 403 || !str_contains($uidConflict['body'], 'no-uid-conflict')
+                        || str_contains($uidConflict['body'], 'write.ics')
+                        || $send('PUT', $writerPath . 'write.ics', 'writer', ['Content-Type: text/calendar', 'If-None-Match: *'], $ics('writer-' . $uid, 'Duplicate'))['status'] !== 412
+                                || $send('PUT', $writerPath . 'write.ics', 'writer', ['Content-Type: text/calendar', 'If-Match: "0000"'], $ics('writer-' . $uid, 'Stale'))['status'] !== 412) {
+                        return false;
+                    }
+
+                    $changed = $send('PUT', $writerPath . 'write.ics', 'writer', ['Content-Type: text/calendar', 'If-Match: ' . $etag], $ics('writer-' . $uid, 'Updated'));
+
+                    return $changed['status'] === 204
+                        && $send('DELETE', $writerPath . 'write.ics', 'writer', ['If-Match: "0000"'])['status'] === 412
+                        && $send('DELETE', $writerPath . 'write.ics', 'writer')['status'] === 204
+                        && $send('DELETE', $ownerPath, 'owner')['status'] === 403
+                        && $send('MKCALENDAR', $ownerPath . 'new/', 'owner')['status'] === 403;
+                },
+            ],
+            [
+                'sync-collection returns incremental additions and deletion tombstones and rejects an invalid token',
+                ['B', 'C', 'D', 'E', 'F'],
+                static function (TeamDavFixture $f) use ($send, $sync, $ics): bool {
+                    $path = $f->calendar('writer');
+                    $firstPut = $send('PUT', $path . 'sync-a.ics', 'writer', ['Content-Type: text/calendar'], $ics('sync-a-' . $f->calendarId, 'Sync A'));
+
+                    if ($firstPut['status'] !== 201) {
+                        return false;
+                    }
+
+                    $initial = $sync('writer', $path);
+                    preg_match('#<d:sync-token>([^<]+)</d:sync-token>#', $initial['body'], $tokenMatch);
+                    $token = html_entity_decode($tokenMatch[1] ?? '', ENT_XML1);
+
+                    if ($initial['status'] !== 207 || $token === '' || !str_contains($initial['body'], 'sync-a.ics')) {
+                        return false;
+                    }
+
+                    $added = $send('PUT', $path . 'sync-b.ics', 'writer', ['Content-Type: text/calendar'], $ics('sync-b-' . $f->calendarId, 'Sync B'));
+                    $delta = $sync('writer', $path, $token);
+
+                    if ($added['status'] !== 201 || $delta['status'] !== 207 || !str_contains($delta['body'], 'sync-b.ics')
+                        || str_contains($delta['body'], 'sync-a.ics')) {
+                        return false;
+                    }
+
+                    $deltaTokenMatch = [];
+                    preg_match('#<d:sync-token>([^<]+)</d:sync-token>#', $delta['body'], $deltaTokenMatch);
+                    $deleted = $send('DELETE', $path . 'sync-b.ics', 'writer');
+                    $tombstone = $sync('writer', $path, html_entity_decode($deltaTokenMatch[1] ?? '', ENT_XML1));
+                    $invalid = $sync('writer', $path, 'urn:other:1');
+
+                    if ($deleted['status'] !== 204 || $tombstone['status'] !== 207
+                        || preg_match('#sync-b\.ics</d:href>\s*<d:status>HTTP/1\.1 404 Not Found</d:status>#', $tombstone['body']) !== 1
+                        || $invalid['status'] !== 403 || !str_contains($invalid['body'], 'valid-sync-token')
+                        || !$f->expireJournal()) {
+                        return false;
+                    }
+
+                    $expired = $sync('writer', $path, '0');
+
+                    return $expired['status'] === 403 && str_contains($expired['body'], 'valid-sync-token');
+                },
+            ],
+            [
+                'Clean-up serves empty then hidden views before revoking the device',
+                ['B', 'C', 'D', 'E', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind, $ics): bool {
+                    $account = $f->accounts['cleanup'];
+                    $path = $f->calendar('cleanup');
+                    $created = $send('PUT', $path . 'cleanup.ics', 'cleanup', ['Content-Type: text/calendar'], $ics('cleanup-' . $f->calendarId, 'Cleanup object'));
+
+                    if ($created['status'] !== 201) {
+                        return false;
+                    }
+
+                    $f->services->cleanup()->startForDevice($account['device_id'], 'test', $f->adminId);
+                    $empty = $propfind('cleanup', $path, '1');
+
+                    if ($empty['status'] !== 207 || str_contains($empty['body'], 'cleanup.ics')) {
+                        return false;
+                    }
+
+                    $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+                    $f->services->cleanup()->advance($now);
+                    $hidden = $propfind('cleanup', $f->home('cleanup'), '1');
+
+                    if ($hidden['status'] !== 207 || str_contains($hidden['body'], $f->calendarUri)) {
+                        return false;
+                    }
+
+                    $f->services->cleanup()->advance($now);
+
+                    return $send('PROPFIND', $f->home('cleanup'), 'cleanup', ['Depth: 1'])['status'] === 401;
+                },
+            ],
+            [
+                'An active device with no configured second factor is refused before DAV discovery',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send): bool {
+                    $response = $send('PROPFIND', '/dav/', 'nomfa', ['Depth: 0']);
+
+                    return $response['status'] === 403 && $response['body'] === '';
+                },
+            ],
+        ];
+
+        foreach ($httpCases as [$name, $packages, $test]) {
             $open = $missing(...$packages);
 
             if ($open !== '') {
                 $suite->pending($name, $open);
             } else {
-                // Delivered dependencies: the case is written in this part when the last one lands.
-                $suite->test($name . ' (to be written once its services are delivered)', static fn () => false);
+                $suite->test($name, static function () use ($test, &$fixture, $fixtureError): bool {
+                    if (!$fixture) {
+                        throw new \RuntimeException('CalDAV fixture setup failed: ' . ($fixtureError?->getMessage() ?? 'not available'));
+                    }
+
+                    return $test($fixture);
+                });
             }
+        }
+
+        if ($fixtureForCleanup instanceof TeamDavFixture) {
+            $suite->test('Remove all CalDAV fixture accounts, keys, devices, calendar and recovery key', static fn () => $fixtureForCleanup->cleanup());
         }
     } finally {
         $statement = $db->prepare("UPDATE {$p}extensions SET params = ? WHERE type='component' AND element='com_appointments'");
