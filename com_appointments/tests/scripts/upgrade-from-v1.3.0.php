@@ -114,6 +114,26 @@ function upgrade_insert(mysqli $db, string $table, array $values): int
     return (int) $db->insert_id;
 }
 
+function upgrade_normalize_json(mixed $value): array
+{
+    if ($value instanceof stdClass) {
+        $properties = get_object_vars($value);
+        ksort($properties, SORT_STRING);
+
+        foreach ($properties as $key => $property) {
+            $properties[$key] = upgrade_normalize_json($property);
+        }
+
+        return ['object' => $properties];
+    }
+
+    if (is_array($value)) {
+        return ['array' => array_map('upgrade_normalize_json', $value)];
+    }
+
+    return ['scalar' => [get_debug_type($value), $value]];
+}
+
 function upgrade_personal_matches(mixed $actual, mixed $expected, string $column): bool
 {
     if ($actual === null || $expected === null) {
@@ -126,8 +146,8 @@ function upgrade_personal_matches(mixed $actual, mixed $expected, string $column
 
     try {
         // The 1.3.0 JSON column may normalize whitespace and object-key order.
-        return json_decode((string) $actual, true, 512, JSON_THROW_ON_ERROR)
-            == json_decode((string) $expected, true, 512, JSON_THROW_ON_ERROR);
+        return upgrade_normalize_json(json_decode((string) $actual, false, 512, JSON_THROW_ON_ERROR))
+            === upgrade_normalize_json(json_decode((string) $expected, false, 512, JSON_THROW_ON_ERROR));
     } catch (JsonException) {
         return false;
     }
@@ -252,7 +272,7 @@ function upgrade_seed(): void
             'invitee_email' => 'upgrade-' . $kind . '@example.test',
             'invitee_phone' => '555-010' . ($kind === 'confirmed' ? '1' : '2'),
             'guest_emails' => 'guest-' . $kind . '@example.test',
-            'custom_fields' => json_encode(['source' => 'published-v1.3.0', 'kind' => $kind], JSON_THROW_ON_ERROR),
+            'custom_fields' => json_encode(['source' => 'published-v1.3.0', 'kind' => $kind, 'numeric_string' => '0'], JSON_THROW_ON_ERROR),
             'cancel_reason' => $state['cancel_reason'],
             'conference_url' => 'https://meeting.example.test/upgrade-' . $kind,
         ];
