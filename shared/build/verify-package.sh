@@ -53,10 +53,14 @@ fi
 LANGUAGE_WORK="$(mktemp -d)"
 trap 'rm -rf "$LANGUAGE_WORK"' EXIT
 unzip -q "$PACKAGE_NAME" -d "$LANGUAGE_WORK"
-if find "$LANGUAGE_WORK" -type d -path '*/language/de-CH' -print -quit | grep -q .; then
-    echo -e "${RED}Error: Package contains a de-CH language folder (Swiss text belongs in de-DE)${NC}"
-    exit 1
-fi
+while IFS= read -r -d '' directory; do
+    if [ "$(basename "$(dirname "$directory")")" = language ]; then
+        case "$(basename "$directory")" in
+            de-DE|en-GB|fr-FR) ;;
+            *) echo -e "${RED}Error: Package contains an unsupported language folder: ${directory#"$LANGUAGE_WORK/"}${NC}"; exit 1 ;;
+        esac
+    fi
+done < <(find "$LANGUAGE_WORK" -type d -print0)
 
 LANGUAGE_COUNT=0
 while IFS= read -r -d '' language; do

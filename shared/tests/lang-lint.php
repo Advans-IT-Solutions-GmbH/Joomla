@@ -492,7 +492,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
             continue;
         }
 
-        if ($fileInfo->isDir() && preg_match('#/language/([a-z]{2}-[A-Z]{2})$#', $path, $tag)
+        if ($fileInfo->isDir() && preg_match('#/language/([^/]+)$#', $path, $tag)
             && !in_array($tag[1], SUPPORTED_TAGS, true)
         ) {
             $addError($path, 0, 'unsupported language folder (only de-DE, en-GB and fr-FR; Swiss High German belongs in de-DE)');
@@ -515,6 +515,8 @@ foreach (array_slice($argv, 1) as $extensionDir) {
         $addError($extensionDir, 0, 'no language files found (de-DE, en-GB and fr-FR are required)');
     }
 
+    $installationPaths = [];
+
     foreach (lint_code_files($extensionDir) as $manifest) {
         if (!str_ends_with($manifest, '.xml')
             || !str_contains((string) file_get_contents($manifest), '<extension')
@@ -528,6 +530,9 @@ foreach (array_slice($argv, 1) as $extensionDir) {
             $addError($manifest, 0, 'cannot parse extension manifest');
             continue;
         }
+
+        $root = str_replace('\\', '/', realpath(dirname($manifest)));
+        $installationPaths[$root] ??= ['files' => [], 'folders' => []];
 
         foreach ($xml->xpath('//languages') as $block) {
             $declared = [];
@@ -547,6 +552,8 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
                 if (!is_file($source)) {
                     $addError($manifest, 0, "declared language file does not exist: $source");
+                } else {
+                    $installationPaths[$root]['files'][] = str_replace('\\', '/', realpath($source));
                 }
             }
 
@@ -556,6 +563,52 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                         $addError($manifest, 0, "missing manifest language $requiredTag for $family");
                     }
                 }
+            }
+        }
+
+        foreach ($xml->xpath('//files') as $block) {
+            $source = dirname($manifest) . '/'
+                . ((string) $block['folder'] !== '' ? (string) $block['folder'] . '/' : '');
+
+            foreach ($block->folder as $folder) {
+                if (is_dir($source . $folder)) {
+                    $installationPaths[$root]['folders'][] = str_replace('\\', '/', realpath($source . $folder)) . '/';
+                }
+            }
+
+            foreach ($block->filename as $filename) {
+                if (is_file($source . $filename)) {
+                    $installationPaths[$root]['files'][] = str_replace('\\', '/', realpath($source . $filename));
+                }
+            }
+        }
+    }
+
+    // A bundled plugin's own manifest must install its languages, even when the
+    // parent also copies the plugin's source folder for the installer script.
+    uksort($installationPaths, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+
+    foreach ($groups as $files) {
+        foreach ($files as $file) {
+            $path = str_replace('\\', '/', realpath($file));
+            $installed = false;
+
+            foreach ($installationPaths as $root => $paths) {
+                if (!str_starts_with($path, $root . '/')) {
+                    continue;
+                }
+
+                $installed = in_array($path, $paths['files'], true);
+
+                foreach ($paths['folders'] as $folder) {
+                    $installed = $installed || str_starts_with($path, $folder);
+                }
+
+                break;
+            }
+
+            if (!$installed) {
+                $addError($file, 0, 'language file is not installed by its extension manifest');
             }
         }
     }

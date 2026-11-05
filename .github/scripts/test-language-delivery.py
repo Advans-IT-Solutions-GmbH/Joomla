@@ -63,6 +63,14 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     (swiss / "plg_example.ini").unlink()
     swiss.rmdir()
 
+    for unsupported in ("it-IT", "fil-PH", "unexpected"):
+        folder = fixture / "language" / unsupported
+        folder.mkdir()
+        check(command, ROOT, False, "unsupported language folder")
+        (folder / "plg_example.ini").write_bytes(original)
+        check(command, ROOT, False, "unsupported language folder")
+        shutil.rmtree(folder)
+
     manifest.write_text(
         xml.replace('<language tag="fr-FR">fr-FR/plg_example.ini</language>', ""),
         encoding="utf-8",
@@ -72,8 +80,28 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     check(command, ROOT, False, "unsupported manifest language tag de-CH")
     manifest.write_text(xml, encoding="utf-8")
 
+    # Omitting an entire file family must fail, even though all remaining
+    # manifest declarations still contain the same three languages.
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_example.sys.ini").write_bytes(original)
+    check(command, ROOT, False, "language file is not installed")
+    manifest.write_text(
+        xml.replace("</languages>", declarations.replace("plg_example.ini", "plg_example.sys.ini") + "</languages>"),
+        encoding="utf-8",
+    )
+    check(command, ROOT, True, "Language files OK")
+    manifest.write_text(xml.replace(
+        f'<languages folder="language">{declarations}</languages>',
+        '<files><folder>language</folder></files>',
+    ), encoding="utf-8")
+    check(command, ROOT, True, "Language files OK")
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_example.sys.ini").unlink()
+    manifest.write_text(xml, encoding="utf-8")
+
     nested = fixture / "plugins" / "system" / "example" / "language"
     shutil.copytree(fixture / "language", nested)
+    (nested.parent / "example.xml").write_text(xml, encoding="utf-8")
     (nested / "fr-FR" / "plg_example.ini").unlink()
     check(command, ROOT, False, "missing fr-FR counterpart")
     (nested / "fr-FR" / "plg_example.ini").write_bytes(original)
@@ -85,7 +113,7 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     archive = fixture / "example_1.0.0.zip"
     # Git Bash understands drive-letter paths with forward slashes too.
     verify_command = ["bash", str(VERIFY).replace(os.sep, "/")]
-    for kind in ("valid", "missing", "swiss", "nested", "empty"):
+    for kind in ("valid", "missing", "swiss", "unsupported", "three-letter", "nested", "empty"):
         with zipfile.ZipFile(archive, "w") as package:
             package.writestr("index.html", b"")
             if kind != "empty":
@@ -95,6 +123,10 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
                     package.writestr("language/fr-FR/plg_example.ini", original)
                 if kind == "swiss":
                     package.writestr("language/de-CH/", b"")
+                if kind == "unsupported":
+                    package.writestr("plugins/system/example/language/it-IT/", b"")
+                if kind == "three-letter":
+                    package.writestr("language/fil-PH/", b"")
                 if kind == "nested":
                     package.writestr(
                         "plugins/system/example/language/de-DE/plg_example.ini",
@@ -106,7 +138,7 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
             kind == "valid",
             "Verified de-DE/en-GB/fr-FR counterparts" if kind == "valid" else
             "contains no language files" if kind == "empty" else
-            "contains a de-CH language folder" if kind == "swiss" else
+            "contains an unsupported language folder" if kind in ("swiss", "unsupported", "three-letter") else
             "missing en-GB counterpart" if kind == "nested" else
             "missing fr-FR counterpart",
         )
