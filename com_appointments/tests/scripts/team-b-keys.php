@@ -417,21 +417,27 @@ return static function (TeamSuite $suite): void {
             && ($https || ($pending->get('com_appointments.team_keys.site') === null && !$escrowCookie));
     });
 
-    $suite->test('B: a backup or e-mail code used after the sign-in changes the factor proof, a counting method does not', static function () use ($db, $p, $member, $services) {
+    $suite->test('B: the factor proof needs a counting method used after the sign-in and no backup or e-mail code used since', static function () use ($db, $p, $member, $services) {
         // Joomla ignores MFA records with empty options, so the codes are real.
         $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[\"40517342\",\"83610277\"]', UTC_TIMESTAMP())");
         $session = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession($services);
         $snapshot = new \ReflectionMethod($session, 'factorSnapshot');
+        $counting = new \ReflectionMethod($session, 'countingSnapshot');
+        $usedSince = new \ReflectionMethod($session, 'countingFactorUsedSince');
         $atSignIn = $snapshot->invoke($session, $member);
+        $countingAtSignIn = $counting->invoke($session, $member);
+        // Before any counting factor was used after the sign-in, nothing is proven.
+        $notYet = !$usedSince->invoke($session, $member, $countingAtSignIn);
         // This session passed with TOTP: the counting record is stamped.
         $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE user_id = {$member} AND method = 'totp'");
         $withTotp = $snapshot->invoke($session, $member);
+        $totpProven = $usedSince->invoke($session, $member, $countingAtSignIn);
         // A backup code instead: the backup code record is stamped.
         $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 2 SECOND) WHERE user_id = {$member} AND method = 'backupcodes'");
         $withBackup = $snapshot->invoke($session, $member);
         $db->query("DELETE FROM {$p}user_mfa WHERE user_id = {$member} AND method = 'backupcodes'");
 
-        return hash_equals($atSignIn, $withTotp) && !hash_equals($atSignIn, $withBackup);
+        return $notYet && $totpProven && hash_equals($atSignIn, $withTotp) && !hash_equals($atSignIn, $withBackup);
     });
 
     if (!str_starts_with($suite->base, 'https://')) {

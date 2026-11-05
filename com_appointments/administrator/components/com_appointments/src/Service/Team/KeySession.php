@@ -308,6 +308,7 @@ final class KeySession implements KeySessionInterface
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
             || !$this->joomlaSecondFactor($userId)
             || !hash_equals((string) ($escrow['nc'] ?? ''), $this->factorSnapshot($userId))
+            || !$this->countingFactorUsedSince($userId, (string) ($escrow['cs'] ?? ''))
             || !$this->services->grants()->hasSecondFactor($userId)) {
             return null;
         }
@@ -324,7 +325,7 @@ final class KeySession implements KeySessionInterface
         $payload = CipherSuite::decrypt(
             $sessionKey,
             (string) base64_decode((string) $escrow['box'], true),
-            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (string) ($escrow['nc'] ?? ''))
+            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (string) ($escrow['nc'] ?? ''), (string) ($escrow['cs'] ?? ''))
         );
 
         if ($payload === null || \strlen($payload) !== CipherSuite::KEY_BYTES) {
@@ -378,7 +379,7 @@ final class KeySession implements KeySessionInterface
 
             if ($escrow['mode'] !== self::MODE_KEY) {
                 // From now on the session holds the key itself, under the same cookie.
-                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (string) $escrow['nc'], $context->secretKey());
+                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (string) $escrow['nc'], (string) $escrow['cs'], $context->secretKey());
             }
 
             return $context;
@@ -484,14 +485,14 @@ final class KeySession implements KeySessionInterface
         $sessionKey = random_bytes(CipherSuite::KEY_BYTES);
 
         try {
-            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $this->factorSnapshot($userId), $payload);
+            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $this->factorSnapshot($userId), $this->countingSnapshot($userId), $payload);
             $this->setCookie($app, $client, bin2hex($sessionKey), 0);
         } finally {
             CipherSuite::wipe($sessionKey);
         }
     }
 
-    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, #[\SensitiveParameter] string $payload): void
+    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot, #[\SensitiveParameter] string $payload): void
     {
         $nonce = random_bytes(16);
         $session->set(self::SESSION_KEY . $client, [
@@ -502,8 +503,9 @@ final class KeySession implements KeySessionInterface
             'salt'    => base64_encode($salt),
             'mfa'     => $secondFactor,
             'nc'      => $factorSnapshot,
+            'cs'      => $countingSnapshot,
             'nonce'   => base64_encode($nonce),
-            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $factorSnapshot))),
+            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $factorSnapshot, $countingSnapshot))),
         ]);
     }
 
@@ -514,9 +516,9 @@ final class KeySession implements KeySessionInterface
      * non-counting MFA records at sign-in), so neither a box nor a field can be
      * replayed or changed in the session table unnoticed.
      */
-    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot): string
+    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot): string
     {
-        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $factorSnapshot);
+        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $factorSnapshot, $countingSnapshot);
     }
 
     /**
@@ -529,6 +531,68 @@ final class KeySession implements KeySessionInterface
      * code, that record would have changed. A use of such a code in another
      * session locks this one too, which fails closed.
      */
+    /**
+     * `last_used` of every enabled counting MFA record at the sign-in, as JSON
+     * (record id => value), for the positive half of the proof.
+     */
+    private function countingSnapshot(int $userId): string
+    {
+        $map = [];
+
+        foreach ($this->countingRecords($userId) as $record) {
+            $map[(string) (int) $record->id] = (string) ($record->last_used ?? '');
+        }
+
+        ksort($map, SORT_STRING);
+
+        return json_encode((object) $map, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * The positive half of the proof: a counting record that existed at the
+     * sign-in has been stamped later than then. Joomla stamps by the second, so
+     * an exclusion alone could be passed by two backup codes within one second;
+     * a counting stamp cannot be produced without that factor. A stamp by a
+     * counting factor in another session also satisfies this half, but then
+     * the exclusion still proves that this session used no backup or e-mail code.
+     */
+    private function countingFactorUsedSince(int $userId, string $countingSnapshot): bool
+    {
+        $before = json_decode($countingSnapshot, true);
+
+        if (!\is_array($before)) {
+            return false;
+        }
+
+        foreach ($this->countingRecords($userId) as $record) {
+            $id = (string) (int) $record->id;
+            $now = (string) ($record->last_used ?? '');
+
+            if (\array_key_exists($id, $before) && $now !== '' && strcmp($now, (string) $before[$id]) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return  object[]  The user's MFA records of an enabled, counting method.
+     */
+    private function countingRecords(int $userId): array
+    {
+        $methods = [];
+
+        foreach (MfaHelper::getMfaMethods() as $method) {
+            $methods[] = (string) ($method['name'] ?? '');
+        }
+
+        return array_values(array_filter(
+            MfaHelper::getUserMfaRecords($userId),
+            static fn ($record): bool => !\in_array($record->method, self::NOT_A_SECOND_FACTOR, true) && \in_array($record->method, $methods, true)
+        ));
+    }
+
     private function factorSnapshot(int $userId): string
     {
         $parts = [];

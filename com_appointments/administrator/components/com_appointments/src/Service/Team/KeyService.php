@@ -631,8 +631,16 @@ final class KeyService implements KeyServiceInterface
         try {
             $rotated = $this->rotate($keyring, $keys->userId());
         } catch (TeamException $e) {
-            if ($e->getMessage() !== 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED'
-                && $this->currentVersion($calendarId, true) === $keyring->current()->version()) {
+            try {
+                $current = $e->getMessage() === 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED' ? null : $this->currentVersion($calendarId, true);
+            } catch (\Throwable $readFailure) {
+                $keyring->wipe();
+                $this->warn('the key version could not be read again', $readFailure);
+
+                return null;
+            }
+
+            if ($current === $keyring->current()->version()) {
                 // Postponed (no holder can be judged now, no recovery key) and,
                 // read under a lock, still the current version.
                 $this->warn('a due key rotation was postponed', $e);
@@ -641,10 +649,15 @@ final class KeyService implements KeyServiceInterface
             }
 
             // Another request rotated first: never hand out the older version as
-            // current; open again, with the new version if this user holds it.
+            // current; open again with locking reads (an outer transaction may
+            // hold an older snapshot), with the new version if this user holds it.
             $keyring->wipe();
 
-            return $this->openWithoutRotation($calendarId, $keys);
+            try {
+                return $this->openWithoutRotation($calendarId, $keys, true);
+            } catch (TeamException $reopenFailure) {
+                return null;
+            }
         }
 
         if ($rotated === null) {
@@ -661,9 +674,9 @@ final class KeyService implements KeyServiceInterface
         return (bool) ($this->calendarState($calendarId)['rotation_due'] ?? false);
     }
 
-    private function openWithoutRotation(int $calendarId, KeyContext $keys): ?CalendarKeyring
+    private function openWithoutRotation(int $calendarId, KeyContext $keys, bool $locking = false): ?CalendarKeyring
     {
-        $calendar = $this->calendarState($calendarId);
+        $calendar = $this->calendarState($calendarId, $locking);
         $row = $this->usableUserKey($keys->userId());
 
         if ($calendar === null || $row === null || (int) $row['key_version'] !== $keys->userKeyVersion()
@@ -672,14 +685,13 @@ final class KeyService implements KeyServiceInterface
         }
 
         $db = $this->services->db();
-        $wraps = $db->setQuery(
-            $this->query()
-                ->select($db->quoteName(['key_version', 'wrapped']))
-                ->from($db->quoteName('#__appointments_calendar_key_wraps'))
-                ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
-                ->where($db->quoteName('user_id') . ' = ' . $keys->userId())
-                ->where($db->quoteName('user_key_version') . ' = ' . $keys->userKeyVersion())
-        )->loadAssocList() ?: [];
+        $wrapQuery = $this->query()
+            ->select($db->quoteName(['key_version', 'wrapped']))
+            ->from($db->quoteName('#__appointments_calendar_key_wraps'))
+            ->where($db->quoteName('calendar_id') . ' = ' . $calendarId)
+            ->where($db->quoteName('user_id') . ' = ' . $keys->userId())
+            ->where($db->quoteName('user_key_version') . ' = ' . $keys->userKeyVersion());
+        $wraps = $db->setQuery((string) $wrapQuery . ($locking ? ' LOCK IN SHARE MODE' : ''))->loadAssocList() ?: [];
 
         $calendarKeys = [];
 
@@ -1430,7 +1442,13 @@ final class KeyService implements KeyServiceInterface
         try {
             $this->services->db()->transactionRollback(true);
         } catch (\Throwable $e) {
-            $this->warn('a rollback failed', $e);
+            // The savepoint is gone: InnoDB rolled back the whole outer
+            // transaction (deadlock, lock wait timeout). The caller's earlier
+            // writes are lost, so nobody may go on as if it were intact. This
+            // is deliberately no TeamException, so no fallback catches it.
+            $this->warn('a rollback failed, the outer transaction is lost', $e);
+
+            throw new \RuntimeException('The database transaction was lost.', 500, $e);
         }
     }
 
@@ -1639,7 +1657,7 @@ final class KeyService implements KeyServiceInterface
     /**
      * @return  array{key_version: int, rotation_due: bool}|null
      */
-    private function calendarState(int $calendarId): ?array
+    private function calendarState(int $calendarId, bool $locking = false): ?array
     {
         if ($calendarId <= 0) {
             return null;
@@ -1652,7 +1670,7 @@ final class KeyService implements KeyServiceInterface
                 ->from($db->quoteName('#__appointments_calendars'))
                 ->where($db->quoteName('id') . ' = ' . $calendarId)
         )->loadAssoc();
-        $current = $row ? $this->currentVersion($calendarId) : null;
+        $current = $row ? $this->currentVersion($calendarId, $locking) : null;
 
         if ($current === null) {
             return null;

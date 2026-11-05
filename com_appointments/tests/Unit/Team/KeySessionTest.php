@@ -28,20 +28,21 @@ final class KeySessionTest extends TestCase
         $nonce = str_repeat("\x01", 16);
         $pub = str_repeat("\x03", 32);
         $salt = str_repeat("\x04", 16);
-        $base = KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, true, 'snap');
+        $base = KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, true, 'snap', '{}');
 
-        self::assertSame(CipherSuite::associatedData('key-escrow', 5, 'site', 'key', 1, str_repeat('01', 16), str_repeat('03', 32), str_repeat('04', 16), 1, 'snap'), $base);
+        self::assertSame(CipherSuite::associatedData('key-escrow', 5, 'site', 'key', 1, str_repeat('01', 16), str_repeat('03', 32), str_repeat('04', 16), 1, 'snap', '{}'), $base);
 
         foreach ([
-            KeySession::escrowAd(6, 'site', 'key', 1, $nonce, $pub, $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'administrator', 'key', 1, $nonce, $pub, $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'create', 1, $nonce, $pub, $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 2, $nonce, $pub, $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 1, str_repeat("\x02", 16), $pub, $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, str_repeat("\x05", 32), $salt, true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, str_repeat("\x06", 16), true, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, false, 'snap'),
-            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, true, 'other'),
+            KeySession::escrowAd(6, 'site', 'key', 1, $nonce, $pub, $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'administrator', 'key', 1, $nonce, $pub, $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'create', 1, $nonce, $pub, $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 2, $nonce, $pub, $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, str_repeat("\x02", 16), $pub, $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, str_repeat("\x05", 32), $salt, true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, str_repeat("\x06", 16), true, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, false, 'snap', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, true, 'other', '{}'),
+            KeySession::escrowAd(5, 'site', 'key', 1, $nonce, $pub, $salt, true, 'snap', '{"7":"2026-11-05 10:00:00"}'),
         ] as $other) {
             self::assertNotSame($base, $other);
         }
@@ -51,12 +52,12 @@ final class KeySessionTest extends TestCase
     {
         $sessionKey = CipherSuite::randomKey();
         $nonce = random_bytes(16);
-        $box = CipherSuite::encrypt($sessionKey, str_repeat("\x07", 32), KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap'));
+        $box = CipherSuite::encrypt($sessionKey, str_repeat("\x07", 32), KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap', '{}'));
 
-        self::assertNotNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap')));
-        self::assertNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(5, 'administrator', 'key', 1, $nonce, '', '', true, 'snap')), 'site escrow in the administrator');
-        self::assertNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(9, 'site', 'key', 1, $nonce, '', '', true, 'snap')), 'another user');
-        self::assertNull(CipherSuite::decrypt(CipherSuite::randomKey(), $box, KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap')), 'another cookie');
+        self::assertNotNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap', '{}')));
+        self::assertNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(5, 'administrator', 'key', 1, $nonce, '', '', true, 'snap', '{}')), 'site escrow in the administrator');
+        self::assertNull(CipherSuite::decrypt($sessionKey, $box, KeySession::escrowAd(9, 'site', 'key', 1, $nonce, '', '', true, 'snap', '{}')), 'another user');
+        self::assertNull(CipherSuite::decrypt(CipherSuite::randomKey(), $box, KeySession::escrowAd(5, 'site', 'key', 1, $nonce, '', '', true, 'snap', '{}')), 'another cookie');
     }
 
     public function testSilentSignInsAreJoomlasDefaultsAtLeast(): void
