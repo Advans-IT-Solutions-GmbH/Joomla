@@ -287,8 +287,8 @@ final class DavServerTest extends TestCase
 
         self::assertStringContainsString($this->teamUri, $home);
         self::assertStringNotContainsString($this->otherUri, $home);
-        self::assertStringContainsString('<cs:getctag>1</cs:getctag>', $home);
-        self::assertStringContainsString('http://sabre.io/ns/sync/1', $home);
+        self::assertStringContainsString('<cs:getctag>http://sabre.io/ns/sync/1</cs:getctag>', $home);
+        self::assertStringContainsString('<d:sync-token>http://sabre.io/ns/sync/1</d:sync-token>', $home);
         self::assertStringContainsString('<cal:comp name="VEVENT"/>', $home);
         self::assertStringNotContainsString('VTODO', $home);
         self::assertSame(404, $this->propfind('/dav/calendars/u5/' . $this->otherUri . '/', '0')->getStatus());
@@ -502,8 +502,9 @@ final class DavServerTest extends TestCase
 
         // Downgraded to free/busy: CTag and token change, the old token is refused.
         $this->world->grant(5, 1, CalendarRole::FreeBusy);
-        $home = self::body($this->propfind('/dav/calendars/u5/', '1', '<cs:getctag/>'));
-        self::assertStringContainsString('<cs:getctag>fb2</cs:getctag>', $home);
+        $home = self::body($this->propfind('/dav/calendars/u5/', '1', '<cs:getctag/><d:sync-token/>'));
+        self::assertStringContainsString('<cs:getctag>http://sabre.io/ns/sync/fb2</cs:getctag>', $home);
+        self::assertStringContainsString('<d:sync-token>http://sabre.io/ns/sync/fb2</d:sync-token>', $home);
 
         $old = $this->sync($this->teamUri, 'http://sabre.io/ns/sync/2');
         self::assertSame(403, $old->getStatus());
@@ -541,8 +542,9 @@ final class DavServerTest extends TestCase
         $this->world->inCleanup = [1 => ['role' => CalendarRole::Read->value, 'synctoken' => 2]];
         $base = '/dav/calendars/u7/' . $this->teamUri . '/';
 
-        $home = self::body($this->send('PROPFIND', '/dav/calendars/u7/', ['Depth' => '1'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/></d:prop></d:propfind>', $password, 'carol'));
-        self::assertStringContainsString('<cs:getctag>2-c</cs:getctag>', $home);
+        $home = self::body($this->send('PROPFIND', '/dav/calendars/u7/', ['Depth' => '1'], '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><cs:getctag/><d:sync-token/></d:prop></d:propfind>', $password, 'carol'));
+        self::assertStringContainsString('<cs:getctag>http://sabre.io/ns/sync/2-c</cs:getctag>', $home);
+        self::assertStringContainsString('<d:sync-token>http://sabre.io/ns/sync/2-c</d:sync-token>', $home);
 
         $list = $this->send('PROPFIND', $base, ['Depth' => '1'], '', $password, 'carol');
         self::assertSame(207, $list->getStatus());

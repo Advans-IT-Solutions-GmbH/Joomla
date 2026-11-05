@@ -18,6 +18,7 @@ use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\Forbidden;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\InvalidSyncToken;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\Exception\NotFound;
 use Advans\Component\Appointments\Vendor\Sabre\DAV\PropPatch;
+use Advans\Component\Appointments\Vendor\Sabre\DAV\Sync\Plugin as SyncPlugin;
 
 defined('_JEXEC') or die;
 
@@ -32,7 +33,7 @@ defined('_JEXEC') or die;
  * - read: read-only, decrypted with the calendar key;
  * - write and manage: read and write;
  * - clean-up «empty»: no objects, read-only, every known address reported
- *   deleted on sync, CTag `<token>-c`.
+ *   deleted on sync, token suffix `<token>-c`.
  *
  * Creating, deleting or sharing calendars is refused (403); PROPPATCH changes
  * only the user's own colour and order.
@@ -71,7 +72,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 'uri'                                                             => $calendar->uri,
                 'principaluri'                                                    => $this->context->principal(),
                 '{DAV:}displayname'                                               => $calendar->title,
-                '{http://calendarserver.org/ns/}getctag'                          => $calendar->token(),
+                '{http://calendarserver.org/ns/}getctag'                          => SyncPlugin::SYNCTOKEN_PREFIX . $calendar->token(),
                 '{http://sabredav.org/ns}sync-token'                              => $calendar->token(),
                 '{urn:ietf:params:xml:ns:caldav}supported-calendar-component-set' => new SupportedCalendarComponentSet(['VEVENT']),
                 '{http://sabredav.org/ns}read-only'                               => !$calendar->isWritable(),
