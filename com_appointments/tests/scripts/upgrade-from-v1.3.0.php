@@ -541,18 +541,35 @@ function upgrade_verify(): void
         }
 
         $sealed = $opened !== null;
+        $allFieldsSealed = true;
         foreach ($expected['personal'] as $column => $value) {
             if ($value === null) {
-                $sealed = $sealed && $row[$column] === null && $opened[$column] === null;
+                $allFieldsSealed = $allFieldsSealed && $row[$column] === null && $opened[$column] === null;
                 continue;
             }
 
-            $sealed = $sealed && is_string($row[$column]) && str_starts_with($row[$column], 'v2:')
+            $allFieldsSealed = $allFieldsSealed && is_string($row[$column]) && str_starts_with($row[$column], 'v2:')
                 && ($opened[$column] ?? null) === $value;
         }
-        $auditCount = (int) $db->query("SELECT COUNT(*) FROM `$auditTable` WHERE booking_id = $bookingId AND action = 'encrypt' AND path = 'admin'")->fetch_row()[0];
+        $auditResult = $db->query("SELECT action, path, COUNT(*) AS row_count FROM `$auditTable`"
+            . " WHERE booking_id = $bookingId GROUP BY action, path");
+        $auditCounts = $auditResult ? $auditResult->fetch_all(MYSQLI_ASSOC) : [];
+        $auditCount = 0;
+        $auditSummary = [];
+        foreach ($auditCounts as $auditRow) {
+            $count = (int) $auditRow['row_count'];
+            $auditSummary[] = (string) $auditRow['action'] . '/' . (string) $auditRow['path'] . ':' . $count;
+            if ($auditRow['action'] === 'encrypt' && $auditRow['path'] === 'admin') {
+                $auditCount = $count;
+            }
+        }
+        $sealed = $sealed && $allFieldsSealed && $auditCount === 1;
         upgrade_check("$kind previous booking is encrypted as v2, remains readable, and has exactly one administrator audit row",
-            $sealed && $auditCount === 1);
+            $sealed,
+            'open=' . ($opened !== null ? 'yes' : 'no')
+            . '; fields_v2_and_readable=' . ($allFieldsSealed ? 'yes' : 'no')
+            . '; admin_encrypt_audit_rows=' . $auditCount
+            . '; all_booking_audit_rows=' . implode(',', $auditSummary));
     }
 
     $finalParams = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
