@@ -40,6 +40,21 @@ function im_pass(string $message): void
     echo "PASS $message\n";
 }
 
+$messageBlocks = static function (string $output): array {
+    preg_match_all('/\[(ERROR|WARNING|CAUTION)\][^\n]*(?:\n(?!\s*\[[A-Z]+\])(?!\s*$)[^\n]*)*/', $output, $matches);
+
+    return $matches[0];
+};
+
+$fixtureBlocks = $messageBlocks("[WARNING] Expected warning.\n  Wrapped detail.\n[SUCCESS] CLI operation completed.\n");
+
+if (count($fixtureBlocks) === 1 && str_contains($fixtureBlocks[0], 'Wrapped detail.')
+    && !str_contains($fixtureBlocks[0], '[SUCCESS]')) {
+    im_pass('message scanner keeps adjacent CLI status lines separate');
+} else {
+    im_fail('message scanner did not isolate the warning block');
+}
+
 echo "=== Installer Messages (CLI, en-GB / de-DE / fr-FR) ===\n\n";
 
 $manifest = sh_read_package_manifest($package);
@@ -52,7 +67,7 @@ if ($manifest === null) {
 echo "Package: $package ({$manifest['type']} {$manifest['element']}"
     . ($manifest['folder'] !== '' ? " in {$manifest['folder']}" : '') . ")\n\n";
 
-$checkOutput = static function (string $label, int $exitCode, string $output, array $expectedWarnings = []): void {
+$checkOutput = static function (string $label, int $exitCode, string $output, array $expectedWarnings = []) use ($messageBlocks): void {
     $clean = sh_strip_ansi($output);
 
     if ($exitCode !== 0) {
@@ -69,10 +84,9 @@ $checkOutput = static function (string $label, int $exitCode, string $output, ar
         im_pass("$label: no untranslated language keys");
     }
 
-    preg_match_all('/\[(ERROR|WARNING|CAUTION)\][^\n]*(?:\n(?!\s*$)[^\n]*)*/', $clean, $blocks);
     $unexpected = [];
 
-    foreach ($blocks[0] as $block) {
+    foreach ($messageBlocks($clean) as $block) {
         $message = sh_plain_text((string) preg_replace('/^\[(?:ERROR|WARNING|CAUTION)\]\s*/', '', $block));
 
         if (!str_starts_with($block, '[WARNING]') || !in_array($message, $expectedWarnings, true)) {
