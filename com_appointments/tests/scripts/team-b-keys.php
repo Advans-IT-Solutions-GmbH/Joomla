@@ -27,6 +27,11 @@ return static function (TeamSuite $suite): void {
             && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_user_keys") === 0;
     });
 
+    $suite->test('B: earlier work packages left no calendar keys for a different recovery key', static function () use ($suite) {
+        return $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_keys") === 0
+            && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_key_wraps") === 0;
+    });
+
     $suite->test('User keys store only a public key and a wrapped secret', static function () use ($suite) {
         return $suite->columns('appointments_user_keys') === ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac', 'created_utc', 'modified_utc'];
     });
@@ -512,7 +517,11 @@ PHP;
             && $keys->recoverKeyring($st['calendar'], 'not a secret') === null;
     });
 
-    $suite->test('B: the recovery key rotates only with the old secret', static function () use ($keys, $refusal, &$recovery, &$st) {
+    $suite->test('B: the recovery key rotates only with the old secret', static function () use ($keys, $refusal, $suite, $p, &$recovery, &$st) {
+        if ($suite->count("SELECT COUNT(*) FROM {$p}appointments_calendar_keys WHERE calendar_id <> {$st['calendar']}") !== 0) {
+            throw new \RuntimeException('Recovery rotation fixture contains calendar keys from another work package.');
+        }
+
         $wrong = KeyService::formatRecoverySecret(CipherSuite::keyPair()['secret']);
 
         if ($refusal(static fn () => $keys->rotateRecoveryKey($wrong, 42)) !== 403) {
@@ -727,7 +736,13 @@ PHP;
             ]);
             curl_exec($curl);
             $postStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+
+            if (!curl_setopt($curl, CURLOPT_COOKIELIST, 'FLUSH')) {
+                throw new \RuntimeException('The password sign-in cookie jar could not be flushed.');
+            }
+
             curl_close($curl);
+            unset($curl);
             $jarContents = file_get_contents($jar);
             @unlink($jar);
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
