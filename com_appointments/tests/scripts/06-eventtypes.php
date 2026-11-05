@@ -121,11 +121,13 @@ try {
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
     $document = new DOMDocument();
     @$document->loadHTML($html);
-    $overview = (new DOMXPath($document))->query('//a[contains(@href, "view=eventtypes")]')->item(0);
+    $overview = (new DOMXPath($document))->query(
+        '(//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-eventtype ")]//a)[1]'
+    )->item(0);
     $check($overview instanceof DOMElement && trim($overview->textContent) === 'Back to appointments',
         'The booking branch has a translated return to its public overview');
     if ($overview instanceof DOMElement) {
-        $public->request($overview->getAttribute('href'));
+        $public->request('/' . ltrim($overview->getAttribute('href'), '/'));
         $check($public->status === 200, 'The public overview return link is usable without administrator permission');
     }
     $check(str_contains($html, 'Fixture &amp; &quot;host&quot;') && str_contains($html, 'com-appointments-host-photo')
