@@ -498,7 +498,9 @@ class ResetRequestTest
 
                 public function load($extension = 'joomla', $basePath = JPATH_BASE, $lang = null, $reload = false, $default = true)
                 {
-                    if ($extension === 'com_users') {
+                    // Language::load() recursively calls this override for its
+                    // English fallback using the already-remapped base path.
+                    if ($extension === 'com_users' && !str_starts_with($basePath, $this->fixture . '/')) {
                         $basePath = $this->fixture . ($basePath === JPATH_SITE ? '/site' : ($basePath === JPATH_ADMINISTRATOR ? '/admin' : '/empty'));
                     }
 
@@ -619,6 +621,78 @@ class ResetRequestTest
             'Legacy HTML-only operator template supplies a translated plain alternative with replaced tags',
             $plain === "Bonjour Recipient\nSuite"
         );
+    }
+
+    private function testLegacyAttachmentNamesThroughSend(): void
+    {
+        echo "\n--- Legacy attachment names through the real send path ---\n";
+        $reason = ajaxforms_mailcatch_install();
+        $this->test('Attachment regression mail capture in place', $reason === null, (string) $reason);
+
+        if ($reason !== null) {
+            return;
+        }
+
+        $config = \Joomla\CMS\Component\ComponentHelper::getParams('com_mails');
+        $originalStyle = $config->get('mail_style', 'plaintext');
+        $file = __DIR__ . '/ajaxforms-attachment-fixture-' . getmypid() . '.pdf';
+
+        try {
+            file_put_contents($file, "%PDF-1.4\nAJAX Forms attachment fixture\n");
+            $plugin = ajaxforms_plugin_instance();
+            $getTemplate = new ReflectionMethod($plugin, 'getMailTemplate');
+            $getTemplate->setAccessible(true);
+            $template = $getTemplate->invoke($plugin, 'com_users.password_reset', 'fr-FR');
+            $this->test('Core reset template exists for attachment send regression', $template !== null);
+
+            if ($template === null) {
+                return;
+            }
+
+            $factoryMethod = new ReflectionMethod($plugin, 'mailTemplateLanguageFactory');
+            $factoryMethod->setAccessible(true);
+            $factory = $factoryMethod->invoke($plugin);
+            $create = new ReflectionMethod($plugin, 'createLocalizedMailTemplate');
+            $create->setAccessible(true);
+            $container = Factory::getContainer();
+
+            foreach (['plaintext', 'both'] as $style) {
+                $config->set('mail_style', $style);
+                ajaxforms_mailcatch_clear();
+                $mailer = $create->invoke($plugin, [
+                    'com_users.password_reset',
+                    'fr-FR',
+                    $container->get(\Joomla\CMS\Mail\MailerFactoryInterface::class)->createMailer(),
+                    $factory,
+                    $container->get(DatabaseInterface::class),
+                ], $template);
+                // Force the legacy adapter even when CI uses an injection-capable core.
+                $mailer->localizeLegacy($factory->createLanguage('fr-FR'), $template);
+                $mailer->addTemplateData([
+                    'NAME' => 'A&B',
+                    'SITENAME' => 'Test site',
+                    'TOKEN' => 'test-code',
+                    'LINK_TEXT' => 'index.php',
+                ]);
+                $mailer->addUnsafeTags(['NAME']);
+                $mailer->addRecipient('attachment@example.test');
+                $mailer->addAttachment($file, '{NAME}.pdf');
+                $this->test("$style attachment mail sends through MailTemplate", $mailer->send() === true);
+                $messages = ajaxforms_mailcatch_messages();
+                $this->test("$style attachment mail captured exactly once", count($messages) === 1);
+                $raw = $messages[0] ?? '';
+                $this->test(
+                    "$style attachment filename keeps an unescaped ampersand",
+                    str_contains($raw, 'filename="A&B.pdf"') && !str_contains($raw, 'A&amp;B.pdf')
+                );
+            }
+        } finally {
+            $config->set('mail_style', $originalStyle);
+            if (is_file($file)) {
+                unlink($file);
+            }
+            ajaxforms_mailcatch_remove();
+        }
     }
 
     /**
@@ -964,6 +1038,7 @@ class ResetRequestTest
         $this->testCoreTemplateMailsSupportAllLocales();
         $this->testIncompleteCoreLanguageDefaults();
         $this->testLegacyLocalizedRendering();
+        $this->testLegacyAttachmentNamesThroughSend();
         $this->testFallbackMailLanguageIsIsolated();
         $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();

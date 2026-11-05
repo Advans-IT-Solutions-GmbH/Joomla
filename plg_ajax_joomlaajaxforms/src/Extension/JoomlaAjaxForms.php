@@ -1529,6 +1529,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             private array $htmlTranslations = [];
             private int $renderCalls = 0;
             private bool $replacing = false;
+            private bool $renderingAttachmentName = false;
 
             public function send()
             {
@@ -1560,14 +1561,25 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 }
             }
 
+            protected function getAttachmentName(string $file, string $name): string
+            {
+                $this->renderingAttachmentName = true;
+
+                try {
+                    return parent::getAttachmentName($file, $name);
+                } finally {
+                    $this->renderingAttachmentName = false;
+                }
+            }
+
             protected function replaceTags($text, $tags, $isHtml = false)
             {
-                if ($this->recipientLanguage === null || $this->replacing) {
+                if ($this->recipientLanguage === null || $this->replacing || $this->renderingAttachmentName) {
                     return parent::replaceTags($text, $tags, $isHtml);
                 }
 
                 // In 5.4/6.0 the first two calls render subject and plain body.
-                // Subsequent calls render HTML, including the complete layout.
+                // Subsequent non-attachment calls render HTML, including the layout.
                 $call = $this->renderCalls++;
                 $text = $call < 2
                     ? $this->localizedFields[$call]
