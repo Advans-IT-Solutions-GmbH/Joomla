@@ -151,13 +151,12 @@ try {
     $inviteeLink->request($fixture->link($after, 'erase'));
     $check($keep->status === 200 && $inviteeLink->status === 200, 'The other guest and the booking person keep their working links');
 
-    // A mail delivery in progress holds the guest list with a shared lock (NotificationService::send).
-    // A removal that arrives meanwhile waits for it, and it lands as soon as the delivery is over.
+    // A mail delivery holds a shared lock; a guest removal must wait until it is released.
     $config = new JConfig();
     $holder = new mysqli($config->host, $config->user, $config->password, $config->db);
     $observer = new mysqli($config->host, $config->user, $config->password, $config->db);
     $holder->query('START TRANSACTION');
-    $holder->query("SELECT guest_emails FROM {$prefix}appointments_bookings WHERE id={$gid} LOCK IN SHARE MODE");
+    $heldRow = $holder->query("SELECT guest_emails FROM {$prefix}appointments_bookings WHERE id={$gid} LOCK IN SHARE MODE")->fetch_assoc();
     $keepLink = $fixture->guestLink($after, 'keep@example.test');
     parse_str((string) parse_url($keepLink, PHP_URL_QUERY), $keepQuery);
     $keepToken = $keep->token($keep->request($keepLink));
@@ -166,10 +165,11 @@ try {
     $released = false;
     try {
         AppointmentsHttp::parallel([[$keep, '/index.php?option=com_appointments&task=guest.remove',
-            ['id' => $gid, 'signature' => $keepQuery['signature'], $keepToken => 1]]], static function (int $running) use (&$waited, &$released, $holder, $observer, $prefix, $gid, $started): void {
+            ['id' => $gid, 'signature' => $keepQuery['signature'], $keepToken => 1]]], static function (int $running) use (&$waited, &$released, $holder, $observer, $prefix, $gid, $started, $heldRow): void {
                 if (!$released && $running && microtime(true) - $started > 2) {
                     $row = $observer->query("SELECT guest_emails FROM {$prefix}appointments_bookings WHERE id={$gid}")->fetch_assoc();
-                    $waited = str_contains((string) $row['guest_emails'], 'keep@example.test');
+                    // This is ciphertext: compare stored bytes, not a plaintext address.
+                    $waited = $row !== null && $heldRow !== null && $row['guest_emails'] === $heldRow['guest_emails'];
                     $holder->query('COMMIT');
                     $released = true;
                 }
@@ -178,8 +178,10 @@ try {
         if (!$released) {
             $holder->query('ROLLBACK');
         }
+        $holder->close();
+        $observer->close();
     }
-    $check($waited && $released && (string) $fixture->row($gid)['guest_emails'] === '',
+    $check($waited && $released && $keep->status === 200 && (string) $fixture->row($gid)['guest_emails'] === '',
         'A guest removal waits while a mail delivery holds the guest list and lands right after it');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
