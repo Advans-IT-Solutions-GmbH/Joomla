@@ -15,11 +15,14 @@
 
 final class TeamDavFixture
 {
+    public const LOCKOUT_SOURCE_IP = '127.0.0.2';
+
     public \Advans\Component\Appointments\Administrator\Service\Team\TeamServices $services;
     public int $calendarId;
     public string $calendarUri;
     public int $adminId;
     public array $accounts = [];
+    public array $cleanupErrors = [];
 
     private bool $createdRecoveryKey = false;
     private string $token;
@@ -52,6 +55,13 @@ final class TeamDavFixture
             throw new \RuntimeException('No team group is configured for the CalDAV fixture.');
         }
 
+        $superUsers = $db->query("SELECT id FROM {$p}usergroups WHERE title='Super Users' LIMIT 1")->fetch_assoc();
+        $superUserGroupId = (int) ($superUsers['id'] ?? 0);
+
+        if ($superUserGroupId < 1) {
+            throw new \RuntimeException('The Joomla Super Users group is missing.');
+        }
+
         if ($this->suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") !== 0) {
             throw new \RuntimeException('The CalDAV fixture requires an empty recovery-key table.');
         }
@@ -59,7 +69,7 @@ final class TeamDavFixture
         $this->services->keys()->createRecoveryKey($this->adminId);
         $this->createdRecoveryKey = true;
 
-        foreach (['owner', 'reader', 'writer', 'freebusy', 'denied', 'nomfa', 'cleanup', 'lockout'] as $name) {
+        foreach (['owner', 'reader', 'writer', 'freebusy', 'denied', 'nomfa', 'cleanup', 'cleanupadmin', 'lockout'] as $name) {
             $username = 'dav_' . $name . '_' . $this->token;
             $password = bin2hex(random_bytes(24));
             $userId = $this->insertUser($username, $password, $groupId);
@@ -70,6 +80,11 @@ final class TeamDavFixture
             ];
             $this->addMfa($userId);
             $this->accounts[$name]['keys'] = $this->services->keys()->createUserKey($userId, $password);
+        }
+
+        if ($superUserGroupId !== $groupId
+            && !$db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES (" . (int) $this->accounts['cleanupadmin']['id'] . ", {$superUserGroupId})")) {
+            throw new \RuntimeException('Could not grant the cleanup fixture Joomla delete permission: ' . $db->error);
         }
 
         $this->calendarId = $this->services->calendars()->create($this->adminId, [
@@ -93,6 +108,7 @@ final class TeamDavFixture
             'denied' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
             'nomfa' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
             'cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'cleanupadmin' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Manage,
             'lockout' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
         ] as $name => $role) {
             $this->services->grants()->grant($owner['id'], $this->calendarId, $this->accounts[$name]['id'], $role, $owner['keys']);
@@ -131,6 +147,35 @@ final class TeamDavFixture
         return $this->home($account) . rawurlencode($this->calendarUri) . '/';
     }
 
+    /**
+     * @return array{state: int, known: bool, known_calendars: int, delivered: ?string}|null
+     */
+    public function cleanupStatus(string $account): ?array
+    {
+        $p = $this->suite->prefix;
+        $deviceId = (int) $this->accounts[$account]['device_id'];
+        $calendarId = (int) $this->calendarId;
+        $result = $this->suite->db->query(
+            "SELECT d.state, dc.device_id AS known_device_id, dc.cleanup_delivered_utc,"
+            . " (SELECT COUNT(*) FROM {$p}appointments_device_calendars known WHERE known.device_id=d.id) AS known_calendars"
+            . " FROM {$p}appointments_devices d LEFT JOIN {$p}appointments_device_calendars dc"
+            . " ON dc.device_id=d.id AND dc.calendar_id={$calendarId} WHERE d.id={$deviceId}"
+        );
+
+        if (!$result) {
+            throw new \RuntimeException('Could not read CalDAV cleanup fixture state: ' . $this->suite->db->error);
+        }
+
+        $row = $result->fetch_assoc();
+
+        return $row === null ? null : [
+            'state' => (int) $row['state'],
+            'known' => $row['known_device_id'] !== null,
+            'known_calendars' => (int) $row['known_calendars'],
+            'delivered' => $row['cleanup_delivered_utc'] === null ? null : (string) $row['cleanup_delivered_utc'],
+        ];
+    }
+
     public function expireJournal(): bool
     {
         $p = $this->suite->prefix;
@@ -146,34 +191,71 @@ final class TeamDavFixture
 
         if (isset($this->calendarId)) {
             try {
-                $this->services->calendars()->delete($this->adminId, $this->calendarId);
+                $this->services->calendars()->delete((int) $this->accounts['cleanupadmin']['id'], $this->calendarId);
             } catch (\Throwable $e) {
-                $errors[] = $e->getMessage();
+                $errors[] = 'CalendarService::delete: ' . $e::class . ' (' . $e->getCode() . '): ' . $e->getMessage();
             }
+
+            if ($errors === [] && $this->suite->count("SELECT COUNT(*) FROM {$p}appointments_calendars WHERE id=" . (int) $this->calendarId) !== 0) {
+                $errors[] = 'CalendarService::delete returned but the fixture calendar row still exists.';
+            }
+        }
+
+        if ($errors !== []) {
+            $this->cleanupErrors = $errors;
+
+            return false;
         }
 
         $userIds = array_values(array_filter(array_map(static fn (array $account): int => (int) ($account['id'] ?? 0), $this->accounts)));
         $ids = implode(',', $userIds);
 
         if ($ids !== '') {
-            foreach (['appointments_device_calendars', 'appointments_devices', 'appointments_user_keys', 'user_mfa', 'user_usergroup_map'] as $table) {
-                if (!$db->query("DELETE FROM {$p}{$table} WHERE " . ($table === 'appointments_device_calendars'
-                    ? "device_id IN (SELECT id FROM {$p}appointments_devices WHERE user_id IN ({$ids}))"
-                    : "user_id IN ({$ids})"))) {
-                    $errors[] = $db->error;
+            if (isset($this->accounts['lockout']['username'])) {
+                try {
+                    $ip = self::LOCKOUT_SOURCE_IP;
+                    $key = $this->services->keyProvider()->key(\Advans\Component\Appointments\Administrator\Helper\KeyProvider::PURPOSE_TEAM_AUTH_BUCKET);
+                    try {
+                        $identity = 'dav:' . $this->accounts['lockout']['username'] . '@' . $ip;
+                        $buckets = \Advans\Component\Appointments\Administrator\Service\Team\LockoutService::buckets($key, $identity, $ip);
+                    } finally {
+                        \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($key);
+                    }
+
+                    foreach ($buckets as $bucket) {
+                        if (!$db->query("DELETE FROM {$p}appointments_auth_failures WHERE bucket=UNHEX('" . bin2hex($bucket) . "')")) {
+                            $errors[] = 'appointments_auth_failures delete failed: ' . $db->error;
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $errors[] = 'CalDAV lockout bucket cleanup: ' . $e::class . ' (' . $e->getCode() . '): ' . $e->getMessage();
                 }
             }
 
-            if (!$db->query("DELETE FROM {$p}users WHERE id IN ({$ids})")) {
-                $errors[] = $db->error;
+            if ($errors === []) {
+                foreach (['appointments_device_calendars', 'appointments_devices', 'appointments_user_keys', 'user_mfa', 'user_usergroup_map'] as $table) {
+                    if (!$db->query("DELETE FROM {$p}{$table} WHERE " . ($table === 'appointments_device_calendars'
+                        ? "device_id IN (SELECT id FROM {$p}appointments_devices WHERE user_id IN ({$ids}))"
+                        : "user_id IN ({$ids})"))) {
+                        $errors[] = "{$table} delete failed: " . $db->error;
+                    }
+                }
+            }
+
+            if ($errors === [] && !$db->query("DELETE FROM {$p}users WHERE id IN ({$ids})")) {
+                $errors[] = 'users delete failed: ' . $db->error;
             }
         }
 
-        if ($this->createdRecoveryKey && !$db->query("DELETE FROM {$p}appointments_keyring")) {
-            $errors[] = $db->error;
+        if ($errors === [] && $this->createdRecoveryKey && !$db->query("DELETE FROM {$p}appointments_keyring")) {
+            $errors[] = 'appointments_keyring delete failed: ' . $db->error;
         }
 
-        $this->accounts = [];
+        $this->cleanupErrors = $errors;
+
+        if ($errors === []) {
+            $this->accounts = [];
+        }
 
         return $errors === [];
     }
@@ -293,7 +375,7 @@ return static function (TeamSuite $suite): void {
      *
      * @return array{status: int, headers: string, body: string}
      */
-    $request = static function (string $method, string $url, array $headers = [], ?string $body = null): array {
+    $request = static function (string $method, string $url, array $headers = [], ?string $body = null, ?string $sourceIp = null): array {
         $ch = curl_init($url);
         $options = [
             CURLOPT_CUSTOMREQUEST  => $method,
@@ -303,6 +385,10 @@ return static function (TeamSuite $suite): void {
             CURLOPT_TIMEOUT        => 30,
             CURLOPT_HTTPHEADER     => $headers,
         ];
+
+        if ($sourceIp !== null) {
+            $options[CURLOPT_INTERFACE] = $sourceIp;
+        }
 
         if (str_starts_with($url, 'https://') && is_file('/etc/ssl/appointments-test/ca.pem')) {
             $options[CURLOPT_CAINFO] = '/etc/ssl/appointments-test/ca.pem';
@@ -366,6 +452,8 @@ return static function (TeamSuite $suite): void {
     $statement->bind_param('s', $encoded);
     $statement->execute();
     $db->query("UPDATE {$p}extensions SET enabled = 1 WHERE type='plugin' AND folder='system' AND element='appointmentsdav'");
+
+    $fixtureForCleanup = null;
 
     try {
         $suite->test('Plain HTTP is refused with 403, no body and no redirect', static function () use ($request, $headersOk) {
@@ -485,7 +573,6 @@ return static function (TeamSuite $suite): void {
         };
 
         $fixture = null;
-        $fixtureForCleanup = null;
         $fixtureError = null;
         $setupMissing = $missing('B', 'C', 'D', 'F');
 
@@ -506,7 +593,15 @@ return static function (TeamSuite $suite): void {
             $suite->test('Create isolated authenticated CalDAV fixture', static fn () => $fixture !== null);
         }
 
-        $send = static function (string $method, string $path, string $account, array $headers = [], ?string $body = null, ?string $password = null) use ($suite, $request, &$fixture, $fixtureError): array {
+        $send = static function (
+            string $method,
+            string $path,
+            string $account,
+            array $headers = [],
+            ?string $body = null,
+            ?string $password = null,
+            ?string $sourceIp = null
+        ) use ($suite, $request, &$fixture, $fixtureError): array {
             if (!$fixture) {
                 throw new \RuntimeException('CalDAV fixture setup failed: ' . ($fixtureError?->getMessage() ?? 'not available'));
             }
@@ -514,7 +609,7 @@ return static function (TeamSuite $suite): void {
             $user = $fixture->accounts[$account];
             $headers[] = 'Authorization: Basic ' . base64_encode($user['username'] . ':' . ($password ?? $user['app_password']));
 
-            return $request($method, $suite->base . $path, $headers, $body);
+            return $request($method, $suite->base . $path, $headers, $body, $sourceIp);
         };
 
         $ics = static function (string $uid, string $summary): string {
@@ -550,21 +645,6 @@ return static function (TeamSuite $suite): void {
                     return $joomla['status'] === 401 && $wrong['status'] === 401
                         && $joomla['body'] === $wrong['body'] && $header($joomla, 'WWW-Authenticate') === $header($wrong, 'WWW-Authenticate')
                         && $good['status'] === 207;
-                },
-            ],
-            [
-                'Ten failed app-password sign-ins lock out the account, including its correct password',
-                ['B', 'C', 'D', 'F'],
-                static function (TeamDavFixture $f) use ($send, $header): bool {
-                    for ($attempt = 0; $attempt < 10; $attempt++) {
-                        if ($send('PROPFIND', '/dav/', 'lockout', ['Depth: 0'], null, str_repeat('A', 32))['status'] !== 401) {
-                            return false;
-                        }
-                    }
-
-                    $locked = $send('PROPFIND', '/dav/', 'lockout', ['Depth: 0']);
-
-                    return $locked['status'] === 429 && (int) $header($locked, 'Retry-After') > 0;
                 },
             ],
             [
@@ -691,23 +771,37 @@ return static function (TeamSuite $suite): void {
                     $account = $f->accounts['cleanup'];
                     $path = $f->calendar('cleanup');
                     $created = $send('PUT', $path . 'cleanup.ics', 'cleanup', ['Content-Type: text/calendar'], $ics('cleanup-' . $f->calendarId, 'Cleanup object'));
+                    $before = $f->cleanupStatus('cleanup');
 
-                    if ($created['status'] !== 201) {
+                    if ($created['status'] !== 201 || $before === null || !$before['known'] || $before['known_calendars'] !== 1 || $before['delivered'] !== null) {
                         return false;
                     }
 
                     $f->services->cleanup()->startForDevice($account['device_id'], 'test', $f->adminId);
-                    $empty = $propfind('cleanup', $path, '1');
+                    $started = $f->cleanupStatus('cleanup');
 
-                    if ($empty['status'] !== 207 || str_contains($empty['body'], 'cleanup.ics')) {
+                    if ($started === null || $started['state'] !== \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::DEVICE_CLEANUP_EMPTY
+                        || !$started['known'] || $started['known_calendars'] !== 1 || $started['delivered'] !== null) {
+                        return false;
+                    }
+
+                    $empty = $propfind('cleanup', $path, '1');
+                    $delivered = $f->cleanupStatus('cleanup');
+
+                    if ($empty['status'] !== 207 || str_contains($empty['body'], 'cleanup.ics')
+                        || $delivered === null || !$delivered['known'] || $delivered['delivered'] === null
+                        || $delivered['known_calendars'] !== 1
+                        || $delivered['state'] !== \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::DEVICE_CLEANUP_HIDDEN) {
                         return false;
                     }
 
                     $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
                     $f->services->cleanup()->advance($now);
                     $hidden = $propfind('cleanup', $f->home('cleanup'), '1');
+                    $revoked = $f->cleanupStatus('cleanup');
 
-                    if ($hidden['status'] !== 207 || str_contains($hidden['body'], $f->calendarUri)) {
+                    if ($hidden['status'] !== 207 || str_contains($hidden['body'], $f->calendarUri)
+                        || $revoked === null || $revoked['state'] !== \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::DEVICE_REVOKED) {
                         return false;
                     }
 
@@ -723,6 +817,21 @@ return static function (TeamSuite $suite): void {
                     $response = $send('PROPFIND', '/dav/', 'nomfa', ['Depth: 0']);
 
                     return $response['status'] === 403 && $response['body'] === '';
+                },
+            ],
+            [
+                'Ten failed app-password sign-ins lock out the account, including its correct password',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $header): bool {
+                    for ($attempt = 0; $attempt < 10; $attempt++) {
+                        if ($send('PROPFIND', '/dav/', 'lockout', ['Depth: 0'], null, str_repeat('A', 32), TeamDavFixture::LOCKOUT_SOURCE_IP)['status'] !== 401) {
+                            return false;
+                        }
+                    }
+
+                    $locked = $send('PROPFIND', '/dav/', 'lockout', ['Depth: 0'], null, null, TeamDavFixture::LOCKOUT_SOURCE_IP);
+
+                    return $locked['status'] === 429 && (int) $header($locked, 'Retry-After') > 0;
                 },
             ],
         ];
@@ -743,10 +852,17 @@ return static function (TeamSuite $suite): void {
             }
         }
 
-        if ($fixtureForCleanup instanceof TeamDavFixture) {
-            $suite->test('Remove all CalDAV fixture accounts, keys, devices, calendar and recovery key', static fn () => $fixtureForCleanup->cleanup());
-        }
     } finally {
+        if ($fixtureForCleanup instanceof TeamDavFixture) {
+            $suite->test('Remove all CalDAV fixture accounts, keys, devices, calendar and recovery key', static function () use ($fixtureForCleanup): bool {
+                if (!$fixtureForCleanup->cleanup()) {
+                    throw new \RuntimeException(implode('; ', $fixtureForCleanup->cleanupErrors));
+                }
+
+                return true;
+            });
+        }
+
         $statement = $db->prepare("UPDATE {$p}extensions SET params = ? WHERE type='component' AND element='com_appointments'");
         $statement->bind_param('s', $originalParams);
         $statement->execute();
