@@ -62,7 +62,7 @@ final class BookingRecords
         }
 
         // A migration already opened keeps its update time, also once its token has expired or
-        // passed the limit: a later update never moves the cutoff (migrate() resumes or ends it).
+        // passed the limit: a later update never moves the cutoff (only encryptRemaining() ends it then).
         if (BookingData::tokenCutoff($token, $keys) !== null) {
             return;
         }
@@ -77,8 +77,10 @@ final class BookingRecords
      * only while the migration token is valid and only in rows created before
      * the update: a clear value a database write put in later is never
      * encrypted into a valid one. Each call that finds rows renews the token's
-     * expiry, so a large site is never left with rows that nobody can read and
-     * nobody encrypts; the Scheduler routine calls it until it returns 0. A token
+     * expiry, never beyond {@see BookingData::MIGRATION_LIMIT_DAYS} after the update;
+     * once the token has expired, this does nothing and only the administrator
+     * action {@see self::encryptRemaining()} encrypts the remaining rows (they stay
+     * readable as «not verified»). The Scheduler routine calls it until it returns 0. A token
      * an Options form wrote back after the end is deleted again. Idempotent: a value
      * that is already sealed is left alone. Each row is updated with a
      * compare-and-set on its old values, so a concurrent change is never
@@ -91,7 +93,8 @@ final class BookingRecords
     public static function migrate(DatabaseInterface $db, KeyProvider $keys, int $batch): int
     {
         $token = self::token($db);
-        $cutoff = BookingData::migrationCutoff($token, $keys, time()) ?? BookingData::authenticCutoff($token, $keys, time());
+        // Only a valid token: after the window only the administrator action encrypts clear text.
+        $cutoff = BookingData::migrationCutoff($token, $keys, time());
 
         if ($cutoff === null) {
             // A new installation, a database without clear rows or an expired token with none left: over.

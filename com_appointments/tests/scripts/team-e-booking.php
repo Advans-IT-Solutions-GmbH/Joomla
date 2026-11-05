@@ -147,8 +147,8 @@ return static function (TeamSuite $suite): void {
             $id = (int) $suite->db->insert_id;
             $readParams = static fn (): array => json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
 
-            // An update 100 days ago whose migration never finished: the clock is past the window.
-            $cutoff = time() - 100 * 86400;
+            // An update 10 days ago whose migration never finished: past the window, inside the limit.
+            $cutoff = time() - 10 * 86400;
             $token = BookingData::migrationToken($keys, $cutoff + BookingData::MIGRATION_DAYS * 86400, $cutoff);
             $params = $readParams();
             $params[BookingData::MIGRATION_OPTION] = $token;
