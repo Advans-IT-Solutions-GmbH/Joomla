@@ -1498,9 +1498,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             ->where($db->quoteName('template_id') . ' = :templateId')
             ->where($db->quoteName('language') . ' IN (' . $db->quote('') . ', :languageTag)')
             ->bind(':templateId', $templateId, ParameterType::STRING)
-            ->bind(':languageTag', $languageTag, ParameterType::STRING);
+            ->bind(':languageTag', $languageTag, ParameterType::STRING)
+            ->setLimit(1);
 
-        $db->setQuery($query, 0, 1);
+        $db->setQuery($query);
 
         return $db->loadResult() !== null;
     }
