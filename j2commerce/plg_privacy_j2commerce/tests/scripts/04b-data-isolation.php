@@ -632,6 +632,7 @@ class DataIsolationTest
         $legacy    = [];
         $addresses = [];
         $cartId    = 0;
+        $mailUser  = 0;
 
         // Guest customer: stored in mixed case, requested in lower case.
         $orders['guest_expired']   = $this->insertGuestTestOrder('GUEST-EXP-' . $suffix, 0, 'Guest.Buyer@Example.COM', $expired, 'Hans');
@@ -962,8 +963,7 @@ class DataIsolationTest
                 && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
                 json_encode($merged));
 
-            // Customer language: newest order, looked up before the anonymization replaces the
-            // e-mail the guest orders are found by (an older lifetime order keeps it).
+            // Order languages are not recipient preferences. A guest uses the site default.
             $orders['lang_new'] = $this->insertGuestTestOrder('GUEST-LGN-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-11 years')), 'Lena');
             $orders['lang_old'] = $this->insertGuestTestOrder('GUEST-LGO-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-13 years')), 'Lena');
 
@@ -994,9 +994,31 @@ class DataIsolationTest
                 'subject' => $this->guestTestRequest('lang.guest@example.com'),
                 'user'    => null,
             ]));
-            $this->test('Customer e-mail language: the newest order (looked up before the anonymization), not the older lifetime order',
-                ($langPlugin->reported[0][0] ?? '') === 'fr-FR' && ($langPlugin->reported[0][1] ?? []) === [$orders['lang_old']],
+            $this->test('Guest e-mail language: site default, independent of newest and older order languages',
+                ($langPlugin->reported[0][0] ?? '') === $langPlugin->call('resolveMailLanguage', '') && ($langPlugin->reported[0][1] ?? []) === [$orders['lang_old']],
                 json_encode($langPlugin->reported));
+
+            $mailAccount = (object) [
+                'name' => 'Mail fixture', 'username' => 'privacy-mail-' . $suffix,
+                'email' => 'privacy-mail-' . $suffix . '@example.test', 'password' => '',
+                'block' => 1, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $mailAccount, 'id');
+            $mailUser = (int) $mailAccount->id;
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
+                    . $this->db->quote(json_encode(['language' => $tag])) . ' WHERE id = ' . $mailUser)->execute();
+                $this->test("$tag: account and address lookup select the recipient preference",
+                    $langPlugin->call('customerLanguage', $mailUser) === $tag
+                    && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
+            }
+            $profile = new \Joomla\CMS\User\User($mailUser);
+            $profile->setParam('language', 'fr-FR');
+            $langPlugin->onPrivacyCanRemoveData(null, $profile);
+            $profile->setParam('language', 'en-GB');
+            $langPlugin->onPrivacyRemoveData(null, $profile);
+            $this->test('The account language is captured before another privacy plugin can pseudonymise the account',
+                (end($langPlugin->reported)[0] ?? '') === 'fr-FR');
 
             // Customer e-mail text names only what the request removed.
             $guestFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'guestRequest');
@@ -1061,6 +1083,9 @@ class DataIsolationTest
         } catch (\Throwable $e) {
             $this->test('Guest request tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
+            if ($mailUser > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $mailUser)->execute();
+            }
             $orderList = implode(',', array_map([$this->db, 'quote'], array_values($orders)));
 
             if ($orderList !== '') {

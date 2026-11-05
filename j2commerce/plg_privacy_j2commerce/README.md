@@ -819,7 +819,14 @@ The administrator message and the customer e-mail list the lifetime-license orde
 - Appears at top of screen after clicking "Delete Data", after the customer e-mail was attempted
 - Lists the orders kept until the end of their retention period and the lifetime-license orders that keep their e-mail address
 - Green: the list was sent to the request address. Warning: the request address is not a valid e-mail address, or sending failed (see the log); inform the customer yourself
-- The customer e-mail is written in the customer's language (`customer_language` of the newest order, else the default site language)
+- Customer and administrator e-mails use the recipient's supported account language, otherwise
+  the default **site** language (including guests without an account), never an order or request
+  language. The customer's preference is captured before other privacy plugins pseudonymise the
+  account. Unsupported preferences use the site default; an unsupported site language uses en-GB.
+  All subjects, eight customer-body variants, three administrator actions and order-detail labels
+  ship in **de-DE, en-GB and fr-FR**, even on a German-only site. These are plain-text mails, not
+  separate HTML templates. The bundled system plugin only changes confirmation URLs in Joomla's
+  `com_privacy` templates; their content and language selection remain owned by Joomla.
 
 **Location 2: Action Log (Permanent)**
 - Visible in request detail view

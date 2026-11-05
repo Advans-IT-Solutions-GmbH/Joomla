@@ -53,12 +53,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     /**
-     * Username and e-mail of the accounts of the current removal request, captured in
+     * Username, e-mail and language of the accounts of the current removal request, captured in
      * onPrivacyCanRemoveData(): com_privacy dispatches that event to all privacy plugins before
      * any onPrivacyRemoveData(), and Joomla's privacy user plugin pseudonymises the shared User
      * object in onPrivacyRemoveData(), possibly before this plugin runs.
      *
-     * @var array<int, array{username: string, email: string}>
+     * @var array<int, array{username: string, email: string, language: string}>
      */
     private array $accountsBeforeRemoval = [];
 
@@ -1346,6 +1346,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $this->accountsBeforeRemoval[(int) $user->id] = [
             'username' => (string) $user->username,
             'email'    => (string) $user->email,
+            'language' => (string) $user->getParam('language', ''),
         ];
 
         // The request is always carried out: orders within the retention period are kept until
@@ -1410,8 +1411,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // extension ID). Without that capture (direct call) the current values are used.
         $userId        = $user ? (int) $user->id : 0;
         $account       = $user
-            ? ($this->accountsBeforeRemoval[$userId] ?? ['username' => (string) $user->username, 'email' => (string) $user->email])
-            : ['username' => '', 'email' => ''];
+            ? ($this->accountsBeforeRemoval[$userId] ?? [
+                'username' => (string) $user->username, 'email' => (string) $user->email,
+                'language' => (string) $user->getParam('language', ''),
+            ])
+            : ['username' => '', 'email' => '', 'language' => ''];
         unset($this->accountsBeforeRemoval[$userId]);
         $username      = $account['username'];
         $accountEmail  = $account['email'];
@@ -1431,10 +1435,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
         $check         = $this->retentionOverDataSets($userId, $emails);
-        // Before the anonymization: it replaces the order e-mail the guest orders are found by.
-        $languageTag   = $this->customerLanguage($userId, $emails);
+        $languageTag   = $user
+            ? $this->resolveMailLanguage($account['language'])
+            : $this->customerLanguage(0, $emails);
         $retained      = $check['orders'];
-        $summary       = $this->formatRetainedOrders($retained, $check['lifetime_expired'] ?? []);
+        $summary       = $this->formatRetainedOrders(
+            $retained, $check['lifetime_expired'] ?? [], $this->pluginLanguage($this->adminNotificationLanguage())
+        );
 
         // Log the deletion request: the entry names the request and the counts; its text comes
         // from the language key in the language of the person reading the User Actions Log.
@@ -1503,8 +1510,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Language of the customer: customer_language of the newest order (of the account or a guest
-     * order with one of $emails), else the default site language.
+     * The recipient's account language, else the default site language. Order
+     * and request languages must not determine another recipient's mail.
      *
      * @param   int       $userId  Joomla user ID (0: no account)
      * @param   string[]  $emails  E-mail addresses of the request
@@ -1512,58 +1519,65 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     protected function customerLanguage(int $userId, array $emails = []): string
     {
         $db     = $this->getDatabase();
-        $tag    = '';
-        $newest = '';
-
         try {
-            // Newest order over every J2Commerce data set (a migrated site keeps #__j2store_*).
-            foreach ($this->forEachDataSet(function () use ($db, $userId, $emails): ?object {
-                $db->setQuery(
-                    $this->createDbQuery()
-                        ->select($db->quoteName(['customer_language', 'created_on']))
-                        ->from($db->quoteName($this->isJ2Commerce4() ? '#__j2store_orders' : '#__j2commerce_orders'))
-                        ->where($this->ownerCondition($userId, $emails))
-                        ->order($db->quoteName('created_on') . ' DESC')
-                        ->setLimit(1)
-                );
+            $emails = self::requestEmails($emails);
+            $query = $this->createDbQuery()->select($db->quoteName(['email', 'params']))->from($db->quoteName('#__users'));
 
-                return $db->loadObject() ?: null;
-            }) as $order) {
-                if ($order !== null && (string) $order->created_on > $newest) {
-                    $newest = (string) $order->created_on;
-                    $tag    = trim((string) $order->customer_language);
-                }
+            if ($userId > 0) {
+                $query->where($db->quoteName('id') . ' = ' . (int) $userId);
+            } elseif ($emails !== []) {
+                $query->where('LOWER(TRIM(' . $db->quoteName('email') . ')) IN (' . implode(',', $db->quote($emails)) . ')');
+            } else {
+                return $this->resolveMailLanguage('');
             }
-        } catch (\Throwable $e) {
-            $tag = '';
+
+            $rows = $db->setQuery($query)->loadObjectList();
+            $rows = array_values(array_filter($rows, static fn (object $row): bool =>
+                $emails === [] || in_array(mb_strtolower(trim((string) $row->email), 'UTF-8'), $emails, true)));
+            $params = count($rows) === 1 ? json_decode((string) $rows[0]->params, true) : [];
+
+            return $this->resolveMailLanguage((string) ($params['language'] ?? ''));
+        } catch (\RuntimeException $e) {
+            Log::add('Privacy mail recipient language could not be read; using the site default.', Log::WARNING, 'plg_privacy_j2commerce');
+
+            return $this->resolveMailLanguage('');
+        }
+    }
+
+    protected function resolveMailLanguage(string $preferred): string
+    {
+        $supported = ['de-DE', 'en-GB', 'fr-FR'];
+        try {
+            $site = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        } catch (\Exception $e) {
+            Log::add('Privacy mail site language could not be read; using en-GB.', Log::WARNING, 'plg_privacy_j2commerce');
+            $site = 'en-GB';
         }
 
-        if (!preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $tag)) {
-            try {
-                $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
-            } catch (\Throwable $e) {
-                // No application (CLI script): the component cache cannot be used.
-                $tag = 'en-GB';
-            }
-        }
+        return in_array($preferred, $supported, true) ? $preferred : (in_array($site, $supported, true) ? $site : 'en-GB');
+    }
 
-        return $tag;
+    protected function adminNotificationLanguage(): string
+    {
+        $app = $this->feedbackApplication();
+        $email = (string) ($this->params->get('admin_email') ?: ($app !== null ? $app->get('mailfrom', '') : ''));
+
+        return $this->customerLanguage(0, [$email]);
     }
 
     /**
-     * Language object for $tag with this plugin's strings (fallback: the current language).
+     * Independent language object: never borrow the operator's request language for mail.
      */
     protected function pluginLanguage(string $tag): Language
     {
-        try {
-            $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
-            $language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR, $tag, true)
-                || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce', $tag, true);
-
-            return $language;
-        } catch (\Throwable $e) {
-            return $this->pluginStrings(self::currentLanguage());
+        $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+        if (!$language->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR, $tag, true)
+            && !$language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce', $tag, true)
+        ) {
+            throw new \RuntimeException('Privacy mail language files could not be loaded.');
         }
+
+        return $language;
     }
 
     private function pluginStrings(Language $language): Language
@@ -2264,21 +2278,23 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $subject = Text::_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_SUBJECT');
-
-        // $username: captured before a pseudonymisation of the account in the same request.
-        $body = Text::sprintf($langKey, $username ?? $user->username, $user->id);
-        
-        if (!empty($details)) {
-            $body .= "\n\n" . $details;
-        }
-
         try {
+            $language = $this->pluginLanguage($this->adminNotificationLanguage());
+            $subject = $language->_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_SUBJECT');
+            // $username was captured before pseudonymisation in the same request.
+            $body = sprintf($language->_($langKey), $username ?? $user->username, $user->id);
+
+            if (!empty($details)) {
+                $body .= "\n\n" . $details;
+            }
+
             $mailer = $this->createMailer();
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
             $mailer->setBody($body);
-            $mailer->send();
+            if ($mailer->send() === false) {
+                Log::add('Privacy admin notification was not delivered.', Log::WARNING, 'plg_privacy_j2commerce');
+            }
         } catch (\Throwable $e) {
             // Log error but don't fail the operation
             Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
@@ -2870,7 +2886,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             $user = $this->getApplication()->getIdentity();
             $this->logActivity('address_deleted', $userId, '', ['addressid' => (string) $addressId]);
-            $this->sendAdminNotification('address_deleted', $user, 'Address ID: ' . $addressId);
+            $language = $this->pluginLanguage($this->adminNotificationLanguage());
+            $this->sendAdminNotification('address_deleted', $user, sprintf($language->_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_ID'), $addressId));
 
             return ['success' => true];
         } catch (\Exception $e) {
