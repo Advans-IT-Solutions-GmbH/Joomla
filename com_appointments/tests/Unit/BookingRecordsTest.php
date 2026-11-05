@@ -15,6 +15,11 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/Conference/RuntimeStubs.php';
 require_once dirname(__DIR__, 2) . '/administrator/components/com_appointments/src/Service/BookingRecords.php';
 
+abstract class BookingRecordsTestDatabase implements DatabaseInterface
+{
+    abstract public function insertObject($table, &$object, $key = null);
+}
+
 final class BookingRecordsTestQuery
 {
     public string $operation = 'select';
@@ -243,10 +248,10 @@ final class BookingRecordsTest extends TestCase
 
     private function database(BookingRecordsTestDatabaseState $state): DatabaseInterface
     {
-        $database = $this->getMockBuilder(DatabaseInterface::class)
+        $database = $this->getMockBuilder(BookingRecordsTestDatabase::class)
             ->onlyMethods(['quoteName', 'quote', 'setQuery', 'execute', 'loadResult', 'loadAssoc', 'updateObject',
-                'transactionStart', 'transactionCommit', 'transactionRollback'])
-            ->addMethods(['createQuery', 'getQuery', 'loadAssocList', 'getAffectedRows', 'insertObject'])
+                'transactionStart', 'transactionCommit', 'transactionRollback', 'insertObject'])
+            ->addMethods(['createQuery', 'getQuery', 'loadAssocList', 'getAffectedRows'])
             ->getMock();
 
         $database->method('quoteName')->willReturnCallback(static function ($name) {

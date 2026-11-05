@@ -192,8 +192,9 @@ final class BookingRecords
                 $found = self::sealBatch($db, $keys, $cutoff, 200);
 
                 foreach ($found['sealed'] as $id) {
-                    $db->insertObject('#__appointments_audit', (object) ['booking_id' => $id, 'action' => 'encrypt', 'path' => 'admin',
-                        'actor_user_id' => $actor > 0 ? $actor : null, 'occurred_utc' => $time]);
+                    $audit = (object) ['booking_id' => $id, 'action' => 'encrypt', 'path' => 'admin',
+                        'actor_user_id' => $actor > 0 ? $actor : null, 'occurred_utc' => $time];
+                    $db->insertObject('#__appointments_audit', $audit);
                 }
 
                 if ($found['rows'] === 0) {
