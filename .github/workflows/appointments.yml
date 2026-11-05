@@ -525,7 +525,7 @@ jobs:
           docker compose -f docker-compose.joomla6.yml logs --no-color > test-results/caldav-compose-logs.txt 2>&1 || true
           log_dir="$(docker exec com_appointments_j6_test php -r 'require "/var/www/html/configuration.php"; echo (new JConfig())->log_path;' 2>/dev/null || true)"
           if [ -n "$log_dir" ]; then
-            docker exec com_appointments_j6_test sh -c 'grep -hF "Internet calendar mail failed: phase=" "$1"/*.php 2>/dev/null | tail -n 50 || true' sh "$log_dir" > test-results/team-mail-diagnostics.txt 2>/dev/null || true
+            docker exec com_appointments_j6_test sh -c 'grep -hE "Internet calendar (mail failed: phase=|activation failed: phase )" "$1"/*.php 2>/dev/null | tail -n 50 || true' sh "$log_dir" > test-results/team-mail-diagnostics.txt 2>/dev/null || true
           else
             printf '%s\n' 'Joomla log directory unavailable.' > test-results/team-mail-diagnostics.txt
           fi

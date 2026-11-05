@@ -16,6 +16,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
@@ -308,9 +309,14 @@ final class InvitationService implements InvitationServiceInterface
             return (int) $db->insertid();
         });
 
+        $phase = 'activation_link';
+
         try {
-            $this->services->mailer()->invitation($email, self::link($token), $expires);
+            $link = self::link($token);
+            $phase = 'activation_delivery';
+            $this->services->mailer()->invitation($email, $link, $expires);
         } catch (\Throwable $e) {
+            Log::add('Internet calendar activation failed: phase ' . $phase . ', exception ' . $e::class, Log::ERROR, 'com_appointments');
             // The token exists only in that mail: without it the link is useless.
             $this->atomic(function () use ($id, $actorUserId): void {
                 foreach ($this->rows('id = ' . $id, true) as $row) {
