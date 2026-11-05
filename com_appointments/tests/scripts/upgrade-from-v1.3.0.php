@@ -288,7 +288,11 @@ function upgrade_update(): void
     echo $clean . "\n";
 
     upgrade_check('Joomla CLI update exits successfully', $code === 0, 'exit code ' . $code);
-    upgrade_check('installer output contains no errors', !preg_match('/\[ERROR\]/', $clean));
+    $hasErrors = preg_match(
+        '/\[ERROR\]|\b(?:Fatal error|Uncaught (?:Error|Exception)|(?:TypeError|Error|Exception):|Call to undefined (?:method|function))/i',
+        $clean
+    ) === 1;
+    upgrade_check('installer output contains no errors', !$hasErrors);
     $rawKeys = sh_find_raw_language_keys($clean);
     upgrade_check('installer output contains no untranslated language keys', $rawKeys === [], implode(', ', $rawKeys));
 
