@@ -425,7 +425,8 @@ final class InvitationService implements InvitationServiceInterface
             $before = $this->storedPasswordHash((int) $row->user_id);
 
             try {
-                $saved = $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
+                $data = ['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''];
+                $saved = $user->bind($data)
                     && $user->save(true);
             } catch (\Throwable) {
                 // A plugin may throw after Joomla stored the password: then the
