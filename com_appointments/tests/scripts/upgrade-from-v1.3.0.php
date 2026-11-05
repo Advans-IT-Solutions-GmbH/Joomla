@@ -549,7 +549,7 @@ function upgrade_verify(): void
             }
 
             $allFieldsSealed = $allFieldsSealed && is_string($row[$column]) && str_starts_with($row[$column], 'v2:')
-                && ($opened[$column] ?? null) === $value;
+                && upgrade_personal_matches($opened[$column] ?? null, $value, $column);
         }
         $auditResult = $db->query("SELECT action, path, COUNT(*) AS row_count FROM `$auditTable`"
             . " WHERE booking_id = $bookingId GROUP BY action, path");
