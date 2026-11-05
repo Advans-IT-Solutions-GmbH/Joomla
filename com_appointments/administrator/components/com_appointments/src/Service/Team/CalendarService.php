@@ -608,7 +608,7 @@ final class CalendarService implements CalendarServiceInterface
         $db = $this->services->db();
         $users = array_map('intval', $db->setQuery(
             'SELECT user_id FROM ' . $db->quoteName('#__' . GrantService::TABLE) . ' WHERE calendar_id = ' . $calendarId
-            . ' AND audience = ' . $db->quote(TeamStates::AUDIENCE_EXTERNAL)
+            . ' AND audience = ' . $db->quote(TeamStates::AUDIENCE_EXTERNAL) . ' FOR UPDATE'
         )->loadColumn() ?: []);
 
         if ($users === []) {

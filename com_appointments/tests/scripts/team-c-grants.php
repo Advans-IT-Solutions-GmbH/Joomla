@@ -284,6 +284,7 @@ return static function (TeamSuite $suite): void {
         $deleteE2e = 'Deleting a calendar removes it with its grants and mails the owner and the managers';
         $aclE2e = 'Real Joomla ACL controls creation, external sharing and deletion independently of calendar management';
         $groupE2e = 'Real group changes invalidate the old audience and an external membership takes precedence';
+        $externalSnapshotE2e = 'Disabling external access removes grants committed after the caller snapshot and never revives them';
         $snapshotE2e = array_combine(['grant', 'wrap'], array_map(
             static fn (string $lost): string => "A stale REPEATABLE READ snapshot cannot authorise mutations after a manager loses its {$lost}",
             ['grant', 'wrap']
@@ -298,7 +299,7 @@ return static function (TeamSuite $suite): void {
                 $suite->pending($name, 'B');
             }
 
-            foreach (array_merge([$aclE2e, $groupE2e], array_values($snapshotE2e)) as $name) {
+            foreach (array_merge([$aclE2e, $groupE2e, $externalSnapshotE2e], array_values($snapshotE2e)) as $name) {
                 $suite->pending($name, 'B');
             }
 
@@ -381,7 +382,7 @@ return static function (TeamSuite $suite): void {
             }
         });
 
-        $suite->test($groupE2e, static function () use ($services, $grants, $keys, $user, $teamGroup, $externalGroup, $super, $owner, $ownerKeys, $calendar, $refused, $db, $p) {
+        $suite->test($groupE2e, static function () use ($grants, $keys, $user, $teamGroup, $externalGroup, $super, $owner, $ownerKeys, $calendar, $refused, $db, $p) {
             $dual = $user('dual', [$teamGroup, $externalGroup], true);
             $keys->createUserKey($dual, 'Fixture-Password-1!');
             $externalFirst = $grants->audienceOf($dual) === TeamStates::AUDIENCE_EXTERNAL;
@@ -518,6 +519,46 @@ return static function (TeamSuite $suite): void {
                 }
             });
         }
+
+        $suite->test($externalSnapshotE2e, static function () use ($services, $grants, $boss, $external, $config, $params, $clock, $tag, &$calendars) {
+            $id = $services->calendars()->create($boss, ['title' => $tag . '-external-snapshot', 'owner_user_id' => $boss, 'allow_external' => 1]);
+            $calendars[] = $id;
+            $other = (new \Joomla\Database\DatabaseFactory())->getDriver($config->dbtype, [
+                'host' => $config->host, 'user' => $config->user, 'password' => $config->password,
+                'database' => $config->db, 'prefix' => $config->dbprefix,
+            ]);
+            $concurrent = new TeamServices(
+                $other, new KeyProvider($config->secret),
+                new \Joomla\Registry\Registry(array_replace($params, ['teamcal_enabled' => 1])), $clock
+            );
+            $connection = $services->db();
+            $connection->setQuery('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')->execute();
+            $connection->transactionStart();
+
+            try {
+                $empty = $grants->accessFor($external, $id) === null;
+                $concurrent->grants()->grant($boss, $id, $external, CalendarRole::FreeBusy, null);
+                $created = $concurrent->grants()->accessFor($external, $id)?->role === CalendarRole::FreeBusy;
+                $services->calendars()->update($boss, $id, ['allow_external' => 0]);
+                $removed = (int) $connection->setQuery(
+                    'SELECT user_id FROM ' . $connection->quoteName('#__appointments_calendar_grants')
+                    . ' WHERE calendar_id=' . $id . ' AND user_id=' . $external . ' FOR UPDATE'
+                )->loadResult() === 0;
+                $services->calendars()->update($boss, $id, ['allow_external' => 1]);
+            } finally {
+                // Roll back the settings changes after observing them; the
+                // independent grant remains committed for the second check.
+                $connection->transactionRollback();
+                $other->disconnect();
+            }
+
+            // Repeat outside the old snapshot to verify committed off/on
+            // never brings back access without a new explicit grant.
+            $services->calendars()->update($boss, $id, ['allow_external' => 0]);
+            $services->calendars()->update($boss, $id, ['allow_external' => 1]);
+
+            return $empty && $created && $removed && $grants->accessFor($external, $id) === null;
+        });
 
         $suite->test($replayE2e[1], static function () use ($grants, $services, $second, $boss, $external, $restore, $db, $p) {
             $grants->grant($boss, $second, $external, CalendarRole::FreeBusy, null);

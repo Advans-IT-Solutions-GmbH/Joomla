@@ -494,7 +494,7 @@ final class GrantService implements GrantServiceInterface
         $db = $services->db();
         $calendars = self::lockCalendarsOf($services, $userId);
         $wrapped = array_map('intval', $db->setQuery(
-            'SELECT DISTINCT calendar_id FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE user_id = ' . $userId
+            'SELECT DISTINCT calendar_id FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE user_id = ' . $userId . ' FOR UPDATE'
         )->loadColumn() ?: []);
         $db->setQuery('DELETE FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE user_id = ' . $userId)->execute();
 
@@ -1267,8 +1267,8 @@ final class GrantService implements GrantServiceInterface
     {
         $db = $this->services->db();
         $held = (int) $db->setQuery(
-            'SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE calendar_id = ' . $calendarId
-            . ' AND user_id = ' . $userId
+            'SELECT user_id FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE calendar_id = ' . $calendarId
+            . ' AND user_id = ' . $userId . ' LIMIT 1 FOR UPDATE'
         )->loadResult() > 0;
 
         if (!$held) {
