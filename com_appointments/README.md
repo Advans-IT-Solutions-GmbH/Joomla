@@ -1323,6 +1323,11 @@ skipped or repeated local hour during a clock change.
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 Like every extension in this repository, the component ships **English (`en-GB`)**, **German
 (`de-DE`, Swiss High German)** and **French (`fr-FR`)**, for both the administrator and site part.
 Visible text uses language keys; generic labels use Joomla core keys.
