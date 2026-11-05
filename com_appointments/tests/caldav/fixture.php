@@ -21,6 +21,13 @@
  * state, including the test passwords, stays in /tmp inside the container.
  */
 
+// Model the site's root HTTPS request before Joomla derives its CLI URI.
+$_SERVER['HTTPS'] = 'on';
+$_SERVER['SERVER_PORT'] = '443';
+$_SERVER['HTTP_HOST'] = 'joomla';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['REQUEST_URI'] = '/';
+
 require __DIR__ . '/../scripts/appointments-joomla.php';
 require_once __DIR__ . '/../scripts/appointments-fixtures.php';
 
@@ -202,6 +209,10 @@ function setup(): void
     setDavBaseUrl('https://joomla/dav/');
     $team = services();
 
+    if ($team->davBaseUrl() !== 'https://joomla/dav/') {
+        fail('The configured HTTPS CalDAV base URL was not accepted by the site.');
+    }
+
     if (!$team->enabled()) {
         fail('The internet calendars do not switch on (option or libsodium).');
     }
@@ -231,6 +242,16 @@ function setup(): void
     saveState($state);
 
     $owner = $state['users']['owner']['id'];
+    $superGroup = (int) (db()->query("SELECT id FROM " . prefix() . "usergroups WHERE title='Super Users'")->fetch_assoc()['id'] ?? 0);
+
+    if ($superGroup < 1) {
+        fail('The Joomla Super Users group is missing.');
+    }
+
+    // Calendar deletion requires both core.delete and an effective manager grant.
+    db()->query("INSERT INTO " . prefix() . "user_usergroup_map (user_id,group_id) VALUES ({$owner},{$superGroup})");
+    $state['cleanup_actor'] = $owner;
+    saveState($state);
 
     foreach (['T' => 'CI team calendar', 'R' => 'CI revocation calendar', 'F' => 'CI owner only'] as $key => $title) {
         $id = $team->calendars()->create($admin, ['title' => $title, 'owner_user_id' => $owner, 'colour' => '#2a6f97']);
@@ -387,12 +408,16 @@ function teardown(): void
 
     foreach ($state['calendars'] as $key => $calendar) {
         try {
-            $team->calendars()->delete($state['admin'], (int) $calendar['id']);
+            $team->calendars()->delete($state['cleanup_actor'] ?? $state['admin'], (int) $calendar['id']);
             unset($state['calendars'][$key]);
             saveState($state);
         } catch (\Throwable $e) {
             $errors[] = 'Calendar delete: ' . $e->getMessage();
         }
+    }
+
+    if ($errors !== []) {
+        fail(implode("\n", $errors));
     }
 
     if (!empty($state['event'])) {
