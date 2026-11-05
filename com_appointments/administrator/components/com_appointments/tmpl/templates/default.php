@@ -33,6 +33,13 @@ $purposeKeys = [
     'guest_reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_RESCHEDULE',
     'guest_cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CANCELLATION',
     'guest_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_REMINDER',
+    'team_device_added' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_DEVICE_ADDED',
+    'team_invitation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION',
+    'team_invitation_accepted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION_ACCEPTED',
+    'team_grant_changed' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_GRANT_CHANGED',
+    'team_access_suspended' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCESS_SUSPENDED',
+    'team_calendar_deleted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_CALENDAR_DELETED',
+    'team_account_locked' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCOUNT_LOCKED',
 ];
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>" method="post" name="adminForm" id="adminForm">

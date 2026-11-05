@@ -62,4 +62,28 @@ final class DefaultTemplates
         'cancellation' => 'guest_cancellation',
         'reminder' => 'guest_reminder',
     ];
+
+    /**
+     * Mails of the internet calendars (work package D). Site-wide only (event type 0), never
+     * with a calendar entry attached; NotificationService sends only the purposes of SENT.
+     */
+    public const TEAM_KEYS = [
+        'team_device_added' => ['COM_APPOINTMENTS_TEAM_D_MAIL_DEVICE_ADDED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_DEVICE_ADDED_BODY'],
+        'team_invitation' => ['COM_APPOINTMENTS_TEAM_D_MAIL_INVITATION_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_INVITATION_BODY'],
+        'team_invitation_accepted' => ['COM_APPOINTMENTS_TEAM_D_MAIL_INVITATION_ACCEPTED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_INVITATION_ACCEPTED_BODY'],
+        'team_grant_changed' => ['COM_APPOINTMENTS_TEAM_D_MAIL_GRANT_CHANGED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_GRANT_CHANGED_BODY'],
+        'team_access_suspended' => ['COM_APPOINTMENTS_TEAM_D_MAIL_ACCESS_SUSPENDED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_ACCESS_SUSPENDED_BODY'],
+        'team_calendar_deleted' => ['COM_APPOINTMENTS_TEAM_D_MAIL_CALENDAR_DELETED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_CALENDAR_DELETED_BODY'],
+        'team_account_locked' => ['COM_APPOINTMENTS_TEAM_D_MAIL_ACCOUNT_LOCKED_SUBJECT', 'COM_APPOINTMENTS_TEAM_D_MAIL_ACCOUNT_LOCKED_BODY'],
+    ];
+
+    /**
+     * Every seeded template purpose: the booking mails and the internet calendar mails.
+     *
+     * @return  array<string, array{0: string, 1: string}>
+     */
+    public static function all(): array
+    {
+        return self::KEYS + self::TEAM_KEYS;
+    }
 }
