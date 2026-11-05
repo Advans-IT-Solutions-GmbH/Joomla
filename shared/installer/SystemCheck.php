@@ -217,7 +217,7 @@ final class SystemCheck
     {
         self::loadLanguage();
         $escape = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $html = '<section class="advans-system-check"><h3>' . $escape(Text::_('ADVANS_CHECK_TITLE') . ' — ' . $id) . '</h3>';
+        $html = '<section class="advans-system-check" style="min-width:0;max-width:100%;overflow-wrap:anywhere"><h3>' . $escape(Text::_('ADVANS_CHECK_TITLE') . ' — ' . $id) . '</h3>';
         $html .= '<p>' . $escape(Text::_('ADVANS_CHECK_SCOPE')) . '</p>';
 
         $headings = ['passed' => 'ADVANS_CHECK_PASSED', 'blockers' => 'ADVANS_CHECK_BLOCKERS', 'warnings' => 'ADVANS_CHECK_WARNINGS'];

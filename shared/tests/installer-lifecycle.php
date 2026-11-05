@@ -226,6 +226,10 @@ namespace {
 
             $assert(!str_contains($html, 'ADVANS_CHECK_'), 'Untranslated shared key in live report.');
             $assert(str_contains($html, 'extension_id=1'), 'Report does not link to the repeatable plugin check.');
+            $document = new \DOMDocument();
+            $document->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NOERROR | LIBXML_NOWARNING);
+            $section = $document->getElementsByTagName('section')->item(0);
+            $assert($section !== null && $section->getAttribute('style') === 'min-width:0;max-width:100%;overflow-wrap:anywhere', 'Shared report must wrap long function names within narrow administrator panels.');
         }
 
         \Joomla\CMS\Factory::$db->enabled = false;
