@@ -824,11 +824,10 @@ return static function (TeamSuite $suite): void {
             }
         }
 
-        // The mail is built on the command line, whose site address and URL style differ from the
-        // suite's address: the mail must carry an HTTPS link with the token, and the browser opens
-        // the activation page with that token at the suite's address.
-        $linkPath = $link !== '' && preg_match('/token=([A-Za-z0-9_-]{43})/', $link, $t) === 1
-            ? '/index.php?option=com_appointments&view=activation&token=' . $t[1]
+        // The browser follows the complete link of the mail, as the invited person does: HTTPS,
+        // the site address, path and query exactly as sent. Only the masked form is printed.
+        $linkPath = $link !== '' && str_starts_with($link, 'https://') && preg_match('/[?&]token=[A-Za-z0-9_-]{43}(?:&|$)/', $link) === 1
+            ? $link
             : '';
 
         if ($linkPath === '') {
@@ -841,7 +840,7 @@ return static function (TeamSuite $suite): void {
         $activationForm = null;
 
         $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm) {
-            if ($linkPath === '') {
+            if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
                 return false;
             }
 
