@@ -586,7 +586,16 @@ return static function (TeamSuite $suite): void {
         $invitations = $services->invitations();
         $tokenFor = static function (array $before): ?string {
             foreach (AppointmentsMail::messagesSince($before) as $mime) {
-                if (preg_match('/token=([A-Za-z0-9_-]{43})/', AppointmentsMail::decoded($mime), $match)) {
+                if (preg_match('#https://[^\s"<>]*token=([A-Za-z0-9_-]{43})#', AppointmentsMail::decoded($mime), $match)) {
+                    $parts = parse_url(html_entity_decode($match[0], ENT_QUOTES, 'UTF-8'));
+                    parse_str($parts['query'] ?? '', $query);
+                    $path = $parts['path'] ?? '';
+
+                    if (!str_ends_with($path, '/index.php') || substr_count($path, '/index.php') !== 1
+                        || ($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== 'activation') {
+                        throw new RuntimeException('The activation mail does not contain a direct, canonical activation URL.');
+                    }
+
                     return $match[1];
                 }
             }
