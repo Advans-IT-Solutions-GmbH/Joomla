@@ -82,22 +82,28 @@ final class AuditPrivacyRedactTest extends TestCase
     public function testLargeSitesAreSearchedWithinHardLimits(): void
     {
         // 10,000 calendars of 300 entries each: far more than one request may load.
-        $ids = range(1, 10000);
-        $stats = [];
+        $used = 0;
+        $searched = [];
 
-        foreach ($ids as $id) {
-            $stats[$id] = ['objects' => 300, 'bytes' => $id === 3 ? TeamPrivacy::MAX_CALENDAR_BYTES + 1 : 300 * 4096];
+        foreach (range(1, 10000) as $id) {
+            $bytes = $id === 3 ? TeamPrivacy::MAX_CALENDAR_BYTES + 1 : 300 * 4096;
+            // Calendars 5 to 9 cannot be opened in this session: they are not charged.
+            $opens = $id < 5 || $id > 9;
+
+            if (!TeamPrivacy::fits(300, $bytes, $used) || !$opens) {
+                continue;
+            }
+
+            $used += 300;
+            $searched[] = $id;
         }
 
-        $plan = TeamPrivacy::plan($ids, $stats);
-        $loaded = array_sum(array_map(static fn (int $id): int => $stats[$id]['objects'], $plan));
-
-        self::assertNotContains(3, $plan, 'A calendar above the byte limit is never loaded');
-        self::assertLessThanOrEqual(TeamPrivacy::MAX_OBJECTS, $loaded);
-        self::assertSame(array_slice(array_values(array_diff($ids, [3])), 0, intdiv(TeamPrivacy::MAX_OBJECTS, 300)), $plan);
-        self::assertSame([], TeamPrivacy::plan([1, 2], [1 => ['objects' => 5, 'bytes' => 10], 2 => ['objects' => 5, 'bytes' => 10]], 100, 4),
-            'Nothing above the entry limit');
-        self::assertSame([7], TeamPrivacy::plan([7], []), 'An empty calendar is searched');
+        self::assertNotContains(3, $searched, 'A calendar above the byte limit is never loaded');
+        self::assertLessThanOrEqual(TeamPrivacy::MAX_OBJECTS, $used);
+        self::assertCount(intdiv(TeamPrivacy::MAX_OBJECTS, 300), $searched);
+        self::assertContains(10, $searched, 'Calendars that cannot be opened use none of the budget');
+        self::assertFalse(TeamPrivacy::fits(5, 10, 0, 100, 4), 'Nothing above the entry limit');
+        self::assertTrue(TeamPrivacy::fits(0, 0, TeamPrivacy::MAX_OBJECTS), 'An empty calendar always fits');
     }
 
     public function testFoldedLinesAreUnfoldedFirst(): void

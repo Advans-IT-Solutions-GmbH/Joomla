@@ -103,6 +103,15 @@ class SystemModel extends BaseDatabaseModel
             ['label' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_ENABLED', 'ok' => true,
                 'value' => Text::_((int) $params->get('teamcal_enabled', 0) === 1 ? 'JENABLED' : 'JDISABLED')],
         ];
+        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (class_exists($records) && method_exists($records, 'pending')) {
+            // Booking rows still in clear (section 5.10): the retention routine encrypts them.
+            $clear = (int) $records::pending($this->getDatabase());
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
+        }
+
         $memory = self::bytes((string) ini_get('memory_limit'));
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY', $memory < 0 || $memory >= 128 * 1024 * 1024,
             (string) ini_get('memory_limit'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY_FIX');
@@ -145,6 +154,12 @@ class SystemModel extends BaseDatabaseModel
         $never = array_map('intval', (array) $users->get('neverMFAUserGroups', []));
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_FORCED', $groups !== [] && array_diff($groups, $force) === [],
             Text::_($groups !== [] && array_diff($groups, $force) === [] ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_FORCED_FIX');
+        // Joomla's own limit of tries for the second factor (com_users options).
+        $tries = (int) $users->get('mfatrycount', 10);
+        $window = (int) $users->get('mfatrytime', 1);
+        $limited = $tries > 0 && $tries <= 10 && $window > 0;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_TRIES', $limited, $tries . ' / ' . $window,
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_TRIES_FIX');
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_NEVER', array_intersect($groups, $never) === [],
             Text::_(array_intersect($groups, $never) === [] ? 'JNO' : 'JYES'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_NEVER_FIX');
 
@@ -168,15 +183,6 @@ class SystemModel extends BaseDatabaseModel
             $behind = $this->anchorsBehind($services);
             $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND', $behind === 0, (string) $behind,
                 'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND_FIX');
-        }
-
-        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
-
-        if (class_exists($records) && method_exists($records, 'pending')) {
-            // Booking rows still in clear (section 5.10): the retention routine encrypts them.
-            $clear = (int) $records::pending($db);
-            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
-                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
         }
 
         // The sign-in lock failed and the website sign-in went on without it

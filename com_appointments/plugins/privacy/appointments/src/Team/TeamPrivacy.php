@@ -52,6 +52,13 @@ final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
 
+    /**
+     * The end of this request's time budget (microtime), shared by search and removal.
+     *
+     * @var  float
+     */
+    private $deadline = 0.0;
+
     /** Hard limits of one request, so a large site never exhausts memory or time. */
     public const MAX_CALENDAR_BYTES = 16777216;
     public const MAX_OBJECTS = 20000;
@@ -191,34 +198,15 @@ final class TeamPrivacy
     }
 
     /**
-     * Which calendars one request may load: a calendar whose entries exceed
-     * MAX_CALENDAR_BYTES is never loaded, and the calendars together stay
-     * below MAX_OBJECTS entries. Pure, in calendar order.
-     *
-     * @param   int[]                                                 $calendarIds
-     * @param   array<int|string, array{objects: int|string, bytes: int|string}>  $stats  Per calendar id.
-     *
-     * @return  int[]  The calendars to search; the others are reported as not searched.
+     * Whether one more calendar fits into a request: a calendar whose entries
+     * exceed MAX_CALENDAR_BYTES is never loaded, and the searched calendars
+     * together stay below MAX_OBJECTS entries. Only calendars this session
+     * can open are charged. Pure.
      */
-    public static function plan(array $calendarIds, array $stats, int $maxCalendarBytes = self::MAX_CALENDAR_BYTES,
-        int $maxObjects = self::MAX_OBJECTS): array
+    public static function fits(int $count, int $bytes, int $used, int $maxCalendarBytes = self::MAX_CALENDAR_BYTES,
+        int $maxObjects = self::MAX_OBJECTS): bool
     {
-        $plan = [];
-        $objects = 0;
-
-        foreach ($calendarIds as $id) {
-            $count = (int) ($stats[$id]['objects'] ?? 0);
-            $bytes = (int) ($stats[$id]['bytes'] ?? 0);
-
-            if ($bytes > $maxCalendarBytes || $objects + $count > $maxObjects) {
-                continue;
-            }
-
-            $objects += $count;
-            $plan[] = $id;
-        }
-
-        return $plan;
+        return $bytes <= $maxCalendarBytes && $used + $count <= $maxObjects;
     }
 
     /**
@@ -329,6 +317,13 @@ final class TeamPrivacy
             $unsearched = $search['unsearched'];
 
             foreach ($search['matches'] as $match) {
+                if (microtime(true) > $this->deadline) {
+                    // Out of time: what is left is reported, not dropped.
+                    $unsearched[$match['calendar_id']] = $match['title'];
+
+                    continue;
+                }
+
                 try {
                     // Only the version that was searched: a client may have
                     // replaced the entry since, which then fails instead of
@@ -398,8 +393,10 @@ final class TeamPrivacy
         $stats = $db->setQuery($this->query()->select([$db->quoteName('calendar_id'), 'COUNT(*) AS ' . $db->quoteName('objects'),
             'COALESCE(SUM(' . $db->quoteName('size') . '), 0) AS ' . $db->quoteName('bytes')])
             ->from($db->quoteName('#__appointments_calendar_objects'))->group($db->quoteName('calendar_id')))->loadAssocList('calendar_id') ?: [];
-        $plan = self::plan(array_map(static fn (array $calendar): int => (int) $calendar['id'], $calendars), $stats);
-        $deadline = microtime(true) + self::TIME_BUDGET_SECONDS;
+        // One deadline for the whole request: the removal after the search
+        // stops at it too.
+        $deadline = $this->deadline = microtime(true) + self::TIME_BUDGET_SECONDS;
+        $used = 0;
         $exported = 0;
         $matches = [];
         $unsearched = [];
@@ -409,9 +406,12 @@ final class TeamPrivacy
             $id = (int) $calendar['id'];
             $title = (string) $calendar['title'] !== '' ? (string) $calendar['title'] : '#' . $id;
 
+            $count = (int) ($stats[$id]['objects'] ?? 0);
+            $bytes = (int) ($stats[$id]['bytes'] ?? 0);
+
             // Beyond the limits of one request (too large, too many entries,
             // out of time): named as not searched, never a silent stop.
-            if (!\in_array($id, $plan, true) || microtime(true) > $deadline) {
+            if (microtime(true) > $deadline || !self::fits($count, $bytes, $used)) {
                 $unsearched[$id] = $title;
 
                 continue;
@@ -420,10 +420,13 @@ final class TeamPrivacy
             $keyring = $address === '' ? null : $this->keyring($id);
 
             if ($keyring === null) {
+                // Not charged: a calendar this session cannot open uses none of the budget.
                 $unsearched[$id] = $title;
 
                 continue;
             }
+
+            $used += $count;
 
             try {
                 $objects = $this->services->objects()->all($id);
