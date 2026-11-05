@@ -42,6 +42,12 @@ interface LockoutServiceInterface
     public function retryAfter(string $username, string $ip): int;
 
     /**
+     * Read the existing account/address lock without reserving an authentication
+     * attempt. For already authenticated actions that do not compare a secret.
+     */
+    public function remainingLock(string $username, string $ip): int;
+
+    /**
      * Before Joomla checks a password. When the request is a sign-in (site:
      * com_users task user.login; administrator: com_login task login) and the
      * user name or the address is locked, the sign-in is answered exactly like a

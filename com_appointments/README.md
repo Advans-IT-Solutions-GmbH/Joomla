@@ -350,6 +350,9 @@ Cancel so their checkout is released. Authorisation and deliberate privacy-prese
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
 
+Adding a device checks existing account and address locks without reserving a password attempt;
+successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
+
 ### Internet calendars
 
 The administrator calendar list has an **Overview** toolbar link back to the component's existing
