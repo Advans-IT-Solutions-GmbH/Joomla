@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Application\ConsoleApplication;
@@ -33,9 +34,30 @@ final class NotificationService
     {
     }
 
+    /**
+     * The guest list of booking $id as stored now. A copy without an id keeps its own list; a
+     * booking that is no longer stored has no guests to write to.
+     *
+     * A locking read: it sees the latest committed list even inside a transaction of the caller
+     * that started earlier (the Scheduler's reminder run), and a guest removal that is still running
+     * finishes first (BookingStore::removeGuest locks the row FOR UPDATE). A removal that starts
+     * afterwards waits for the caller's transaction, so a removed address never gets a later mail.
+     */
+    private function currentGuests(int $id, mixed $copy): ?string
+    {
+        if ($id < 1) {
+            return is_string($copy) ? $copy : null;
+        }
+
+        $rows = $this->db->setQuery('SELECT ' . $this->db->quoteName('guest_emails') . ' FROM ' . $this->db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' LOCK IN SHARE MODE')->loadColumn();
+
+        return is_string($rows[0] ?? null) ? $rows[0] : null;
+    }
+
     public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
     {
-        if (!isset(DefaultTemplates::KEYS[$purpose])) {
+        if (!in_array($purpose, DefaultTemplates::SENT, true)) {
             throw new \InvalidArgumentException('Unsupported notification purpose.');
         }
 
@@ -48,96 +70,132 @@ final class NotificationService
         }
         $event = $this->event((int) $booking['eventtype_id']);
         $hostParams = json_decode((string) $event['host_params'], true) ?: [];
-        $hostLanguage = (string) ($hostParams['language'] ?? 'en-GB');
-        $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage : 'en-GB';
+        // The host's profile language, else the site's default language, else English.
+        $siteLanguage = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        $hostLanguage = (string) (($hostParams['language'] ?? '') !== '' ? $hostParams['language'] : $siteLanguage);
+        $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage
+            : (in_array($siteLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $siteLanguage : 'en-GB');
         $inviteeLanguage = (string) ($booking['invitee_language'] ?? 'en-GB');
         $recipients = [];
+        // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
+        // who removed their address in the meantime gets no further mail and is no attendee of the
+        // calendar entry. The list is read with a shared lock inside a transaction (a savepoint when the
+        // caller, such as the Scheduler, already holds one) that lasts until every mail is out, so a
+        // guest removal (BookingStore::removeGuest, FOR UPDATE on the same row) waits for the delivery
+        // and a removed address is never written to afterwards.
+        $stored = (int) $booking['id'] > 0;
 
-        if (!$hostOnly && !empty($booking['invitee_email'])) {
-            $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true];
-            foreach (preg_split('/\r\n|\r|\n/', trim((string) ($booking['guest_emails'] ?? '')), -1, PREG_SPLIT_NO_EMPTY) as $guest) {
-                $recipients[] = [$guest, $inviteeLanguage, false, false];
-            }
+        if ($stored) {
+            $this->db->transactionStart(true);
         }
-        $recipients[] = [$event['host_email'], $hostLanguage, true, false];
-        $failures = 0;
-        $conferences = ConferenceService::forComponent($this->db);
 
-        foreach ($recipients as [$address, $tag, $isHost, $canManage]) {
-            try {
-                $recipientPurpose = $isHost && in_array($purpose, ['confirmation', 'pending'], true) ? 'host_notice' : $purpose;
-                $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
-                $language = new Language($tag);
-                $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
-                $timezone = $isHost ? (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'))
-                    : (string) $booking['invitee_timezone'];
-                $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);
-                $stateKey = match ((int) $booking['state']) {
-                    0 => 'COM_APPOINTMENTS_MAIL_STATE_PENDING',
-                    1 => 'COM_APPOINTMENTS_MAIL_STATE_CONFIRMED',
-                    2 => 'COM_APPOINTMENTS_MAIL_STATE_CANCELLED',
-                    default => throw new \InvalidArgumentException('Invalid notification booking state.'),
-                };
-                $presentation['{state_label}'] = $language->_($stateKey);
-                $template['subject'] = strtr($template['subject'], $presentation);
-                $template['body'] = strtr($template['body'], $presentation);
-                $links = $canManage ? $this->links($booking) : [];
-                $recipientBooking = $booking;
-                if ($isHost && !empty($booking['conference_url'])) {
-                    $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
-                }
-                $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, $links, $now);
-                // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
-                // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
-                if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
-                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_JOIN') . ":\n" . $recipientBooking['conference_url'];
-                }
+        try {
+            $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], $booking['guest_emails'] ?? null);
 
-                if ($canManage) {
-                    $message['body'] .= "\n\n" . $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE') . ":\n" . $links['reschedule_url']
-                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_CANCEL') . ":\n" . $links['cancel_url']
-                        . "\n" . $language->_('COM_APPOINTMENTS_MAIL_DELETE') . ":\n" . $links['erase_url'];
-                }
-
-                $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
-                $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
-                $mailer->addRecipient($address);
-                $mailer->setSubject($message['subject']);
-                // HTML in the site's mail layout when com_mails sends HTML, the text stays as
-                // alternative part. A site with plain-text mails keeps the text mail.
-                // Known URLs with the label they are shown with in the HTML part.
-                $known = [];
-                if (!empty($recipientBooking['conference_url'])) {
-                    $known[(string) $recipientBooking['conference_url']] = $language->_('COM_APPOINTMENTS_MAIL_JOIN');
-                }
-                foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL', 'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE'] as $field => $key) {
-                    if (!empty($links[$field])) {
-                        $known[(string) $links[$field]] = $language->_($key);
+            if (!$hostOnly && !empty($booking['invitee_email'])) {
+                $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true, false];
+                // A guest gets the guest template of the purpose, with a neutral salutation and the
+                // link that removes only their own address. A purpose without one is not sent to guests.
+                if (isset(DefaultTemplates::GUEST[$purpose])) {
+                    foreach (PrivacyAddress::guestList($booking['guest_emails'] ?? null) as $guest) {
+                        $recipients[] = [$guest, $inviteeLanguage, false, false, true];
                     }
                 }
-                $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, $known, $this->publicBase());
+            }
+            $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
+            $failures = 0;
+            $conferences = ConferenceService::forComponent($this->db);
 
-                if ($html !== null) {
-                    $mailer->isHtml(true);
-                    $mailer->setBody($html);
-                    $mailer->AltBody = $message['body'];
-                } else {
-                    $mailer->setBody($message['body']);
-                    $mailer->isHtml(false);
-                }
+            foreach ($recipients as [$address, $tag, $isHost, $canManage, $isGuest]) {
+                try {
+                    $recipientPurpose = $isHost ? (DefaultTemplates::HOST[$purpose] ?? $purpose)
+                        : ($isGuest ? DefaultTemplates::GUEST[$purpose] : $purpose);
+                    $template = $this->template((int) $booking['eventtype_id'], $recipientPurpose, $tag);
+                    $language = new Language($tag);
+                    $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
+                    // «Label:» before a link on its own line, «Label :» in French.
+                    $labelFormat = $language->_('COM_APPOINTMENTS_MAIL_LINK_LABEL');
+                    $labelFormat = str_contains($labelFormat, '%s') ? $labelFormat : '%s:';
+                    $timezone = $isHost ? (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'))
+                        : (string) $booking['invitee_timezone'];
+                    $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);
+                    $stateKey = match ((int) $booking['state']) {
+                        0 => 'COM_APPOINTMENTS_MAIL_STATE_PENDING',
+                        1 => 'COM_APPOINTMENTS_MAIL_STATE_CONFIRMED',
+                        2 => 'COM_APPOINTMENTS_MAIL_STATE_CANCELLED',
+                        default => throw new \InvalidArgumentException('Invalid notification booking state.'),
+                    };
+                    $presentation['{state_label}'] = $language->_($stateKey);
+                    $template['subject'] = strtr($template['subject'], $presentation);
+                    $template['body'] = strtr($template['body'], $presentation);
+                    $links = $canManage ? $this->links($booking) : ($isGuest ? $this->guestLinks($booking, $address) : []);
+                    $recipientBooking = $booking;
+                    if ($isHost && !empty($booking['conference_url'])) {
+                        $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
+                    }
+                    $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, $links, $now);
+                    // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
+                    // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
+                    if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_JOIN')) . "\n" . $recipientBooking['conference_url'];
+                    }
 
-                foreach ($message['attachments'] as $attachment) {
-                    $mailer->addStringAttachment($attachment['content'], $attachment['filename'], 'base64', $attachment['content_type']);
-                }
+                    if ($canManage) {
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE')) . "\n" . $links['reschedule_url']
+                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_CANCEL')) . "\n" . $links['cancel_url']
+                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_DELETE')) . "\n" . $links['erase_url'];
+                    }
 
-                if (!$mailer->send()) {
-                    throw new NotificationException('Mail delivery was rejected.');
+                    if ($isGuest) {
+                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_GUEST_REMOVE')) . "\n" . $links['guest_remove_url'];
+                    }
+
+                    $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
+                    $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
+                    $mailer->addRecipient($address);
+                    $mailer->setSubject($message['subject']);
+                    // HTML in the site's mail layout when com_mails sends HTML, the text stays as
+                    // alternative part. A site with plain-text mails keeps the text mail.
+                    // Known URLs with the label they are shown with in the HTML part.
+                    $known = [];
+                    if (!empty($recipientBooking['conference_url'])) {
+                        $known[(string) $recipientBooking['conference_url']] = $language->_('COM_APPOINTMENTS_MAIL_JOIN');
+                    }
+                    foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL',
+                        'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE', 'guest_remove_url' => 'COM_APPOINTMENTS_MAIL_GUEST_REMOVE'] as $field => $key) {
+                        if (!empty($links[$field])) {
+                            $known[(string) $links[$field]] = $language->_($key);
+                        }
+                    }
+                    $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, $known, $this->publicBase());
+
+                    if ($html !== null) {
+                        $mailer->isHtml(true);
+                        $mailer->setBody($html);
+                        $mailer->AltBody = $message['body'];
+                    } else {
+                        $mailer->setBody($message['body']);
+                        $mailer->isHtml(false);
+                    }
+
+                    foreach ($message['attachments'] as $attachment) {
+                        $mailer->addStringAttachment($attachment['content'], $attachment['filename'], 'base64', $attachment['content_type']);
+                    }
+
+                    if (!$mailer->send()) {
+                        throw new NotificationException('Mail delivery was rejected.');
+                    }
+                } catch (NotificationException | MailDisabledException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException $e) {
+                    // Transport exceptions can contain recipients, URLs or SMTP credentials.
+                    // Keep diagnostics deliberately limited to an internal booking id and purpose.
+                    Log::add('Appointment notification failed: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
+                    $failures++;
                 }
-            } catch (NotificationException | MailDisabledException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException $e) {
-                // Transport exceptions can contain recipients, URLs or SMTP credentials.
-                // Keep diagnostics deliberately limited to an internal booking id and purpose.
-                Log::add('Appointment notification failed: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
-                $failures++;
+            }
+        } finally {
+            // Nothing is written here: committing only releases the lock (or the savepoint).
+            if ($stored) {
+                $this->db->transactionCommit(true);
             }
         }
 
@@ -209,6 +267,41 @@ final class NotificationService
 
     public function links(array $booking): array
     {
+        $base = $this->linkBase();
+        $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+        $result = [];
+        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
+
+        foreach ($names as $action => $key) {
+            $result[$key] = $base . '/index.php?' . http_build_query([
+                'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
+                'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
+            ]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * The guest's own address and the signed link that removes only that address from the
+     * booking. The address is bound into the signature, never written into the URL.
+     */
+    public function guestLinks(array $booking, string $guest): array
+    {
+        $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+
+        return [
+            'guest_email' => $guest,
+            'guest_remove_url' => $this->linkBase() . '/index.php?' . http_build_query([
+                'option' => 'com_appointments', 'task' => 'guest.confirm', 'id' => (int) $booking['id'],
+                'signature' => $signed->signGuest((int) $booking['id'], $guest, $booking['modified_utc']),
+            ]),
+        ];
+    }
+
+    /** Public site root for signed links, without a trailing slash. */
+    private function linkBase(): string
+    {
         $app = Factory::getApplication();
         $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
         if ($base === '') {
@@ -226,17 +319,7 @@ final class NotificationService
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
             throw new NotificationException('The appointment public site URL is invalid.');
         }
-        $signed = new SignedLink(new KeyProvider((string) $app->get('secret')));
-        $result = [];
-        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
 
-        foreach ($names as $action => $key) {
-            $result[$key] = rtrim($base, '/') . '/index.php?' . http_build_query([
-                'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
-                'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
-            ]);
-        }
-
-        return $result;
+        return rtrim($base, '/');
     }
 }

@@ -98,7 +98,8 @@ class InstallationTest
             );
             $row = $result ? $result->fetch_assoc() : null;
 
-            return $row && $row['version_id'] === '1.0.0';
+            // The newest file in sql/updates/mysql: an update runs every later file exactly once.
+            return $row && $row['version_id'] === '1.3.0';
         });
 
         $this->test('Administrator language file en-GB is installed', function () {
@@ -215,6 +216,80 @@ class InstallationTest
 
             return $problems === [];
         });
+        $tasks = function (): array {
+            $found = [];
+            $result = $this->db->query("SELECT id, type, state, execution_rules, params FROM {$this->dbPrefix}scheduler_tasks"
+                . " WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention') ORDER BY id");
+            while ($result && ($row = $result->fetch_assoc())) {
+                $found[$row['type']][] = $row;
+            }
+
+            return $found;
+        };
+        $reinstall = function (): bool {
+            $output = [];
+            $exitCode = 0;
+            exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg('/tmp/extension.zip') . ' 2>&1', $output, $exitCode);
+            if ($exitCode !== 0) {
+                echo '    ' . implode("\n    ", $output) . "\n";
+            }
+
+            return $exitCode === 0;
+        };
+
+        $this->test('Installation creates one enabled Scheduler task per routine', function () use ($tasks) {
+            $found = $tasks();
+            $reminders = $found['plg_task_appointments.reminders'] ?? [];
+            $retention = $found['plg_task_appointments.retention'] ?? [];
+            $rules = static fn (array $row): array => json_decode((string) $row['execution_rules'], true) ?: [];
+
+            return count($reminders) === 1 && count($retention) === 1
+                && (int) $reminders[0]['state'] === 1 && (int) $retention[0]['state'] === 1
+                && ($rules($reminders[0])['rule-type'] ?? '') === 'interval-minutes' && (int) ($rules($reminders[0])['interval-minutes'] ?? 0) === 5
+                && ($rules($retention[0])['rule-type'] ?? '') === 'interval-hours' && (int) ($rules($retention[0])['interval-hours'] ?? 0) === 24
+                && (int) (json_decode((string) $reminders[0]['params'], true)['batch_size'] ?? 0) === 100;
+        });
+
+        $this->test('An update never re-enables or duplicates a task the operator disabled or trashed', function () use ($tasks, $reinstall) {
+            $found = $tasks();
+            $reminders = (int) ($found['plg_task_appointments.reminders'][0]['id'] ?? 0);
+            $retention = (int) ($found['plg_task_appointments.retention'][0]['id'] ?? 0);
+            if ($reminders === 0 || $retention === 0) {
+                return false;
+            }
+
+            try {
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = 0 WHERE id = {$reminders}");
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = -2 WHERE id = {$retention}");
+                if (!$reinstall()) {
+                    return false;
+                }
+                $after = $tasks();
+
+                return count($after['plg_task_appointments.reminders'] ?? []) === 1 && count($after['plg_task_appointments.retention'] ?? []) === 1
+                    && (int) $after['plg_task_appointments.reminders'][0]['state'] === 0
+                    && (int) $after['plg_task_appointments.retention'][0]['state'] === -2;
+            } finally {
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = 1 WHERE id IN ({$reminders}, {$retention})");
+            }
+        });
+
+        $this->test('An update creates a missing routine task disabled, so it changes no existing booking unasked', function () use ($tasks, $reinstall) {
+            $this->db->query("DELETE FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_appointments.retention'");
+            if (!$reinstall()) {
+                return false;
+            }
+            $after = $tasks();
+            $created = $after['plg_task_appointments.retention'] ?? [];
+            // The later suites run the installed tasks: enable the new one again as an operator would.
+            if (count($created) === 1) {
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = 1 WHERE id = " . (int) $created[0]['id']);
+            }
+
+            return count($created) === 1 && (int) $created[0]['state'] === 0
+                && count($after['plg_task_appointments.reminders'] ?? []) === 1;
+        });
+
         echo "\n=== Installation Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

@@ -11,7 +11,77 @@ final class BookingInputTest extends TestCase
 {
     private function input(): array
     {
-        return ['name' => 'Fixture Person', 'email' => 'person@example.test', 'timezone' => 'Europe/Zurich'];
+        return ['first_name' => 'Fixture', 'last_name' => 'Person', 'email' => 'person@example.test', 'timezone' => 'Europe/Zurich'];
+    }
+
+    public function testFirstAndLastNameAreStoredSeparatelyAndAsTheFullName(): void
+    {
+        $row = (new BookingInput())->validate(array_replace($this->input(), ['first_name' => '  Anna Maria ', 'last_name' => ' Muster-Meier ']), [], 'de-DE');
+        self::assertSame('Anna Maria', $row['invitee_first_name']);
+        self::assertSame('Muster-Meier', $row['invitee_last_name']);
+        self::assertSame('Anna Maria Muster-Meier', $row['invitee_name']);
+        self::assertArrayNotHasKey('name', $row);
+    }
+
+    public function testFirstAndLastNameAreBothRequiredAndReportedAtTheirFields(): void
+    {
+        $input = $this->input();
+        unset($input['first_name'], $input['last_name']);
+        $error = $this->refusal($input + ['name' => 'Legacy Single Field'], []);
+        self::assertSame([
+            'first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME',
+            'last_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME',
+        ], $error->fieldErrors);
+
+        $error = $this->refusal(array_replace($this->input(), ['last_name' => '   ']), []);
+        self::assertSame(['last_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME'], $error->fieldErrors);
+    }
+
+    public function testNamePartsAreLimitedSoTheFullNameFitsItsColumn(): void
+    {
+        $long = str_repeat('ä', BookingInput::NAME_PART_LENGTH);
+        $row = (new BookingInput())->validate(array_replace($this->input(), ['first_name' => $long, 'last_name' => $long]), [], 'en-GB');
+        self::assertSame(255, mb_strlen($row['invitee_name']));
+
+        $error = $this->refusal(array_replace($this->input(), ['first_name' => $long . 'a']), []);
+        self::assertSame(['first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME'], $error->fieldErrors);
+        $error = $this->refusal(array_replace($this->input(), ['last_name' => ['array']]), []);
+        self::assertSame(['last_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME'], $error->fieldErrors);
+    }
+
+    public function testConfiguredGuestMaximumIsEnforced(): void
+    {
+        $guests = static fn (int $count): string => implode(', ', array_map(static fn ($i) => "guest{$i}@example.test", range(1, $count)));
+        $row = (new BookingInput())->validate($this->input() + ['guests' => $guests(3)], [], 'en-GB', false, 3);
+        self::assertCount(3, explode("\n", $row['guest_emails']));
+
+        $error = $this->refusal($this->input() + ['guests' => $guests(4)], [], false, 3);
+        self::assertSame(['guests' => 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS'], $error->fieldErrors);
+
+        $row = (new BookingInput())->validate($this->input() + ['guests' => $guests(50)], [], 'en-GB', false, 50);
+        self::assertCount(50, explode("\n", $row['guest_emails']));
+        $error = $this->refusal($this->input() + ['guests' => $guests(51)], [], false, 99);
+        self::assertSame(['guests' => 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS'], $error->fieldErrors, 'The maximum is clamped to 50');
+    }
+
+    public function testWithoutAGuestFieldSubmittedGuestsAreATamperedForm(): void
+    {
+        $row = (new BookingInput())->validate($this->input(), [], 'en-GB', false, 0);
+        self::assertSame('', $row['guest_emails']);
+
+        $error = $this->refusal($this->input() + ['guests' => 'guest@example.test'], [], false, 0);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS', $error->languageKey);
+        self::assertSame([], $error->fieldErrors);
+    }
+
+    public function testGuestMaximumOptionIsClamped(): void
+    {
+        self::assertSame(10, BookingInput::maxGuests(null));
+        self::assertSame(10, BookingInput::maxGuests('ten'));
+        self::assertSame(0, BookingInput::maxGuests('0'));
+        self::assertSame(0, BookingInput::maxGuests(-5));
+        self::assertSame(25, BookingInput::maxGuests('25'));
+        self::assertSame(50, BookingInput::maxGuests(500));
     }
 
     public function testContactGuestDeduplicationAndUnknownFields(): void
@@ -28,7 +98,7 @@ final class BookingInputTest extends TestCase
     public function testMultilineInviteeNameIsRejectedBeforeSaving(): void
     {
         $this->expectException(BookingValidationException::class);
-        (new BookingInput())->validate(array_replace($this->input(), ['name' => "Fixture\r\nName"]), [], 'en-GB');
+        (new BookingInput())->validate(array_replace($this->input(), ['last_name' => "Fixture\r\nName"]), [], 'en-GB');
     }
 
     #[DataProvider('validFields')]
@@ -139,6 +209,45 @@ final class BookingInputTest extends TestCase
         yield 'North America' => [['country' => '1', 'number' => '(212) 555-0100'], '+12125550100'];
     }
 
+    public function testFixedDialCodeAppliesOnlyWithoutChoiceAndAValidDefault(): void
+    {
+        $params = static fn (array $values): object => (object) $values;
+        self::assertSame('41', BookingInput::fixedDialCode($params(['phone_default_country' => '41', 'phone_country_choice' => 0])));
+        self::assertSame('41', BookingInput::fixedDialCode($params(['phone_default_country' => '+41', 'phone_country_choice' => '0'])));
+        self::assertSame('', BookingInput::fixedDialCode($params(['phone_default_country' => '41', 'phone_country_choice' => 1])));
+        self::assertSame('', BookingInput::fixedDialCode($params(['phone_default_country' => '41'])), 'Choice is allowed by default');
+        self::assertSame('', BookingInput::fixedDialCode($params(['phone_default_country' => '999', 'phone_country_choice' => 0])));
+        self::assertSame('', BookingInput::fixedDialCode($params(['phone_default_country' => '', 'phone_country_choice' => 0])));
+    }
+
+    public function testFixedDialCodeRefusesAnyOtherCodeInEveryTelephoneField(): void
+    {
+        $validate = fn (array $input, array $fields = []): array => (new BookingInput())->validate($input, $fields, 'en-GB', true, 10, '41');
+        self::assertSame('+41791234567', $validate($this->input() + ['phone' => ['country' => '', 'number' => '079 123 45 67']])['invitee_phone']);
+        self::assertSame('+41791234567', $validate($this->input() + ['phone' => ['country' => '41', 'number' => '+41 79 123 45 67']])['invitee_phone']);
+
+        foreach ([['country' => '49', 'number' => '30 1234567'], ['country' => '41', 'number' => '+49 30 1234567'],
+            ['country' => '', 'number' => '0049 30 1234567']] as $phone) {
+            try {
+                $validate($this->input() + ['phone' => $phone]);
+                self::fail('Another calling code was accepted.');
+            } catch (BookingValidationException $e) {
+                self::assertSame(['phone' => 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE'], $e->fieldErrors);
+            }
+        }
+
+        $fields = [['id' => 3, 'type' => 'tel', 'required' => 0, 'options' => null]];
+        try {
+            $validate($this->input() + ['phone' => ['country' => '41', 'number' => '791234567'], 'fields' => [3 => ['country' => '', 'number' => '+44 20 7946 0958']]], $fields);
+            self::fail('A custom telephone field accepted another calling code.');
+        } catch (BookingValidationException $e) {
+            self::assertSame(['field-3' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID'], $e->fieldErrors);
+        }
+
+        $row = (new BookingInput())->validate($this->input() + ['phone' => ['country' => '49', 'number' => '30 1234567']], [], 'en-GB', true);
+        self::assertSame('+49301234567', $row['invitee_phone'], 'Without a fixed code every code is accepted');
+    }
+
     public function testFixedPhoneTakesPrecedenceOverACustomTelephoneField(): void
     {
         $fields = [['id' => 3, 'type' => 'tel', 'required' => 0, 'options' => null]];
@@ -169,11 +278,11 @@ final class BookingInputTest extends TestCase
             ['id' => 6, 'type' => 'email', 'required' => 0, 'options' => '[]'],
             ['id' => 7, 'type' => 'text', 'required' => 0, 'options' => '[]'],
         ];
-        $error = $this->refusal(['name' => '  ', 'email' => 'not-an-address', 'timezone' => 'Europe/Zurich',
+        $error = $this->refusal(['first_name' => '  ', 'last_name' => 'Person', 'email' => 'not-an-address', 'timezone' => 'Europe/Zurich',
             'guests' => 'guest@', 'fields' => [5 => '', 6 => 'broken', 7 => 'valid']], $fields);
         self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS', $error->languageKey);
         self::assertSame([
-            'name' => 'COM_APPOINTMENTS_BOOKING_ERROR_NAME',
+            'first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME',
             'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL',
             'guests' => 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS',
             'field-5' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED',
@@ -183,9 +292,9 @@ final class BookingInputTest extends TestCase
 
     public function testMalformedContactValuesAreReportedAtTheirFields(): void
     {
-        $error = $this->refusal(['name' => ['array'], 'email' => str_repeat('a', 300) . '@example.test', 'timezone' => 'UTC'], []);
+        $error = $this->refusal(['first_name' => ['array'], 'last_name' => 'Person', 'email' => str_repeat('a', 300) . '@example.test', 'timezone' => 'UTC'], []);
         self::assertSame([
-            'name' => 'COM_APPOINTMENTS_BOOKING_ERROR_NAME',
+            'first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME',
             'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL',
         ], $error->fieldErrors);
     }
@@ -200,10 +309,10 @@ final class BookingInputTest extends TestCase
         self::assertSame([], $error->fieldErrors);
     }
 
-    private function refusal(array $input, array $fields, bool $phoneRequired = false): BookingValidationException
+    private function refusal(array $input, array $fields, bool $phoneRequired = false, int $maxGuests = 10): BookingValidationException
     {
         try {
-            (new BookingInput())->validate($input, $fields, 'en-GB', $phoneRequired);
+            (new BookingInput())->validate($input, $fields, 'en-GB', $phoneRequired, $maxGuests);
         } catch (BookingValidationException $e) {
             return $e;
         }

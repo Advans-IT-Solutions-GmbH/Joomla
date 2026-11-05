@@ -65,9 +65,26 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             }
             $domain->addItem($item);
         }
+        // Bookings of other people in which the address is an additional guest: only what
+        // concerns the guest (their address, the event type and the time), never the data of
+        // the person who booked or of the other guests.
+        $guestDomain = new Domain();
+        $guestDomain->name = 'appointments_guest_invitations';
+        $guestDomain->description = Text::_('PLG_PRIVACY_APPOINTMENTS_GUEST_DOMAIN');
+        foreach ($service->guestBookings((string) $event->getRequest()->email) as $invitation) {
+            $item = new Item();
+            $item->id = $invitation['id'];
+            foreach (['guest_email', 'event_title', 'start_utc', 'end_utc', 'state'] as $name) {
+                $field = new Field();
+                $field->name = $name;
+                $field->value = $invitation[$name];
+                $item->addField($field);
+            }
+            $guestDomain->addItem($item);
+        }
         // No invitee information lives in the erasure audit, and staff actor IDs
         // must not be exposed in an invitee's domain.
-        $event->addResult([$domain]);
+        $event->addResult([$domain, $guestDomain]);
     }
 
     public function onPrivacyCanRemoveData(CanRemoveDataEvent $event): void
@@ -79,12 +96,9 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($user && !PrivacyAddress::matches((string) $user->email, $address)) {
             $status->canRemove = false;
             $status->reason = Text::_('PLG_PRIVACY_APPOINTMENTS_ACCOUNT_MISMATCH');
-        } elseif ($service->legalReason() !== '') {
-            foreach ($service->bookings($address) as $booking) {
-                $status->canRemove = false;
-                $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
-                break;
-            }
+        } elseif ($service->legalReason() !== '' && $service->hasBookings($address)) {
+            $status->canRemove = false;
+            $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
         }
         $event->addResult($status);
     }
@@ -96,6 +110,9 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $result = $this->service()->remove((string) $event->getRequest()->email,
             new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
         $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_REMOVED', $result['removed']), 'message');
+        if ($result['guest_removed']) {
+            $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_GUEST_REMOVED', $result['guest_removed']), 'message');
+        }
         if ($result['mail_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_MAIL_FAILED'), 'warning');
         }

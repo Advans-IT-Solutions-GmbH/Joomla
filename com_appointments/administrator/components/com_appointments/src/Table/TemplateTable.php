@@ -16,7 +16,9 @@ defined('_JEXEC') or die;
 
 class TemplateTable extends Table
 {
-    public const PURPOSES = ['confirmation', 'pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice'];
+    public const PURPOSES = ['confirmation', 'pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice',
+        'guest_confirmation', 'guest_pending', 'guest_approved', 'guest_reschedule', 'guest_cancellation', 'guest_reminder',
+        'host_approved', 'host_reschedule', 'host_cancellation', 'host_reminder'];
 
     public function __construct(DatabaseDriver $db)
     {

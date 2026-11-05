@@ -20,13 +20,18 @@ if ($item === null) {
 $user = Factory::getApplication()->getIdentity();
 $asset = 'com_appointments.eventtype.' . (int) $item->eventtype_id;
 $labels = [
-    'invitee_name' => 'COM_APPOINTMENTS_DETAIL_INVITEE_NAME', 'invitee_email' => 'COM_APPOINTMENTS_DETAIL_INVITEE_EMAIL',
+    'invitee_first_name' => 'COM_APPOINTMENTS_DETAIL_INVITEE_FIRST_NAME', 'invitee_last_name' => 'COM_APPOINTMENTS_DETAIL_INVITEE_LAST_NAME',
+    'invitee_email' => 'COM_APPOINTMENTS_DETAIL_INVITEE_EMAIL',
     'invitee_phone' => 'COM_APPOINTMENTS_DETAIL_INVITEE_PHONE', 'guest_emails' => 'COM_APPOINTMENTS_DETAIL_GUEST_EMAILS',
     'start_utc' => 'COM_APPOINTMENTS_DETAIL_START_UTC', 'end_utc' => 'COM_APPOINTMENTS_DETAIL_END_UTC',
     'invitee_timezone' => 'COM_APPOINTMENTS_DETAIL_INVITEE_TIMEZONE', 'cancel_reason' => 'COM_APPOINTMENTS_DETAIL_CANCEL_REASON',
     'uid' => 'COM_APPOINTMENTS_DETAIL_UID', 'sequence' => 'COM_APPOINTMENTS_DETAIL_SEQUENCE',
     'anonymised_utc' => 'COM_APPOINTMENTS_DETAIL_ANONYMISED_UTC',
 ];
+// Proof of consent exists only for bookings made in the consent mode of the booking form.
+if (!empty($item->consent_utc)) {
+    $labels += ['consent_utc' => 'COM_APPOINTMENTS_DETAIL_CONSENT_UTC', 'consent_version' => 'COM_APPOINTMENTS_DETAIL_CONSENT_VERSION'];
+}
 ?>
 <h2><?php echo $this->escape($item->eventtype_title); ?></h2>
 <dl class="row">

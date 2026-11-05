@@ -49,6 +49,16 @@ $inspect = static function (array $before, array $booking, string $method, strin
         } else {
             $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
                 && !str_contains($decoded, 'action=erase'), 'Guest and host notifications never contain the primary invitee bearer capabilities');
+            if (preg_match('/^To:.*guest@example\.test/mi', $unfolded)) {
+                $check(str_contains($decoded, 'task=guest.confirm') && !str_contains($decoded, 'guest@example.test&')
+                    && !str_contains($decoded, 'guest%40example.test'), 'Guest mail carries the signed guest removal link without the address in the URL');
+                $check(preg_match('/(?:Hello|Guten Tag|Bonjour) Fixture/', $decoded) === 0,
+                    'Guest mail never greets the guest with the name of the booking person');
+            } else {
+                $check(!str_contains($decoded, 'task=guest.confirm'), 'Host notification carries no guest removal link');
+                $check(preg_match('/(?:Hello|Guten Tag|Bonjour) Fixture/', $decoded) === 0,
+                    'Host notification uses host wording, never a mail addressed to the booking person');
+            }
         }
         if ($localizedSubject !== null && preg_match('/^Subject:\s*(.*)$/mi', $unfolded, $subject)) {
             $localized = $localized || str_contains(iconv_mime_decode(trim($subject[1]), 0, 'UTF-8'), $localizedSubject);
@@ -60,8 +70,8 @@ $inspect = static function (array $before, array $booking, string $method, strin
 };
 
 try {
-    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 24,
-        'All eight purposes have editable defaults in all three languages');
+    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 54,
+        'All eighteen purposes (eight, six guest and four host templates) have editable defaults in all three languages');
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
@@ -82,7 +92,7 @@ try {
     $before = $spool();
     $html = $browser->request($path, $form);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 10:00:00'")->fetch_assoc();
-    $check($booking && str_contains($html, 'Appointment received'), 'Public confirmation sends real email after saving');
+    $check($booking && preg_match('/Appointment (?:received|confirmed)/', $html) === 1, 'Public confirmation sends real email after saving');
     $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 3, 'Fixture override');
 
     $db->query("UPDATE {$prefix}appointments_bookings SET invitee_language='de-DE' WHERE id=" . (int) $booking['id']);
@@ -151,7 +161,7 @@ try {
     $html = $browser->request($path, $form);
     $saved = $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 12:00:00'")->fetch_row()[0];
     $check((int) $saved === 1 && $before === $spool()
-        && str_contains($html, 'Appointment received') && str_contains($html, 'Your appointment was saved, but'),
+        && preg_match('/Appointment (?:received|confirmed)/', $html) === 1 && str_contains($html, 'Your appointment was saved, but'),
         'Mail failure explicitly preserves the saved booking and warns against duplicate booking');
     // The booking is saved, so the message is a warning, like the missing conference link:
     // messages of one kind look the same in every template.

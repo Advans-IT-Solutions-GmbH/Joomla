@@ -1,4 +1,10 @@
 version: 2
+# Composer ignore rules: every extension declares "php": "^8.1" (Joomla 5.4 minimum),
+# and the CI runs composer install on PHP 8.1 (unit tests of Product Compare and Privacy)
+# and 8.3 (PHPUnit jobs). require-dev must stay installable on PHP 8.1, so these
+# major versions are excluded until the PHP minimum is raised:
+#   - phpunit/phpunit >= 11 (11 needs PHP 8.2, 12 needs PHP 8.3, 13 needs PHP 8.4.1)
+#   - joomla/registry >= 4 (4.x needs PHP 8.3, Joomla 5.4 ships registry 3.x)
 updates:
   # Privacy Plugin
   - package-ecosystem: "composer"
@@ -6,6 +12,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -20,6 +29,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -34,6 +46,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -48,6 +63,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -62,6 +80,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -75,6 +96,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -87,6 +111,11 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
+      - dependency-name: "joomla/registry"
+        versions: [">= 4"]
     groups:
       dependencies:
         patterns:
@@ -99,6 +128,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -111,6 +143,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:
@@ -123,6 +158,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "phpunit/phpunit"
+        versions: [">= 11"]
     groups:
       dependencies:
         patterns:

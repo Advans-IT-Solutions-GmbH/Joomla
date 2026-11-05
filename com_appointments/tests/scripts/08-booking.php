@@ -10,6 +10,11 @@ $tag = 'suite-booking-' . bin2hex(random_bytes(6));
 $scheduleIds = [];
 $eventIds = [];
 $componentParams = null;
+$originalParams = null;
+$setParams = static function (array $changes) use ($db, $prefix, &$originalParams): void {
+    $params = array_replace(json_decode((string) $originalParams, true) ?: [], $changes);
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
+};
 $privacyMenu = null;
 $failures = 0;
 $check = static function (bool $condition, string $label) use (&$failures): void {
@@ -23,7 +28,7 @@ $admin = new AppointmentsHttp('http://localhost', 'booking-admin');
 
 $prepare = static function (int $event, string $start) use ($check): array {
     $client = new AppointmentsHttp('http://localhost', 'booking-guest');
-    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&month=' . substr($start, 0, 7) . '&day=' . substr($start, 0, 10));
+    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start));
     $check($client->status === 200 && str_contains($html, 'name="booking[start]"'), 'No-JavaScript booking form rendered');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -35,7 +40,8 @@ $prepare = static function (int $event, string $start) use ($check): array {
     $data = [
         $client->token($html) => 1, 'rendered_at' => $hidden['rendered_at'] ?? '',
         'form_signature' => $hidden['form_signature'] ?? '', 'website' => '', 'consent' => 1,
-        'booking' => ['name' => 'Fixture Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start],
+        'consent_version' => $hidden['consent_version'] ?? '',
+        'booking' => ['first_name' => 'Fixture', 'last_name' => 'Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start],
     ];
     return [$client, '/index.php?option=com_appointments&task=booking.submit&id=' . $event, $data];
 };
@@ -59,6 +65,10 @@ $pageTitle = static fn (string $html): string => preg_match('#<title>(.*?)</titl
 $bookings = static fn (int $event): int => (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}")->fetch_assoc()['n'];
 
 try {
+    $originalParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    // Most checks below cover the privacy checkbox, which only the acknowledge and consent
+    // modes render; the default notice mode is checked on its own further down.
+    $setParams(['consent_mode' => 'consent']);
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
@@ -83,7 +93,7 @@ try {
     $second = $prepare($eventIds[0], $slot);
     sleep(2);
     $bodies = AppointmentsHttp::parallel([$first, $second]);
-    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment received')));
+    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment confirmed')));
     $friendly = count(array_filter($bodies, static fn ($html) => str_contains($html, 'This time was just taken')));
     $count = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]} AND start_utc='{$slot}' AND state IN(0,1)")->fetch_assoc()['n'];
     $check($successes === 1 && $friendly === 1 && $count === 1, 'Identical concurrent slot: exactly one success and one friendly refreshed form');
@@ -121,7 +131,7 @@ try {
             $db->rollback();
         }
     }
-    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment received')));
+    $successes = count(array_filter($bodies, static fn ($html) => str_contains($html, 'Appointment confirmed')));
     $friendly = count(array_filter($bodies, static fn ($html) => str_contains($html, 'This time was just taken')));
     $count = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_bookings WHERE eventtype_id IN(" . implode(',', $eventIds) . ') AND state IN(0,1)')->fetch_assoc()['n'];
     $check($bothWaited, 'Both requests wait on the host row rather than their different schedules');
@@ -134,7 +144,29 @@ try {
     $body = $request[0]->request($request[1], $request[2]);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$eventIds[0]}")->fetch_assoc();
     $check($booking && (int) $booking['state'] === 0 && str_contains($body, 'held while'), 'Pending request holds its slot');
+    $check($booking && $booking['consent_utc'] !== null && $booking['consent_utc'] >= $time
+        && $booking['consent_version'] === hash('sha256', "consent\nen-GB\nI agree to the processing of my data for this appointment."),
+        'The consent mode stores the consent time and the 64-hex version of mode, language and label');
+    $check($booking && $booking['invitee_first_name'] === 'Fixture' && $booking['invitee_last_name'] === 'Invitee'
+        && $booking['invitee_name'] === 'Fixture Invitee', 'First and last name are stored separately and the full name stays in invitee_name');
     $check($pageTitle($body) === 'Appointment received', 'The confirmation page sets its own title without a menu item of its own');
+    // Step 3: the calendar entry and the reschedule and cancel links of the confirmation mail.
+    $confirmation = $dom($body);
+    $calendarLink = $confirmation->query('//a[contains(@class, "com-appointments-calendar-add")]')->item(0);
+    $calendarHref = $calendarLink instanceof DOMElement ? preg_replace('#^https?://[^/]+#', '', html_entity_decode($calendarLink->getAttribute('href'))) : '';
+    $check(str_contains($calendarHref, 'task=booking.ics') && str_contains($calendarHref, 'id=' . (int) ($booking['id'] ?? 0))
+        && $confirmation->query('//a[contains(@class, "com-appointments-reschedule")][contains(@href, "action=reschedule")]')->length === 1
+        && $confirmation->query('//a[contains(@class, "com-appointments-cancel")][contains(@href, "action=cancel")]')->length === 1,
+        'The confirmation offers the calendar entry and the signed reschedule and cancel links');
+    $ics = $calendarHref !== '' ? $request[0]->request($calendarHref) : '';
+    $check($request[0]->status === 200 && str_starts_with($ics, 'BEGIN:VCALENDAR') && str_contains($ics, 'UID:' . ($booking['uid'] ?? '-')),
+        'The .ics download of the confirmation carries the appointment with the UID of its mail attachment');
+    $request[0]->request(str_replace('id=' . (int) ($booking['id'] ?? 0), 'id=' . ((int) ($booking['id'] ?? 0) + 1000), $calendarHref));
+    $stale = $request[0]->status;
+    $check($stale === 404, 'An .ics link of another appointment is refused in the booking session');
+    $stranger = new AppointmentsHttp('http://localhost', 'booking-stranger');
+    $stranger->request($calendarHref !== '' ? $calendarHref : '/index.php?option=com_appointments&task=booking.ics&id=1');
+    $check($stranger->status === 404, 'The .ics download is not available to another browser session');
     $bookingId = (int) ($booking['id'] ?? 0);
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
     $check($admin->status === 200 && str_contains($page, 'invitee@example.test'), 'Booking visible in administrator list');
@@ -153,6 +185,13 @@ try {
     $check($fieldError($dom($body), 'booking-consent', 'Please confirm your consent.')
         && !str_contains($body, 'The form has expired') && $bookings($eventIds[0]) === 1,
         'Missing consent gets its own message at the checkbox and never creates a booking');
+    // A tick given to another wording (the options changed while the form was open) counts as missing.
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['consent_version'] = str_repeat('0', 64);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $check($fieldError($dom($body), 'booking-consent', 'Please confirm your consent.') && $bookings($eventIds[0]) === 1,
+        'A consent to a label version other than the current one is refused at the checkbox and creates no booking');
     $request[2]['consent'] = 1;
     unset($request[2][$request[0]->token($body)]);
     $request[0]->request($request[1], $request[2]);
@@ -160,15 +199,17 @@ try {
 
     // Release test 22.10.: every invalid field gets its own message at the field.
     $request = $prepare($eventIds[0], $slot);
-    $request[2]['booking']['name'] = '';
+    $request[2]['booking']['first_name'] = '';
+    $request[2]['booking']['last_name'] = '';
     $request[2]['booking']['email'] = 'not-an-address';
     sleep(2);
     $body = $request[0]->request($request[1], $request[2]);
     $xpath = $dom($body);
-    $check($fieldError($xpath, 'booking-name', 'Please enter your name.')
+    $check($fieldError($xpath, 'booking-first_name', 'Please enter your first name.')
+        && $fieldError($xpath, 'booking-last_name', 'Please enter your last name.')
         && $fieldError($xpath, 'booking-email', 'Please enter a valid email address.'),
-        'Empty name and invalid email each get their own message at the field with aria-invalid and aria-describedby');
-    $check(substr_count($body, 'Please enter your name.') === 1 && !str_contains($body, 'Please complete all required fields'),
+        'Empty first name, empty last name and invalid email each get their own message at the field with aria-invalid and aria-describedby');
+    $check(substr_count($body, 'Please enter your first name.') === 1 && !str_contains($body, 'Please complete all required fields'),
         'Field messages are not repeated as a collective message above the form');
     $email = $xpath->query('//input[@id="booking-email"]')->item(0);
     $check($email instanceof DOMElement && $email->getAttribute('value') === 'not-an-address' && $bookings($eventIds[0]) === 1,
@@ -176,15 +217,73 @@ try {
 
     $request = $prepare($eventIds[0], $slot);
     $request[2]['consent'] = 0;
-    $request[2]['booking']['name'] = '';
+    $request[2]['booking']['first_name'] = '';
     sleep(2);
     $xpath = $dom($request[0]->request($request[1], $request[2]));
     $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
-        && $fieldError($xpath, 'booking-name', 'Please enter your name.'),
-        'A missing consent and an empty name are reported together in one round trip');
+        && $fieldError($xpath, 'booking-first_name', 'Please enter your first name.'),
+        'A missing consent and an empty first name are reported together in one round trip');
     $focused = $xpath->query('//*[@autofocus]');
-    $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-name',
+    $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-first_name',
         'The first invalid control in page order receives the focus, not the consent checkbox');
+
+    // The component option max_guests limits the guests on the server, whatever the form sends.
+    // The submissions above used the hourly booking budget of this client address.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $guestParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $componentParams ??= $guestParams;
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(array_merge(json_decode($guestParams, true) ?: [], ['max_guests' => 2]))) . "' WHERE element='com_appointments' AND type='component'");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['guests'] = 'one@example.test, two@example.test, three@example.test';
+    sleep(2);
+    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $guestError = trim((string) ($xpath->query('//*[@id="booking-guests-error"]')->item(0)?->textContent ?? ''));
+    $check($guestError === 'Please enter valid email addresses for at most 2 guests.' && $bookings($eventIds[0]) === 1,
+        'More guests than the configured maximum are refused at the guest field with the configured number');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(array_merge(json_decode($guestParams, true) ?: [], ['max_guests' => 0]))) . "' WHERE element='com_appointments' AND type='component'");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['guests'] = 'one@example.test';
+    sleep(2);
+    $request[0]->request($request[1], $request[2]);
+    $check($bookings($eventIds[0]) === 1, 'With max_guests 0 a submitted guest list is refused as a tampered form');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($guestParams) . "' WHERE element='com_appointments' AND type='component'");
+
+    // The privacy notice modes. Default (and unknown values): no checkbox, nothing required or
+    // stored. Acknowledge: a required checkbox, nothing stored.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $modeForm = static fn (int $event, string $start): DOMXPath => $dom((new AppointmentsHttp('http://localhost', 'booking-mode'))
+        ->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start)));
+    $stored = static fn (int $event, string $start): ?array => $db->query("SELECT id,consent_utc,consent_version FROM {$prefix}appointments_bookings"
+        . " WHERE eventtype_id={$event} AND start_utc='{$start}' AND state IN (0,1)")->fetch_assoc();
+    $setParams(['consent_mode' => 'unknown-mode']);
+    $noticeSlot = $day . ' 09:00:00';
+    $check($modeForm($eventIds[1], $noticeSlot)->query('//input[@name="consent"]')->length === 0,
+        'Notice mode (also for an unknown value): the form has no privacy checkbox');
+    $request = $prepare($eventIds[1], $noticeSlot);
+    unset($request[2]['consent']);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $row = $stored($eventIds[1], $noticeSlot);
+    $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
+        'Notice mode: a booking without the checkbox succeeds and stores no consent');
+    $setParams(['consent_mode' => 'acknowledge']);
+    $ackSlot = $day . ' 16:00:00';
+    $check($modeForm($eventIds[1], $ackSlot)->query('//input[@name="consent"][@required]')->length === 1,
+        'Acknowledge mode: the form has a required checkbox');
+    $request = $prepare($eventIds[1], $ackSlot);
+    $request[2]['consent'] = 0;
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $check($fieldError($dom($body), 'booking-consent', 'Please confirm that you have taken note of the notice.') && $stored($eventIds[1], $ackSlot) === null,
+        'Acknowledge mode: without the checkbox the booking is refused at the checkbox');
+    $request = $prepare($eventIds[1], $ackSlot);
+    sleep(2);
+    $body = $request[0]->request($request[1], $request[2]);
+    $row = $stored($eventIds[1], $ackSlot);
+    $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
+        'Acknowledge mode: with the checkbox the booking succeeds and nothing is stored');
+    $setParams(['consent_mode' => 'consent']);
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
 
     $request = $prepare($eventIds[0], $slot);
     $request[2]['website'] = 'filled by a robot';
@@ -192,6 +291,15 @@ try {
     $body = $request[0]->request($request[1], $request[2]);
     $check(str_contains($body, 'The form has expired or could not be verified.') && !str_contains($body, 'Please confirm your consent.')
         && $bookings($eventIds[0]) === 1, 'A filled honeypot gets the form message, never the consent message');
+
+    // A sent time that is no time at all names no day: the reason stands above the calendar.
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['booking']['start'] = 'not-a-time';
+    sleep(2);
+    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $check(trim((string) ($xpath->query('//*[@id="booking-start-error"]')->item(0)?->textContent ?? '')) === 'Please choose an available time.'
+        && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
+        'A malformed time returns to the calendar with its message, without a booking');
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
@@ -203,10 +311,14 @@ try {
     $check($pageTitle($html) === $tag . '-1' && $text('//h1[contains(@class, "com-appointments-heading")]') === $tag . '-1',
         'The booking page uses the event type title as page title and heading without a menu item of its own');
     $check($text('//*[@id="appointment-calendar-title"]') === $date->format('F Y'), 'The month heading is written in words');
-    $check($text('//legend[contains(@class, "com-appointments-slots-legend")]') === 'Available times on ' . $date->format('l, j F Y'),
-        'The slot legend names the weekday and the date in words');
-    $check($text('//label[@for="booking-slot-0"]') === '09:00' && preg_match('/\b\d{2}:\d{2} (?:UTC|CES?T)\b/', $html) === 0,
-        'Slot times read 09:00 without a zone abbreviation at every time');
+    $check($text('//legend[contains(@class, "com-appointments-slots-legend")]/span[contains(@class, "visually-hidden")]') === 'Available times on ' . $date->format('l, j F Y')
+        && $text('//legend[contains(@class, "com-appointments-slots-legend")]/span[@aria-hidden="true"]') === $date->format('l, j F'),
+        'The slot legend shows the weekday and the date without the year, its full wording for screen readers');
+    $abbreviated = preg_match('/.{0,80}\b\d{2}:\d{2} (?:UTC|CES?T)\b.{0,20}/s', $html, $context) === 1;
+    // The consent sections above book the first times of this event type, so the first free time is not always 09:00.
+    $check(preg_match('/^(?:0\d|1\d|2[0-3]):[0-5]\d$/', $text('//label[@for="booking-slot-0"]')) === 1 && !$abbreviated,
+        'Slot times read like 09:00 without a zone abbreviation at every time (first time "' . $text('//label[@for="booking-slot-0"]') . '"'
+        . ($abbreviated ? ', abbreviated at: ' . preg_replace('/\s+/', ' ', strip_tags($context[0])) : '') . ')');
     $check(substr_count($html, 'All times are shown in the UTC time zone.') === 1, 'The time zone is stated once');
     $weekdays = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th');
     $firstWeekday = $xpath->query('//table[contains(@class, "com-appointments-calendar-grid")]/thead//th//abbr')->item(0);
@@ -258,8 +370,10 @@ try {
     // this one client address, so the following checks start with a fresh rate-limit window.
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $page = new AppointmentsHttp('http://localhost', 'booking-page');
-    $show = static fn (int $event): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-        . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day));
+    // Step 1 shows the times of the day, step 2 (start=) the details form of the chosen time.
+    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
+        . '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start))));
+    $freeSlot = $day . ' 15:00:00';
 
     // Without JavaScript every step is a link or a form; the script is an external, deferred
     // file of the component and the markup carries no inline code (CSP without unsafe-inline).
@@ -277,16 +391,18 @@ try {
         && trim($xpath->query('//a[contains(@class, "com-appointments-calendar-next")]')->item(0)->textContent) === ''
         && $xpath->query('//*[contains(@class, "com-appointments-calendar-prev")][contains(@class, "disabled")]')->length === (substr($day, 0, 7) === gmdate('Y-m') ? 1 : 0),
         'Month navigation uses arrow buttons with accessible names, and the current month has no way back into the past');
+    $xpath = $show($eventIds[1], $freeSlot);
     $check($xpath->query('//input[@id="booking-phone"]')->length === 0, 'Without a telephone location the form has no fixed telephone field');
     $check($xpath->query('//label[@for="booking-consent"]//a')->length === 0
-        && trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent) === 'I agree to the processing of my data for this appointment.',
+        && rtrim(trim($xpath->query('//label[@for="booking-consent"]')->item(0)->textContent), '*') === 'I agree to the processing of my data for this appointment.'
+        && $xpath->query('//label[@for="booking-consent"]/span[contains(@class, "com-appointments-required")][@aria-hidden="true"]')->length === 1,
         'Without a configured privacy notice the consent label is plain text');
 
     // The privacy notice option: the consent label links to it, and the calling-code option preselects a code.
     $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
     $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking', 'phone_default_country' => '41']));
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
-    $xpath = $show($eventIds[1]);
+    $xpath = $show($eventIds[1], $freeSlot);
     $privacy = $xpath->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking'
         && $privacy->getAttribute('target') === '_blank' && str_contains($privacy->getAttribute('rel'), 'noopener')
@@ -303,12 +419,12 @@ try {
     $configured = json_encode(array_merge(json_decode($componentParams, true) ?: [], ['privacy_url' => '/privacy-fixture#booking',
         'phone_default_country' => '41', 'privacy_menuitem' => (string) $privacyMenu, 'privacy_anchor' => 'privacy-section']));
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($configured) . "' WHERE element='com_appointments' AND type='component'");
-    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $privacy = $show($eventIds[1], $freeSlot)->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && (str_contains($privacy->getAttribute('href'), $menuAlias) || str_contains($privacy->getAttribute('href'), 'Itemid=' . $privacyMenu))
         && str_ends_with($privacy->getAttribute('href'), '#privacy-section') && !str_contains($privacy->getAttribute('href'), '&amp;'),
         'The privacy menu item takes precedence over the URL and keeps its section anchor');
     $db->query("UPDATE {$prefix}menu SET access=3 WHERE id={$privacyMenu}");
-    $privacy = $show($eventIds[1])->query('//label[@for="booking-consent"]//a')->item(0);
+    $privacy = $show($eventIds[1], $freeSlot)->query('//label[@for="booking-consent"]//a')->item(0);
     $check($privacy instanceof DOMElement && $privacy->getAttribute('href') === '/privacy-fixture#booking',
         'A privacy menu item the visitor cannot open is not linked, the URL applies instead');
     // One host serves both events, so each books its own hour.
@@ -324,7 +440,7 @@ try {
         $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,location_type,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},30,30,'{$location}','{$token}','{$time}','{$time}')");
         $eventIds[] = $phoneEvent = (int) $db->insert_id;
 
-        $xpath = $show($phoneEvent);
+        $xpath = $show($phoneEvent, $phoneSlot);
         $number = $xpath->query('//input[@id="booking-phone"]')->item(0);
         $selected = $xpath->query('//select[@id="booking-phone-country"][@name="booking[phone][country]"]/option[@selected]')->item(0);
         $check($number instanceof DOMElement && $number->getAttribute('name') === 'booking[phone][number]'
@@ -351,7 +467,7 @@ try {
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $stored = $db->query("SELECT id,invitee_phone,custom_fields FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc();
-        $check(str_contains($body, 'Appointment received') && $stored && $stored['invitee_phone'] === '+41791234567'
+        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
         $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');
@@ -367,6 +483,9 @@ try {
     }
     if ($componentParams !== null) {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
+    if ($originalParams !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
     }
     if ($eventIds) {
         $db->query("DELETE FROM {$prefix}appointments_bookings WHERE eventtype_id IN(" . implode(',', $eventIds) . ')');
