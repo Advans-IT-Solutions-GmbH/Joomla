@@ -9,8 +9,8 @@
  *   UID, cancellation and anonymisation remove it. Until then these tests are
  *   reported as pending.
  *
- * Cleans up every row it creates; a site recovery key it had to create stays,
- * because it is site-wide key material other parts may rely on.
+ * Cleans up every row it creates, including its own recovery key, while
+ * preserving any recovery key that existed before this fixture.
  */
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
@@ -400,6 +400,7 @@ return static function (TeamSuite $suite): void {
         $admin = $fixture->host;
         $user = 0;
         $calendar = 0;
+        $createdRecoveryFingerprint = null;
 
         try {
             // A team member as host, with a key pair and a second factor.
@@ -417,6 +418,7 @@ return static function (TeamSuite $suite): void {
 
             if ($team->keys()->recoveryFingerprint() === null) {
                 $team->keys()->createRecoveryKey($admin);
+                $createdRecoveryFingerprint = $team->keys()->recoveryFingerprint();
             }
 
             $keys = $team->keys()->createUserKey($user, $password);
@@ -482,6 +484,10 @@ return static function (TeamSuite $suite): void {
                 $suite->db->query("DELETE FROM {$suite->prefix}user_usergroup_map WHERE user_id={$user}");
                 $suite->db->query("DELETE FROM {$suite->prefix}appointments_hosts WHERE user_id={$user}");
                 $suite->db->query("DELETE FROM {$suite->prefix}users WHERE id={$user}");
+            }
+            if ($createdRecoveryFingerprint !== null) {
+                $suite->db->query("DELETE FROM {$suite->prefix}appointments_keyring WHERE purpose='recovery'"
+                    . " AND fingerprint='" . $suite->db->real_escape_string($createdRecoveryFingerprint) . "' AND created_by={$admin}");
             }
         }
     } finally {
