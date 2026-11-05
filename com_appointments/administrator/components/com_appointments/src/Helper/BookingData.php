@@ -154,8 +154,18 @@ final class BookingData
      */
     public static function authenticCutoff(string $token, KeyProvider $keys, int $now): ?int
     {
-        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match) || (int) $match[2] > $now
-            || $now >= (int) $match[2] + self::MIGRATION_LIMIT_DAYS * 86400) {
+        $cutoff = self::tokenCutoff($token, $keys);
+
+        return $cutoff === null || $cutoff > $now || $now >= $cutoff + self::MIGRATION_LIMIT_DAYS * 86400 ? null : $cutoff;
+    }
+
+    /**
+     * The update time of a token made with this site's key, however old: a
+     * migration once opened is never opened again with a later update time.
+     */
+    public static function tokenCutoff(string $token, KeyProvider $keys): ?int
+    {
+        if (!preg_match('/^(\d{1,12})\.(\d{1,12})\.[0-9a-f]{64}$/D', $token, $match)) {
             return null;
         }
 

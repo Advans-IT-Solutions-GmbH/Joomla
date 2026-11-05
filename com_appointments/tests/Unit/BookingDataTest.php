@@ -171,6 +171,8 @@ final class BookingDataTest extends TestCase
         self::assertNull(BookingData::authenticCutoff($token, $keys, $now - 60 + BookingData::MIGRATION_LIMIT_DAYS * 86400),
             'A kept token written back after the limit revives nothing');
         self::assertSame($now - 60, BookingData::authenticCutoff($token, $keys, $now - 61 + BookingData::MIGRATION_LIMIT_DAYS * 86400));
+        self::assertSame($now - 60, BookingData::tokenCutoff($token, $keys), 'An opened migration keeps its update time for ever');
+        self::assertNull(BookingData::tokenCutoff(BookingData::migrationDoneMarker($keys), $keys));
         $late = BookingData::migrationToken($keys, $now + BookingData::MIGRATION_LIMIT_DAYS * 86400, $now - 60);
         self::assertNull(BookingData::migrationCutoff($late, $keys, $now - 60 + BookingData::MIGRATION_LIMIT_DAYS * 86400), 'Not even unexpired');
 

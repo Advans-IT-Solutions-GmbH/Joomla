@@ -61,7 +61,13 @@ final class BookingRecords
             return;
         }
 
-        if (self::pending($db) > 0 && !self::anySealed($db) && BookingData::migrationCutoff($token, $keys, time()) === null) {
+        // A migration already opened keeps its update time, also once its token has expired or
+        // passed the limit: a later update never moves the cutoff (migrate() resumes or ends it).
+        if (BookingData::tokenCutoff($token, $keys) !== null) {
+            return;
+        }
+
+        if (self::pending($db) > 0 && !self::anySealed($db)) {
             self::setToken($db, BookingData::migrationToken($keys, time() + BookingData::MIGRATION_DAYS * 86400, time()), $token);
         }
     }
