@@ -102,6 +102,12 @@ return static function (TeamSuite $suite): void {
     $users = [];
     $calendars = [];
     $hash = password_hash('Fixture-Password-1!', PASSWORD_BCRYPT);
+    // This part runs as another system user than the web server: an epoch
+    // anchor it creates is removed again, one it changes is handed back to
+    // the web server's user, so later web requests can still update it.
+    $anchorFile = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+    $anchorExisted = is_file($anchorFile);
+    $anchorDir = is_dir(\dirname($anchorFile));
     $setOptions = static function (array $changes) use ($db, $p, $params): void {
         $json = $db->real_escape_string(json_encode(array_replace($params, $changes)));
         $db->query("UPDATE {$p}extensions SET params='{$json}' WHERE type='component' AND element='com_appointments'");
@@ -522,6 +528,23 @@ return static function (TeamSuite $suite): void {
 
         if (!empty($createdRecovery)) {
             $db->query("DELETE FROM {$p}appointments_keyring WHERE purpose='recovery'");
+        }
+
+        if (!$anchorExisted) {
+            foreach (array_merge([$anchorFile, $anchorFile . '.lock'], glob(\dirname($anchorFile) . '/*.tmp') ?: []) as $file) {
+                @unlink($file);
+            }
+
+            if (!$anchorDir) {
+                @rmdir(\dirname($anchorFile));
+            }
+        } elseif (\function_exists('posix_getpwnam') && ($web = posix_getpwnam('www-data'))) {
+            foreach ([\dirname($anchorFile), $anchorFile, $anchorFile . '.lock'] as $file) {
+                if (file_exists($file) && fileowner($file) !== $web['uid']) {
+                    @chown($file, $web['uid']);
+                    @chgrp($file, $web['gid']);
+                }
+            }
         }
     }
 };
