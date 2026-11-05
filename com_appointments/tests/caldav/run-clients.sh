@@ -183,11 +183,13 @@ step mfa-enable && client mfa-restored
 
 step revoke && client revoked
 
-# Clean-up: empty, then hidden, then revoked. Each phase is delivered by the
-# client's fetch and advanced by the Scheduler routine.
+# Successful collection/home listings advance delivered phases immediately.
+# The Scheduler timeout path uses a separate device that never fetches them.
 step cleanup-start && client cleanup-empty
-step cleanup-advance && client cleanup-hidden
-step cleanup-advance && client cleanup-revoked
+client cleanup-hidden
+client cleanup-revoked
+step cleanup-advance
+step cleanup-advance
 client lockout
 
 summary

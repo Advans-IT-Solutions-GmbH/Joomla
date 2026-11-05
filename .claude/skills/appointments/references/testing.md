@@ -107,7 +107,11 @@ recurring events, and vdirsyncer create/change/delete in both directions. Negati
 cover anonymous and mismatched credentials, case-insensitive names, MFA removal/restoration,
 and stale DELETE rejection with contents retained. Sync tombstones remove local entries during
 clean-up, booking cancellation removes the local event, and the final lockout assertion requires
-HTTP 429 with `Retry-After`. These are automated assertions, not a claim that end-to-end execution
+HTTP 429 with `Retry-After`. Clean-up uses independent devices for the sync tombstones, empty
+collection listing, vdirsyncer's deletion guard and explicitly forced local deletion: fetching the
+empty collection already advances that device to hidden, and listing its hidden home revokes it.
+A separate idle device checks both Scheduler timeout transitions without consuming those deliveries.
+These are automated assertions, not a claim that end-to-end execution
 succeeded on a partial branch. Phases whose work package still ships its stub print PENDING, as
 `TeamSuite::pending()` does (a failure with `TEAM_NO_PENDING=1`).
 The job also verifies the Joomla runtime's required PHP extensions before starting the clients.

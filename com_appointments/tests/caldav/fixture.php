@@ -11,8 +11,8 @@
  *   php fixture.php mfa-disable      WRITER removes its second factor
  *   php fixture.php mfa-enable       WRITER sets up a second factor again
  *   php fixture.php revoke           OWNER revokes WRITER's grant on CAL-R
- *   php fixture.php cleanup-start    VDIR removes its device: the clean-up starts
- *   php fixture.php cleanup-advance  the Scheduler advances every delivered clean-up phase
+ *   php fixture.php cleanup-start    start the independent clean-up devices
+ *   php fixture.php cleanup-advance  advance the idle device through a Scheduler timeout
  *   php fixture.php teardown         remove everything this fixture created
  *
  * Every command prints one JSON object. `setup` prints the state the client
@@ -48,6 +48,10 @@ const USERS = [
     'reader' => CalendarRole::Read,
     'busy'   => CalendarRole::FreeBusy,
     'vdir'   => CalendarRole::Write,
+    'cleanup-sync' => CalendarRole::Write,
+    'cleanup-list' => CalendarRole::Write,
+    'cleanup-guard' => CalendarRole::Write,
+    'cleanup-timeout' => CalendarRole::Write,
 ];
 
 function fail(string $message): never
@@ -359,31 +363,48 @@ function revoke(): void
 function cleanupStart(): void
 {
     $state = state();
-    services()->cleanup()->startForDevice($state['devices']['vdir'], 'user_removed', $state['users']['vdir']['id']);
+    $cleanup = services()->cleanup();
+    $states = [];
 
-    if (deviceState($state['devices']['vdir']) !== TeamStates::DEVICE_CLEANUP_EMPTY) {
-        fail('Removing the device did not start the empty clean-up phase.');
+    foreach (['vdir', 'cleanup-sync', 'cleanup-list', 'cleanup-guard', 'cleanup-timeout'] as $name) {
+        $cleanup->startForDevice($state['devices'][$name], 'user_removed', $state['users'][$name]['id']);
+        $states[$name] = deviceState($state['devices'][$name]);
+
+        if ($states[$name] !== TeamStates::DEVICE_CLEANUP_EMPTY) {
+            fail("Removing {$name}'s device did not start the empty clean-up phase.");
+        }
     }
 
-    out(['device' => 'vdir', 'state' => deviceState($state['devices']['vdir'])]);
+    out(['states' => $states]);
 }
 
 function cleanupAdvance(): void
 {
     $state = state();
-    $before = deviceState($state['devices']['vdir']);
-    $advanced = services()->cleanup()->advance(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+    $device = (int) $state['devices']['cleanup-timeout'];
+    $before = deviceState($device);
     $expected = match ($before) {
         TeamStates::DEVICE_CLEANUP_EMPTY => TeamStates::DEVICE_CLEANUP_HIDDEN,
         TeamStates::DEVICE_CLEANUP_HIDDEN => TeamStates::DEVICE_REVOKED,
-        default => fail('The device is not in a delivered clean-up phase.'),
+        default => fail('The idle device is not in a clean-up phase.'),
     };
+    $started = db()->query("SELECT cleanup_started_utc FROM " . prefix() . "appointments_devices WHERE id={$device}")->fetch_assoc()['cleanup_started_utc'] ?? null;
 
-    if ($advanced < 1 || deviceState($state['devices']['vdir']) !== $expected) {
-        fail('The Scheduler did not advance the delivered clean-up phase.');
+    if ($started === null) {
+        fail('The idle device has no clean-up phase start.');
     }
 
-    out(['advanced' => $advanced, 'state' => deviceState($state['devices']['vdir'])]);
+    $days = filter_var(componentParams()['team_cleanup_days'] ?? 14, FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 1, 'max_range' => 90]]);
+    $days = $days === false ? 14 : $days;
+    $afterTimeout = (new \DateTimeImmutable($started, new \DateTimeZone('UTC')))->modify("+{$days} days +1 second");
+    $advanced = services()->cleanup()->advance($afterTimeout);
+
+    if ($advanced < 1 || deviceState($device) !== $expected) {
+        fail('The Scheduler did not advance the timed-out clean-up phase.');
+    }
+
+    out(['advanced' => $advanced, 'device' => 'cleanup-timeout', 'state' => deviceState($device)]);
 }
 
 function deviceState(int $device): int
