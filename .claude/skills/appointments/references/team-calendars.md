@@ -355,7 +355,10 @@ play back an older, validly signed grant, calendar, device or invitation row.
   shown as «not verified», the system check warns, and an administrator action «encrypt now» (form token,
   core.admin, logged) finishes the migration; after the window nothing encrypts clear text without that
   action (protection against planted clear text). A test proves that nothing becomes unreadable after the
-  window. Residual risk: a database writer who deletes
+  window.
+  Accepted residual risk: a database writer who puts an old migration token from a backup over the end
+  marker, back-dates a booking and overwrites all its fields with clear text (destroying the real data)
+  gets that row read as «not verified»; it is never sealed as genuine without the administrator action. Residual risk: a database writer who deletes
   the end marker and every sealed booking can reopen a migration with the next update.
 - **No blind index** (maintainer's decision): a keyed hash of an address could be tested against known
   addresses by whoever holds the server key. A lookup by address (privacy plugin, booking list filter)
