@@ -133,6 +133,14 @@ final class EpochAnchor implements EpochAnchorInterface
             $this->load(true);
 
             if (is_file($legacyFile)) {
+                $stableData = $this->parse((string) @file_get_contents($this->file()));
+                $legacyData = $this->parse((string) @file_get_contents($legacyFile));
+
+                if ($stableData !== null && $legacyData === null) {
+                    // Preserve unauthenticated legacy bytes without letting them block a verified anchor.
+                    return;
+                }
+
                 throw new \RuntimeException('The legacy Appointments epoch anchor could not be retired.');
             }
         });

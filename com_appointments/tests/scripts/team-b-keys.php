@@ -1032,7 +1032,7 @@ PHP;
         }
     });
 
-    $suite->test('B: legacy-only epoch anchor migration prepares the stable directory before locking', static function () use ($services) {
+    $suite->test('B: epoch anchor migration handles legacy-only and invalid legacy layouts', static function () use ($services) {
         $root = sys_get_temp_dir() . '/teamb-anchor-legacy-only-' . bin2hex(random_bytes(6));
         $stableFolder = $root . '/stable';
         $legacyFolder = $root . '/legacy';
@@ -1089,7 +1089,27 @@ PHP;
                     && is_file($blockedLegacyFile);
             }
 
-            return $migrated && $failedClosed;
+            $invalidStableFolder = $root . '/invalid-stable';
+            $invalidLegacyFolder = $root . '/invalid-legacy';
+            $invalidStableFile = $invalidStableFolder . '/epochs.php';
+            $invalidLegacyFile = $invalidLegacyFolder . '/epochs.php';
+            $invalidLegacyBytes = "<?php defined('_JEXEC') or die;\n{}\n";
+
+            if (!mkdir($invalidStableFolder, 0755, true)
+                || !mkdir($invalidLegacyFolder, 0755, true)
+                || file_put_contents($invalidStableFile, $bytes) !== strlen($bytes)
+                || file_put_contents($invalidLegacyFile, $invalidLegacyBytes) !== strlen($invalidLegacyBytes)) {
+                throw new \RuntimeException('Could not create the invalid legacy epoch anchor fixture.');
+            }
+
+            $anchor = new EpochAnchor($services, $invalidStableFile, $invalidLegacyFile);
+            $anchor->migrateLegacy();
+            $anchor->migrateLegacy();
+            $invalidLegacyIgnored = file_get_contents($invalidStableFile) === $bytes
+                && file_get_contents($invalidLegacyFile) === $invalidLegacyBytes
+                && (new EpochAnchor($services, $invalidStableFile))->minimum(EpochAnchorInterface::KIND_USER, $id) === 7;
+
+            return $migrated && $failedClosed && $invalidLegacyIgnored;
         } finally {
             foreach ([
                 $stableFile,
@@ -1099,13 +1119,24 @@ PHP;
                 $root . '/not-a-directory',
                 $root . '/blocked-legacy/epochs.php',
                 $root . '/blocked-legacy/epochs.php.lock',
+                $root . '/invalid-stable/epochs.php',
+                $root . '/invalid-stable/epochs.php.lock',
+                $root . '/invalid-legacy/epochs.php',
+                $root . '/invalid-legacy/epochs.php.lock',
             ] as $file) {
                 if (is_file($file) && !@unlink($file)) {
                     throw new \RuntimeException('Could not remove a legacy-only epoch anchor fixture.');
                 }
             }
 
-            foreach ([$legacyFolder, $stableFolder, $root . '/blocked-legacy', $root] as $folder) {
+            foreach ([
+                $legacyFolder,
+                $stableFolder,
+                $root . '/blocked-legacy',
+                $root . '/invalid-stable',
+                $root . '/invalid-legacy',
+                $root,
+            ] as $folder) {
                 if (is_dir($folder) && !@rmdir($folder)) {
                     throw new \RuntimeException('Could not remove a legacy-only epoch anchor fixture folder.');
                 }
