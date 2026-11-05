@@ -132,7 +132,7 @@ teardown() {
 trap teardown EXIT
 
 client() {
-    if docker run --rm --network "$NETWORK" -v "$WORK:/work" "$IMAGE" "$1"; then
+    if docker run --rm --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/work -v "$WORK:/work" "$IMAGE" "$1"; then
         return 0
     fi
     failed=$((failed + 1))
@@ -166,7 +166,7 @@ fi
 step setup state.json || summary
 
 for phase in seed discovery sync roles vdirsyncer; do
-    client "$phase"
+    client "$phase" || summary
 done
 
 if missing="$(stubbed "${BOOKING[@]}")"; then
