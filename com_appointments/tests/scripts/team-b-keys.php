@@ -259,7 +259,7 @@ return static function (TeamSuite $suite): void {
     if ($suite->isStub(GrantService::class)) {
         $suite->pending('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', 'C');
     } else {
-        $suite->test('B: discarding a damaged key row requires the authenticated core.admin actor', static function () use ($db, $keys, $member, $memberPassword, $p, $refusal, $superUser) {
+        $suite->test('B: discarding a damaged key row requires the authenticated core.admin actor', static function () use ($db, $keys, $member, $memberPassword, $owner, $p, $refusal, $superUser) {
             $application = \Joomla\CMS\Factory::getApplication();
             $originalIdentity = $application->getIdentity();
             $userFactory = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class);
@@ -454,8 +454,6 @@ return static function (TeamSuite $suite): void {
             'code' => teamBTotp($totpKey, time()), $http->token($captive) => 1,
         ]);
         $passed = teamBSession($db, $p, $member);
-        $escrow = $passed?->get('com_appointments.team_keys.site');
-        $escrow = \is_object($escrow) ? (array) $escrow : $escrow;
         $escrowCookie = str_contains((string) @file_get_contents(teamBCookieJar($http)), 'appointments_keys_');
 
         echo '  Joomla session after password: mfa_checked=' . var_export($pending?->get('com_users.mfa_checked'), true)
@@ -465,7 +463,6 @@ return static function (TeamSuite $suite): void {
 
         return $pending !== null && (int) $pending->get('com_users.mfa_checked', 0) === 0
             && $passed !== null && (int) $passed->get('com_users.mfa_checked', 0) === 1
-            && \is_array($escrow) && (int) ($escrow['mb'] ?? -1) === 0
             // Without HTTPS the key session keeps nothing: no escrow, no cookie.
             && ($https || ($pending->get('com_appointments.team_keys.site') === null && !$escrowCookie));
     });
@@ -473,7 +470,7 @@ return static function (TeamSuite $suite): void {
     $suite->test('B: session MFA proof rejects backup and e-mail factors, including same-second use', static function () use ($db, $p, $member, $services) {
         // Joomla ignores MFA records with empty options, so the codes are real.
         $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[\"40517342\",\"83610277\"]', UTC_TIMESTAMP())");
-        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B email', 'email', 0, '{}', UTC_TIMESTAMP())");
+        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B email', 'email', 0, '{\"fixture\":\"email\"}', UTC_TIMESTAMP())");
         $session = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession($services);
         $snapshot = new \ReflectionMethod($session, 'factorSnapshot');
         $usedSince = new \ReflectionMethod($session, 'nonCountingFactorUsedSince');
@@ -538,6 +535,7 @@ return static function (TeamSuite $suite): void {
             $attributes = strtolower($cookie[2] ?? '');
 
             return isset($cookie[1]) && \is_array($escrow)
+                && (int) ($escrow['mb'] ?? -1) === 0
                 && str_contains($attributes, 'httponly') && str_contains($attributes, 'secure') && str_contains($attributes, 'samesite=strict')
                 && !str_contains($attributes, 'expires=')
                 && !str_contains($raw, $secret) && stripos($raw, bin2hex($secret)) === false && !str_contains($raw, base64_encode($secret))
