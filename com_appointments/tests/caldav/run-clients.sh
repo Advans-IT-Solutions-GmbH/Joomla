@@ -43,13 +43,21 @@ pending_line() {
 }
 
 # Work packages whose stub a group of phases waits for. A stub still refuses
-# with COM_APPOINTMENTS_TEAM_NOT_READY; A additionally bundles sabre/dav in lib/.
+# with COM_APPOINTMENTS_TEAM_NOT_READY and knows no other team error key; a
+# delivered service may keep NOT_READY as a fail-closed guard next to its own
+# keys. A additionally bundles sabre/dav in lib/.
+is_stub_file() {
+    [ -f "$1" ] || return 0
+    grep -q 'COM_APPOINTMENTS_TEAM_NOT_READY' "$1" || return 1
+    ! grep -o 'COM_APPOINTMENTS_TEAM_[A-Z0-9_]*' "$1" | grep -qv '^COM_APPOINTMENTS_TEAM_NOT_READY$'
+}
+
 stubbed() {
     local missing=() service
     for service in "$@"; do
         if [ "$service" = "lib" ]; then
             [ -f "$LIB/sabre/dav/lib/DAV/Server.php" ] || missing+=("A")
-        elif [ ! -f "$SERVICES/${service%%:*}.php" ] || grep -q COM_APPOINTMENTS_TEAM_NOT_READY "$SERVICES/${service%%:*}.php"; then
+        elif is_stub_file "$SERVICES/${service%%:*}.php"; then
             missing+=("${service##*:}")
         fi
     done
