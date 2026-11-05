@@ -371,11 +371,22 @@ grant: e-mail is the same channel as a password reset, so it would let a reset b
 the calendars. Neither does an account in a group listed under «Never use MFA for these user
 groups».
 
-Keep Joomla's **API Authentication - Basic Auth** plugin disabled, as Joomla ships it. The lock-out
-after failed sign-ins guards Joomla's sign-in forms before the password is checked. Sign-ins
-without a form (that plugin, AJAX or JSON logins of other extensions) are still refused while an
-account is locked, but Joomla's answer there shows that the password was right. Administrators get
-a mail when an account with a calendar right is locked and can lift the lock in the devices view.
+**Failed sign-ins** lock an account temporarily (after 10 failures, with a growing delay, never
+permanently). The lock is checked before the password, on Joomla's own sign-in forms of the site
+and the administrator and on CalDAV. Administrators get a mail when an account with a calendar
+right is locked and can lift the lock in the devices view. Not covered, stated plainly:
+
+- Joomla's **API Authentication - Basic Auth** plugin signs in with a password, without second
+  factor and without the lock-out. Keep it disabled, as Joomla ships it; the system check warns
+  when it is enabled.
+- Sign-ins of other extensions that do not post `username` and `password` like Joomla's forms are
+  refused while locked, but Joomla's answer there shows that the password was right.
+- Guessing the second factor after a correct password is limited by Joomla itself (Users → Options
+  → Multi-factor Authentication, by default 10 tries per hour); the system check warns when that
+  limit is off or above 10.
+- If the lock-out check itself fails (a database error), the website sign-in still works, so that
+  nobody, administrators included, is locked out; the system check then warns. CalDAV and «Add
+  device» refuse in that case.
 
 #### Setting up
 
@@ -519,10 +530,13 @@ possible with CalDAV clients.
 
 #### Updating to 1.4.0
 
-The update encrypts the personal fields of existing bookings in batches, within a limited migration
-window of at most 30 days; whatever the update itself does not finish is encrypted by the Scheduler
-task. **System checks** shows how many bookings are still unencrypted. Keep the
-Scheduler running until that number is zero.
+The update encrypts the personal fields of existing bookings in batches, inside the update itself;
+whatever it does not finish is encrypted at the next visit of an administrator to the component,
+independent of the Scheduler. This migration window lasts at most 7 days. **An update never makes
+data unreadable:** a booking still in clear text after the window stays readable, is shown as «not
+verified», and **System checks** warns and shows how many are left. The action **Encrypt now**
+there finishes the migration. After the window nothing else encrypts clear text, so that clear
+text planted in the database later is never taken for a genuine booking.
 
 #### Restoring a backup
 
@@ -538,8 +552,10 @@ from an older database copy no longer counts. This is the protection against pla
   and grant that was revoked after the backup was taken.
 - **Files and database restored together** is a legitimate rollback, and the anchor goes back too.
   Revoke again every device and grant that was revoked after the backup was taken.
-- **System checks** reports when the anchor file cannot be written or is not kept up to date; the
-  protection is then off.
+- **System checks** reports when the anchor file cannot be written or is not kept up to date (the
+  protection is then off), and when an anchored value lies below the verified database value.
+- The anchor belongs to one installation: a fresh installation and an uninstall remove
+  `data/epochs.php`.
 
 #### Privacy requests and retention
 
