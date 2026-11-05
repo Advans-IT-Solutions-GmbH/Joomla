@@ -165,8 +165,10 @@ fi
 
 step setup state.json || summary
 
-for phase in seed discovery sync roles vdirsyncer; do
-    client "$phase" || summary
+client seed || summary
+
+for phase in discovery sync roles vdirsyncer; do
+    client "$phase"
 done
 
 if missing="$(stubbed "${BOOKING[@]}")"; then
