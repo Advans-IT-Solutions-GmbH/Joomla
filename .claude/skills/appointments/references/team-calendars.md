@@ -327,15 +327,19 @@ play back an older, validly signed grant, calendar, device or invitation row.
   the highest epoch per calendar and per user in a signed file below the Joomla directory; a row is
   valid only when its epoch is at least the anchored one. Without a writable file the feature works
   without this protection and the system check says so. Restoring files and database together is a
-  legitimate rollback. The anchor belongs to one installation: a fresh installation and an uninstall
-  remove `data/epochs.php`. There is deliberately no `forget()`; tests delete files they created.
+  legitimate rollback. The anchor belongs to one installation: a fresh installation without
+  retained Appointments tables removes any leftover
+  `administrator/components/com_appointments-data/epochs.php`; an uninstall that keeps the tables
+  preserves it outside the component directory, while choosing to delete the tables removes it.
+  There is deliberately no `forget()`; tests delete files they created.
 - Known residual risk, low: a database writer can put back an older, validly sealed envelope at the
   same URI (the envelope binds no revision). The booking row stays the source of truth and the next
   booking change rewrites the copy.
 - A restore of the database alone from a backup older than the last rotation, revocation or device
-  block keeps the affected calendars and users closed until `data/epochs.php` is deleted, which resets
-  the protection on purpose; the system check warns when an anchor value lies below the MAC-verified
-  database value. The log head is anchored with `record()` after an intact chain check only.
+  block keeps the affected calendars and users closed until
+  `administrator/components/com_appointments-data/epochs.php` is deleted, which resets the protection
+  on purpose; the system check warns when an anchor value lies below the MAC-verified database value.
+  The log head is anchored with `record()` after an intact chain check only.
 - Activation links cannot be anchored; `complete()` therefore works only for an account that has never
   signed in, and every completion mails the administrators with the revoke link.
 

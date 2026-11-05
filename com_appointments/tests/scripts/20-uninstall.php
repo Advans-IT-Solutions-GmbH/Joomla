@@ -76,15 +76,35 @@ class UninstallTest
             "INSERT INTO {$this->dbPrefix}appointments_schedules (title, timezone, owner_user_id, created_utc, modified_utc)"
             . " VALUES ('{$marker}', 'UTC', 0, '{$now}', '{$now}')"
         );
-        $anchorPath = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+        $anchorPath = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
+        $legacyAnchorPath = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+        if (is_file($anchorPath) && is_file($legacyAnchorPath)) {
+            throw new \RuntimeException('Both stable and legacy epoch anchors exist before the test.');
+        }
         $anchorContent = is_file($anchorPath) ? file_get_contents($anchorPath) : null;
+        if ($anchorContent === false) {
+            throw new \RuntimeException('Could not read the epoch anchor test fixture.');
+        }
+        if ($anchorContent === null && is_file($legacyAnchorPath)) {
+            $anchorContent = file_get_contents($legacyAnchorPath);
+            if ($anchorContent === false) {
+                throw new \RuntimeException('Could not read the legacy epoch anchor test fixture.');
+            }
+        }
         if ($anchorContent === null) {
-            if (!is_dir(dirname($anchorPath)) && !mkdir(dirname($anchorPath), 0755, true)) {
+            if (!is_dir(dirname($legacyAnchorPath)) && !mkdir(dirname($legacyAnchorPath), 0755, true)) {
                 throw new \RuntimeException('Could not create the epoch anchor test directory.');
             }
             $anchorContent = "Appointments uninstall test anchor\n";
-            if (file_put_contents($anchorPath, $anchorContent) !== strlen($anchorContent)) {
+            if (file_put_contents($legacyAnchorPath, $anchorContent) !== strlen($anchorContent)) {
                 throw new \RuntimeException('Could not create the epoch anchor test fixture.');
+            }
+        } elseif (is_file($anchorPath)) {
+            if (!is_dir(dirname($legacyAnchorPath)) && !mkdir(dirname($legacyAnchorPath), 0755, true)) {
+                throw new \RuntimeException('Could not create the legacy epoch anchor test directory.');
+            }
+            if (!rename($anchorPath, $legacyAnchorPath)) {
+                throw new \RuntimeException('Could not stage the legacy epoch anchor test fixture.');
             }
         }
         $this->insertSchedulerTasks();
@@ -125,17 +145,27 @@ class UninstallTest
             return $row && (int) $row['cnt'] === 0;
         });
 
-        $retainedAnchor = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
-        $this->test('Epoch anchor is preserved outside the component directory', function () use ($retainedAnchor, $anchorContent) {
-            return is_file($retainedAnchor) && file_get_contents($retainedAnchor) === $anchorContent;
+        $this->test('Legacy epoch anchor is migrated and preserved outside the component directory', function () use ($anchorPath, $legacyAnchorPath, $anchorContent) {
+            return is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent
+                && !is_file($legacyAnchorPath);
         });
 
         $output = [];
         $exitCode = 0;
         exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/extension.zip --no-interaction 2>&1', $output, $exitCode);
-        $this->test('Component can be reinstalled with retained data', function () use ($exitCode, $anchorPath, $anchorContent) {
+        $this->test('Component can be reinstalled with retained data and its stable epoch anchor', function () use ($exitCode, $anchorPath, $legacyAnchorPath, $anchorContent) {
             return $exitCode === 0 && $this->extensionId() > 0
-                && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent;
+                && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent
+                && !is_file($legacyAnchorPath);
+        });
+        $this->test('Reinstalled Scheduler routines stay disabled until reviewed', function () {
+            $types = "'plg_task_appointments.reminders','plg_task_appointments.retention'";
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS total, SUM(state = 1) AS enabled FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ({$types})"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['total'] === 2 && (int) $row['enabled'] === 0;
         });
 
         $deleteExtensionId = $this->extensionId();
@@ -159,14 +189,14 @@ class UninstallTest
             return true;
         });
 
-        $this->test('Explicit delete choice removes the retained epoch anchor and all task types', function () use ($retainedAnchor) {
+        $this->test('Explicit delete choice removes both epoch anchors and all task types', function () use ($anchorPath, $legacyAnchorPath) {
             $types = "'" . implode("','", self::TASK_TYPES) . "'";
             $result = $this->db->query(
                 "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ({$types})"
             );
             $row = $result ? $result->fetch_assoc() : null;
 
-            return $row && (int) $row['cnt'] === 0 && !is_file($retainedAnchor);
+            return $row && (int) $row['cnt'] === 0 && !is_file($anchorPath) && !is_file($legacyAnchorPath);
         });
 
         $this->test('Component registration is removed', function () {

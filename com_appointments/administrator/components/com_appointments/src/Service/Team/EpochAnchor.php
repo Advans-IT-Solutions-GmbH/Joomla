@@ -72,7 +72,7 @@ final class EpochAnchor implements EpochAnchorInterface
     private $shutdownRegistered = false;
 
     /**
-     * @var  string|null  Overrides the file for the tests; null means the component folder.
+     * @var  string|null  Overrides the file for the tests; null means the stable administrator path.
      */
     private $path;
 
@@ -166,7 +166,7 @@ final class EpochAnchor implements EpochAnchorInterface
         if ($this->data === null) {
             // Reading needs no lock: the file is only ever replaced by rename.
             // A valid file is enforced even when it cannot be written any more.
-            $data = $this->parse(is_file($this->file()) ? (string) @file_get_contents($this->file()) : '');
+            $data = $this->readFiles();
 
             if ($data === null) {
                 // A rebuild inside a transaction would read this request's own,
@@ -331,15 +331,34 @@ final class EpochAnchor implements EpochAnchorInterface
     {
         $raw = is_file($this->file()) ? (string) @file_get_contents($this->file()) : '';
         $data = $this->parse($raw);
+        $legacyFile = $this->legacyFile();
+        $legacyRaw = $legacyFile !== null && is_file($legacyFile) ? (string) @file_get_contents($legacyFile) : '';
+        $legacyData = $legacyRaw === '' ? null : $this->parse($legacyRaw);
 
         if ($data !== null) {
+            if ($legacyData !== null) {
+                $merged = self::merge($data, $legacyData);
+
+                if ($merged !== $data) {
+                    $this->write($merged);
+                }
+
+                return $merged;
+            }
+
             return $data;
+        }
+
+        if ($legacyData !== null) {
+            $this->write($legacyData);
+
+            return $legacyData;
         }
 
         // After a change of the site secret every signature fails: rebuilding
         // would sign whatever the database holds under the wrong secret. Keep
         // the file for the old secret and run without the anchor meanwhile.
-        if ($raw !== '' && $this->siteSecretSuspect()) {
+        if (($raw !== '' || $legacyRaw !== '') && $this->siteSecretSuspect()) {
             return null;
         }
 
@@ -352,6 +371,48 @@ final class EpochAnchor implements EpochAnchorInterface
         $this->log($raw === '' ? 'missing' : 'signature');
 
         return $data;
+    }
+
+    /**
+     * Read both the stable and legacy locations during upgrades. A request
+     * already running old code can still write the legacy file after migration.
+     *
+     * @return  array<string, array<int, int>>|null
+     */
+    private function readFiles(): ?array
+    {
+        $legacyFile = $this->legacyFile();
+        $legacyData = $legacyFile !== null && is_file($legacyFile)
+            ? $this->parse((string) @file_get_contents($legacyFile))
+            : null;
+        $data = $this->parse(is_file($this->file()) ? (string) @file_get_contents($this->file()) : '');
+
+        if ($legacyData === null) {
+            return $data;
+        }
+
+        return $data === null ? $legacyData : self::merge($data, $legacyData);
+    }
+
+    /**
+     * Keep the highest verified value from each installation-era file.
+     *
+     * @param   array<string, array<int, int>>  $current
+     * @param   array<string, array<int, int>>  $legacy
+     *
+     * @return  array<string, array<int, int>>
+     */
+    private static function merge(array $current, array $legacy): array
+    {
+        foreach (self::KINDS as $kind) {
+            foreach ($legacy[$kind] ?? [] as $id => $epoch) {
+                if (($current[$kind][$id] ?? 0) < $epoch) {
+                    $current[$kind][$id] = $epoch;
+                }
+            }
+        }
+
+        return $current;
     }
 
     /**
@@ -504,22 +565,45 @@ final class EpochAnchor implements EpochAnchorInterface
      */
     private function locked(callable $operation): mixed
     {
-        $handle = @fopen($this->file() . '.lock', 'c');
+        $paths = [$this->file()];
+        $legacyFile = $this->legacyFile();
 
-        if ($handle === false || !flock($handle, LOCK_EX)) {
-            if ($handle !== false) {
-                fclose($handle);
-            }
-
-            throw new \RuntimeException('The epoch anchor could not be locked.');
+        if ($legacyFile !== null && (is_file($legacyFile) || is_file($legacyFile . '.lock'))) {
+            $paths[] = $legacyFile;
         }
+
+        sort($paths, SORT_STRING);
+        $handles = [];
 
         try {
+            foreach ($paths as $path) {
+                $handle = @fopen($path . '.lock', 'c');
+
+                if ($handle === false || !flock($handle, LOCK_EX)) {
+                    if ($handle !== false) {
+                        fclose($handle);
+                    }
+
+                    throw new \RuntimeException('The epoch anchor could not be locked.');
+                }
+
+                $handles[] = $handle;
+            }
+
             return $operation();
         } finally {
-            flock($handle, LOCK_UN);
-            fclose($handle);
+            foreach (array_reverse($handles) as $handle) {
+                flock($handle, LOCK_UN);
+                fclose($handle);
+            }
         }
+    }
+
+    private function legacyFile(): ?string
+    {
+        return $this->path === null
+            ? JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php'
+            : null;
     }
 
     private function siteSecretSuspect(): bool
@@ -535,7 +619,7 @@ final class EpochAnchor implements EpochAnchorInterface
 
     private function file(): string
     {
-        return $this->path ?? JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+        return $this->path ?? JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
     }
 
     private function log(string $reason): void

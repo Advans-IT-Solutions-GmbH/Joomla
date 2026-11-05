@@ -161,11 +161,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // an earlier installation would close the new calendars and users.
         if ($type === 'install') {
             if ($this->hasExistingAppointmentsTables) {
-                $this->restoreRetainedEpochAnchor();
+                $this->migrateLegacyEpochAnchor();
             } else {
                 $this->removeEpochAnchor();
-                $this->removeRetainedEpochAnchor();
             }
+        } elseif ($type === 'update') {
+            $this->migrateLegacyEpochAnchor();
         }
 
         $this->ensureUpdateSite();
@@ -177,7 +178,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
-        $this->ensureSchedulerTasks($type === 'install');
+        $this->ensureSchedulerTasks($type === 'install' && !$this->hasExistingAppointmentsTables);
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
 
@@ -216,13 +217,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
-        if ($deleteData) {
-            $this->removeEpochAnchor();
-            $this->removeRetainedEpochAnchor();
-        } else {
-            $this->preserveEpochAnchor();
-        }
-
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
@@ -256,7 +250,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
             foreach (self::APPOINTMENT_TABLES as $table) {
                 $db->setQuery('DROP TABLE IF EXISTS ' . $db->quoteName('#__appointments_' . $table))->execute();
             }
+            $this->removeEpochAnchor();
         } else {
+            $this->migrateLegacyEpochAnchor();
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
@@ -271,75 +267,106 @@ class Com_appointmentsInstallerScript extends InstallerScript
      */
     private function removeEpochAnchor(): void
     {
-        $folder = JPATH_ADMINISTRATOR . '/components/com_appointments/data';
+        foreach ([$this->epochAnchorPath(), $this->legacyEpochAnchorPath()] as $path) {
+            if (!is_file($path) && (glob($path . '.*.tmp') ?: []) === []) {
+                continue;
+            }
 
-        foreach (glob($folder . '/epochs.php*') ?: [] as $file) {
-            if (is_file($file) && !@unlink($file)) {
+            try {
+                $this->withEpochAnchorLocks([$path], function () use ($path): void {
+                    foreach (glob($path . '.*.tmp') ?: [] as $temporary) {
+                        if (is_file($temporary) && !File::delete($temporary)) {
+                            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+                        }
+                    }
+
+                    if (is_file($path) && !File::delete($path)) {
+                        Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+                    }
+                });
+            } catch (\Throwable $e) {
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
             }
         }
     }
 
-    private function retainedEpochAnchorPath(): string
+    private function epochAnchorPath(): string
     {
         return JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
     }
 
-    private function preserveEpochAnchor(): void
+    private function legacyEpochAnchorPath(): string
     {
-        $source = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+        return JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+    }
+
+    private function migrateLegacyEpochAnchor(): void
+    {
+        $source = $this->legacyEpochAnchorPath();
 
         if (!is_file($source)) {
             return;
         }
 
-        $destination = $this->retainedEpochAnchorPath();
+        $destination = $this->epochAnchorPath();
 
-        if (is_file($destination)) {
-            throw new \RuntimeException('A retained Appointments epoch anchor already exists.');
-        }
+        $this->withEpochAnchorLocks([$source, $destination], function () use ($source, $destination): void {
+            if (!is_file($source)) {
+                return;
+            }
 
-        if (!Folder::create(dirname($destination)) || !File::copy($source, $destination)) {
-            throw new \RuntimeException('The Appointments epoch anchor could not be preserved.');
-        }
+            if (file_exists($destination) || is_link($destination)) {
+                throw new \RuntimeException('Both legacy and stable Appointments epoch anchors exist.');
+            }
 
-        if (!File::delete($source)) {
-            File::delete($destination);
-            throw new \RuntimeException('The Appointments epoch anchor could not be moved.');
-        }
+            if (!@rename($source, $destination)) {
+                throw new \RuntimeException('The Appointments epoch anchor could not be moved to its stable location.');
+            }
+        });
     }
 
-    private function restoreRetainedEpochAnchor(): void
+    /**
+     * Lock anchor paths in the same order used by migrations to avoid deadlocks.
+     *
+     * @template T
+     *
+     * @param   string[]       $paths
+     * @param   callable():T   $operation
+     *
+     * @return  T
+     */
+    private function withEpochAnchorLocks(array $paths, callable $operation): mixed
     {
-        $source = $this->retainedEpochAnchorPath();
+        $paths = array_values(array_unique($paths));
+        sort($paths, SORT_STRING);
+        $handles = [];
 
-        if (!is_file($source)) {
-            return;
-        }
+        try {
+            foreach ($paths as $path) {
+                $folder = dirname($path);
 
-        $destination = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+                if (!is_dir($folder) && !Folder::create($folder)) {
+                    throw new \RuntimeException('The Appointments epoch anchor folder could not be created.');
+                }
 
-        if (is_file($destination)) {
-            throw new \RuntimeException('Both installed and retained Appointments epoch anchors exist.');
-        }
+                $handle = @fopen($path . '.lock', 'c');
 
-        if (!Folder::create(dirname($destination)) || !File::copy($source, $destination)) {
-            throw new \RuntimeException('The retained Appointments epoch anchor could not be restored.');
-        }
+                if ($handle === false || !flock($handle, LOCK_EX)) {
+                    if ($handle !== false) {
+                        fclose($handle);
+                    }
 
-        if (!File::delete($source)) {
-            File::delete($destination);
-            throw new \RuntimeException('The retained Appointments epoch anchor could not be moved back.');
-        }
-    }
+                    throw new \RuntimeException('The Appointments epoch anchor could not be locked.');
+                }
 
-    private function removeRetainedEpochAnchor(): void
-    {
-        $path = $this->retainedEpochAnchorPath();
+                $handles[] = $handle;
+            }
 
-        foreach (glob($path . '*') ?: [] as $file) {
-            if (is_file($file) && !File::delete($file)) {
-                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+            return $operation();
+        } finally {
+            foreach (array_reverse($handles) as $handle) {
+                flock($handle, LOCK_UN);
+                fclose($handle);
             }
         }
     }

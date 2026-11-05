@@ -552,20 +552,22 @@ text planted in the database later is never taken for a genuine booking.
 
 Grants, calendars and devices carry counters (epochs) that every key rotation, revocation and
 device block raises. A signed anchor file,
-`administrator/components/com_appointments/data/epochs.php`, keeps the highest value, so a row
+`administrator/components/com_appointments-data/epochs.php`, keeps the highest value, so a row
 from an older database copy no longer counts. This is the protection against played-back rows.
 
 - **Database only restored**, from a backup older than the last key rotation, revocation or device
   block (or an older row written back into it): the affected calendars and users **stay closed**, on
   purpose; revoked grants and devices cannot come back this way. To open them, delete
-  `data/epochs.php`, which deliberately resets the protection, and then revoke again every device
-  and grant that was revoked after the backup was taken.
+  `administrator/components/com_appointments-data/epochs.php`, which deliberately resets the
+  protection, and then revoke again every device and grant that was revoked after the backup was
+  taken.
 - **Files and database restored together** is a legitimate rollback, and the anchor goes back too.
   Revoke again every device and grant that was revoked after the backup was taken.
 - **System checks** reports when the anchor file cannot be written or is not kept up to date (the
   protection is then off), and when an anchored value lies below the verified database value.
-- The anchor belongs to one installation: a fresh installation and an uninstall remove
-  `data/epochs.php`.
+- The anchor belongs to one installation: a fresh installation without retained Appointments
+  tables removes any leftover anchor. An uninstall that keeps the tables preserves the anchor
+  outside the component directory; choosing to delete the tables removes it.
 
 #### Privacy requests and retention
 
@@ -1205,13 +1207,13 @@ Verify the backup before deleting component data:
 5. If any check fails, treat the backup as unverified and do not delete the live component data.
 
 Only after a successful restore and any needed readable exports should you select **Delete all
-Appointments data** and uninstall.
+Appointments data** in the component options and uninstall.
 
 The uninstaller always removes the bundled plugins, their Scheduler tasks and the component files.
 It does not remove the Joomla user groups, access level, or MFA group settings created for Internet
-calendars; review these separately if they are no longer used. When data is kept, the replay-
-protection epoch anchor is kept outside the component directory and restored on reinstallation;
-when data is deleted, that anchor is deleted too.
+calendars; review these separately if they are no longer used. When data is kept, the replay-protection
+epoch anchor remains at its stable path outside the component directory and is reused after
+reinstallation. When data is deleted, that anchor is deleted too.
 
 ## Development
 

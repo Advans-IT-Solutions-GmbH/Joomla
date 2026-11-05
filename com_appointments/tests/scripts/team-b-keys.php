@@ -11,6 +11,7 @@
 use Advans\Component\Appointments\Administrator\Helper\Team\AppPassword;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKey;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
@@ -46,10 +47,10 @@ return static function (TeamSuite $suite): void {
     $db = $suite->db;
     $p = $suite->prefix;
     $tag = 'teamb' . bin2hex(random_bytes(4));
-    // The key service reads the epoch anchor below the component folder. This
+    // The key service reads the epoch anchor outside the component folder. This
     // process may run as another system user than the web server, so a file it
     // creates is removed again at the end.
-    $anchorFile = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+    $anchorFile = JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
     $st = ['users' => [], 'calendar' => 0, 'createdRecovery' => false, 'anchorExisted' => is_file($anchorFile), 'anchorDir' => is_dir(\dirname($anchorFile))];
     $services = TeamServices::fromApplication();
     /** @var KeyService $keys */
@@ -859,6 +860,61 @@ PHP;
         @rmdir(\dirname($file));
 
         return $kept && $forged;
+    });
+
+    $suite->test('B: a late write by an older request remains enforced from the legacy anchor path', static function () use ($services) {
+        $legacyFile = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+        $folder = \dirname($legacyFile);
+        $folderExisted = is_dir($folder);
+        $original = is_file($legacyFile) ? file_get_contents($legacyFile) : null;
+        if ($original === false) {
+            throw new \RuntimeException('Could not read the legacy epoch anchor fixture.');
+        }
+
+        try {
+            if (!$folderExisted && !mkdir($folder, 0755, true)) {
+                throw new \RuntimeException('Could not create the legacy epoch anchor folder.');
+            }
+
+            $id = random_int(1000000000, 2000000000);
+            $epoch = random_int(1000, 2000);
+            $data = [
+                EpochAnchorInterface::KIND_CALENDAR => [],
+                EpochAnchorInterface::KIND_CALENDAR_KEY => [],
+                EpochAnchorInterface::KIND_LOG => [],
+                EpochAnchorInterface::KIND_USER => [$id => $epoch],
+            ];
+            $key = $services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_ANCHOR);
+            $mac = hash_hmac('sha256', EpochAnchor::canonical($data), $key);
+            CipherSuite::wipe($key);
+            $document = [
+                'v' => 2,
+                EpochAnchorInterface::KIND_CALENDAR => (object) [],
+                EpochAnchorInterface::KIND_CALENDAR_KEY => (object) [],
+                EpochAnchorInterface::KIND_LOG => (object) [],
+                EpochAnchorInterface::KIND_USER => (object) [$id => $epoch],
+                'mac' => $mac,
+            ];
+            $bytes = "<?php defined('_JEXEC') or die;\n" . json_encode($document, JSON_THROW_ON_ERROR) . "\n";
+
+            if (file_put_contents($legacyFile, $bytes) !== strlen($bytes)) {
+                throw new \RuntimeException('Could not write the legacy epoch anchor fixture.');
+            }
+
+            return (new EpochAnchor($services))->minimum(EpochAnchorInterface::KIND_USER, $id) === $epoch;
+        } finally {
+            if ($original !== null) {
+                if (file_put_contents($legacyFile, $original) !== strlen($original)) {
+                    throw new \RuntimeException('Could not restore the previous legacy epoch anchor.');
+                }
+            } elseif (is_file($legacyFile) && !@unlink($legacyFile)) {
+                throw new \RuntimeException('Could not remove the legacy epoch anchor fixture.');
+            }
+
+            if (!$folderExisted && is_dir($folder) && !@rmdir($folder)) {
+                throw new \RuntimeException('Could not remove the legacy epoch anchor fixture folder.');
+            }
+        }
     });
 
     $suite->test('B: recordAfterCommit anchors only what was committed, nothing while a transaction is open, never a rolled-back value', static function () use ($services, &$st) {
