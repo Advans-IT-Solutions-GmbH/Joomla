@@ -112,6 +112,13 @@ class SystemModel extends BaseDatabaseModel
                 'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
         }
 
+        if (class_exists($records) && method_exists($records, 'unverified')) {
+            // Still in clear after the migration window: readable, but not verified.
+            $unverified = (int) $records::unverified($this->getDatabase());
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED', $unverified === 0, (string) $unverified,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED_FIX');
+        }
+
         $memory = self::bytes((string) ini_get('memory_limit'));
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY', $memory < 0 || $memory >= 128 * 1024 * 1024,
             (string) ini_get('memory_limit'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY_FIX');
