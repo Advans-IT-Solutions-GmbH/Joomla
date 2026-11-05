@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
+use Advans\Plugin\Privacy\Appointments\Team\TeamPrivacy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
@@ -85,6 +86,16 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // No invitee information lives in the erasure audit, and staff actor IDs
         // must not be exposed in an invitee's domain.
         $event->addResult([$domain, $guestDomain]);
+        // Booking rows that could not be decrypted: the export says it is incomplete, with the count only.
+        $incomplete = TeamPrivacy::unreadableBookings($service, $this->getApplication());
+        if ($incomplete !== null) {
+            $event->addResult([$incomplete]);
+        }
+        // Internet calendars: entries found by their address, and staff data.
+        $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
+        if ($team !== null) {
+            $event->addResult($team->export((string) $event->getRequest()->email, $event->getUser()));
+        }
     }
 
     public function onPrivacyCanRemoveData(CanRemoveDataEvent $event): void
@@ -107,8 +118,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     {
         // The request address remains authoritative even if a preceding core
         // plugin has already pseudonymised the event's shared User object.
-        $result = $this->service()->remove((string) $event->getRequest()->email,
+        $service = $this->service();
+        $result = $service->remove((string) $event->getRequest()->email,
             new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        TeamPrivacy::unreadableBookings($service, $this->getApplication());
         $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_REMOVED', $result['removed']), 'message');
         if ($result['guest_removed']) {
             $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_GUEST_REMOVED', $result['guest_removed']), 'message');
@@ -119,6 +132,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
+        TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
+            ?->remove((string) $event->getRequest()->email, $event->getUser());
     }
 
     private function service(): PrivacyService

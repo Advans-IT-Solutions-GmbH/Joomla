@@ -8,9 +8,18 @@
 
 namespace Advans\Component\Appointments\Administrator\Model;
 
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
+use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
+use Advans\Component\Appointments\Administrator\Service\FeedService;
+use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
+use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\Version;
 
 defined('_JEXEC') or die;
@@ -63,7 +72,418 @@ class SystemModel extends BaseDatabaseModel
         $oldest = $db->setQuery($query)->loadResult();
         $checks[] = ['label' => 'COM_APPOINTMENTS_SYSTEM_AUDIT', 'ok' => true,
             'value' => $oldest ?? Text::_('COM_APPOINTMENTS_SYSTEM_NONE')];
+        return array_merge($checks, $this->teamChecks());
+    }
+
+    /**
+     * Internet calendars (work package F, specification 8.3): what a host can block, each with
+     * its remedy, plus the configuration checks. The checks that send requests to the site
+     * itself (HTTPS, DAV methods, Authorization header, well-known) and the Argon2id test run
+     * only when asked for (`probe=1`), so the page stays fast. No host name is shown.
+     *
+     * @return  array<int, array{label: string, ok: bool, value: string, remedy?: string}>
+     */
+    public function teamChecks(): array
+    {
+        // libsodium is required by the whole component (encrypted bookings),
+        // so everybody who may see this view sees whether it is there.
+        $sodium = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM', CipherSuite::available(),
+            Text::_(CipherSuite::available() ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SODIUM_FIX');
+
+        // The state of keys, MFA enforcement and the log is for administrators only.
+        if (!Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
+            return [$sodium];
+        }
+
+        $services = TeamServices::fromApplication();
+        $params = $services->params();
+        $enabled = $services->enabled();
+        $checks = [
+            $sodium,
+            ['label' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_ENABLED', 'ok' => true,
+                'value' => Text::_((int) $params->get('teamcal_enabled', 0) === 1 ? 'JENABLED' : 'JDISABLED')],
+        ];
+        $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
+
+        if (class_exists($records) && method_exists($records, 'pending')) {
+            // Booking rows still in clear (section 5.10): the retention routine encrypts them.
+            $clear = (int) $records::pending($this->getDatabase());
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR', $clear === 0, (string) $clear,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_CLEAR_FIX');
+        }
+
+        if (class_exists($records) && method_exists($records, 'unverified')) {
+            // Still in clear after the migration window: readable, but not verified.
+            $unverified = (int) $records::unverified($this->getDatabase(), $services->keyProvider());
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED', $unverified === 0, (string) $unverified,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_BOOKINGS_UNVERIFIED_FIX');
+        }
+
+        $memory = self::bytes((string) ini_get('memory_limit'));
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY', $memory < 0 || $memory >= 128 * 1024 * 1024,
+            (string) ini_get('memory_limit'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY_FIX');
+
+        if ((int) $params->get('teamcal_enabled', 0) !== 1) {
+            return $checks;
+        }
+
+        $db = $this->getDatabase();
+        $base = $this->siteUrl($params);
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS', str_starts_with($base, 'https://'),
+            Text::_(str_starts_with($base, 'https://') ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS_FIX');
+        // Behind a load balancer Joomla takes the address from X-Forwarded-For,
+        // which a client can set unless the proxy overwrites it.
+        $proxy = (bool) Factory::getApplication()->get('behind_loadbalancer', false);
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROXY', !$proxy, Text::_($proxy ? 'JYES' : 'JNO'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_PROXY_FIX');
+
+        foreach (['system' => 'appointmentsdav', 'user' => 'appointments'] as $folder => $element) {
+            $query = $this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . " = 'plugin'")->where($db->quoteName('element') . ' = ' . $db->quote($element))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote($folder));
+            $on = (int) $db->setQuery($query)->loadResult() === 1;
+            $checks[] = $this->check($folder === 'system' ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_PLUGIN_DAV' : 'COM_APPOINTMENTS_TEAM_F_SYSTEM_PLUGIN_USER',
+                $on, Text::_($on ? 'JENABLED' : 'JDISABLED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_PLUGIN_FIX');
+        }
+
+        // The API's Basic Auth plugin signs in with the Joomla password: no
+        // second factor and no sign-in lock (guardLogin covers site and administrator only).
+        $basic = (int) $db->setQuery($this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . " = 'plugin'")->where($db->quoteName('folder') . " = 'api-authentication'")
+            ->where($db->quoteName('element') . " = 'basic'"))->loadResult() === 1;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_API_BASIC', !$basic, Text::_($basic ? 'JENABLED' : 'JDISABLED'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_API_BASIC_FIX');
+
+        $users = ComponentHelper::getParams('com_users');
+        $groups = array_values(array_filter(array_map('intval', array_merge((array) $params->get('team_groups', []),
+            [(int) $params->get('external_group', 0)])), static fn (int $id): bool => $id > 0));
+        $force = array_map('intval', (array) $users->get('forceMFAUserGroups', []));
+        $never = array_map('intval', (array) $users->get('neverMFAUserGroups', []));
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_FORCED', $groups !== [] && array_diff($groups, $force) === [],
+            Text::_($groups !== [] && array_diff($groups, $force) === [] ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_FORCED_FIX');
+        // Joomla's own limit of tries for the second factor (com_users options).
+        $tries = (int) $users->get('mfatrycount', 10);
+        $window = (int) $users->get('mfatrytime', 1);
+        $limited = $tries > 0 && $tries <= 10 && $window > 0;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_TRIES', $limited, $tries . ' / ' . $window,
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_TRIES_FIX');
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_NEVER', array_intersect($groups, $never) === [],
+            Text::_(array_intersect($groups, $never) === [] ? 'JNO' : 'JYES'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MFA_NEVER_FIX');
+
+        $recovery = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_keyring'))
+            ->where($db->quoteName('purpose') . " = 'recovery'"))->loadResult() > 0;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_RECOVERY', $recovery, Text::_($recovery ? 'JYES' : 'JNO'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_RECOVERY_FIX');
+
+        try {
+            $anchor = $services->anchor()->writable();
+        } catch (\Throwable $e) {
+            $anchor = false;
+        }
+
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR', $anchor, Text::_($anchor ? 'JYES' : 'JNO'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_FIX');
+
+        if ($anchor) {
+            // Anchored values below the database's: those rows are not anchored
+            // (rollback protection inactive for them).
+            $behind = $this->anchorsBehind($services);
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND', $behind === 0, (string) $behind,
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_ANCHOR_BEHIND_FIX');
+        }
+
+        // The sign-in lock failed and the website sign-in went on without it
+        // (fail-open by decision): visible here for 24 hours.
+        $guard = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_teamlog'))
+            ->where($db->quoteName('event') . ' = ' . $db->quote(AuditEvent::LOGIN_GUARD_FAILED))
+            ->where($db->quoteName('occurred_utc') . ' >= ' . $db->quote(gmdate('Y-m-d H:i:s', time() - 86400))))->loadResult();
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_GUARD', $guard === 0, (string) $guard, 'COM_APPOINTMENTS_TEAM_F_SYSTEM_GUARD_FIX');
+
+        $secret = $this->secretUnchanged($services);
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET', $secret !== false,
+            Text::_($secret === null ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_NO_LOG' : ($secret ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_SAME' : 'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_CHANGED')),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_SECRET_FIX');
+
+        $legacy = method_exists(FeedService::class, 'legacyEnabled') ? (bool) FeedService::legacyEnabled($params)
+            : (int) $params->get('legacy_feeds', 0) === 1;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FEEDS', !$legacy,
+            Text::_($legacy ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_ON' : 'JDISABLED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FIX');
+
+        foreach (['teamcleanup' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_CLEANUP', 'teamlog' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_LOG',
+            'teaminvitations' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_INVITATIONS', 'teamretention' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_RETENTION'] as $routine => $label) {
+            $task = $db->setQuery($this->query()->select($db->quoteName(['last_execution', 'last_exit_code']))
+                ->from($db->quoteName('#__scheduler_tasks'))->where($db->quoteName('type') . ' = '
+                    . $db->quote('plg_task_appointments.' . $routine))->where($db->quoteName('state') . ' = 1')
+                ->order($db->quoteName('last_execution') . ' DESC')->setLimit(1))->loadAssoc();
+            $checks[] = $this->check($label, $task && !empty($task['last_execution']) && (int) $task['last_exit_code'] === 0,
+                (string) ($task['last_execution'] ?? Text::_('COM_APPOINTMENTS_SYSTEM_NEVER')), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_FIX');
+        }
+
+        if (!$this->getState('probe', false)) {
+            $checks[] = ['label' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE', 'ok' => true,
+                'value' => Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_OFF')];
+
+            return $checks;
+        }
+
+        return array_merge($checks, $this->probes($base, $services->davBaseUrl(), $enabled));
+    }
+
+    /**
+     * Requests to the site itself: HTTPS with a valid certificate, every DAV method reaching
+     * the CalDAV handler (it answers 401 with `WWW-Authenticate: Basic` to an anonymous
+     * request; a 405, 501 or a page from the web server means the method was stopped before
+     * PHP), the Authorization header arriving (the handler confirms a received header with
+     * `X-Appointments-Authorization: received`), the well-known redirect, and Argon2id.
+     *
+     * @return  array<int, array{label: string, ok: bool, value: string, remedy?: string}>
+     */
+    private function probes(string $base, string $dav, bool $enabled): array
+    {
+        $checks = [];
+        $argon = false;
+
+        if (CipherSuite::available()) {
+            try {
+                $argon = \strlen(sodium_crypto_pwhash(32, 'probe', random_bytes(SODIUM_CRYPTO_PWHASH_SALTBYTES),
+                    SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE, SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+                    SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13)) === 32;
+            } catch (\Throwable $e) {
+                $argon = false;
+            }
+        }
+
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_ARGON2', $argon, Text::_($argon ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_MEMORY_FIX');
+
+        if (!\function_exists('curl_init') || !preg_match('#^https?://#i', $base)) {
+            $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE', false, Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_UNAVAILABLE'),
+                'COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_FIX');
+
+            return $checks;
+        }
+
+        $root = $this->request('GET', $base);
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_TLS', str_starts_with($base, 'https://') && $root['status'] > 0,
+            $root['status'] > 0 ? (string) $root['status'] : Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_NO_ANSWER'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HTTPS_FIX');
+        $hsts = stripos($root['headers'], "\nstrict-transport-security:") !== false;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_HSTS', $hsts, Text::_($hsts ? 'JYES' : 'JNO'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_HSTS_FIX');
+
+        if (!$enabled) {
+            return $checks;
+        }
+
+        $blocked = [];
+
+        foreach (['OPTIONS', 'PROPFIND', 'REPORT', 'PUT', 'DELETE', 'MKCALENDAR'] as $method) {
+            $answer = $this->request($method, $dav);
+
+            if ($answer['status'] !== 401 || stripos($answer['headers'], "\nwww-authenticate: basic") === false) {
+                $blocked[] = $method . ' ' . ($answer['status'] ?: '-');
+            }
+        }
+
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_METHODS', $blocked === [],
+            $blocked === [] ? Text::_('JYES') : implode(', ', $blocked), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_METHODS_FIX');
+        $answer = $this->request('PROPFIND', $dav, ['Authorization: Basic ' . base64_encode('probe:' . bin2hex(random_bytes(8)))]);
+        $received = stripos($answer['headers'], "\nx-appointments-authorization: received") !== false;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_AUTH_HEADER', $received,
+            Text::_($received ? 'JYES' : 'COM_APPOINTMENTS_TEAM_F_SYSTEM_NOT_CONFIRMED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_AUTH_HEADER_FIX');
+        $answer = $this->request('PROPFIND', $base . '.well-known/caldav');
+        $location = preg_match('/\nlocation:\s*(\S+)/i', $answer['headers'], $m) === 1 ? $m[1] : '';
+        $wellKnown = \in_array($answer['status'], [301, 308], true) && rtrim($location, '/') === rtrim($dav, '/');
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_WELL_KNOWN', $wellKnown,
+            $answer['status'] > 0 ? (string) $answer['status'] : Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_NO_ANSWER'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_WELL_KNOWN_FIX');
+
         return $checks;
+    }
+
+    /**
+     * @param   string[]  $headers
+     *
+     * @return  array{status: int, headers: string}
+     */
+    private function request(string $method, string $url, array $headers = []): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST   => $method,
+            CURLOPT_RETURNTRANSFER  => true,
+            CURLOPT_HEADER          => true,
+            CURLOPT_NOBODY          => false,
+            CURLOPT_FOLLOWLOCATION  => false,
+            CURLOPT_CONNECTTIMEOUT  => 3,
+            CURLOPT_TIMEOUT         => 5,
+            CURLOPT_HTTPHEADER      => array_merge(['Depth: 0', 'Content-Type: application/xml; charset=utf-8'], $headers),
+            CURLOPT_POSTFIELDS      => \in_array($method, ['PROPFIND', 'REPORT', 'PUT', 'MKCALENDAR'], true) ? '' : null,
+            CURLOPT_PROTOCOLS       => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_SSL_VERIFYPEER  => true,
+            CURLOPT_SSL_VERIFYHOST  => 2,
+        ]);
+        $raw = curl_exec($ch);
+        $status = \is_string($raw) ? (int) curl_getinfo($ch, CURLINFO_HTTP_CODE) : 0;
+        $size = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        curl_close($ch);
+
+        return ['status' => $status, 'headers' => "\n" . str_replace("\r", '', \is_string($raw) ? substr($raw, 0, $size) : '')];
+    }
+
+    /**
+     * The site's own address: the configured public address, else Joomla's root URL. Ends with a slash.
+     */
+    private function siteUrl(\Joomla\Registry\Registry $params): string
+    {
+        $url = trim((string) $params->get('public_site_url', ''));
+
+        if ($url === '') {
+            $url = Uri::root();
+        }
+
+        return rtrim($url, '/') . '/';
+    }
+
+    /**
+     * Calendars (grant epoch, read through the calendar service, which checks the row MAC)
+     * and users (device epoch) whose anchored epoch is below the database value.
+     */
+    private function anchorsBehind(TeamServices $services): int
+    {
+        $db = $this->getDatabase();
+        $anchor = $services->anchor();
+        $behind = 0;
+
+        // Every row, in batches by id; a value that cannot be read counts as
+        // not anchored, so the check is never green on a partial scan.
+        for ($after = 0; ; $after = (int) end($ids)) {
+            $ids = $db->setQuery($this->query()->select($db->quoteName('id'))->from($db->quoteName('#__appointments_calendars'))
+                ->where($db->quoteName('id') . ' > ' . $after)->order($db->quoteName('id') . ' ASC')->setLimit(500))->loadColumn() ?: [];
+
+            foreach ($ids as $id) {
+                try {
+                    $row = $services->calendars()->get((int) $id);
+                    $behind += $row === null || !isset($row->grant_epoch)
+                        || $anchor->minimum(EpochAnchorInterface::KIND_CALENDAR, (int) $id) < (int) $row->grant_epoch ? 1 : 0;
+                } catch (\Throwable $e) {
+                    $behind++;
+                }
+            }
+
+            if (\count($ids) < 500) {
+                break;
+            }
+        }
+
+        for ($after = 0; ; $after = (int) end($rows)['user_id']) {
+            $rows = $db->setQuery($this->query()->select($db->quoteName(['user_id', 'device_epoch']))
+                ->from($db->quoteName('#__appointments_user_keys'))->where($db->quoteName('user_id') . ' > ' . $after)
+                ->order($db->quoteName('user_id') . ' ASC')->setLimit(500))->loadAssocList() ?: [];
+
+            foreach ($rows as $row) {
+                try {
+                    $behind += $anchor->minimum(EpochAnchorInterface::KIND_USER, (int) $row['user_id']) < (int) $row['device_epoch'] ? 1 : 0;
+                } catch (\Throwable $e) {
+                    $behind++;
+                }
+            }
+
+            if (\count($rows) < 500) {
+                break;
+            }
+        }
+
+        return $behind;
+    }
+
+    /**
+     * Whether the log still verifies with the current site secret, at both ends: the oldest
+     * remaining row (written with the secret of its time) and the head seal (rewritten with
+     * every append). True, false, or null while nothing was logged yet. Every server key comes
+     * from the site secret, so a changed secret shows here; the full chain check is in the log view.
+     */
+    private function secretUnchanged(TeamServices $services): ?bool
+    {
+        $db = $this->getDatabase();
+        // Head, newest and oldest row from one snapshot, so a prune running at
+        // the same time cannot look like a changed secret.
+        $db->transactionStart(true);
+
+        try {
+            $result = $this->secretUnchangedIn($services);
+            $db->transactionCommit(true);
+
+            return $result;
+        } catch (\Throwable $e) {
+            $db->transactionRollback(true);
+
+            throw $e;
+        }
+    }
+    private function secretUnchangedIn(TeamServices $services): ?bool
+    {
+        $db = $this->getDatabase();
+        $head = $db->setQuery($this->query()->select($db->quoteName(['last_id', 'last_hash']))
+            ->from($db->quoteName('#__appointments_teamlog_head'))->where($db->quoteName('id') . ' = ' . AuditService::HEAD_ID))->loadAssoc();
+
+        if (!$head) {
+            return null;
+        }
+
+        $key = $services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_LOG);
+        $lastId = (int) $head['last_id'];
+
+        if ($lastId === 0) {
+            return hash_equals(AuditService::emptyHead($key), (string) $head['last_hash']);
+        }
+
+        $rowHash = $db->setQuery($this->query()->select($db->quoteName('row_hash'))->from($db->quoteName('#__appointments_teamlog'))
+            ->where($db->quoteName('id') . ' = ' . $lastId))->loadResult();
+
+        if (!\is_string($rowHash) || !hash_equals(AuditService::seal($key, $lastId, $rowHash), (string) $head['last_hash'])) {
+            return false;
+        }
+
+        $oldest = $db->setQuery($this->query()->select('*')->from($db->quoteName('#__appointments_teamlog'))
+            ->order($db->quoteName('id') . ' ASC')->setLimit(1))->loadAssoc();
+
+        return \is_array($oldest) && \is_string($oldest['row_hash']) && hash_equals(AuditService::rowHash($key, $oldest), $oldest['row_hash']);
+    }
+
+    /**
+     * @return  array{label: string, ok: bool, value: string, remedy: string}
+     */
+    private function check(string $label, bool $ok, string $value, string $remedy): array
+    {
+        return ['label' => $label, 'ok' => $ok, 'value' => $value, 'remedy' => $remedy];
+    }
+
+    /**
+     * `memory_limit` in bytes, -1 for unlimited.
+     */
+    public static function bytes(string $value): int
+    {
+        $value = trim($value);
+
+        if ($value === '' || $value === '-1') {
+            return -1;
+        }
+
+        $number = (int) $value;
+
+        return match (strtolower(substr($value, -1))) {
+            'g' => $number * 1024 ** 3,
+            'm' => $number * 1024 ** 2,
+            'k' => $number * 1024,
+            default => $number,
+        };
+    }
+
+    protected function populateState()
+    {
+        parent::populateState();
+        // The probes send requests and hash with 64 MiB: only on the form's
+        // POST with its token, never from a link.
+        $input = Factory::getApplication()->getInput();
+        $this->setState('probe', $input->getMethod() === 'POST' && $input->post->getInt('probe', 0) === 1
+            && $input->post->get(\Joomla\CMS\Session\Session::getFormToken(), '', 'alnum') === '1');
     }
 
     private function query(): \Joomla\Database\QueryInterface
