@@ -737,7 +737,8 @@ return static function (TeamSuite $suite): void {
             $browser->dropCookie('__Host-appointments_keys_site');
             $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
             $html = $browser->request($form['action'], $form['fields'] + ['name' => 'Locked phone', 'client' => 'davx5', 'rule' => 1], 0);
-            $noForm = !str_contains($html, 'devices.create');
+            // No «Add device» form: the page itself may repeat the requested address (…task=devices.create).
+            $noForm = TeamDBrowser::form($html, 'devices.create') === null;
             $noPassword = !preg_match('/id="appointments-app-password"/', $html);
             $unchanged = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
 
