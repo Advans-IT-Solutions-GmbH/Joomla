@@ -324,8 +324,8 @@ class ResetRequestTest
     }
 
     /**
-     * The mail has to arrive in the language of the customer, so the language
-     * of the account decides, not the language the request happened to run in.
+     * The mail follows a supported account language or the configured default
+     * site language; the active request language is never a selector.
      */
     private function testMailLanguageFollowsTheAccount(): void
     {
@@ -344,41 +344,130 @@ class ResetRequestTest
         $method->setAccessible(true);
 
         $plugin    = ajaxforms_plugin_instance();
-        $requestTag = Factory::getApplication()->getLanguage()->getTag();
-        $installed  = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
+        $configuredSiteTag = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        $defaultTag = in_array($configuredSiteTag, ['de-DE', 'en-GB', 'fr-FR'], true)
+            ? $configuredSiteTag
+            : 'en-GB';
 
-        $this->test('Site has at least one installed language', $installed !== []);
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $account         = new stdClass();
+            $account->params = json_encode(['language' => $tag]);
 
-        if ($installed === []) {
-            return;
+            $this->test(
+                "Supported account language $tag is selected even without its site language pack",
+                $method->invoke($plugin, $account) === $tag,
+                'got ' . var_export($method->invoke($plugin, $account), true)
+            );
         }
 
-        // Note: the test container has one site language, which is also the
-        // language of the request, so the precedence of the account language
-        // over the request language cannot be told apart here. What can be told
-        // apart is that an unusable tag is refused, which is what this decides.
-
-        // A mail template stores subject and body as language keys. Without the
-        // matching language pack the recipient would read those keys, so a tag
-        // the site does not have must never be used.
-        $missing         = new stdClass();
-        $missing->params = json_encode(['language' => 'zz-ZZ']);
-        $fallback        = (string) $method->invoke($plugin, $missing);
+        $unsupported         = new stdClass();
+        $unsupported->params = json_encode(['language' => 'zz-ZZ']);
 
         $this->test(
-            'A language the site does not have is not used',
-            $fallback !== 'zz-ZZ' && in_array($fallback, $installed, true),
-            'got ' . var_export($fallback, true)
+            'An unsupported account language falls back to a supported site language',
+            $method->invoke($plugin, $unsupported) === $defaultTag,
+            'expected ' . $defaultTag . ', got ' . var_export($method->invoke($plugin, $unsupported), true)
         );
 
         $none         = new stdClass();
         $none->params = '{}';
 
         $this->test(
-            'Without a choice the language of the request is used',
-            $method->invoke($plugin, $none) === $requestTag,
-            'expected ' . $requestTag . ', got ' . var_export($method->invoke($plugin, $none), true)
+            'A guest or account without a language uses the configured site language, not the request language',
+            $method->invoke($plugin, $none) === $defaultTag,
+            'expected ' . $defaultTag . ', got ' . var_export($method->invoke($plugin, $none), true)
         );
+
+        $siteParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_languages');
+        $originalSiteLanguage = (string) $siteParams->get('site', 'en-GB');
+
+        try {
+            $siteParams->set('site', 'de-CH');
+
+            $this->test(
+                'An unsupported configured site language falls back to en-GB',
+                $method->invoke($plugin, $none) === 'en-GB',
+                'got ' . var_export($method->invoke($plugin, $none), true)
+            );
+        } finally {
+            $siteParams->set('site', $originalSiteLanguage);
+        }
+    }
+
+    /**
+     * The plugin supplies translated com_users defaults when only the site
+     * language pack is installed. MailTemplate must still send the core
+     * template, plain-text alternative and configured HTML layout in each
+     * supported recipient language.
+     */
+    private function testCoreTemplateMailsSupportAllLocales(): void
+    {
+        echo "\n--- Core mail templates render in every shipped language ---\n";
+
+        $reason = ajaxforms_mailcatch_install();
+
+        try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
+            $selfTest = ajaxforms_mailcatch_selftest();
+            $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
+
+            if ($selfTest !== null) {
+                return;
+            }
+
+            ajaxforms_enable_html_mail();
+
+            $plugin = ajaxforms_plugin_instance();
+            $send   = new ReflectionMethod($plugin, 'sendResetEmail');
+            $send->setAccessible(true);
+            $expected = [
+                'de-DE' => 'Guten Tag',
+                'en-GB' => 'A request has been made',
+                'fr-FR' => 'Une demande de réinitialisation',
+            ];
+
+            foreach ($expected as $tag => $phrase) {
+                $suffix = 'mail_' . strtolower(substr($tag, 0, 2));
+                $user   = ajaxforms_create_test_user($suffix, $tag);
+
+                try {
+                    ajaxforms_mailcatch_clear();
+                    $send->invoke($plugin, $user, str_repeat('a1b2c3d4', 4));
+
+                    $messages = ajaxforms_mailcatch_messages();
+                    $this->test("$tag reset template sends exactly one mail", count($messages) === 1, count($messages) . ' captured');
+
+                    if (count($messages) !== 1) {
+                        continue;
+                    }
+
+                    $raw  = $messages[0];
+                    $text = ajaxforms_mail_text($raw);
+                    $this->test("$tag template keys are translated", stripos($text, 'COM_USERS_EMAIL_') === false);
+                    $installed = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
+                    $this->test(
+                        "$tag rendered mail contains translated core wording",
+                        in_array($tag, $installed, true) || stripos($text, $phrase) !== false,
+                        'expected shipped wording was not found for a language without a site language pack'
+                    );
+                    $this->test(
+                        "$tag mail keeps the HTML layout and plain-text alternative",
+                        stripos($text, '<html') !== false
+                            && stripos($text, '<table') !== false
+                            && stripos($raw, 'text/plain') !== false
+                    );
+                } finally {
+                    ajaxforms_delete_test_user($suffix);
+                }
+            }
+        } finally {
+            ajaxforms_mailcatch_remove();
+        }
     }
 
     /**
@@ -721,6 +810,7 @@ class ResetRequestTest
         $this->testFormDetection();
         $this->testResetMailCarriesTheSiteDesign();
         $this->testMailLanguageFollowsTheAccount();
+        $this->testCoreTemplateMailsSupportAllLocales();
         $this->testFallbackMailLanguageIsIsolated();
         $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();

@@ -428,25 +428,31 @@ the plugin for that.
 
 ### What changes for an existing site
 
-**The wording of these mails changes on every site, not only on a site that
-styled its templates.** Joomla creates the rows in `#__mail_templates` with
-every installation, and `MailTemplate` reads the stored subject and body
-whatever the mail style is set to. From this version on, the recipient
-therefore reads Joomla's own `COM_USERS_EMAIL_…` texts, which Joomla ships
-translated, instead of the plugin's former `PLG_AJAX_JOOMLAAJAXFORMS_…` texts.
-That is the point of the change: these mails now read and look like every other
-account mail of the site, and the site can edit them in the backend like all
-the others. A site that wants its former wording back enters it in the
-corresponding mail template.
+The messages continue to use Joomla's stored `com_users` subject, plain-text
+body, HTML body, layout and logo. A site's custom mail-template edits therefore
+remain in effect. Joomla's `com_users` language pack supplies the standard
+wording when available; the plugin ships translated defaults for de-DE, en-GB
+and fr-FR and uses them only for missing core language keys. This lets a
+recipient receive a translated core template even when the site has only its
+default language pack installed. The plugin's older plain-text messages remain
+the last fallback when a core mail-template row is missing or sending the
+template fails; that deliberately unstyled fallback is still translated in all
+three shipped languages. No separate plugin HTML template is maintained: the
+core HTML body and layout render the translated core text.
 
-The plugin's own texts are kept as a fallback only. That fallback is reached
-when `#__mail_templates` has no such row, for example after someone deleted it,
-which is why a normal installation never uses it. It writes a warning to the
-log when it does. The fallback is rendered in the same language as the template
-mail it replaces — the recipient's — through a separate `Language` instance per
-language, so it never changes the language of the running request and the
-language of one recipient never reaches the next when a single request sends
-more than one mail.
+Mail language follows the recipient's account language when it is one of the
+three shipped languages, whether or not that site's language pack is installed.
+Guests and accounts without a supported language use the configured site
+language when it is supported, otherwise en-GB; the request language is never
+used. The notice to the
+configured `mailfrom` address uses that address's account language only when
+exactly one Joomla account matches it; otherwise it uses the default site
+language (or en-GB when the site language is unsupported). Address candidates
+returned by the database are compared again using Unicode case-folding, so a
+case- or accent-insensitive database collation cannot select another account's
+language. Each fallback is rendered in its own `Language` instance, so it does
+not change the request language or leak one recipient's language into another
+mail.
 
 A refused send leaves a trace as well. Joomla's mailer does not only throw, it
 also returns `false`, for instance while the site has mail switched off or when
@@ -462,23 +468,21 @@ Three details follow from the plugin answering inside `com_ajax`:
   the mail is rendered. `MailTemplate` does that only for a mail in another
   language than the request, so without it the mail would carry the raw
   language keys.
-- The mail is rendered in the language of the account, if the account has one
-  and the site has that language installed, otherwise in the language of the
-  request and finally in the default site language. A language the site does
-  not have is refused, because the template texts are language keys and the
-  recipient would read those keys.
-- Joomla's own helper for those language files remembers per extension that it
-  already loaded them, without regard for the language. When one request sends
-  two mails of the same extension in two languages that both differ from the
-  language of the request, the second one can therefore arrive untranslated.
-  The registration path sends the mail to the customer first and the notice to
-  the site second, so the notice is the one that would be affected.
+- The mail is rendered in a supported account language even when the
+  corresponding Joomla language pack is not installed. Otherwise a supported
+  configured site language is used, or en-GB when the site language is
+  unsupported; the request language does not affect the mail.
+- `MailTemplate` can create a separate language object for each recipient.
+  The plugin loads that object's exact `com_users` language before Joomla's
+  extension-level translation cache runs, so a second mail in another language
+  within the same request remains translated.
 
 ### The notice about a new registration
 
-It goes to the address of the site (`mailfrom`) in the default site language,
-and it uses `com_users.registration.admin.new_notification`, the template whose
-text says that someone has registered. It deliberately does not use
+It goes to the address of the site (`mailfrom`) in the account language when
+exactly one Joomla account matches that address; otherwise it uses the default
+site language. It uses `com_users.registration.admin.new_notification`, the
+template whose text says that someone has registered. It deliberately does not use
 `com_users.registration.admin.verification_request`: that is the template
 Joomla sends **after** the new account has confirmed its e-mail address, with a
 token generated at that moment for the administration to activate the account.

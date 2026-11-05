@@ -312,16 +312,17 @@ function ajaxforms_plugin_instance(): object
  * Create a throwaway account and return its record from #__users.
  *
  * @param   string  $suffix       Distinguishes the accounts of the single suites
- * @param   string  $languageTag  Frontend language of the account, empty for none
+ * @param   string       $languageTag  Frontend language of the account, empty for none
+ * @param   string|null  $emailAddress  Optional address for mail-recipient tests
  */
-function ajaxforms_create_test_user(string $suffix, string $languageTag = ''): object
+function ajaxforms_create_test_user(string $suffix, string $languageTag = '', ?string $emailAddress = null): object
 {
     // Factory::getDate() asks the application for the site offset.
     ajaxforms_bootstrap_site_application();
 
     $db       = Factory::getContainer()->get(DatabaseInterface::class);
     $username = 'ajaxforms_' . $suffix;
-    $email    = $username . '@example.test';
+    $email    = $emailAddress ?? ($username . '@example.test');
 
     ajaxforms_delete_test_user($suffix);
 
