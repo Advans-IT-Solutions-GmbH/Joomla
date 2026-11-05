@@ -19,7 +19,10 @@ require_once dirname(__DIR__, 3) . '/administrator/components/com_appointments/s
  */
 final class LockoutDelayTest extends TestCase
 {
-    private const KEY = 'fedcba9876543210fedcba9876543210';
+    private static function key(): string
+    {
+        return hash('sha256', 'lockout-test-fixture', true);
+    }
 
     public function testDelaysGrowFromTheTenthFailureAndStopAtAnHour(): void
     {
@@ -44,14 +47,14 @@ final class LockoutDelayTest extends TestCase
 
     public function testBucketsAreKeyedAndHoldNoNameOrAddress(): void
     {
-        $buckets = LockoutService::buckets(self::KEY, LockoutService::identityFor(0, ' Someone '), '2001:db8:1:2::1');
+        $buckets = LockoutService::buckets(self::key(), LockoutService::identityFor(0, ' Someone '), '2001:db8:1:2::1');
 
         self::assertSame(32, strlen($buckets['user']));
         self::assertSame(32, strlen($buckets['ip']));
-        self::assertSame($buckets['user'], LockoutService::buckets(self::KEY, LockoutService::identityFor(0, 'SOMEONE'), '')['user'], 'An unknown name is case-insensitive');
-        self::assertSame($buckets['ip'], LockoutService::buckets(self::KEY, 'name:other', '2001:db8:1:2:9::9')['ip']);
-        self::assertArrayNotHasKey('ip', LockoutService::buckets(self::KEY, 'name:someone', 'not an address'));
-        self::assertNotSame($buckets['user'], LockoutService::buckets(strrev(self::KEY), 'name:someone', '')['user']);
+        self::assertSame($buckets['user'], LockoutService::buckets(self::key(), LockoutService::identityFor(0, 'SOMEONE'), '')['user'], 'An unknown name is case-insensitive');
+        self::assertSame($buckets['ip'], LockoutService::buckets(self::key(), 'name:other', '2001:db8:1:2:9::9')['ip']);
+        self::assertArrayNotHasKey('ip', LockoutService::buckets(self::key(), 'name:someone', 'not an address'));
+        self::assertNotSame($buckets['user'], LockoutService::buckets(strrev(self::key()), 'name:someone', '')['user']);
         self::assertStringNotContainsString('someone', implode('', $buckets));
     }
 
@@ -60,8 +63,8 @@ final class LockoutDelayTest extends TestCase
         // Spellings the database collation treats as the same name resolve to the same id.
         self::assertSame('uid:42', LockoutService::identityFor(42, 'ädmin'));
         self::assertSame('uid:42', LockoutService::identityFor(42, "ad\u{00AD}min"));
-        self::assertSame(LockoutService::buckets(self::KEY, LockoutService::identityFor(42, 'Admin'), '')['user'],
-            LockoutService::buckets(self::KEY, LockoutService::identityFor(42, 'admín'), '')['user']);
+        self::assertSame(LockoutService::buckets(self::key(), LockoutService::identityFor(42, 'Admin'), '')['user'],
+            LockoutService::buckets(self::key(), LockoutService::identityFor(42, 'admín'), '')['user']);
         self::assertNotSame(LockoutService::identityFor(42, 'x'), LockoutService::identityFor(0, 'uid:42'));
     }
 

@@ -9,6 +9,8 @@
  * a later part only if that part documents it; each part cleans up its own rows.
  */
 
+ob_start();
+
 final class TeamSuite
 {
     public mysqli $db;
@@ -82,7 +84,19 @@ final class TeamSuite
             if (str_starts_with($class, $prefix)) {
                 $file = $dir . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
 
-                return !is_file($file) || str_contains((string) file_get_contents($file), 'COM_APPOINTMENTS_TEAM_NOT_READY');
+                if (!is_file($file)) {
+                    return true;
+                }
+
+                $code = (string) file_get_contents($file);
+
+                if (!str_contains($code, 'COM_APPOINTMENTS_TEAM_NOT_READY')) {
+                    return false;
+                }
+
+                preg_match_all('/COM_APPOINTMENTS_TEAM_[A-Z0-9_]+/', $code, $matches);
+
+                return array_diff(array_unique($matches[0]), ['COM_APPOINTMENTS_TEAM_NOT_READY']) === [];
             }
         }
 

@@ -82,7 +82,14 @@ final class TeamDBrowser
         $this->status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $size = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         $location = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
-        curl_close($ch);
+
+        // Since PHP 8 the jar is written only when the handle is freed: write it now, so the
+        // redirect after a sign-in sends the regenerated session cookie.
+        if (!curl_setopt($ch, CURLOPT_COOKIELIST, 'FLUSH')) {
+            throw new \RuntimeException('The cookie jar could not be written.');
+        }
+
+        unset($ch);
         $this->headers = substr($raw, 0, $size);
         $body = substr($raw, $size);
 
@@ -438,6 +445,10 @@ return static function (TeamSuite $suite): void {
             $state['recovery'] = true;
         }
 
+        // Calendar creation needs the owner's public key before the browser session releases
+        // its escrow. Seed that fixture separately; device creation still needs real password/MFA sign-in.
+        $services->keys()->createUserKey($member, $password)->wipe();
+
         $signIn = static function (TeamDBrowser $browser, string $username, string $password, string $secret): bool {
             $login = TeamDBrowser::form($browser->request('/index.php?option=com_users&view=login'), 'user.login');
 
@@ -684,7 +695,7 @@ return static function (TeamSuite $suite): void {
             return $refused;
         });
 
-        $suite->test($flow[20], static function () use ($services, $rowOf, $restore, $tag, $db, $p, $member, $password, &$created, $refusal) {
+        $suite->test($flow[20], static function () use ($services, $rowOf, $restore, $tag, $db, $p, $member, $password, &$created, $refusal, $suite) {
             $keys = $services->keys()->unlockWithPassword($member, $password);
             $key = $rowOf('appointments_user_keys', 'user_id = ' . $member);
 
@@ -696,7 +707,10 @@ return static function (TeamSuite $suite): void {
 
             try {
                 $refusedDevice = $services->devices()->authenticate($tag . 'member', $created) === null;
-                $refusedAdd = $refusal(static fn () => $services->devices()->create($keys, $tag . ' broken key', 'other', true)) === 403;
+                $devicesBefore = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+                // The key service refuses the changed row (409) before the device service's own check (403).
+                $refusedAdd = \in_array($refusal(static fn () => $services->devices()->create($keys, $tag . ' broken key', 'other', true)), [403, 409], true)
+                    && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $devicesBefore;
             } catch (\Throwable $e) {
                 $refusedDevice = $refusedAdd = false;
             } finally {
@@ -706,21 +720,35 @@ return static function (TeamSuite $suite): void {
             return $refusedDevice && $refusedAdd && $services->devices()->authenticate($tag . 'member', $created) !== null;
         });
 
-        $suite->test($flow[7], static function () use ($browser, $page, $suite, $p, $member) {
+        $suite->test($flow[7], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
+            // A session of its own: the key and factor probes above may have closed the first one's keys.
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
             $form = TeamDBrowser::form($page($browser), 'devices.create');
-            $browser->dropCookie('appointments_keys_site');
 
             if ($form === null) {
+                echo '    keyless add: page answered ' . $browser->status . " without the «Add device» form\n";
+
                 return false;
             }
 
+            // Over HTTPS the key cookie carries the __Host- prefix.
+            $browser->dropCookie('appointments_keys_site');
+            $browser->dropCookie('__Host-appointments_keys_site');
+            $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
             $html = $browser->request($form['action'], $form['fields'] + ['name' => 'Locked phone', 'client' => 'davx5', 'rule' => 1], 0);
+            // No «Add device» form: only that form carries the one-time form value; other forms of
+            // the page (e.g. the sign-out module) may use the requested address …task=devices.create.
+            $noForm = !preg_match('/name="form_nonce"/', $html);
+            $noPassword = !preg_match('/id="appointments-app-password"/', $html);
+            $unchanged = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
 
-            // Only devices that still work count: the replay probes above are revoked.
-            return $browser->status === 423
-                && !str_contains($html, 'devices.create')
-                && !preg_match('/id="appointments-app-password"/', $html)
-                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member} AND state <> 0") === 1;
+            if ($browser->status !== 423 || !($noForm && $noPassword && $unchanged)) {
+                echo '    keyless add: answered ' . $browser->status . ($browser->header('Location') === '' ? ' without' : ' with') . ' Location, no form '
+                    . (int) $noForm . ', no password ' . (int) $noPassword . ', unchanged ' . (int) $unchanged . "\n";
+            }
+
+            return $browser->status === 423 && $noForm && $noPassword && $unchanged;
         });
         $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
             $browser = new TeamDBrowser($suite->base);
@@ -763,44 +791,83 @@ return static function (TeamSuite $suite): void {
             // The answer is a redirect back to the page, which shows the general message.
             $html .= $status >= 300 && $status < 400 ? $browser->request($browser->header('Location')) : '';
 
-            return $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before
-                && !preg_match('/id="appointments-app-password"/', $html)
-                && !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
+            $unchanged = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
+            $noPassword = !preg_match('/id="appointments-app-password"/', $html);
+            $noDetail = !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
+
+            if (!($unchanged && $noPassword && $noDetail)) {
+                echo '    security check: answered ' . $status . ', final ' . $browser->status . ', unchanged ' . (int) $unchanged
+                    . ', no password ' . (int) $noPassword . ', no detail ' . (int) $noDetail . "\n";
+            }
+
+            return $unchanged && $noPassword && $noDetail;
         });
 
         // ------------------------------------------------------------------
         // Account activation (an administrator created the account)
         // ------------------------------------------------------------------
 
+        // Team accounts are invited only by core.admin with a real second factor: a temporary
+        // Super User of this suite with its own TOTP method, removed with the other fixture users.
+        $inviter = $user('inviter', 'Unused-' . bin2hex(random_bytes(12)) . '!', [8]);
+        $inviterMfa = \Joomla\CMS\Factory::getApplication()->bootComponent('com_users')->getMVCFactory()->createTable('Mfa', 'Administrator');
+        $inviterMfa->save(['user_id' => $inviter, 'title' => 'Test', 'method' => 'totp', 'default' => 1, 'options' => ['key' => $secret]]);
         $fresh = $user('fresh', 'Unused-' . bin2hex(random_bytes(12)) . '!', [$teamGroup]);
         $hashBefore = (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password'];
         $mailsBefore = AppointmentsMail::snapshot();
-        $services->invitations()->invite($admin, $fresh);
+        $services->invitations()->invite($inviter, $fresh);
         $link = '';
 
         foreach (AppointmentsMail::messagesSince($mailsBefore) as $mime) {
-            if (preg_match('#https?://[^\s"<>]*view=activation(?:&amp;|&)token=([A-Za-z0-9_-]{43})#', AppointmentsMail::decoded($mime), $m) === 1) {
+            if (preg_match('#https://[^\s"<>]*token=[A-Za-z0-9_-]{43}[^\s"<>]*#', AppointmentsMail::decoded($mime), $m) === 1
+                && str_contains($m[0], 'activation')) {
                 $link = html_entity_decode($m[0]);
             }
+        }
+
+        // The browser follows the complete link of the mail, as the invited person does: HTTPS,
+        // the site address, path and query exactly as sent. Only the masked form is printed.
+        $linkPath = $link !== '' && str_starts_with($link, 'https://') && preg_match('/[?&]token=[A-Za-z0-9_-]{43}(?:&|$)/', $link) === 1
+            ? $link
+            : '';
+
+        if ($linkPath === '') {
+            echo '    activation: no HTTPS activation link in ' . \count(AppointmentsMail::messagesSince($mailsBefore)) . " new mail(s)\n";
+        } else {
+            echo '    activation: mail link ' . (preg_replace(['/token=[^&\s]*/', '#^https://[^/]*#'], ['token=[masked]', 'https://[host]'], $link) ?? '') . "\n";
         }
 
         $activation = new TeamDBrowser($suite->base);
         $activationForm = null;
 
-        $suite->test($flow[10], static function () use ($activation, $link, &$activationForm) {
-            if ($link === '') {
+        $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm) {
+            if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
                 return false;
             }
 
-            $activation->request($link, null, 0);
+            $activation->request($linkPath, null, 0);
             $location = $activation->header('Location');
 
-            if ($activation->status < 300 || $activation->status >= 400 || $location === '' || str_contains($location, 'token=')) {
+            // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
+            for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
+                $activation->request($location, null, 0);
+                $location = $activation->header('Location');
+            }
+
+            if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
+                // Never the token itself: only where the answer points to.
+                echo '    activation: exchange answered ' . $activation->status . ' to '
+                    . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
+
                 return false;
             }
 
             $html = $activation->request($location);
             $activationForm = TeamDBrowser::form($html, 'activation.complete');
+
+            if ($activationForm === null) {
+                echo '    activation: page answered ' . $activation->status . " without the activation form\n";
+            }
 
             return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
                 && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
@@ -846,11 +913,11 @@ return static function (TeamSuite $suite): void {
                 && password_verify($strong, (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password']);
         });
 
-        $suite->test($flow[14], static function () use ($suite, $link) {
+        $suite->test($flow[14], static function () use ($suite, $linkPath) {
             $again = new TeamDBrowser($suite->base);
-            $again->request($link);
+            $again->request($linkPath);
 
-            return $link !== '' && $again->status === 404;
+            return $linkPath !== '' && $again->status === 404;
         });
     } finally {
         // Own rows only; the log keeps its rows so that the chain of part F still verifies.

@@ -9,8 +9,8 @@
  *   UID, cancellation and anonymisation remove it. Until then these tests are
  *   reported as pending.
  *
- * Cleans up every row it creates; a site recovery key it had to create stays,
- * because it is site-wide key material other parts may rely on.
+ * Cleans up every row it creates, including its own recovery key, while
+ * preserving any recovery key that existed before this fixture.
  */
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
@@ -147,8 +147,8 @@ return static function (TeamSuite $suite): void {
             $id = (int) $suite->db->insert_id;
             $readParams = static fn (): array => json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
 
-            // An update 100 days ago whose migration never finished: the clock is past the window.
-            $cutoff = time() - 100 * 86400;
+            // An update 10 days ago whose migration never finished: past the window, inside the limit.
+            $cutoff = time() - 10 * 86400;
             $token = BookingData::migrationToken($keys, $cutoff + BookingData::MIGRATION_DAYS * 86400, $cutoff);
             $params = $readParams();
             $params[BookingData::MIGRATION_OPTION] = $token;
@@ -400,6 +400,7 @@ return static function (TeamSuite $suite): void {
         $admin = $fixture->host;
         $user = 0;
         $calendar = 0;
+        $createdRecoveryFingerprint = null;
 
         try {
             // A team member as host, with a key pair and a second factor.
@@ -417,6 +418,7 @@ return static function (TeamSuite $suite): void {
 
             if ($team->keys()->recoveryFingerprint() === null) {
                 $team->keys()->createRecoveryKey($admin);
+                $createdRecoveryFingerprint = str_replace('-', '', $team->keys()->recoveryFingerprint());
             }
 
             $keys = $team->keys()->createUserKey($user, $password);
@@ -482,6 +484,14 @@ return static function (TeamSuite $suite): void {
                 $suite->db->query("DELETE FROM {$suite->prefix}user_usergroup_map WHERE user_id={$user}");
                 $suite->db->query("DELETE FROM {$suite->prefix}appointments_hosts WHERE user_id={$user}");
                 $suite->db->query("DELETE FROM {$suite->prefix}users WHERE id={$user}");
+            }
+            if ($createdRecoveryFingerprint !== null) {
+                $suite->test('E removes exactly the recovery key its fixture created', static function () use ($suite, $createdRecoveryFingerprint, $admin) {
+                    $suite->db->query("DELETE FROM {$suite->prefix}appointments_keyring WHERE purpose='recovery'"
+                        . " AND fingerprint='" . $suite->db->real_escape_string($createdRecoveryFingerprint) . "' AND created_by={$admin}");
+
+                    return $suite->db->affected_rows === 1;
+                });
             }
         }
     } finally {

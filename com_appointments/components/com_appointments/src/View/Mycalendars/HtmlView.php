@@ -10,7 +10,6 @@
 namespace Advans\Component\Appointments\Site\View\Mycalendars;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
-use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
@@ -73,6 +72,18 @@ class HtmlView extends BaseHtmlView
 
     protected $username = '';
 
+    /** Reason set by the controller for this response (e.g. 423 Locked); it wins over the checks. */
+    private string $forcedBlock = '';
+
+    /**
+     * Called by the controller when it refuses «Add device» in this response: the
+     * page then shows the reason and no form, whatever the checks would say now.
+     */
+    public function blockAdd(string $reason): void
+    {
+        $this->forcedBlock = $reason;
+    }
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -112,7 +123,7 @@ class HtmlView extends BaseHtmlView
 
         try {
             $this->devices = $services->devices()->listForUser($userId);
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             $this->unavailable = true;
         }
 
@@ -137,7 +148,8 @@ class HtmlView extends BaseHtmlView
 
         $this->setLayout('default');
         $this->calendars = $this->calendarsOf($services, $userId);
-        $this->addBlocked = $this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId);
+        $this->addBlocked = $this->forcedBlock !== '' ? $this->forcedBlock
+            : ($this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId));
 
         if ($this->addBlocked === '') {
             // A new value per rendering: the form can be sent once, a reload or a second
@@ -195,7 +207,7 @@ class HtmlView extends BaseHtmlView
     {
         try {
             $calendars = $services->grants()->calendarsFor($userId);
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             $this->unavailable = true;
 
             return [];
@@ -208,6 +220,8 @@ class HtmlView extends BaseHtmlView
 
     /**
      * Why «Add device» cannot be offered now, in the order the user can fix it.
+     * A check that cannot be made (e.g. a database error) blocks the form with the
+     * general text; its message never reaches the page.
      */
     private function addBlockedReason(TeamServices $services, int $userId): string
     {
@@ -221,7 +235,7 @@ class HtmlView extends BaseHtmlView
             }
 
             $keys = $services->keySession()->current();
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             return 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY';
         }
 

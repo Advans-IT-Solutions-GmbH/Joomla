@@ -14,9 +14,10 @@ use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
+use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Router\Route;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
 
@@ -140,7 +141,39 @@ final class InvitationService implements InvitationServiceInterface
      */
     public static function link(string $token): string
     {
-        return Route::link('site', 'index.php?option=com_appointments&view=activation&token=' . rawurlencode($token), false, Route::TLS_FORCE, true);
+        $app = Factory::getApplication();
+        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
+
+        if ($base === '') {
+            $base = (string) $app->get('live_site', '');
+        }
+
+        if ($base === '' && !$app instanceof ConsoleApplication) {
+            $base = Uri::root();
+        }
+
+        return self::activationLink($base, $token);
+    }
+
+    /**
+     * A direct entry point, independent of SEF/menu state and CLI router roots.
+     */
+    public static function activationLink(string $base, string $token): string
+    {
+        $parts = parse_url($base);
+
+        if (!self::tokenFormatValid($token) || !filter_var($base, FILTER_VALIDATE_URL) || !\is_array($parts)
+            || !\in_array($parts['scheme'] ?? '', ['http', 'https'], true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
+        }
+
+        $base = preg_replace('#(?:/index\.php)+/*$#', '', rtrim($base, '/'));
+        $base = preg_replace('#\Ahttp://#', 'https://', $base);
+
+        return $base . '/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => 'activation', 'token' => $token,
+        ], '', '&', PHP_QUERY_RFC3986);
     }
 
     /**
@@ -308,9 +341,14 @@ final class InvitationService implements InvitationServiceInterface
             return (int) $db->insertid();
         });
 
+        $phase = 'activation_link';
+
         try {
-            $this->services->mailer()->invitation($email, self::link($token), $expires);
+            $link = self::link($token);
+            $phase = 'activation_delivery';
+            $this->services->mailer()->invitation($email, $link, $expires);
         } catch (\Throwable $e) {
+            Log::add('Internet calendar activation failed: phase ' . $phase . ', exception ' . $e::class, Log::ERROR, 'com_appointments');
             // The token exists only in that mail: without it the link is useless.
             $this->atomic(function () use ($id, $actorUserId): void {
                 foreach ($this->rows('id = ' . $id, true) as $row) {
@@ -419,7 +457,8 @@ final class InvitationService implements InvitationServiceInterface
             $before = $this->storedPasswordHash((int) $row->user_id);
 
             try {
-                $saved = $user->bind(['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''])
+                $data = ['password' => $password, 'password2' => $password, 'requireReset' => 0, 'activation' => ''];
+                $saved = $user->bind($data)
                     && $user->save(true);
             } catch (\Throwable) {
                 // A plugin may throw after Joomla stored the password: then the

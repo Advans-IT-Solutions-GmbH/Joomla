@@ -318,7 +318,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 // Next batch.
             }
         } catch (\Throwable $e) {
-            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_BOOKING_ENCRYPTION_PENDING'), 'warning');
+            $app = Factory::getApplication();
+            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_BOOKING_ENCRYPTION_PENDING'), 'warning');
         }
     }
 

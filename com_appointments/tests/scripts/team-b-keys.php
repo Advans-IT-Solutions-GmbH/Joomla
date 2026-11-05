@@ -27,6 +27,11 @@ return static function (TeamSuite $suite): void {
             && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_user_keys") === 0;
     });
 
+    $suite->test('B: earlier work packages left no calendar keys for a different recovery key', static function () use ($suite) {
+        return $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_keys") === 0
+            && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_key_wraps") === 0;
+    });
+
     $suite->test('User keys store only a public key and a wrapped secret', static function () use ($suite) {
         return $suite->columns('appointments_user_keys') === ['user_id', 'key_version', 'public_key', 'password_wrapped', 'password_salt', 'pwhash_opslimit', 'pwhash_memlimit', 'device_epoch', 'row_mac', 'created_utc', 'modified_utc'];
     });
@@ -86,6 +91,211 @@ return static function (TeamSuite $suite): void {
     // ------------------------------------------------------------------
 
     $recovery = '';
+
+    if ($suite->isStub(GrantService::class) || !str_starts_with($suite->base, 'https://')) {
+        $suite->pending('B: a no-grant backend administrator unlocks recovery only after a real second factor', 'C and HTTPS');
+    } else {
+        $suite->test('B: a no-grant backend administrator unlocks recovery only after a real second factor', static function () use ($suite, $db, $p, $user, $owner, $keys, $hex) {
+            if ((int) $db->query("SELECT COUNT(*) FROM {$p}appointments_keyring WHERE purpose='recovery'")->fetch_row()[0] !== 0) {
+                throw new \RuntimeException('Bootstrap regression needs an empty recovery keyring.');
+            }
+
+            $password = 'Bootstrap-' . bin2hex(random_bytes(12)) . '!';
+            $admin = $user('bootstrap', $password);
+            $holderPassword = 'Holder-' . bin2hex(random_bytes(12)) . '!';
+            $holder = $user('bootstrap-holder', $holderPassword);
+            $keys->createUserKey($holder, $holderPassword)->wipe();
+            $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$admin}, 8)");
+            $username = (string) $db->query("SELECT username FROM {$p}users WHERE id = {$admin}")->fetch_row()[0];
+            $totp = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+            $options = $db->real_escape_string(json_encode(['key' => $totp]));
+            $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$admin}, 'Bootstrap', 'totp', 1, '{$options}', UTC_TIMESTAMP())");
+            $record = (int) $db->insert_id;
+            $componentParams = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0];
+            $usersParams = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_users'")->fetch_row()[0];
+            $pluginEnabled = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='user' AND element='appointments'")->fetch_row()[0];
+            $params = json_decode($componentParams, true, 512, JSON_THROW_ON_ERROR);
+            $params['teamcal_enabled'] = 1;
+            $users = json_decode($usersParams, true, 512, JSON_THROW_ON_ERROR);
+            // Prove optional MFA, not incidental membership in a forced group.
+            $users['forceMFAUserGroups'] = [];
+            $users['neverMFAUserGroups'] = [];
+            $gate = bin2hex(random_bytes(32));
+            $probeName = 'teamb-bootstrap-' . bin2hex(random_bytes(8)) . '.php';
+            $probeFile = JPATH_ADMINISTRATOR . '/' . $probeName;
+            $calendar = 0;
+            $probe = <<<'PHP'
+<?php
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !hash_equals('__GATE__', (string) ($_POST['gate'] ?? ''))) {
+    http_response_code(404);
+    exit;
+}
+define('_JEXEC', 1);
+require __DIR__ . '/includes/defines.php';
+require JPATH_BASE . '/includes/framework.php';
+$container = \Joomla\CMS\Factory::getContainer();
+$container->alias('session', 'session.web.administrator')
+    ->alias(\Joomla\Session\SessionInterface::class, 'session.web.administrator');
+$app = $container->get(\Joomla\CMS\Application\AdministratorApplication::class);
+\Joomla\CMS\Factory::$application = $app;
+$app->getSession()->start();
+$app->loadLanguage($container->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)->createLanguage('en-GB'));
+$app->createExtensionNamespaceMap();
+$app->bootComponent('com_appointments');
+$services = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
+$backendAdmin = new \ReflectionMethod($services->keySession(), 'isBackendKeyAdministrator');
+$ordinaryUserExcluded = $app->isClient('administrator')
+    && !$backendAdmin->invoke($services->keySession(), __ORDINARY_USER__);
+$unlocked = false;
+$context = null;
+try {
+    $context = $services->keySession()->requireUnlocked();
+    $unlocked = true;
+} catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
+    if ($e->getCode() !== 423) {
+        throw $e;
+    }
+}
+$identity = $app->getIdentity();
+$id = (int) ($identity->id ?? 0);
+$created = false;
+$recovered = false;
+if ($unlocked && $identity->authorise('core.admin', 'com_appointments') && ($_POST['create'] ?? '') === '1') {
+    $secret = $services->keys()->createRecoveryKey($id);
+    $created = $services->keys()->recoveryFingerprint() !== null;
+    $services->keys()->createCalendarKeys(__CALENDAR__, __HOLDER__);
+    $ring = $services->keys()->recoverKeyring(__CALENDAR__, $secret);
+    $recovered = $ring !== null;
+    $ring?->wipe();
+    \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($secret);
+}
+$noKey = $context !== null && $services->keys()->openKeyring(__CALENDAR__, $context) === null;
+$context?->wipe();
+header('Content-Type: application/json');
+echo json_encode([
+    'unlocked' => $unlocked,
+    'created' => $created,
+    'recovered' => $recovered,
+    'noAudience' => $services->grants()->audienceOf($id) === 'none',
+    'noCalendars' => $services->grants()->calendarsFor($id) === [],
+    'noAccess' => $services->grants()->accessFor($id, __CALENDAR__) === null,
+    'noKey' => $noKey,
+    'ordinaryUserExcluded' => $ordinaryUserExcluded,
+    'passed' => (int) $app->getSession()->get('com_users.mfa_checked', 0) === 1,
+]);
+PHP;
+            $curl = curl_init();
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5,
+                CURLOPT_COOKIEFILE => '', CURLOPT_TIMEOUT => 30,
+                CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0,
+            ]);
+            $request = static function (string $path, ?array $data = null) use ($curl, $suite): string {
+                curl_setopt_array($curl, [CURLOPT_URL => $suite->base . $path, CURLOPT_POST => $data !== null]);
+
+                if ($data !== null) {
+                    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+                }
+
+                $response = curl_exec($curl);
+
+                if ($response === false || curl_getinfo($curl, CURLINFO_HTTP_CODE) !== 200) {
+                    throw new \RuntimeException('Bootstrap fixture request failed.');
+                }
+
+                return $response;
+            };
+            $token = static function (string $html): string {
+                if (!preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $html, $match)) {
+                    throw new \RuntimeException('Bootstrap fixture form token missing.');
+                }
+
+                return $match[1];
+            };
+            $inspect = static fn (bool $create = false): array => json_decode($request('/administrator/' . $probeName, ['gate' => $gate, 'create' => $create ? '1' : '0']), true, 512, JSON_THROW_ON_ERROR);
+
+            try {
+                $uri = bin2hex(random_bytes(16));
+                $db->query("INSERT INTO {$p}appointments_calendars (uri, title, owner_user_id, row_mac, created_utc, modified_utc) VALUES ('{$uri}', 'Bootstrap isolation', {$holder}, " . $hex(str_repeat("\0", 32)) . ', UTC_TIMESTAMP(), UTC_TIMESTAMP())');
+                $calendar = (int) $db->insert_id;
+                $mac = $keys->rowMac('calendars', ['id' => $calendar, 'uri' => $uri, 'owner_user_id' => $holder, 'allow_external' => 0, 'state' => 1]);
+                $db->query("UPDATE {$p}appointments_calendars SET row_mac=" . $hex($mac) . " WHERE id={$calendar}");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}extensions SET enabled=1 WHERE type='plugin' AND folder='user' AND element='appointments'");
+
+                if (file_put_contents($probeFile, str_replace(['__GATE__', '__CALENDAR__', '__HOLDER__', '__ORDINARY_USER__'], [$gate, (string) $calendar, (string) $holder, (string) $owner], $probe)) === false) {
+                    throw new \RuntimeException('Could not write bootstrap fixture probe.');
+                }
+
+                $guest = $inspect();
+                $form = $request('/administrator/index.php');
+                $request('/administrator/index.php', [
+                    'option' => 'com_login', 'task' => 'login', 'username' => $username, 'passwd' => $password,
+                    'return' => base64_encode('index.php'), $token($form) => 1,
+                ]);
+                $pending = $inspect();
+                $captive = $request('/administrator/index.php?option=com_users&view=captive');
+                $request('/administrator/index.php?option=com_users&task=captive.validate&record_id=' . $record, [
+                    'code' => teamBTotp($totp, time()), $token($captive) => 1,
+                ]);
+                $passed = $inspect(true);
+                $recoveryCreated = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_keyring WHERE purpose='recovery'")->fetch_row()[0] === 1;
+                $noImplicitGrants = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE user_id={$admin}")->fetch_row()[0] === 0;
+                $siteSession = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession(TeamServices::fromApplication());
+                $backendAdmin = new \ReflectionMethod($siteSession, 'isBackendKeyAdministrator');
+                $notOnSite = !$backendAdmin->invoke($siteSession, $admin);
+
+                $db->query("DELETE FROM {$p}user_usergroup_map WHERE user_id={$admin} AND group_id=8");
+                $revokedAdmin = $inspect();
+                $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$admin}, 8)");
+                $users['neverMFAUserGroups'] = [8];
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $excluded = $inspect();
+                $users['neverMFAUserGroups'] = [];
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}user_mfa SET method='email' WHERE id={$record}");
+                $emailOnly = $inspect();
+                $db->query("UPDATE {$p}user_mfa SET method='backupcodes' WHERE id={$record}");
+                $backupOnly = $inspect();
+                $db->query("DELETE FROM {$p}user_mfa WHERE user_id={$admin}");
+                $noFactor = $inspect();
+
+                $checks = [
+                    'guestLocked' => !$guest['unlocked'],
+                    'passwordOnlyLocked' => !$pending['unlocked'] && !$pending['passed'],
+                    'totpUnlocks' => $passed['passed'] && $passed['unlocked'],
+                    'recoveryCreated' => $passed['created'] && $recoveryCreated,
+                    'explicitRecoveryWorks' => $passed['recovered'],
+                    'noImplicitCalendarAccess' => $passed['noAudience'] && $passed['noCalendars'] && $passed['noAccess'] && $passed['noKey'] && $noImplicitGrants,
+                    'backendOnly' => $notOnSite,
+                    'ordinaryUserExcluded' => $passed['ordinaryUserExcluded'] && !$revokedAdmin['unlocked'],
+                    'neverMfaExcluded' => !$excluded['unlocked'],
+                    'emailExcluded' => !$emailOnly['unlocked'],
+                    'backupExcluded' => !$backupOnly['unlocked'],
+                    'removedFactorExcluded' => !$noFactor['unlocked'],
+                ];
+                echo '  Bootstrap checks: ' . json_encode($checks, JSON_THROW_ON_ERROR) . "\n";
+
+                return !\in_array(false, $checks, true);
+            } finally {
+                curl_close($curl);
+
+                if (is_file($probeFile)) {
+                    unlink($probeFile);
+                }
+
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($componentParams) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($usersParams) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}extensions SET enabled={$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
+                $db->query("DELETE FROM {$p}appointments_keyring WHERE purpose='recovery' AND created_by={$admin}");
+                $db->query("DELETE FROM {$p}appointments_calendar_key_wraps WHERE calendar_id={$calendar}");
+                $db->query("DELETE FROM {$p}appointments_calendar_keys WHERE calendar_id={$calendar}");
+                $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
+                $db->query("DELETE FROM {$p}user_mfa WHERE user_id={$admin}");
+            }
+        });
+    }
 
     $suite->test('B: the recovery key is created once, printed with a typing check, its secret never stored', static function () use ($suite, $keys, $refusal, $row, $p, &$recovery, &$st) {
         if ($suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") > 0) {
@@ -269,14 +479,14 @@ return static function (TeamSuite $suite): void {
             $before = $db->query("SELECT key_version, device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row();
 
             try {
-                $application->setIdentity($guest);
+                $application->loadIdentity($guest);
                 $db->query($flip);
                 $guestRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
-                $application->setIdentity($userFactory->loadUserById($owner));
+                $application->loadIdentity($userFactory->loadUserById($owner));
                 $impersonationRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
                 $stillDamaged = $keys->userKeyStatus($member)['status'] === 'tampered';
                 $db->query($flip);
-                $application->setIdentity($admin);
+                $application->loadIdentity($admin);
                 $adminRefusedForValidRow = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 409;
 
                 $db->query($flip);
@@ -292,7 +502,7 @@ return static function (TeamSuite $suite): void {
                 if ($keys->userKeyStatus($member)['status'] === 'tampered') {
                     $db->query($flip);
                 }
-                $application->setIdentity($originalIdentity ?? $guest);
+                $application->loadIdentity($originalIdentity ?? $guest);
             }
         });
     }
@@ -307,7 +517,11 @@ return static function (TeamSuite $suite): void {
             && $keys->recoverKeyring($st['calendar'], 'not a secret') === null;
     });
 
-    $suite->test('B: the recovery key rotates only with the old secret', static function () use ($keys, $refusal, &$recovery, &$st) {
+    $suite->test('B: the recovery key rotates only with the old secret', static function () use ($keys, $refusal, $suite, $p, &$recovery, &$st) {
+        if ($suite->count("SELECT COUNT(*) FROM {$p}appointments_calendar_keys WHERE calendar_id <> {$st['calendar']}") !== 0) {
+            throw new \RuntimeException('Recovery rotation fixture contains calendar keys from another work package.');
+        }
+
         $wrong = KeyService::formatRecoverySecret(CipherSuite::keyPair()['secret']);
 
         if ($refusal(static fn () => $keys->rotateRecoveryKey($wrong, 42)) !== 403) {
@@ -387,10 +601,10 @@ return static function (TeamSuite $suite): void {
             $ownerIdentity = $userFactory->loadUserById($owner);
 
             try {
-                $application->setIdentity($ownerIdentity);
+                $application->loadIdentity($ownerIdentity);
                 $rejected = $refusal(static fn () => $keys->rotateCalendarKey($staleRing)) === 409;
             } finally {
-                $application->setIdentity($originalIdentity ?? $userFactory->loadUserById(0));
+                $application->loadIdentity($originalIdentity ?? $userFactory->loadUserById(0));
             }
 
             $memberKeys = $keys->unlockWithPassword($member, $memberPassword);
@@ -505,6 +719,7 @@ return static function (TeamSuite $suite): void {
             $db->query("INSERT IGNORE INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$member}, " . (int) ($groups[0] ?? 0) . ')');
             // Switch the feature and the user plugin on for this test only.
             $params = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0];
+            $pluginEnabled = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='user' AND element='appointments'")->fetch_row()[0];
             $on = json_decode($params ?: '{}', true) ?: [];
             $on['teamcal_enabled'] = 1;
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($on)) . "' WHERE type='component' AND element='com_appointments'");
@@ -512,35 +727,112 @@ return static function (TeamSuite $suite): void {
             $headers = '';
             $curl = curl_init($suite->base . '/index.php?option=com_users&view=login');
             $jar = sys_get_temp_dir() . '/teamb-' . bin2hex(random_bytes(6));
-            curl_setopt_array($curl, [CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0]);
-            $form = (string) curl_exec($curl);
-            preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $form, $token);
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+                CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5, CURLOPT_TIMEOUT => 30,
+            ]);
+            $form = curl_exec($curl);
+
+            if ($form === false || (int) curl_getinfo($curl, CURLINFO_HTTP_CODE) !== 200
+                || !preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $form, $token)) {
+                $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+                curl_close($curl);
+                unset($curl);
+                @unlink($jar);
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET enabled = {$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
+                throw new \RuntimeException('The password sign-in form did not render a token: HTTP ' . $status . '.');
+            }
+
             curl_setopt_array($curl, [
                 CURLOPT_URL => $suite->base . '/index.php?option=com_users&task=user.login', CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => http_build_query(['username' => $tag . 'member', 'password' => $memberPassword, 'return' => base64_encode('index.php'), ($token[1] ?? 'x') => 1]),
+                // Inspect the password response itself, before the captive page.
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_POSTFIELDS => http_build_query(['username' => $tag . 'member', 'password' => $memberPassword, 'return' => base64_encode('index.php'), $token[1] => 1]),
                 CURLOPT_HEADERFUNCTION => static function ($c, $line) use (&$headers) { $headers .= $line; return \strlen($line); },
             ]);
             curl_exec($curl);
+            $postStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+
+            if (!curl_setopt($curl, CURLOPT_COOKIELIST, 'FLUSH')) {
+                throw new \RuntimeException('The password sign-in cookie jar could not be flushed.');
+            }
+
             curl_close($curl);
+            unset($curl);
+            $jarContents = file_get_contents($jar);
             @unlink($jar);
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
-            $db->query("UPDATE {$p}extensions SET enabled = 0 WHERE type='plugin' AND folder='user' AND element='appointments'");
+            $db->query("UPDATE {$p}extensions SET enabled = {$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
+
+            if ($jarContents === false) {
+                throw new RuntimeException('The password sign-in cookie jar could not be read.');
+            }
 
             preg_match('/^Set-Cookie:\s*(?:__Host-)?appointments_keys_site=([0-9a-f]{64});([^\r\n]*)/mi', $headers, $cookie);
-            $session = teamBSession($db, $p, $member);
+            $session = null;
+            $sessionId = null;
+            $sessionCookiePresent = false;
+
+            foreach (preg_split('/\R/', $jarContents) ?: [] as $line) {
+                if (str_starts_with($line, '#HttpOnly_')) {
+                    $line = substr($line, \strlen('#HttpOnly_'));
+                } elseif ($line === '' || $line[0] === '#') {
+                    continue;
+                }
+
+                $fields = preg_split('/\s+/', trim($line)) ?: [];
+
+                if (\count($fields) < 7 || $fields[5] === 'appointments_keys_site'
+                    || !preg_match('/^[A-Za-z0-9_-]{16,128}$/D', $fields[6])) {
+                    continue;
+                }
+
+                $sessionCookiePresent = true;
+                $candidate = teamBSession($db, $p, $member, $fields[6]);
+
+                if ($candidate !== null) {
+                    $sessionId = $fields[6];
+                    $session = $candidate;
+                    break;
+                }
+            }
+
             $escrow = $session?->get('com_appointments.team_keys.site');
             $escrow = \is_object($escrow) ? (array) $escrow : $escrow;
-            $raw = (string) $db->query("SELECT data FROM {$p}session WHERE userid = {$member} ORDER BY time DESC LIMIT 1")->fetch_row()[0];
+            $rawRow = $sessionId === null ? null : $db->query(
+                "SELECT data FROM {$p}session WHERE userid = {$member} AND session_id = '" . $db->real_escape_string($sessionId) . "'"
+            )->fetch_row();
+            $raw = (string) ($rawRow[0] ?? '');
             $secret = $keys->unlockWithPassword($member, $memberPassword)?->secretKey() ?? random_bytes(32);
             $attributes = strtolower($cookie[2] ?? '');
-
-            return isset($cookie[1]) && \is_array($escrow)
-                && (int) ($escrow['mb'] ?? -1) === 0
-                && str_contains($attributes, 'httponly') && str_contains($attributes, 'secure') && str_contains($attributes, 'samesite=strict')
-                && !str_contains($attributes, 'expires=')
-                && !str_contains($raw, $secret) && stripos($raw, bin2hex($secret)) === false && !str_contains($raw, base64_encode($secret))
+            $postSucceeded = $postStatus >= 200 && $postStatus < 400;
+            $tokenPresent = isset($token[1]);
+            $cookiePresent = isset($cookie[1]);
+            $escrowPresent = \is_array($escrow);
+            $mfaNotChecked = $escrowPresent && (int) ($escrow['mb'] ?? -1) === 0;
+            $sessionSecretAbsent = !str_contains($raw, $secret) && stripos($raw, bin2hex($secret)) === false
+                && !str_contains($raw, base64_encode($secret))
                 && stripos(base64_decode(preg_match('/joomla\|s:\d+:"([^"]*)"/', $raw, $m) ? $m[1] : ''), bin2hex($secret)) === false
-                && !str_contains($raw, $cookie[1]);
+                && (!$cookiePresent || !str_contains($raw, $cookie[1]));
+            $secureCookie = str_contains($attributes, 'httponly') && str_contains($attributes, 'secure')
+                && str_contains($attributes, 'samesite=strict') && !str_contains($attributes, 'expires=');
+            $passed = $postSucceeded && $tokenPresent && $cookiePresent && $escrowPresent && $mfaNotChecked
+                && $secureCookie && $sessionSecretAbsent;
+
+            if (!$passed) {
+                echo '  B escrow diagnostics: HTTPS=' . (str_starts_with($suite->base, 'https://') ? 'yes' : 'no')
+                    . ', POST status=' . $postStatus . ', token=' . ($tokenPresent ? 'yes' : 'no')
+                    . ', key cookie=' . ($cookiePresent ? 'yes' : 'no')
+                    . ', session cookie=' . ($sessionCookiePresent ? 'yes' : 'no')
+                    . ', matching session=' . ($sessionId !== null ? 'yes' : 'no')
+                    . ', escrow=' . ($escrowPresent ? 'yes' : 'no')
+                    . ', mb=0=' . ($mfaNotChecked ? 'yes' : 'no')
+                    . ', secret absent=' . ($sessionSecretAbsent ? 'yes' : 'no') . "\n";
+            }
+
+            return $passed;
         });
     }
 
@@ -645,11 +937,12 @@ return static function (TeamSuite $suite): void {
 };
 
 /**
- * The Joomla session registry of the newest session of a user, null when none.
+ * The Joomla session registry for a session ID, or the user's newest session when omitted.
  */
-function teamBSession(mysqli $db, string $prefix, int $userId): ?\Joomla\Registry\Registry
+function teamBSession(mysqli $db, string $prefix, int $userId, ?string $sessionId = null): ?\Joomla\Registry\Registry
 {
-    $result = $db->query("SELECT data FROM {$prefix}session WHERE userid = {$userId} ORDER BY time DESC LIMIT 1");
+    $where = $sessionId === null ? '' : " AND session_id = '" . $db->real_escape_string($sessionId) . "'";
+    $result = $db->query("SELECT data FROM {$prefix}session WHERE userid = {$userId}{$where} ORDER BY time DESC LIMIT 1");
     $data = $result ? (string) ($result->fetch_row()[0] ?? '') : '';
 
     if (!preg_match('/joomla\|s:\d+:"([^"]*)"/', $data, $match)) {

@@ -222,7 +222,7 @@ final class KeySession implements KeySessionInterface
             return;
         }
 
-        if ($this->services->grants()->audienceOf($userId) === 'none') {
+        if ($this->services->grants()->audienceOf($userId) === 'none' && !$this->isBackendKeyAdministrator($userId)) {
             return;
         }
 
@@ -316,6 +316,7 @@ final class KeySession implements KeySessionInterface
             || empty($escrow['mfa'])
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
+            || ($this->services->grants()->audienceOf($userId) === 'none' && !$this->isBackendKeyAdministrator($userId))
             || !$this->joomlaSecondFactor($userId)
             || !$this->services->grants()->hasSecondFactor($userId)) {
             return null;
@@ -708,13 +709,25 @@ final class KeySession implements KeySessionInterface
         return $identity === null || $identity->guest ? null : (int) $identity->id;
     }
 
+    private function isBackendKeyAdministrator(int $userId): bool
+    {
+        if (!Factory::getApplication()->isClient('administrator') || $userId <= 0) {
+            return false;
+        }
+
+        // onUserLogin may run before Joomla replaces the guest identity.
+        $user = Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById($userId);
+
+        return !$user->guest && !(int) $user->block && $user->authorise('core.admin', 'com_appointments');
+    }
+
     /**
      * Joomla's own test of its captive page: a record of a method that is
      * enabled now. Not counted: backup codes, and the code by e-mail, which
      * travels the same way as the password reset link, so a reset by e-mail
-     * plus that code would be one factor twice. Only accounts covered by a
-     * forced-MFA group and not excluded by `neverMFAUserGroups` are eligible
-     * for a key session.
+     * plus that code would be one factor twice. Calendar users need forced MFA;
+     * a backend key administrator may use an enrolled, optional factor for
+     * recovery without a calendar grant. Neither may be excluded from MFA.
      */
     private function joomlaSecondFactor(int $userId): bool
     {
@@ -723,7 +736,8 @@ final class KeySession implements KeySessionInterface
         $never = array_map('intval', (array) $options->get('neverMFAUserGroups', []));
         $force = array_map('intval', (array) $options->get('forceMFAUserGroups', []));
 
-        if (array_intersect($never, $groups) !== [] || array_intersect($force, $groups) === []) {
+        if (array_intersect($never, $groups) !== []
+            || (array_intersect($force, $groups) === [] && !$this->isBackendKeyAdministrator($userId))) {
             return false;
         }
 

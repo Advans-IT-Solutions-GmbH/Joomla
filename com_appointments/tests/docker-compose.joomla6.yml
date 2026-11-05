@@ -30,6 +30,7 @@ services:
 
   mysql:
     image: mysql:8.0
+    command: --log-bin-trust-function-creators=1
     container_name: com_appointments_j6_test_mysql
     environment:
       MYSQL_ROOT_PASSWORD: root_pass

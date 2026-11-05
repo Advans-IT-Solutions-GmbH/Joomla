@@ -111,6 +111,28 @@ final class CalendarActivationRulesTest extends TestCase
         self::assertNotSame(InvitationService::tokenHash($key, 'x@example.test'), InvitationService::emailHash($key, 'x@example.test'));
     }
 
+    public function testActivationLinksUseOneEntryPointAndKeepSubdirectoryAndPort(): void
+    {
+        $token = InvitationService::newToken();
+
+        foreach ([
+            'http://example.test/' => 'https://example.test',
+            'https://example.test/site/' => 'https://example.test/site',
+            'https://example.test:8443/site/index.php/index.php/' => 'https://example.test:8443/site',
+        ] as $base => $expected) {
+            self::assertSame($expected . '/index.php?option=com_appointments&view=activation&token=' . $token, InvitationService::activationLink($base, $token));
+        }
+
+        foreach (['', '/site', 'ftp://example.test', 'https://user@example.test/', 'https://example.test/?x=1', 'https://example.test/#fragment'] as $base) {
+            try {
+                InvitationService::activationLink($base, $token);
+                self::fail('Accepted an invalid activation base.');
+            } catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
+                self::assertSame(400, $e->getCode());
+            }
+        }
+    }
+
     public function testActivationMacFields(): void
     {
         $row = (object) [

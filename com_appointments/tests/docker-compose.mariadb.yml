@@ -38,6 +38,7 @@ services:
   # JOOMLA_DB_HOST above need no change; only the image behind it differs.
   mysql:
     image: mariadb:10.6
+    command: --log-bin-trust-function-creators=1
     container_name: com_appointments_mariadb_test_mysql
     environment:
       MARIADB_ROOT_PASSWORD: root_pass

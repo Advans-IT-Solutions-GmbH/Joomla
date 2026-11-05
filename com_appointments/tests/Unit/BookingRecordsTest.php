@@ -15,15 +15,23 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/Conference/RuntimeStubs.php';
 require_once dirname(__DIR__, 2) . '/administrator/components/com_appointments/src/Service/BookingRecords.php';
 
+abstract class BookingRecordsTestDatabase implements DatabaseInterface
+{
+    abstract public function insertObject($table, &$object, $key = null);
+}
+
 final class BookingRecordsTestQuery
 {
     public string $operation = 'select';
+    public string $selected = '';
     public string $table = '';
     public ?int $bookingId = null;
     public array $sets = [];
 
     public function select($columns): self
     {
+        $this->selected = \is_array($columns) ? implode(',', $columns) : (string) $columns;
+
         return $this;
     }
 
@@ -214,11 +222,30 @@ final class BookingRecordsTest extends TestCase
         $this->assertCompleted($state);
     }
 
-    private function databaseState(): BookingRecordsTestDatabaseState
+    public function testExpiredWindowInsideTheLimitNeverEncryptsAutomatically(): void
+    {
+        $state = $this->databaseState(10);
+        $before = $state->rows;
+        $token = $state->params[BookingData::MIGRATION_OPTION];
+        $keys = new KeyProvider(self::SECRET);
+        self::assertNotNull(BookingData::authenticCutoff($token, $keys, time()), 'The fixture token must be expired but inside the limit.');
+        self::assertNull(BookingData::migrationCutoff($token, $keys, time()), 'The fixture token must be expired.');
+
+        self::assertSame(0, BookingRecords::migrate($this->database($state), $keys, 200));
+        self::assertSame(0, BookingRecords::resume($this->database($state), $keys, 1));
+        self::assertSame($before, $state->rows, 'After the window no automatic path may encrypt clear text.');
+        self::assertSame([], $state->audit);
+        self::assertSame($token, $state->params[BookingData::MIGRATION_OPTION], 'Pending rows must keep the token, not the end marker.');
+
+        self::assertSame(2, BookingRecords::encryptRemaining($this->database($state), $keys, 7));
+        $this->assertCompleted($state);
+    }
+
+    private function databaseState(int $daysAgo = 100): BookingRecordsTestDatabaseState
     {
         $state = new BookingRecordsTestDatabaseState();
         $keys = new KeyProvider(self::SECRET);
-        $cutoff = time() - 100 * 86400;
+        $cutoff = time() - $daysAgo * 86400;
         $state->params[BookingData::MIGRATION_OPTION] = BookingData::migrationToken(
             $keys,
             $cutoff + BookingData::MIGRATION_DAYS * 86400,
@@ -243,10 +270,10 @@ final class BookingRecordsTest extends TestCase
 
     private function database(BookingRecordsTestDatabaseState $state): DatabaseInterface
     {
-        $database = $this->getMockBuilder(DatabaseInterface::class)
+        $database = $this->getMockBuilder(BookingRecordsTestDatabase::class)
             ->onlyMethods(['quoteName', 'quote', 'setQuery', 'execute', 'loadResult', 'loadAssoc', 'updateObject',
-                'transactionStart', 'transactionCommit', 'transactionRollback'])
-            ->addMethods(['createQuery', 'getQuery', 'loadAssocList', 'getAffectedRows', 'insertObject'])
+                'transactionStart', 'transactionCommit', 'transactionRollback', 'insertObject'])
+            ->addMethods(['createQuery', 'getQuery', 'loadAssocList', 'getAffectedRows'])
             ->getMock();
 
         $database->method('quoteName')->willReturnCallback(static function ($name) {
@@ -264,7 +291,21 @@ final class BookingRecordsTest extends TestCase
 
             return $database;
         });
-        $database->method('loadResult')->willReturnCallback(static fn (): string => json_encode($state->params));
+        $database->method('loadResult')->willReturnCallback(static function () use ($state) {
+            if ($state->query !== null && $state->query->selected === 'COUNT(*)') {
+                return (string) \count(array_filter($state->rows, static function (array $row): bool {
+                    foreach (BookingData::COLUMNS as $column) {
+                        if ($row[$column] !== null && BookingData::isSealed((string) $row[$column])) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }));
+            }
+
+            return json_encode($state->params);
+        });
         $database->method('loadAssocList')->willReturnCallback(static function () use ($state): array {
             $rows = [];
 

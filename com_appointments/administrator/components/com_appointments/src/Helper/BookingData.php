@@ -165,9 +165,9 @@ final class BookingData
     }
 
     /**
-     * The update time of a token made with this site's key, expired or not: the
-     * migration may resume from it (only rows created before that time), while
-     * reading clear text needs an unexpired token. Null from
+     * The update time of a token made with this site's key, expired or not, as
+     * the base of {@see self::migrationCutoff()}; reading clear text as data and
+     * encrypting it automatically need an unexpired token. Null from
      * {@see self::MIGRATION_LIMIT_DAYS} after the update on: the update time is
      * inside the keyed hash, so a database write can neither move that limit nor
      * revive an old token.

@@ -147,7 +147,8 @@ com_appointments/tests/scripts/
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 ├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
 ├── 21-teamcalendars.php     # internet calendars: one runner, one part file team-<letter>-*.php per work package
-└── 20-uninstall.php         # tables dropped, task plugin removed, no orphan rows
+├── 20-uninstall.php         # final installed-suite run: tables dropped, task plugin removed, no orphan rows
+└── upgrade-from-v1.3.0.php  # separate CI-only published v1.3.0 upgrade fixture
 ```
 
 Build the package once, then run either lane. `tests/test.env` names the Joomla 5 container, so the
@@ -257,6 +258,17 @@ Tag prefix: `appointments-v`.
 `shared/tests/deprecated-api-scan.php` and the shared scripts the component's `test.env` actually
 runs. `shared-path-coverage.yml` fails if a file under `shared/` is matched by no workflow, so check
 it after adding the component.
+
+The `upgrade-v130` matrix starts isolated Joomla 5.4 and 6 installations from the actual published
+`appointments-v1.3.0` ZIP, verifies its asset digest, seeds representative 1.3.0 schedules,
+event types and plaintext bookings, then installs the exact candidate ZIP through Joomla's CLI.
+It checks the 1.4.0 schema migration and legacy-feed compatibility, then verifies that the same
+plaintext bookings remain readable during the authenticated seven-day migration window. The
+fixture expires that token and uses the authenticated administrator action on those bookings,
+requiring `v2:` ciphertext and exactly one audit row per booking. The upgraded installations also
+run the booking suite and strict team-calendar suite, with real CalDAV clients on Joomla 6.
+The release workflow intentionally retires older assets, so this transition-specific job reports
+an explicit skip after the v1.3.0 source asset is removed.
 
 Concurrency: cancel a superseded run of the same branch or pull request, never on `main`, never for
 `workflow_dispatch`, never in the release or publish workflows.
