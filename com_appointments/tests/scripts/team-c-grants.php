@@ -630,9 +630,18 @@ return static function (TeamSuite $suite): void {
         if ($suite->isStub(CleanupService::class)) {
             // The one-step revoke starts the device clean-up before it closes the link.
             $suite->pending($grantE2e[9], 'F');
-        } else $suite->test($grantE2e[9], static function () use ($invitations, $grants, $super, $owner, $fresh, $calendar, $ownerKeys, $refused, $db, $p) {
+        } else $suite->test($grantE2e[9], static function () use ($invitations, $grants, $super, $owner, $user, $teamGroup, $tokenFor, $calendar, $ownerKeys, $refused, $db, $p) {
+            $fresh = $user('revoked', [$teamGroup], false);
+            $before = AppointmentsMail::snapshot();
+            $id = $invitations->invite($super, $fresh);
+            $token = $tokenFor($before);
+
+            if ($token === null) {
+                throw new RuntimeException('The activation fixture mail contains no token.');
+            }
+
+            $invitations->complete($token, 'Fixture-Password-2!x');
             $grants->grant($owner, $calendar, $fresh, CalendarRole::Read, $ownerKeys);
-            $id = (int) $db->query("SELECT id FROM {$p}appointments_invitations WHERE user_id={$fresh} AND state=" . TeamStates::INVITATION_COMPLETED)->fetch_row()[0];
             $nobody = $refused(static fn () => $invitations->revoke($owner, $id), 403);
             $invitations->revoke($super, $id);
 
@@ -641,8 +650,9 @@ return static function (TeamSuite $suite): void {
                 && (int) $db->query("SELECT block FROM {$p}users WHERE id={$fresh}")->fetch_row()[0] === 1;
         });
 
-        $third = $services->calendars()->create($boss, ['title' => $tag . '-third', 'owner_user_id' => $boss]);
+        $third = $services->calendars()->create($boss, ['title' => $tag . '-third', 'owner_user_id' => $owner]);
         $calendars[] = $third;
+        $grants->grant($owner, $third, $boss, CalendarRole::Manage, $ownerKeys);
 
         $suite->test($deleteE2e, static function () use ($services, $third, $boss, $tag, $db, $p) {
             $before = AppointmentsMail::snapshot();
@@ -650,7 +660,7 @@ return static function (TeamSuite $suite): void {
             $mailed = false;
 
             foreach (AppointmentsMail::messagesSince($before) as $mime) {
-                $mailed = $mailed || str_contains(AppointmentsMail::decoded($mime), $tag . 'boss@example.test');
+                $mailed = $mailed || str_contains(AppointmentsMail::decoded($mime), $tag . 'owner@example.test');
             }
 
             return $mailed

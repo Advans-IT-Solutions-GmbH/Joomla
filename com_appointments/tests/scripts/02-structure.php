@@ -747,6 +747,8 @@ class StructureTest
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN invitee_last_name");
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_utc");
                 $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_version");
+                // CREATE TABLE LIKE copies the current 1.4 schema, so restore the 1.3 full-name type.
+                $this->db->query("ALTER TABLE {$bookings} MODIFY invitee_name VARCHAR(255) DEFAULT NULL");
                 $names = [1 => 'Anna Muster', 2 => '  Anna Maria  von Muster ', 3 => 'Cher', 4 => null, 5 => 'Zoë Ærø'];
                 foreach ($names as $id => $name) {
                     $value = $name === null ? 'NULL' : "'" . $this->db->real_escape_string($name) . "'";

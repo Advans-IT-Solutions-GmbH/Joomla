@@ -269,14 +269,14 @@ return static function (TeamSuite $suite): void {
             $before = $db->query("SELECT key_version, device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row();
 
             try {
-                $application->setIdentity($guest);
+                $application->loadIdentity($guest);
                 $db->query($flip);
                 $guestRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
-                $application->setIdentity($userFactory->loadUserById($owner));
+                $application->loadIdentity($userFactory->loadUserById($owner));
                 $impersonationRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
                 $stillDamaged = $keys->userKeyStatus($member)['status'] === 'tampered';
                 $db->query($flip);
-                $application->setIdentity($admin);
+                $application->loadIdentity($admin);
                 $adminRefusedForValidRow = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 409;
 
                 $db->query($flip);
@@ -292,7 +292,7 @@ return static function (TeamSuite $suite): void {
                 if ($keys->userKeyStatus($member)['status'] === 'tampered') {
                     $db->query($flip);
                 }
-                $application->setIdentity($originalIdentity ?? $guest);
+                $application->loadIdentity($originalIdentity ?? $guest);
             }
         });
     }
@@ -387,10 +387,10 @@ return static function (TeamSuite $suite): void {
             $ownerIdentity = $userFactory->loadUserById($owner);
 
             try {
-                $application->setIdentity($ownerIdentity);
+                $application->loadIdentity($ownerIdentity);
                 $rejected = $refusal(static fn () => $keys->rotateCalendarKey($staleRing)) === 409;
             } finally {
-                $application->setIdentity($originalIdentity ?? $userFactory->loadUserById(0));
+                $application->loadIdentity($originalIdentity ?? $userFactory->loadUserById(0));
             }
 
             $memberKeys = $keys->unlockWithPassword($member, $memberPassword);
@@ -521,26 +521,80 @@ return static function (TeamSuite $suite): void {
                 CURLOPT_HEADERFUNCTION => static function ($c, $line) use (&$headers) { $headers .= $line; return \strlen($line); },
             ]);
             curl_exec($curl);
+            $postStatus = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
             curl_close($curl);
+            $jarContents = file_get_contents($jar);
             @unlink($jar);
             $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($params) . "' WHERE type='component' AND element='com_appointments'");
             $db->query("UPDATE {$p}extensions SET enabled = 0 WHERE type='plugin' AND folder='user' AND element='appointments'");
 
+            if ($jarContents === false) {
+                throw new RuntimeException('The password sign-in cookie jar could not be read.');
+            }
+
             preg_match('/^Set-Cookie:\s*(?:__Host-)?appointments_keys_site=([0-9a-f]{64});([^\r\n]*)/mi', $headers, $cookie);
-            $session = teamBSession($db, $p, $member);
+            $session = null;
+            $sessionId = null;
+            $sessionCookiePresent = false;
+
+            foreach (preg_split('/\R/', $jarContents) ?: [] as $line) {
+                if (str_starts_with($line, '#HttpOnly_')) {
+                    $line = substr($line, \strlen('#HttpOnly_'));
+                } elseif ($line === '' || $line[0] === '#') {
+                    continue;
+                }
+
+                $fields = preg_split('/\s+/', trim($line)) ?: [];
+
+                if (\count($fields) < 7 || $fields[5] === 'appointments_keys_site'
+                    || !preg_match('/^[A-Za-z0-9_-]{16,128}$/D', $fields[6])) {
+                    continue;
+                }
+
+                $sessionCookiePresent = true;
+                $candidate = teamBSession($db, $p, $member, $fields[6]);
+
+                if ($candidate !== null) {
+                    $sessionId = $fields[6];
+                    $session = $candidate;
+                    break;
+                }
+            }
+
             $escrow = $session?->get('com_appointments.team_keys.site');
             $escrow = \is_object($escrow) ? (array) $escrow : $escrow;
-            $raw = (string) $db->query("SELECT data FROM {$p}session WHERE userid = {$member} ORDER BY time DESC LIMIT 1")->fetch_row()[0];
+            $rawRow = $sessionId === null ? null : $db->query(
+                "SELECT data FROM {$p}session WHERE userid = {$member} AND session_id = '" . $db->real_escape_string($sessionId) . "'"
+            )->fetch_row();
+            $raw = (string) ($rawRow[0] ?? '');
             $secret = $keys->unlockWithPassword($member, $memberPassword)?->secretKey() ?? random_bytes(32);
             $attributes = strtolower($cookie[2] ?? '');
-
-            return isset($cookie[1]) && \is_array($escrow)
-                && (int) ($escrow['mb'] ?? -1) === 0
-                && str_contains($attributes, 'httponly') && str_contains($attributes, 'secure') && str_contains($attributes, 'samesite=strict')
-                && !str_contains($attributes, 'expires=')
-                && !str_contains($raw, $secret) && stripos($raw, bin2hex($secret)) === false && !str_contains($raw, base64_encode($secret))
+            $postSucceeded = $postStatus >= 200 && $postStatus < 400;
+            $tokenPresent = isset($token[1]);
+            $cookiePresent = isset($cookie[1]);
+            $escrowPresent = \is_array($escrow);
+            $mfaNotChecked = $escrowPresent && (int) ($escrow['mb'] ?? -1) === 0;
+            $sessionSecretAbsent = !str_contains($raw, $secret) && stripos($raw, bin2hex($secret)) === false
+                && !str_contains($raw, base64_encode($secret))
                 && stripos(base64_decode(preg_match('/joomla\|s:\d+:"([^"]*)"/', $raw, $m) ? $m[1] : ''), bin2hex($secret)) === false
-                && !str_contains($raw, $cookie[1]);
+                && (!$cookiePresent || !str_contains($raw, $cookie[1]));
+            $secureCookie = str_contains($attributes, 'httponly') && str_contains($attributes, 'secure')
+                && str_contains($attributes, 'samesite=strict') && !str_contains($attributes, 'expires=');
+            $passed = $postSucceeded && $tokenPresent && $cookiePresent && $escrowPresent && $mfaNotChecked
+                && $secureCookie && $sessionSecretAbsent;
+
+            if (!$passed) {
+                echo '  B escrow diagnostics: HTTPS=' . (str_starts_with($suite->base, 'https://') ? 'yes' : 'no')
+                    . ', POST status=' . $postStatus . ', token=' . ($tokenPresent ? 'yes' : 'no')
+                    . ', key cookie=' . ($cookiePresent ? 'yes' : 'no')
+                    . ', session cookie=' . ($sessionCookiePresent ? 'yes' : 'no')
+                    . ', matching session=' . ($sessionId !== null ? 'yes' : 'no')
+                    . ', escrow=' . ($escrowPresent ? 'yes' : 'no')
+                    . ', mb=0=' . ($mfaNotChecked ? 'yes' : 'no')
+                    . ', secret absent=' . ($sessionSecretAbsent ? 'yes' : 'no') . "\n";
+            }
+
+            return $passed;
         });
     }
 
@@ -645,11 +699,12 @@ return static function (TeamSuite $suite): void {
 };
 
 /**
- * The Joomla session registry of the newest session of a user, null when none.
+ * The Joomla session registry for a session ID, or the user's newest session when omitted.
  */
-function teamBSession(mysqli $db, string $prefix, int $userId): ?\Joomla\Registry\Registry
+function teamBSession(mysqli $db, string $prefix, int $userId, ?string $sessionId = null): ?\Joomla\Registry\Registry
 {
-    $result = $db->query("SELECT data FROM {$prefix}session WHERE userid = {$userId} ORDER BY time DESC LIMIT 1");
+    $where = $sessionId === null ? '' : " AND session_id = '" . $db->real_escape_string($sessionId) . "'";
+    $result = $db->query("SELECT data FROM {$prefix}session WHERE userid = {$userId}{$where} ORDER BY time DESC LIMIT 1");
     $data = $result ? (string) ($result->fetch_row()[0] ?? '') : '';
 
     if (!preg_match('/joomla\|s:\d+:"([^"]*)"/', $data, $match)) {
