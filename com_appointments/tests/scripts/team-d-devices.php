@@ -695,7 +695,7 @@ return static function (TeamSuite $suite): void {
             return $refused;
         });
 
-        $suite->test($flow[20], static function () use ($services, $rowOf, $restore, $tag, $db, $p, $member, $password, &$created, $refusal) {
+        $suite->test($flow[20], static function () use ($services, $rowOf, $restore, $tag, $db, $p, $member, $password, &$created, $refusal, $suite) {
             $keys = $services->keys()->unlockWithPassword($member, $password);
             $key = $rowOf('appointments_user_keys', 'user_id = ' . $member);
 
@@ -707,7 +707,10 @@ return static function (TeamSuite $suite): void {
 
             try {
                 $refusedDevice = $services->devices()->authenticate($tag . 'member', $created) === null;
-                $refusedAdd = $refusal(static fn () => $services->devices()->create($keys, $tag . ' broken key', 'other', true)) === 403;
+                $devicesBefore = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+                // The key service refuses the changed row (409) before the device service's own check (403).
+                $refusedAdd = \in_array($refusal(static fn () => $services->devices()->create($keys, $tag . ' broken key', 'other', true)), [403, 409], true)
+                    && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $devicesBefore;
             } catch (\Throwable $e) {
                 $refusedDevice = $refusedAdd = false;
             } finally {
@@ -719,7 +722,9 @@ return static function (TeamSuite $suite): void {
 
         $suite->test($flow[7], static function () use ($browser, $page, $suite, $p, $member) {
             $form = TeamDBrowser::form($page($browser), 'devices.create');
+            // Over HTTPS the key cookie carries the __Host- prefix.
             $browser->dropCookie('appointments_keys_site');
+            $browser->dropCookie('__Host-appointments_keys_site');
 
             if ($form === null) {
                 return false;
@@ -774,9 +779,16 @@ return static function (TeamSuite $suite): void {
             // The answer is a redirect back to the page, which shows the general message.
             $html .= $status >= 300 && $status < 400 ? $browser->request($browser->header('Location')) : '';
 
-            return $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before
-                && !preg_match('/id="appointments-app-password"/', $html)
-                && !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
+            $unchanged = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
+            $noPassword = !preg_match('/id="appointments-app-password"/', $html);
+            $noDetail = !str_contains($html, 'user_mfa') && !str_contains($html, 'SQL');
+
+            if (!($unchanged && $noPassword && $noDetail)) {
+                echo '    security check: answered ' . $status . ', final ' . $browser->status . ', unchanged ' . (int) $unchanged
+                    . ', no password ' . (int) $noPassword . ', no detail ' . (int) $noDetail . "\n";
+            }
+
+            return $unchanged && $noPassword && $noDetail;
         });
 
         // ------------------------------------------------------------------
@@ -795,28 +807,43 @@ return static function (TeamSuite $suite): void {
         $link = '';
 
         foreach (AppointmentsMail::messagesSince($mailsBefore) as $mime) {
-            if (preg_match('#https?://[^\s"<>]*view=activation(?:&amp;|&)token=([A-Za-z0-9_-]{43})#', AppointmentsMail::decoded($mime), $m) === 1) {
+            if (preg_match('#https://[^\s"<>]*token=[A-Za-z0-9_-]{43}[^\s"<>]*#', AppointmentsMail::decoded($mime), $m) === 1
+                && str_contains($m[0], 'activation')) {
                 $link = html_entity_decode($m[0]);
             }
+        }
+
+        // The mail is built on the command line, whose site address is the container's own
+        // host; the browser sends path and query of the HTTPS link to the suite's address.
+        $linkPath = $link === '' ? '' : (string) parse_url($link, PHP_URL_PATH) . '?' . (string) parse_url($link, PHP_URL_QUERY);
+
+        if ($linkPath === '') {
+            echo '    activation: no HTTPS activation link in ' . \count(AppointmentsMail::messagesSince($mailsBefore)) . " new mail(s)\n";
         }
 
         $activation = new TeamDBrowser($suite->base);
         $activationForm = null;
 
-        $suite->test($flow[10], static function () use ($activation, $link, &$activationForm) {
-            if ($link === '') {
+        $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm) {
+            if ($linkPath === '') {
                 return false;
             }
 
-            $activation->request($link, null, 0);
+            $activation->request($linkPath, null, 0);
             $location = $activation->header('Location');
 
             if ($activation->status < 300 || $activation->status >= 400 || $location === '' || str_contains($location, 'token=')) {
+                echo '    activation: link answered ' . $activation->status . ($location === '' ? ' without' : ' with') . " Location\n";
+
                 return false;
             }
 
             $html = $activation->request($location);
             $activationForm = TeamDBrowser::form($html, 'activation.complete');
+
+            if ($activationForm === null) {
+                echo '    activation: page answered ' . $activation->status . " without the activation form\n";
+            }
 
             return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
                 && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
@@ -862,11 +889,11 @@ return static function (TeamSuite $suite): void {
                 && password_verify($strong, (string) $db->query("SELECT password FROM {$p}users WHERE id = {$fresh}")->fetch_assoc()['password']);
         });
 
-        $suite->test($flow[14], static function () use ($suite, $link) {
+        $suite->test($flow[14], static function () use ($suite, $linkPath) {
             $again = new TeamDBrowser($suite->base);
-            $again->request($link);
+            $again->request($linkPath);
 
-            return $link !== '' && $again->status === 404;
+            return $linkPath !== '' && $again->status === 404;
         });
     } finally {
         // Own rows only; the log keeps its rows so that the chain of part F still verifies.
