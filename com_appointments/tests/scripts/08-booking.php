@@ -472,7 +472,7 @@ try {
         $before = AppointmentsMail::snapshot();
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
-        $stored = appointments_open_booking($db->query("SELECT id,uid,created_utc,invitee_phone,custom_fields FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
+        $stored = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
         $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
         $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));

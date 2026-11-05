@@ -11,6 +11,7 @@ defined('_JEXEC') || define('_JEXEC', 1);
 require_once '/var/www/html/configuration.php';
 $appointmentsHelper = '/var/www/html/administrator/components/com_appointments/src/Helper/';
 require_once $appointmentsHelper . 'KeyProvider.php';
+require_once $appointmentsHelper . 'UtcTimestamp.php';
 require_once $appointmentsHelper . 'Team/CipherSuite.php';
 require_once $appointmentsHelper . 'BookingData.php';
 
