@@ -101,6 +101,7 @@ class UninstallTest
         $output = [];
         $exitCode = 0;
         exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        clearstatcache(true);
         $this->test('Uninstall command executed', function () use ($exitCode) {
             return $exitCode === 0;
         });
@@ -142,6 +143,7 @@ class UninstallTest
         $output = [];
         $exitCode = 0;
         exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/extension.zip --no-interaction 2>&1', $output, $exitCode);
+        clearstatcache(true);
         $this->test('Component can be reinstalled with retained data and its stable epoch anchor', function () use ($exitCode, $anchorPath, $legacyAnchorPath, $anchorContent) {
             return $exitCode === 0 && $this->extensionId() > 0
                 && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent
@@ -163,6 +165,7 @@ class UninstallTest
         $output = [];
         $exitCode = 0;
         exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $deleteExtensionId --no-interaction 2>&1", $output, $exitCode);
+        clearstatcache(true);
         $this->test('Uninstall command with explicit delete choice executed', function () use ($exitCode) {
             return $exitCode === 0;
         });
